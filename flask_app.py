@@ -30,8 +30,11 @@ app = Flask(__name__)
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-app.config['SECRET_KEY'] = 'super-secret-key-change-this-later' 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'intelligence.db'))
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-this-later')
+_db_url = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'intelligence.db'))
+if _db_url.startswith('postgres://'):
+    _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
