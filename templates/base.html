@@ -14,6 +14,7 @@
     <meta name="twitter:title" content="Westminster Brief — AI Parliamentary Research Tools">
     <meta name="twitter:description" content="Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly. Free for gov.uk officials.">
     <link rel="canonical" href="https://westminsterbrief.co.uk{{ request.path }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     {% block extra_head %}{% endblock %}
 </head>
@@ -50,6 +51,8 @@
     </div>
 
     <div class="footer">
+        &copy; 2026 Westminster Brief. AI-generated briefing content is original work and may not be reproduced without permission.
+        <br style="margin-bottom:6px;">
         Contains Parliamentary information licensed under the
         <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank">Open Parliament Licence v3.0</a>.
         &nbsp;·&nbsp;

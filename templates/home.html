@@ -14,31 +14,49 @@
 
 <div class="home-hero">
     <div class="home-hero-icon">🏛️</div>
-    <div>
+    <div style="flex:1;">
         <h1 class="home-hero-title">Westminster Brief</h1>
         <p class="home-hero-subtitle">
-            AI-powered parliamentary research tools — built by civil servants, for civil servants.
+            AI-powered parliamentary research tools — built for UK civil servants and parliamentary staff.
         </p>
+        <div style="display:flex; gap:20px; margin-top:14px; flex-wrap:wrap;">
+            <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ Live parliamentary data</span>
+            <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ AI-generated briefings</span>
+            <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ Free for gov.uk staff</span>
+        </div>
     </div>
+    {% if not current_user.is_authenticated %}
+    <a href="/register" style="background:white; color:#1c3e6e; font-weight:700; font-size:14px; padding:12px 22px; border-radius:8px; text-decoration:none; white-space:nowrap; flex-shrink:0;">Get started free →</a>
+    {% endif %}
 </div>
 
 <div class="box" style="margin-bottom: 28px; border-left: 4px solid #1c3e6e; background: #f8fafd;">
     <h2 style="margin-top: 0; font-size: 18px; color: #1c3e6e;">Why Westminster Brief?</h2>
-    <p style="font-size: 15px; line-height: 1.75; color: #333; margin-bottom: 12px;">
-        Preparing for parliamentary debates, ministerial meetings, and Select Committee appearances takes significant time.
-        Tracking down relevant Written Questions, reading through Hansard transcripts, researching an MP's background and
-        policy interests, and collating it all into a coherent briefing can take hours — often under tight deadlines.
-    </p>
-    <p style="font-size: 15px; line-height: 1.75; color: #333; margin-bottom: 12px;">
-        Westminster Brief brings it all together in one place. Search what has been said in Parliament on any topic,
-        see which questions are due for answer today, build instant profiles of any MP or Peer, and generate
-        formatted Word briefings with a single click — all drawing on live parliamentary data.
-    </p>
-    <p style="font-size: 14px; line-height: 1.7; color: #555; margin-bottom: 0; padding: 12px 16px; background: #eef4fb; border-radius: 6px;">
-        <strong>Access &amp; Pricing:</strong> Westminster Brief is currently <strong>free to use for everyone</strong>.
-        We may introduce paid tiers in future for private sector and commercial users, but we are committed to keeping
-        full access <strong>free for all <code>gov.uk</code> email holders</strong> and civil servants in perpetuity.
-        See our <a href="/terms" style="color: #005a8f;">Terms of Use</a> for full details.
+    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; margin-bottom:20px;">
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+            <span style="font-size:22px; line-height:1; flex-shrink:0;">⏱️</span>
+            <div>
+                <div style="font-weight:700; color:#1c3e6e; font-size:14px; margin-bottom:4px;">Save hours of research</div>
+                <div style="font-size:13px; color:#555; line-height:1.5;">What used to take half a day — reading Hansard, tracking PQs, profiling MPs — takes minutes.</div>
+            </div>
+        </div>
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+            <span style="font-size:22px; line-height:1; flex-shrink:0;">🏛️</span>
+            <div>
+                <div style="font-weight:700; color:#1c3e6e; font-size:14px; margin-bottom:4px;">Live parliamentary data</div>
+                <div style="font-size:13px; color:#555; line-height:1.5;">Draws directly from Parliament's official APIs and Hansard — always up to date, no manual searching.</div>
+            </div>
+        </div>
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+            <span style="font-size:22px; line-height:1; flex-shrink:0;">📄</span>
+            <div>
+                <div style="font-weight:700; color:#1c3e6e; font-size:14px; margin-bottom:4px;">Briefing-ready output</div>
+                <div style="font-size:13px; color:#555; line-height:1.5;">AI synthesises results into structured Word documents ready for a briefing pack or ministerial submission.</div>
+            </div>
+        </div>
+    </div>
+    <p style="font-size:13px; line-height:1.7; color:#555; margin-bottom:0; padding:10px 14px; background:#eef4fb; border-radius:6px;">
+        <strong>Access &amp; Pricing:</strong> Currently <strong>free for all users</strong>. Full access will remain <strong>free for <code>gov.uk</code> email holders</strong> in perpetuity. See our <a href="/terms" style="color:#005a8f;">Terms of Use</a>.
     </p>
 </div>
 
