@@ -1,5 +1,5 @@
-import requests, os, json, re, io, concurrent.futures
-from flask import Blueprint, render_template, request, send_file
+import requests, os, json, re, io, concurrent.futures, time
+from flask import Blueprint, render_template, request, send_file, jsonify
 from datetime import datetime
 from cache_models import CachedTranscript
 
@@ -17,6 +17,8 @@ TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TWFY_API_URL = "https://www.theyworkforyou.com/api/getDebates"
 TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
+MINISTER_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'minister_cache.json')
+MINISTER_CACHE_TTL = 7 * 24 * 3600  # 7 days
 
 DEPARTMENTS_TWFY = [
     "All Departments", "Department for Education", "Department of Health and Social Care",
@@ -185,6 +187,49 @@ def expand_search_query(topic, api_key):
     except Exception:
         pass
     return f'"{topic}"'
+
+def verify_government_speaker(name):
+    """Check Parliament Members API to confirm a speaker is a current minister.
+    Returns dict with confirmed (bool) and role (str). File-cached for 7 days."""
+    cache = {}
+    try:
+        if os.path.exists(MINISTER_CACHE_FILE):
+            with open(MINISTER_CACHE_FILE) as f:
+                cache = json.load(f)
+    except Exception:
+        cache = {}
+
+    if name in cache:
+        entry = cache[name]
+        if time.time() - entry.get('ts', 0) < MINISTER_CACHE_TTL:
+            return {'confirmed': entry['confirmed'], 'role': entry.get('role', '')}
+
+    result = {'confirmed': False, 'role': ''}
+    try:
+        s_resp = requests.get(
+            f"https://members-api.parliament.uk/api/Members/Search?Name={requests.utils.quote(name)}&IsCurrentMember=true&take=5",
+            timeout=5
+        )
+        if s_resp.status_code == 200 and s_resp.json().get('items'):
+            member_id = s_resp.json()['items'][0]['value']['id']
+            m_resp = requests.get(f"https://members-api.parliament.uk/api/Members/{member_id}", timeout=5)
+            if m_resp.status_code == 200:
+                govt_posts = m_resp.json().get('value', {}).get('governmentPosts', [])
+                if govt_posts:
+                    result['confirmed'] = True
+                    result['role'] = govt_posts[0].get('name', '')
+    except Exception:
+        pass
+
+    try:
+        cache[name] = {'confirmed': result['confirmed'], 'role': result['role'], 'ts': time.time()}
+        with open(MINISTER_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
+    except Exception:
+        pass
+
+    return result
+
 
 # ==========================================
 # ROUTE 1: SCAN AND GROUP BY THEME (STEP 1)
@@ -416,6 +461,18 @@ def debates_topic():
                         raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
                         clean_text = raw_text.replace('```json', '').replace('```', '').strip()
                         topic_briefing = json.loads(clean_text)
+
+                        # Verify government speakers against Parliament Members API (parallel)
+                        govt_speakers = topic_briefing.get('government_speakers', [])
+                        if govt_speakers:
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as vex:
+                                vfutures = {vex.submit(verify_government_speaker, s.get('name', '')): s for s in govt_speakers}
+                                for vf in concurrent.futures.as_completed(vfutures):
+                                    spk = vfutures[vf]
+                                    v = vf.result()
+                                    spk['verified'] = v['confirmed']
+                                    spk['confirmed_role'] = v['role']
+
                         topic_briefing_as_text = format_briefing_as_text(topic_briefing, topic)
                 except Exception:
                     topic_briefing = None

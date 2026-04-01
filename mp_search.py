@@ -1,6 +1,6 @@
 import requests, os, json, io
-from flask import Blueprint, render_template, request, send_file
-from datetime import datetime
+from flask import Blueprint, render_template, request, send_file, jsonify
+from datetime import datetime, timedelta
 
 try:
     import docx
@@ -112,6 +112,55 @@ def search_mp_pqs():
                            selected_dept=selected_dept, search_mp=search_mp,
                            start_date=start_date, end_date=end_date,
                            is_post=(request.method == 'POST'))
+
+@mp_search_bp.route('/api/mp_pqs')
+def api_mp_pqs():
+    name = request.args.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Name required'}), 400
+    try:
+        s_resp = requests.get(
+            f"https://members-api.parliament.uk/api/Members/Search?Name={name}&IsCurrentMember=true&take=5",
+            timeout=5
+        )
+        if not (s_resp.status_code == 200 and s_resp.json().get('items')):
+            return jsonify({'error': f'MP not found: {name}'}), 404
+
+        member_data = s_resp.json()['items'][0]['value']
+        member_id = member_data['id']
+        display_name = member_data.get('nameDisplayAs', name)
+        party = (member_data.get('latestParty') or {}).get('name', '')
+        membership = member_data.get('latestHouseMembership') or {}
+        house = "Lords" if membership.get('house') == 2 else "Commons"
+        constituency = membership.get('membershipFrom', '')
+        role = "Life Peer" if house == "Lords" else f"MP for {constituency}"
+
+        three_months_ago = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+        q_resp = requests.get(
+            "https://questions-statements-api.parliament.uk/api/writtenquestions/questions",
+            params={'askingMemberId': member_id, 'tabledWhenFrom': three_months_ago, 'take': 15},
+            timeout=10
+        )
+        pqs = []
+        if q_resp.status_code == 200:
+            for item in q_resp.json().get('results', []):
+                val = item.get('value', {})
+                raw_date = (val.get('dateTabled') or '').split('T')[0]
+                is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
+                uin = str(val.get('uin', ''))
+                pqs.append({
+                    'uin': uin,
+                    'dept': val.get('answeringBodyName', ''),
+                    'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
+                    'date': raw_date,
+                    'status': 'ANSWERED' if is_answered else 'UNANSWERED',
+                    'link': f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date}/{uin}"
+                })
+
+        return jsonify({'name': display_name, 'party': party, 'role': role, 'pqs': pqs})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @mp_search_bp.route('/download_mp_word', methods=['POST'])
 def download_mp_word():

@@ -27,3 +27,6 @@ Thumbs.db
 
 # Flask
 instance/
+
+# Runtime caches
+minister_cache.json
