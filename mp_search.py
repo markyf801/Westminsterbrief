@@ -116,6 +116,7 @@ def search_mp_pqs():
 @mp_search_bp.route('/api/mp_pqs')
 def api_mp_pqs():
     name = request.args.get('name', '').strip()
+    topic = request.args.get('topic', '').strip()
     if not name:
         return jsonify({'error': 'Name required'}), 400
     try:
@@ -135,20 +136,21 @@ def api_mp_pqs():
         constituency = membership.get('membershipFrom', '')
         role = "Life Peer" if house == "Lords" else f"MP for {constituency}"
 
-        three_months_ago = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+        # Fetch 6 months so topic filtering has enough to work with
+        six_months_ago = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
         q_resp = requests.get(
             "https://questions-statements-api.parliament.uk/api/writtenquestions/questions",
-            params={'askingMemberId': member_id, 'tabledWhenFrom': three_months_ago, 'take': 15},
+            params={'askingMemberId': member_id, 'tabledWhenFrom': six_months_ago, 'take': 50},
             timeout=10
         )
-        pqs = []
+        all_pqs = []
         if q_resp.status_code == 200:
             for item in q_resp.json().get('results', []):
                 val = item.get('value', {})
                 raw_date = (val.get('dateTabled') or '').split('T')[0]
                 is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
                 uin = str(val.get('uin', ''))
-                pqs.append({
+                all_pqs.append({
                     'uin': uin,
                     'dept': val.get('answeringBodyName', ''),
                     'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
@@ -157,7 +159,30 @@ def api_mp_pqs():
                     'link': f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date}/{uin}"
                 })
 
-        return jsonify({'name': display_name, 'party': party, 'role': role, 'pqs': pqs})
+        # Filter to topic-relevant PQs if a topic was supplied
+        topic_filtered = False
+        pqs = all_pqs
+        if topic and all_pqs:
+            # Build keyword list from topic (skip short stop words)
+            stop_words = {'the', 'and', 'for', 'that', 'this', 'with', 'from', 'are', 'have'}
+            keywords = [w.lower().strip('"\' ') for w in topic.split()
+                        if len(w) > 3 and w.lower() not in stop_words]
+            if keywords:
+                filtered = [q for q in all_pqs
+                            if any(kw in q['text'].lower() for kw in keywords)]
+                if filtered:
+                    pqs = filtered
+                    topic_filtered = True
+                # If nothing matched, fall back to all PQs with a note
+
+        return jsonify({
+            'name': display_name,
+            'party': party,
+            'role': role,
+            'pqs': pqs[:15],  # cap display at 15
+            'topic_filtered': topic_filtered,
+            'total_pqs': len(all_pqs)
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

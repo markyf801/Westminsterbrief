@@ -104,7 +104,7 @@
                         {% for s in topic_briefing.non_government_speakers %}
                         <li>
                             <strong>{{ s.name }}</strong> <span class="topic-party-badge">{{ s.role_or_party }}</span>
-                            <button onclick="togglePQs(this, '{{ s.name | e }}')" style="font-size:11px; color:#005a8f; background:none; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View PQs</button>
+                            <button onclick="togglePQs(this, '{{ s.name | e }}', '{{ topic | e }}')" style="font-size:11px; color:#005a8f; background:none; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View PQs</button>
                             <br><span style="font-size:12px; color:#555;">{{ s.stance }}</span>
                             <div class="pq-expand" style="display:none; margin-top:8px;"></div>
                         </li>
@@ -406,7 +406,7 @@
         showPanel('panel-topic');
     }
 
-    function togglePQs(btn, name) {
+    function togglePQs(btn, name, topic) {
         const li = btn.closest('li');
         const panel = li.querySelector('.pq-expand');
         if (panel.style.display !== 'none') {
@@ -421,22 +421,27 @@
         }
         btn.textContent = '⏳ Loading...';
         btn.disabled = true;
-        fetch('/api/mp_pqs?name=' + encodeURIComponent(name))
+        let url = '/api/mp_pqs?name=' + encodeURIComponent(name);
+        if (topic) url += '&topic=' + encodeURIComponent(topic);
+        fetch(url)
             .then(r => r.json())
             .then(data => {
                 if (data.error) {
                     panel.innerHTML = `<p style="color:#d9534f;font-size:12px;">⚠ ${data.error}</p>`;
                 } else if (!data.pqs || data.pqs.length === 0) {
-                    panel.innerHTML = `<p style="color:#888;font-size:12px;">No written questions found in the last 3 months.</p>`;
+                    panel.innerHTML = `<p style="color:#888;font-size:12px;">No written questions on this topic found in the last 6 months.</p>`;
                 } else {
-                    let html = `<div style="font-size:12px;color:#555;margin-bottom:6px;">${data.role} · ${data.party} · Last 3 months (${data.pqs.length} PQs)</div>`;
+                    const filterNote = data.topic_filtered
+                        ? `<span style="color:#6f42c1;font-size:11px;"> · filtered to topic</span>`
+                        : (data.total_pqs > data.pqs.length ? `<span style="color:#888;font-size:11px;"> · showing ${data.pqs.length} of ${data.total_pqs} (no topic match found)</span>` : '');
+                    let html = `<div style="font-size:12px;color:#555;margin-bottom:6px;">${data.role} · ${data.party} · Last 6 months (${data.pqs.length} PQs)${filterNote}</div>`;
                     data.pqs.forEach(q => {
                         const colour = q.status === 'ANSWERED' ? '#166534' : '#991b1b';
                         const bg = q.status === 'ANSWERED' ? '#dcfce7' : '#fee2e2';
                         html += `<div style="border-left:3px solid ${colour};padding:6px 10px;margin-bottom:6px;background:#fafafa;border-radius:0 4px 4px 0;">
                             <span style="background:${bg};color:${colour};font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;">${q.status}</span>
                             <span style="font-size:11px;color:#888;margin-left:6px;">${q.date} · ${q.dept}</span>
-                            <p style="margin:4px 0 4px 0;font-size:12px;font-style:italic;">"${q.text.substring(0, 180)}${q.text.length > 180 ? '…' : ''}"</p>
+                            <p style="margin:4px 0 4px 0;font-size:12px;font-style:italic;">"${q.text.substring(0, 200)}${q.text.length > 200 ? '…' : ''}"</p>
                             <a href="${q.link}" target="_blank" style="font-size:11px;color:#005a8f;">↗ View on Parliament</a>
                         </div>`;
                     });
