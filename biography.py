@@ -10,7 +10,7 @@ except ImportError:
 
 try:
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt, RGBColor, Inches
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 except ImportError:
@@ -309,57 +309,128 @@ def export_biography_word():
     if not Document:
         return "Word library missing.", 500
 
+    from docx.shared import Inches, Pt
     mp_name = request.form.get('mp_name', 'Unknown Member')
     party = request.form.get('party', '')
     constituency = request.form.get('constituency', '')
     bio_text = request.form.get('bio_text', '')
+    image_url = request.form.get('image_url', '')
+    member_id = request.form.get('member_id', '')
 
     doc = Document()
 
-    # Title block
-    h = doc.add_heading(f'Member Profile: {mp_name}', 0)
-    h.alignment = 1
-    meta = doc.add_paragraph()
-    meta.alignment = 1
-    if party:
-        meta.add_run(f'{party}').bold = True
-    if constituency:
-        meta.add_run(f'  ·  {constituency}')
-    meta.add_run(f'  ·  Generated {datetime.now().strftime("%d %B %Y")}')
-    doc.add_paragraph()
+    # Helper: set compact paragraph spacing (values in points)
+    def compact(para, before=0, after=3):
+        pPr = para._p.get_or_add_pPr()
+        existing = pPr.find(qn('w:spacing'))
+        if existing is not None:
+            pPr.remove(existing)
+        sp = OxmlElement('w:spacing')
+        sp.set(qn('w:before'), str(before * 20))
+        sp.set(qn('w:after'), str(after * 20))
+        pPr.append(sp)
 
-    # Parse and render the markdown biography
+    # Helper: remove all borders from a table
+    def remove_table_borders(table):
+        tblPr = table._tbl.find(qn('w:tblPr'))
+        if tblPr is None:
+            tblPr = OxmlElement('w:tblPr')
+            table._tbl.insert(0, tblPr)
+        borders = OxmlElement('w:tblBorders')
+        for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+            el = OxmlElement(f'w:{side}')
+            el.set(qn('w:val'), 'none')
+            borders.append(el)
+        tblPr.append(borders)
+
+    # Try to download photo
+    img_stream = None
+    if image_url:
+        try:
+            img_resp = requests.get(image_url, timeout=5)
+            if img_resp.status_code == 200:
+                img_stream = io.BytesIO(img_resp.content)
+        except:
+            pass
+
+    # ── Header: photo left, name/details right ───────────────────────────────
+    header_table = doc.add_table(rows=1, cols=2)
+    remove_table_borders(header_table)
+    photo_cell = header_table.cell(0, 0)
+    detail_cell = header_table.cell(0, 1)
+
+    # Set column widths
+    photo_cell.width = Inches(1.5)
+    detail_cell.width = Inches(5.0)
+
+    if img_stream:
+        photo_cell.paragraphs[0].add_run().add_picture(img_stream, width=Inches(1.3))
+    else:
+        photo_cell.paragraphs[0].add_run('')
+
+    # Name
+    name_para = detail_cell.paragraphs[0]
+    name_run = name_para.add_run(mp_name)
+    name_run.bold = True
+    name_run.font.size = Pt(16)
+    compact(name_para, before=0, after=4)
+
+    # Party · Constituency
+    meta_para = detail_cell.add_paragraph()
+    parts = [p for p in [party, constituency] if p]
+    meta_para.add_run('  ·  '.join(parts))
+    compact(meta_para, before=0, after=3)
+
+    # Generated date
+    date_para = detail_cell.add_paragraph()
+    date_run = date_para.add_run(f'Profile generated {datetime.now().strftime("%d %B %Y")}')
+    date_run.font.size = Pt(9)
+    date_run.font.color.rgb = RGBColor(128, 128, 128)
+    compact(date_para, before=0, after=0)
+
+    # Divider line after header
+    doc.add_paragraph('─' * 80)
+
+    # ── Biography content ─────────────────────────────────────────────────────
     heading_re = re.compile(r'^#{1,3}\s+(.+)$')
     bullet_re = re.compile(r'^[-*]\s+(.+)$')
 
     for line in bio_text.split('\n'):
         line = line.rstrip()
         if not line:
-            doc.add_paragraph()
-            continue
-        m = heading_re.match(line)
-        if m:
-            level = line.count('#', 0, 4)
-            doc.add_heading(m.group(1).strip(), level=min(level, 3))
+            continue  # skip blank lines — use spacing instead
+        hm = heading_re.match(line)
+        if hm:
+            level = min(line.count('#', 0, 4), 3)
+            p = doc.add_heading(hm.group(1).strip(), level=level)
+            compact(p, before=10, after=2)
             continue
         bm = bullet_re.match(line)
         if bm:
-            doc.add_paragraph(bm.group(1).strip(), style='List Bullet')
+            p = doc.add_paragraph(bm.group(1).strip(), style='List Bullet')
+            compact(p, before=0, after=2)
+            if p.runs:
+                p.runs[0].font.size = Pt(10)
             continue
-        # Strip bold markers and render as plain paragraph
         clean = re.sub(r'\*\*(.+?)\*\*', r'\1', line)
-        doc.add_paragraph(clean)
+        if clean:
+            p = doc.add_paragraph(clean)
+            compact(p, before=0, after=3)
+            if p.runs:
+                p.runs[0].font.size = Pt(10)
 
-    # Activity links section
-    member_id = request.form.get('member_id', '')
+    # ── Activity links ────────────────────────────────────────────────────────
     if member_id:
-        doc.add_heading('Parliamentary Activity Links', level=2)
+        p = doc.add_heading('Parliamentary Activity Links', level=2)
+        compact(p, before=10, after=2)
         lp = doc.add_paragraph()
         lp.add_run('Hansard contributions: ').bold = True
         _add_hyperlink(lp, f"https://hansard.parliament.uk/search/MemberContributions?memberId={member_id}", "View on Hansard")
+        compact(lp, before=0, after=2)
         lp2 = doc.add_paragraph()
         lp2.add_run('Written questions: ').bold = True
         _add_hyperlink(lp2, f"https://members.parliament.uk/member/{member_id}/writtenquestions", "View on Parliament.uk")
+        compact(lp2, before=0, after=2)
 
     mem = io.BytesIO()
     doc.save(mem)
