@@ -31,8 +31,6 @@
         {% if current_user.is_authenticated %}
             <a href="/my_alerts" class="nav-auth-alerts {% if request.path == '/my_alerts' %}nav-active{% endif %}">👤 My Alerts</a>
             <a href="/logout" class="nav-logout">Logout</a>
-        {% else %}
-            <a href="/login" class="nav-auth-login {% if request.path == '/login' %}nav-active{% endif %}">Login</a>
         {% endif %}
     </nav>
 
