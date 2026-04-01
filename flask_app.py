@@ -4,8 +4,8 @@ import re
 import numpy as np
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash
-from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from extensions import db
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
@@ -37,7 +37,7 @@ if _db_url.startswith('postgres://'):
 app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db = SQLAlchemy(app)
+db.init_app(app)
 
 # ==========================================
 # 2. LOGIN MANAGER
@@ -84,6 +84,9 @@ class Alert(db.Model):
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+# Import cache models so their tables are created
+from cache_models import CachedTranscript, CachedQuestion, CachedMember
 
 # ==========================================
 # 4. AUTO-BUILD DATABASE

@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, make_response
 from docx import Document
 from docx.oxml.shared import OxmlElement, qn
 from datetime import datetime
+from cache_models import CachedQuestion, CachedMember
 
 hansard_bp = Blueprint('hansard', __name__)
 
@@ -16,18 +17,27 @@ MEMBER_CACHE = {}
 def get_member_details(member_id, fallback_house):
     if not member_id: return "Unknown", "No Party", "Unknown", fallback_house
     if member_id in MEMBER_CACHE: return MEMBER_CACHE[member_id]
+
+    # Check DB cache first
+    cached = CachedMember.get(member_id)
+    if cached:
+        result = (cached.name, cached.party, cached.constituency, cached.house)
+        MEMBER_CACHE[member_id] = result
+        return result
+
     try:
         url = f"https://members-api.parliament.uk/api/Members/{member_id}"
         resp = requests.get(url, timeout=3)
         if resp.status_code == 200:
             data = resp.json().get('value') or {}
             membership = data.get('latestHouseMembership') or {}
-            MEMBER_CACHE[member_id] = (
-                data.get('nameDisplayAs') or 'Unknown',
-                (data.get('latestParty') or {}).get('name') or 'No Party',
-                membership.get('membershipFrom') or 'Unknown',
-                "Lords" if membership.get('house') == 2 else "Commons"
-            )
+            name = data.get('nameDisplayAs') or 'Unknown'
+            party = (data.get('latestParty') or {}).get('name') or 'No Party'
+            constituency = membership.get('membershipFrom') or 'Unknown'
+            house = "Lords" if membership.get('house') == 2 else "Commons"
+            image_url = data.get('thumbnailUrl') or ''
+            CachedMember.store(member_id, name, party, constituency, house, image_url)
+            MEMBER_CACHE[member_id] = (name, party, constituency, house)
             return MEMBER_CACHE[member_id]
     except: pass
     return "Member", "Party Info Pending", "Unknown", fallback_house
@@ -107,12 +117,31 @@ def index():
                     f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
                 except: f_date = "N/A"
                 
+                question_url = f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date_str}/{val.get('uin')}"
+                question_text = val.get('questionText', '').replace('<p>','').replace('</p>','')
+
+                # Cache questions older than 7 days — they won't change
+                uin = val.get('uin')
+                if uin and CachedQuestion.is_cacheable(raw_date_str):
+                    try:
+                        if not CachedQuestion.get(uin):
+                            CachedQuestion.store(
+                                uin=uin, member_name=name, party=party,
+                                department_id=val.get('answeringBodyId', ''),
+                                department_name=val.get('answeringBodyName', ''),
+                                question_text=question_text,
+                                answer_text=val.get('answerText'),
+                                date_tabled=raw_date_str, url=question_url
+                            )
+                    except Exception:
+                        pass
+
                 results.append({
                     'display_text': f"[{val.get('answeringBodyName')}] {name}: {val.get('questionText')}",
-                    'url': f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date_str}/{val.get('uin')}",
-                    'dept': val.get('answeringBodyName'), 'name': name, 'party': party, 
-                    'role': "Life Peer" if actual_house == "Lords" else f"MP for {constituency}", 
-                    'date': f_date, 'text': val.get('questionText').replace('<p>','').replace('</p>','')
+                    'url': question_url,
+                    'dept': val.get('answeringBodyName'), 'name': name, 'party': party,
+                    'role': "Life Peer" if actual_house == "Lords" else f"MP for {constituency}",
+                    'date': f_date, 'text': question_text
                 })
                         
             # Export Handlers...

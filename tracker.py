@@ -1,6 +1,7 @@
 import requests, os, json, re, concurrent.futures, io
 from flask import Blueprint, render_template, request, send_file
 from datetime import datetime, timedelta
+from cache_models import CachedMember
 
 try:
     import docx
@@ -57,11 +58,25 @@ def get_working_model(api_key):
 def get_member_name(member_id):
     if not member_id: return "Unknown Member"
     if member_id in MEMBER_CACHE: return MEMBER_CACHE[member_id]
+
+    # Check DB cache first
+    cached = CachedMember.get(member_id)
+    if cached:
+        MEMBER_CACHE[member_id] = cached.name
+        return cached.name
+
     try:
         url = f"https://members-api.parliament.uk/api/Members/{member_id}"
         resp = requests.get(url, timeout=3)
         if resp.status_code == 200:
-            name = resp.json().get('value', {}).get('nameDisplayAs', 'Unknown Member')
+            data = resp.json().get('value', {})
+            name = data.get('nameDisplayAs', 'Unknown Member')
+            party = (data.get('latestParty') or {}).get('name', '')
+            membership = data.get('latestHouseMembership') or {}
+            constituency = membership.get('membershipFrom', '')
+            house = "Lords" if membership.get('house') == 2 else "Commons"
+            image_url = data.get('thumbnailUrl', '')
+            CachedMember.store(member_id, name, party, constituency, house, image_url)
             MEMBER_CACHE[member_id] = name
             return name
     except: pass

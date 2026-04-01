@@ -2,6 +2,7 @@ import os, requests, io, docx, wikipedia, time
 from flask import Blueprint, render_template, request, jsonify, make_response
 from datetime import datetime
 from docx import Document
+from cache_models import CachedMember
 
 biography_bp = Blueprint('biography', __name__)
 
@@ -36,10 +37,23 @@ def biography_home():
     if request.method == 'POST':
         member_id = request.form.get('member_id')
         if member_id:
-            try:
-                resp = requests.get(f"https://members-api.parliament.uk/api/Members/{member_id}").json().get('value')
-                mp_data = {'id': resp.get('id'), 'name': resp.get('nameDisplayAs'), 'party': resp.get('latestParty', {}).get('name'), 'constituency': resp.get('latestHouseMembership', {}).get('membershipFrom'), 'image_url': resp.get('thumbnailUrl')}
-            except: error = "Could not load member."
+            # Check DB cache first
+            cached = CachedMember.get(member_id)
+            if cached:
+                mp_data = {'id': cached.member_id, 'name': cached.name, 'party': cached.party,
+                           'constituency': cached.constituency, 'image_url': cached.image_url}
+            else:
+                try:
+                    resp = requests.get(f"https://members-api.parliament.uk/api/Members/{member_id}").json().get('value')
+                    name = resp.get('nameDisplayAs')
+                    party = resp.get('latestParty', {}).get('name')
+                    constituency = resp.get('latestHouseMembership', {}).get('membershipFrom')
+                    house = "Lords" if resp.get('latestHouseMembership', {}).get('house') == 2 else "Commons"
+                    image_url = resp.get('thumbnailUrl')
+                    CachedMember.store(member_id, name, party, constituency, house, image_url)
+                    mp_data = {'id': resp.get('id'), 'name': name, 'party': party,
+                               'constituency': constituency, 'image_url': image_url}
+                except: error = "Could not load member."
     return render_template('biography.html', mp_data=mp_data, error_message=error)
 
 @biography_bp.route('/api/search_members')

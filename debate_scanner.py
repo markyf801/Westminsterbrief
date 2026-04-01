@@ -1,6 +1,7 @@
 import requests, os, json, re, io
 from flask import Blueprint, render_template, request, send_file
 from datetime import datetime
+from cache_models import CachedTranscript
 
 # Import Word Document libraries
 try:
@@ -233,11 +234,17 @@ def analyze_selected():
             url = parts[0]
             title = parts[1] if len(parts) > 1 else "Unknown Title"
             date_val = parts[2] if len(parts) > 2 else ""
-            
+
             if url and url.startswith('http'):
+                # Check cache first — transcripts never change once published
+                cached = CachedTranscript.get(url)
+                if cached:
+                    full_transcript_text += f"### DEBATE: {cached.title} ({cached.date})\n\n{cached.transcript_text}\n\n"
+                    continue
+
                 headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
                 resp = requests.get(url, headers=headers, timeout=20)
-                
+
                 if resp.status_code == 200:
                     html = resp.text
                     html = re.sub(r'<head.*?>.*?</head>', '', html, flags=re.DOTALL|re.IGNORECASE)
@@ -246,11 +253,18 @@ def analyze_selected():
                     html = re.sub(r'<nav.*?>.*?</nav>', '', html, flags=re.DOTALL|re.IGNORECASE)
                     html = re.sub(r'<header.*?>.*?</header>', '', html, flags=re.DOTALL|re.IGNORECASE)
                     html = re.sub(r'<footer.*?>.*?</footer>', '', html, flags=re.DOTALL|re.IGNORECASE)
-                    
+
                     clean_text = re.sub(r'<[^>]+>', ' ', html)
                     clean_text = re.sub(r'\s+', ' ', clean_text).strip()
                     clean_text = clean_text[:60000]
-                    
+
+                    # Store in cache for next time
+                    try:
+                        CachedTranscript.store(url=url, title=title, date=date_val,
+                                               house='', transcript_text=clean_text)
+                    except Exception:
+                        pass
+
                     session_text = f"### DEBATE: {title} ({date_val})\n\n{clean_text}\n\n"
                     full_transcript_text += session_text
             
