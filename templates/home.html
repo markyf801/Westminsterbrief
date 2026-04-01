@@ -1,5 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Westminster Brief — Parliamentary Research Tools{% endblock %}
+{% block title %}Westminster Brief — AI Parliamentary Research Tools for Civil Servants{% endblock %}
+
+{% block extra_head %}
+<meta name="description" content="Westminster Brief gives UK civil servants and parliamentary researchers AI-powered tools to search Hansard, track Written Questions, analyse debates, and generate professional briefings — all in one place.">
+<meta property="og:title" content="Westminster Brief — AI Parliamentary Research Tools">
+<meta property="og:description" content="Save hours of research. Search Hansard, track PQs, build member profiles, and generate Word briefings instantly. Free for gov.uk officials.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://westminsterbrief.co.uk">
+<link rel="canonical" href="https://westminsterbrief.co.uk">
+{% endblock %}
 
 {% block content %}
 
@@ -8,10 +17,29 @@
     <div>
         <h1 class="home-hero-title">Westminster Brief</h1>
         <p class="home-hero-subtitle">
-            AI-powered tools to search Hansard, track Written Questions, analyse debates, and generate briefings —
-            built for UK government officials and parliamentary researchers.
+            AI-powered parliamentary research tools — built by civil servants, for civil servants.
         </p>
     </div>
+</div>
+
+<div class="box" style="margin-bottom: 28px; border-left: 4px solid #1c3e6e; background: #f8fafd;">
+    <h2 style="margin-top: 0; font-size: 18px; color: #1c3e6e;">Why Westminster Brief?</h2>
+    <p style="font-size: 15px; line-height: 1.75; color: #333; margin-bottom: 12px;">
+        Preparing for parliamentary debates, ministerial meetings, and Select Committee appearances takes significant time.
+        Tracking down relevant Written Questions, reading through Hansard transcripts, researching an MP's background and
+        policy interests, and collating it all into a coherent briefing can take hours — often under tight deadlines.
+    </p>
+    <p style="font-size: 15px; line-height: 1.75; color: #333; margin-bottom: 12px;">
+        Westminster Brief brings it all together in one place. Search what has been said in Parliament on any topic,
+        see which questions are due for answer today, build instant profiles of any MP or Peer, and generate
+        formatted Word briefings with a single click — all drawing on live parliamentary data.
+    </p>
+    <p style="font-size: 14px; line-height: 1.7; color: #555; margin-bottom: 0; padding: 12px 16px; background: #eef4fb; border-radius: 6px;">
+        <strong>Access &amp; Pricing:</strong> Westminster Brief is currently <strong>free to use for everyone</strong>.
+        We may introduce paid tiers in future for private sector and commercial users, but we are committed to keeping
+        full access <strong>free for all <code>gov.uk</code> email holders</strong> and civil servants in perpetuity.
+        See our <a href="/terms" style="color: #005a8f;">Terms of Use</a> for full details.
+    </p>
 </div>
 
 <div class="tool-grid">
@@ -23,8 +51,10 @@
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Search Parliamentary Written Questions across both Houses by keyword, department, and date range.
-                Export results to CSV or a formatted Word document for briefings.
+                Search the full archive of Parliamentary Written Questions across both Houses by keyword, department,
+                and date range. Instantly see who is asking questions on your policy area, what they are asking,
+                and whether they have been answered. Export a clean list to CSV or a formatted Word document
+                ready for a briefing pack.
             </p>
             <a href="/questions" class="tool-card-link">Open Scanner &rarr;</a>
         </div>
@@ -38,8 +68,10 @@
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Morning briefing tool: fetches unanswered questions from the last 4 days and uses AI to group them
-                by policy theme. Includes MP history and one-click Word briefing generation.
+                Your morning briefing tool. Automatically fetches all Written Questions due for answer today —
+                or the most recent sitting day if Parliament is in recess — and uses AI to group them by
+                policy theme. Filter by department, drill into an MP's question history, and download a
+                structured Word briefing in one click. Ideal for daily PQ handling teams.
             </p>
             <a href="/tracker" class="tool-card-link">Open Tracker &rarr;</a>
         </div>
@@ -52,8 +84,10 @@
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Search all Written Questions asked by a specific MP or Peer, filtered by department and date.
-                Export a full question history to Word with Parliament.uk links.
+                Deep-dive into any MP or Peer's Written Question history. Search by name, filter by department
+                and date, and see every question they have ever tabled — with answered/unanswered status and
+                direct links to Parliament.uk. Useful for understanding a member's policy priorities ahead of
+                a meeting or Select Committee session. Export to Word with one click.
             </p>
             <a href="/mp_search" class="tool-card-link">Open MP Research &rarr;</a>
         </div>
@@ -67,8 +101,11 @@
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Generate professional profiles for any MP or Peer with AI-synthesised career history, policy
-                interests, and parliamentary activity. Export a polished Word briefing document instantly.
+                Generate a comprehensive professional profile for any MP or Peer in seconds. Draws on Parliament's
+                official biography API, registered interests, committee memberships, recent Written Questions,
+                and Wikipedia to produce a structured briefing covering career before parliament, government and
+                opposition roles, policy interests, and key context for meetings. Exports as a formatted Word document
+                with photo.
             </p>
             <a href="/biography" class="tool-card-link">Open Member Profiles &rarr;</a>
         </div>
@@ -82,9 +119,11 @@
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Search everything said in Parliament on any topic — Commons, Westminster Hall, Lords, and Written
-                Answers simultaneously. AI generates a structured briefing covering government position, opposition
-                critique, key speakers, and next steps. Built for debate preparation.
+                Search everything said in Parliament on any topic — Commons chamber, Westminster Hall, House of
+                Lords, and Written Answers — simultaneously. AI synthesises the results into a structured briefing
+                covering the government position, opposition critique, key speakers, notable quotes, and recommended
+                next steps. Also includes Speech Research: analyse a specific minister's debate record and
+                communication style for parliamentary preparation.
             </p>
             <a href="/debates" class="tool-card-link">Open Research Tool &rarr;</a>
         </div>
@@ -99,7 +138,8 @@
         <div class="tool-card-body">
             <p class="tool-card-desc">
                 Track policy topics across Hansard debates, news media, and stakeholder Bluesky accounts.
-                AI semantic filtering surfaces only genuinely relevant updates for your brief.
+                AI semantic filtering surfaces only genuinely relevant updates for your brief — cutting through
+                the noise to highlight what matters for your policy area.
             </p>
             <p class="tool-card-desc" style="color:#999; font-size:13px; margin-top:8px;">
                 🚧 This feature is currently in development and not yet available.

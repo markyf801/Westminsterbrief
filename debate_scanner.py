@@ -206,14 +206,16 @@ def expand_search_query(topic, api_key):
 
 def _display_name(title):
     """Strip honorifics/post-nominals from a GOV.UK title for clean display.
-    e.g. 'Rt Hon Bridget Phillipson MP' → 'Bridget Phillipson'"""
+    Two passes to handle 'The Rt Hon Baroness Smith of Malvern' → 'Smith of Malvern'."""
     name = title.strip()
-    for prefix in ['The Rt Hon ', 'The Right Hon ', 'Rt Hon ', 'Right Hon ',
-                   'The Baroness ', 'Baroness ', 'The Lord ', 'Lord ',
-                   'Dame ', 'Sir ', 'Dr ', 'Mr ', 'Mrs ', 'Ms ', 'Miss ']:
-        if name.startswith(prefix):
-            name = name[len(prefix):]
-            break
+    prefixes = ['The Rt Hon ', 'The Right Hon ', 'Rt Hon ', 'Right Hon ',
+                'The Baroness ', 'Baroness ', 'The Lord ', 'Lord ',
+                'Dame ', 'Sir ', 'Dr ', 'Mr ', 'Mrs ', 'Ms ', 'Miss ']
+    for _ in range(2):
+        for prefix in prefixes:
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
     name = re.sub(r'\s+(MP|OBE|CBE|MBE|PC|QC|KC|DBE|KBE)(\b.*)?$', '', name)
     return name.strip()
 
@@ -395,20 +397,31 @@ def verify_government_speaker(name):
 
 def lookup_twfy_person(name):
     """Look up TWFY person_id by name. Checks MPs first, then Lords.
+    Tries multiple name variants to handle titles like 'Baroness Smith of Malvern'.
     Returns (person_id, matched_name, is_lord) or (None, None, False)."""
-    for endpoint, is_lord in [('getMPs', False), ('getLords', True)]:
-        try:
-            resp = requests.get(
-                'https://www.theyworkforyou.com/api/' + endpoint,
-                params={'key': TWFY_API_KEY, 'search': name, 'output': 'json'},
-                timeout=5
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list) and data:
-                    return data[0].get('person_id'), data[0].get('name'), is_lord
-        except Exception:
-            pass
+    # Build variants: original → stripped display → normalised title-case
+    variants = [name]
+    display = _display_name(name)
+    if display and display != name:
+        variants.append(display)
+    norm_title = _normalise_name(name).title()
+    if norm_title and norm_title not in variants:
+        variants.append(norm_title)
+
+    for variant in variants:
+        for endpoint, is_lord in [('getMPs', False), ('getLords', True)]:
+            try:
+                resp = requests.get(
+                    'https://www.theyworkforyou.com/api/' + endpoint,
+                    params={'key': TWFY_API_KEY, 'search': variant, 'output': 'json'},
+                    timeout=5
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list) and data:
+                        return data[0].get('person_id'), data[0].get('name'), is_lord
+            except Exception:
+                pass
     return None, None, False
 
 

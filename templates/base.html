@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Westminster Brief{% endblock %}</title>
+    <meta name="description" content="{% block meta_description %}Westminster Brief — AI-powered parliamentary research tools for UK civil servants. Search Hansard, track Written Questions, build member profiles, and generate Word briefings instantly.{% endblock %}">
+    <meta name="robots" content="index, follow">
+    <meta property="og:site_name" content="Westminster Brief">
+    <meta property="og:title" content="{% block og_title %}Westminster Brief — AI Parliamentary Research Tools{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly. Free for gov.uk officials.{% endblock %}">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Westminster Brief — AI Parliamentary Research Tools">
+    <meta name="twitter:description" content="Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly. Free for gov.uk officials.">
+    <link rel="canonical" href="https://westminsterbrief.co.uk{{ request.path }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     {% block extra_head %}{% endblock %}
 </head>
