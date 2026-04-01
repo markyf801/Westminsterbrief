@@ -1,4 +1,4 @@
-import requests, os, json, re, io
+import requests, os, json, re, io, concurrent.futures
 from flask import Blueprint, render_template, request, send_file
 from datetime import datetime
 from cache_models import CachedTranscript
@@ -16,6 +16,7 @@ debate_scanner_bp = Blueprint('debates', __name__)
 TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TWFY_API_URL = "https://www.theyworkforyou.com/api/getDebates"
+TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
 
 DEPARTMENTS_TWFY = [
     "All Departments", "Department for Education", "Department of Health and Social Care",
@@ -74,6 +75,83 @@ def get_debate_type(title):
     if 'westminster hall' in t: return '🏛️ Westminster Hall'
     return '💬 General Debate'
 
+def clean_body_text(text):
+    if not text: return ""
+    text = re.sub(r'<[^>]+>', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+def get_source_label(source):
+    return {'commons': 'Commons', 'westminsterhall': 'Westminster Hall',
+            'lords': 'Lords', 'wrans': 'Written Answer'}.get(source, source.title())
+
+def fetch_twfy_topic(search, source_type, date_range, num=50):
+    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure."""
+    try:
+        api_url = TWFY_WRANS_URL if source_type == 'wrans' else TWFY_API_URL
+        query = f"{search} {date_range}".strip()
+        params = {'key': TWFY_API_KEY, 'search': query, 'order': 'r', 'num': num, 'output': 'json'}
+        if source_type != 'wrans':
+            params['type'] = source_type
+        resp = requests.get(api_url, params=params, timeout=15)
+        if resp.status_code != 200:
+            return []
+        rows = resp.json().get('rows', [])
+        results = []
+        for r in rows:
+            body_raw = r.get('body', '')
+            debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
+            if source_type == 'wrans':
+                debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
+            results.append({
+                'listurl': r.get('listurl', ''),
+                'body_clean': clean_body_text(body_raw)[:500],
+                'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
+                'speaker_party': (r.get('speaker') or {}).get('party', ''),
+                'hdate': r.get('hdate', ''),
+                'debate_title': debate_title,
+                'source': source_type,
+                'source_label': get_source_label(source_type),
+                'relevance': r.get('relevance', 0),
+            })
+        return results
+    except Exception:
+        return []
+
+def deduplicate_by_listurl(rows):
+    seen = set()
+    out = []
+    for r in rows:
+        key = r.get('listurl', '')
+        if key and key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+def format_briefing_as_text(briefing_dict, topic):
+    """Converts structured AI briefing dict to a markdown string for Word export."""
+    lines = [f"## PARLIAMENTARY BRIEFING: {topic.upper()}\n"]
+    lines.append(f"## 1. TOPIC SUMMARY\n{briefing_dict.get('topic_summary', '')}\n")
+    lines.append(f"## 2. GOVERNMENT POSITION\n{briefing_dict.get('government_position', '')}\n")
+    lines.append(f"## 3. OPPOSITION POSITION\n{briefing_dict.get('opposition_position', '')}\n")
+
+    speakers = briefing_dict.get('key_speakers', [])
+    if speakers:
+        lines.append("## 4. KEY SPEAKERS")
+        for s in speakers:
+            lines.append(f"- {s.get('name', '')} ({s.get('role_or_party', '')}): {s.get('stance', '')}")
+        lines.append("")
+
+    quotes = briefing_dict.get('key_quotes', [])
+    if quotes:
+        lines.append("## 5. KEY QUOTES")
+        for q in quotes:
+            lines.append(f"- \"{q.get('quote', '')}\" — {q.get('speaker', '')} ({q.get('date', '')}, {q.get('source', '')})")
+        lines.append("")
+
+    lines.append(f"## 6. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
+    lines.append(f"## 7. COVERAGE NOTE\n{briefing_dict.get('coverage_note', '')}\n")
+    return "\n".join(lines)
+
 # ==========================================
 # ROUTE 1: SCAN AND GROUP BY THEME (STEP 1)
 # ==========================================
@@ -102,7 +180,12 @@ def scan_debates():
                 date_query = get_twfy_date_range(start_date, end_date)
                 
                 search_term = DEPT_KEYWORDS.get(selected_dept, '("Oral questions" OR "Debate")')
-                houses_to_search = ['commons', 'lords'] if selected_house == 'all' else [selected_house]
+                if selected_house == 'all':
+                    houses_to_search = ['commons', 'westminsterhall', 'lords']
+                elif selected_house == 'commons':
+                    houses_to_search = ['commons', 'westminsterhall']
+                else:
+                    houses_to_search = [selected_house]
                 all_rows = []
 
                 for h in houses_to_search:
@@ -208,17 +291,114 @@ def scan_debates():
             except Exception as e:
                 error_message = f"Internal Error: {str(e)}"
 
-    return render_template('debate_scanner.html', 
+    return render_template('debate_scanner.html',
+                           mode='dept',
                            grouped_debates=grouped_debates,
                            error_message=error_message,
                            start_date=start_date, end_date=end_date,
                            departments=DEPARTMENTS_TWFY, selected_dept=selected_dept,
                            selected_house=selected_house, content_type=content_type,
-                           is_post=(request.method == 'POST'))
+                           is_post=(request.method == 'POST'),
+                           # Topic mode defaults
+                           topic='', topic_rows=[], topic_briefing=None,
+                           topic_briefing_as_text='', house_filter='all')
 
 
 # ==========================================
-# ROUTE 2: FETCH TRANSCRIPTS (NUCLEAR WEB SCRAPER OPTION)
+# ROUTE 2: TOPIC SEARCH (NEW — PARALLEL API CALLS)
+# ==========================================
+@debate_scanner_bp.route('/debates_topic', methods=['GET', 'POST'])
+def debates_topic():
+    topic_rows = []
+    topic_briefing = None
+    topic_briefing_as_text = ""
+    error_message = None
+    topic = ""
+    start_date = ""
+    end_date = ""
+    house_filter = "all"
+
+    if request.method == 'POST':
+        topic = request.form.get('topic', '').strip()
+        start_date = request.form.get('start_date', '').strip()
+        end_date = request.form.get('end_date', '').strip()
+        house_filter = request.form.get('house_filter', 'all')
+
+        if not topic:
+            error_message = "Please enter a topic to search."
+        elif not TWFY_API_KEY:
+            error_message = "TWFY API key is not configured."
+        else:
+            date_range = get_twfy_date_range(start_date, end_date)
+
+            if house_filter == 'lords_only':
+                sources = ['lords', 'wrans']
+            elif house_filter == 'commons_only':
+                sources = ['commons', 'westminsterhall', 'wrans']
+            else:
+                sources = ['commons', 'westminsterhall', 'lords', 'wrans']
+
+            all_rows = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = {executor.submit(fetch_twfy_topic, topic, src, date_range): src for src in sources}
+                for future in concurrent.futures.as_completed(futures):
+                    all_rows.extend(future.result())
+
+            topic_rows = deduplicate_by_listurl(all_rows)
+            topic_rows.sort(key=lambda x: x.get('relevance', 0), reverse=True)
+
+            if not topic_rows:
+                error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
+            elif GEMINI_API_KEY:
+                try:
+                    top_25 = topic_rows[:25]
+                    ai_payload = [
+                        {'listurl': r['listurl'], 'speaker': r['speaker_name'],
+                         'party': r['speaker_party'], 'date': r['hdate'],
+                         'source': r['source_label'], 'text': r['body_clean']}
+                        for r in top_25
+                    ]
+                    prompt = (
+                        f"You are a senior UK Parliamentary Researcher. Below are the most relevant parliamentary "
+                        f"contributions on the topic: \"{topic}\".\n\n"
+                        "Return ONLY a valid JSON object (no markdown fences) with these exact keys:\n"
+                        "\"topic_summary\", \"government_position\", \"opposition_position\",\n"
+                        "\"key_speakers\" (array of {\"name\", \"role_or_party\", \"stance\"}),\n"
+                        "\"key_quotes\" (array of {\"quote\", \"speaker\", \"date\", \"source\"}),\n"
+                        "\"next_steps\", \"coverage_note\"\n\n"
+                        f"DATA: {json.dumps(ai_payload)}"
+                    )
+                    model_path = get_working_model(GEMINI_API_KEY)
+                    ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={GEMINI_API_KEY}"
+                    payload = {
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"responseMimeType": "application/json"}
+                    }
+                    ai_resp = requests.post(ai_url, json=payload, timeout=90)
+                    if ai_resp.status_code == 200:
+                        raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
+                        clean_text = raw_text.replace('```json', '').replace('```', '').strip()
+                        topic_briefing = json.loads(clean_text)
+                        topic_briefing_as_text = format_briefing_as_text(topic_briefing, topic)
+                except Exception:
+                    topic_briefing = None
+
+    return render_template('debate_scanner.html',
+                           mode='topic',
+                           topic=topic, topic_rows=topic_rows,
+                           topic_briefing=topic_briefing,
+                           topic_briefing_as_text=topic_briefing_as_text,
+                           start_date=start_date, end_date=end_date,
+                           house_filter=house_filter,
+                           error_message=error_message,
+                           # Dept scan defaults (needed so template doesn't crash)
+                           grouped_debates={}, departments=DEPARTMENTS_TWFY,
+                           selected_dept="All Departments", selected_house="all",
+                           content_type="exclude_bills", is_post=True)
+
+
+# ==========================================
+# ROUTE 3: FETCH TRANSCRIPTS AND ANALYSE (DEPT SCAN)
 # ==========================================
 @debate_scanner_bp.route('/debates_analyze', methods=['POST'])
 def analyze_selected():
@@ -303,7 +483,7 @@ def analyze_selected():
 
 
 # ==========================================
-# ROUTE 3: EXPORT BRIEFING TO WORD DOC
+# ROUTE 4: EXPORT BRIEFING TO WORD DOC
 # ==========================================
 @debate_scanner_bp.route('/download_debate_briefing', methods=['POST'])
 def download_debate_briefing():
