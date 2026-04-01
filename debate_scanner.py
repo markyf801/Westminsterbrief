@@ -1,5 +1,6 @@
 import requests, os, json, re, io, concurrent.futures, time
 from flask import Blueprint, render_template, request, send_file
+from flask_login import current_user
 from datetime import datetime
 from cache_models import CachedTranscript
 
@@ -83,6 +84,16 @@ def get_twfy_date_range(start_str, end_str):
     elif s: return f"{s}..{datetime.now().strftime('%Y%m%d')}"
     elif e: return f"19000101..{e}"
     return ""
+
+def _get_user_pref():
+    """Return the current user's UserPreference or None."""
+    try:
+        from flask_app import UserPreference
+        if current_user.is_authenticated:
+            return UserPreference.query.filter_by(user_id=current_user.id).first()
+    except Exception:
+        pass
+    return None
 
 def get_debate_type(title):
     t = title.lower()
@@ -670,6 +681,7 @@ def debates_topic():
     end_date = ""
     house_filter = "all"
     selected_depts = []
+    user_pref = _get_user_pref()
 
     if request.method == 'POST':
         topic = request.form.get('topic', '').strip()
@@ -809,6 +821,7 @@ def debates_topic():
                            house_filter=house_filter,
                            narrow_keyword=narrow_keyword,
                            selected_depts=selected_depts,
+                           user_pref=user_pref,
                            error_message=error_message,
                            # Dept scan defaults (needed so template doesn't crash)
                            grouped_debates={}, departments=DEPARTMENTS_TWFY,

@@ -30,6 +30,7 @@
 
         {% if current_user.is_authenticated %}
             <a href="/my_alerts" class="nav-auth-alerts {% if request.path == '/my_alerts' %}nav-active{% endif %}">👤 My Alerts</a>
+            <a href="/my_preferences" {% if request.path == '/my_preferences' %}class="nav-active"{% endif %}>⚙️ Preferences</a>
             <a href="/logout" class="nav-logout">Logout</a>
         {% endif %}
     </nav>

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Get started — Westminster Brief{% endblock %}
+
+{% block content %}
+<div style="display:flex; justify-content:center; align-items:center; min-height:60vh;">
+    <div class="box" style="width:100%; max-width:520px; border-top:5px solid #6f42c1;">
+
+        <h2 style="margin-bottom:6px;">Get better results, faster</h2>
+        <p style="color:#555; font-size:14px; line-height:1.6; margin-bottom:24px;">
+            Tell us about your work and Westminster Brief will pre-fill your searches every time you open the Parliamentary Research tool.
+            You can update or clear these at any time from your profile.
+        </p>
+
+        <form method="POST" action="/onboarding/save">
+
+            <div style="margin-bottom:18px;">
+                <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">Your Department</label>
+                <select name="department" style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px;">
+                    {% for dept in departments %}
+                    <option value="{{ dept }}">{{ dept }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="margin-bottom:18px;">
+                <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">
+                    Policy area
+                    <span style="font-weight:normal; color:#888; font-size:12px;">(e.g. Higher Education, SEND)</span>
+                </label>
+                <input type="text" name="policy_area" placeholder="e.g. Higher Education" maxlength="100"
+                       style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px; box-sizing:border-box;">
+            </div>
+
+            <div style="margin-bottom:28px;">
+                <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">
+                    Specific subject
+                    <span style="font-weight:normal; color:#888; font-size:12px;">(e.g. free speech, funding)</span>
+                </label>
+                <input type="text" name="subject" placeholder="e.g. free speech" maxlength="100"
+                       style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px; box-sizing:border-box;">
+            </div>
+
+            <button type="submit" class="btn-search" style="width:100%; padding:14px; font-size:15px;">
+                Save preferences
+            </button>
+        </form>
+
+        <form method="POST" action="/onboarding/skip" style="margin-top:14px; text-align:center;">
+            <button type="submit" style="background:none; border:none; color:#888; font-size:13px; cursor:pointer; text-decoration:underline; padding:0;">
+                Skip for now
+            </button>
+        </form>
+
+    </div>
+</div>
+{% endblock %}

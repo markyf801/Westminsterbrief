@@ -53,8 +53,10 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
+    has_completed_onboarding = db.Column(db.Boolean, default=False, nullable=False)
     topics = db.relationship('TrackedTopic', backref='owner', lazy=True)
     stakeholders = db.relationship('TrackedStakeholder', backref='owner', lazy=True)
+    preference = db.relationship('UserPreference', backref='user', uselist=False, lazy=True)
 
 class TrackedTopic(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -81,6 +83,13 @@ class Alert(db.Model):
     speaker = db.Column(db.String(100), nullable=True) 
     date_found = db.Column(db.DateTime, default=datetime.utcnow)
 
+class UserPreference(db.Model):
+    id          = db.Column(db.Integer, primary_key=True)
+    user_id     = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    department  = db.Column(db.String(100), default='')
+    policy_area = db.Column(db.String(100), default='')
+    subject     = db.Column(db.String(100), default='')
+
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
@@ -98,6 +107,13 @@ with app.app_context():
         joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
         db.session.add(joe)
         db.session.commit()
+
+DEPARTMENTS_FOR_PREFS = [
+    "All Departments", "Department for Education",
+    "Department of Health and Social Care", "HM Treasury",
+    "Home Office", "Ministry of Defence", "Ministry of Justice",
+    "Department for Science, Innovation and Technology", "Cabinet Office",
+]
 
 # ==========================================
 # 5. ROUTES
@@ -127,6 +143,8 @@ def login():
         user = User.query.filter_by(email=email).first()
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
+            if not user.has_completed_onboarding:
+                return redirect(url_for('onboarding'))
             return redirect(url_for('my_alerts'))
         flash('Invalid email or password')
     return render_template('login.html')
@@ -143,6 +161,55 @@ def my_alerts():
     user_topics = TrackedTopic.query.filter_by(user_id=current_user.id).all()
     user_stakeholders = TrackedStakeholder.query.filter_by(user_id=current_user.id).all()
     return render_template('my_alerts.html', topics=user_topics, stakeholders=user_stakeholders)
+
+@app.route('/onboarding')
+@login_required
+def onboarding():
+    return render_template('onboarding.html', departments=DEPARTMENTS_FOR_PREFS)
+
+@app.route('/onboarding/save', methods=['POST'])
+@login_required
+def onboarding_save():
+    dept   = request.form.get('department', '').strip()
+    policy = request.form.get('policy_area', '').strip()
+    subject = request.form.get('subject', '').strip()
+    pref = UserPreference.query.filter_by(user_id=current_user.id).first()
+    if pref is None:
+        pref = UserPreference(user_id=current_user.id)
+        db.session.add(pref)
+    pref.department  = dept
+    pref.policy_area = policy
+    pref.subject     = subject
+    current_user.has_completed_onboarding = True
+    db.session.commit()
+    flash('Preferences saved — your searches will now be pre-filled.')
+    return redirect(url_for('my_alerts'))
+
+@app.route('/onboarding/skip', methods=['POST'])
+@login_required
+def onboarding_skip():
+    current_user.has_completed_onboarding = True
+    db.session.commit()
+    return redirect(url_for('my_alerts'))
+
+@app.route('/my_preferences', methods=['GET', 'POST'])
+@login_required
+def my_preferences():
+    pref = UserPreference.query.filter_by(user_id=current_user.id).first()
+    if request.method == 'POST':
+        dept   = request.form.get('department', '').strip()
+        policy = request.form.get('policy_area', '').strip()
+        subject = request.form.get('subject', '').strip()
+        if pref is None:
+            pref = UserPreference(user_id=current_user.id)
+            db.session.add(pref)
+        pref.department  = dept
+        pref.policy_area = policy
+        pref.subject     = subject
+        db.session.commit()
+        flash('Preferences updated.')
+        return redirect(url_for('my_preferences'))
+    return render_template('my_preferences.html', pref=pref, departments=DEPARTMENTS_FOR_PREFS)
 
 @app.route('/add_topic', methods=['POST'])
 @login_required

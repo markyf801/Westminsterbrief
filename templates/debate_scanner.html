@@ -23,15 +23,16 @@
             ⚠️ <strong>This tool is in development</strong> — some features may not work correctly. If you encounter an issue, please <a href="/home" style="color:#7a5c00;">leave us feedback</a> via the home page.
         </div>
 
+        {% set effective_depts = selected_depts if selected_depts else ([user_pref.department] if user_pref and user_pref.department and user_pref.department != 'All Departments' else []) %}
         <form method="POST" action="/debates_topic" onsubmit="showTopicLoading()">
             <div class="form-row">
                 <div class="form-group" style="flex: 2;">
                     <label>Search Topic</label>
-                    <input type="text" name="topic" value="{{ topic }}" placeholder="e.g. free speech" required>
+                    <input type="text" name="topic" value="{{ topic if topic else (user_pref.subject if user_pref else '') }}" placeholder="e.g. free speech" required>
                 </div>
                 <div class="form-group" style="flex: 1;">
                     <label>Narrow by keyword <span style="font-weight:normal; color:#888; font-size:12px;">(optional)</span></label>
-                    <input type="text" name="narrow_keyword" value="{{ narrow_keyword }}" placeholder="e.g. higher education, universities">
+                    <input type="text" name="narrow_keyword" value="{{ narrow_keyword if narrow_keyword else (user_pref.policy_area if user_pref else '') }}" placeholder="e.g. higher education, universities">
                 </div>
                 <div class="form-group">
                     <label>House / Chamber</label>
@@ -46,14 +47,14 @@
                 <div class="form-group" style="flex: 1;">
                     <label>Filter by Department <span style="font-weight:normal; color:#888; font-size:12px;">(optional — hold Ctrl/Cmd to select multiple)</span></label>
                     <select name="dept_filter" multiple style="height: 110px; border-radius:4px; border:1px solid #ccc; padding:6px; width:100%; font-size:13.5px;">
-                        <option value="Department for Education" {% if 'Department for Education' in selected_depts %}selected{% endif %}>Department for Education</option>
-                        <option value="Department of Health and Social Care" {% if 'Department of Health and Social Care' in selected_depts %}selected{% endif %}>Department of Health and Social Care</option>
-                        <option value="HM Treasury" {% if 'HM Treasury' in selected_depts %}selected{% endif %}>HM Treasury</option>
-                        <option value="Home Office" {% if 'Home Office' in selected_depts %}selected{% endif %}>Home Office</option>
-                        <option value="Ministry of Defence" {% if 'Ministry of Defence' in selected_depts %}selected{% endif %}>Ministry of Defence</option>
-                        <option value="Ministry of Justice" {% if 'Ministry of Justice' in selected_depts %}selected{% endif %}>Ministry of Justice</option>
-                        <option value="Department for Science, Innovation and Technology" {% if 'Department for Science, Innovation and Technology' in selected_depts %}selected{% endif %}>Dept for Science, Innovation &amp; Technology</option>
-                        <option value="Cabinet Office" {% if 'Cabinet Office' in selected_depts %}selected{% endif %}>Cabinet Office</option>
+                        <option value="Department for Education" {% if 'Department for Education' in effective_depts %}selected{% endif %}>Department for Education</option>
+                        <option value="Department of Health and Social Care" {% if 'Department of Health and Social Care' in effective_depts %}selected{% endif %}>Department of Health and Social Care</option>
+                        <option value="HM Treasury" {% if 'HM Treasury' in effective_depts %}selected{% endif %}>HM Treasury</option>
+                        <option value="Home Office" {% if 'Home Office' in effective_depts %}selected{% endif %}>Home Office</option>
+                        <option value="Ministry of Defence" {% if 'Ministry of Defence' in effective_depts %}selected{% endif %}>Ministry of Defence</option>
+                        <option value="Ministry of Justice" {% if 'Ministry of Justice' in effective_depts %}selected{% endif %}>Ministry of Justice</option>
+                        <option value="Department for Science, Innovation and Technology" {% if 'Department for Science, Innovation and Technology' in effective_depts %}selected{% endif %}>Dept for Science, Innovation &amp; Technology</option>
+                        <option value="Cabinet Office" {% if 'Cabinet Office' in effective_depts %}selected{% endif %}>Cabinet Office</option>
                     </select>
                 </div>
             </div>
@@ -66,6 +67,16 @@
                     <label>End Date (optional)</label>
                     <input type="date" name="end_date" value="{{ end_date }}">
                 </div>
+                {% if current_user.is_authenticated and user_pref and (user_pref.subject or user_pref.policy_area or user_pref.department) %}
+                <div class="form-group" style="align-self:flex-end; padding-bottom:15px;">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13.5px; white-space:nowrap;">
+                        <input type="checkbox" id="load-prefs-cb"
+                               {% if not is_post %}checked{% endif %}
+                               onchange="togglePrefPrefill(this.checked)">
+                        Load my preferences
+                    </label>
+                </div>
+                {% endif %}
                 <div class="form-group" style="align-self: flex-end;">
                     <button type="submit" class="btn btn-primary btn-full" id="btnTopic">
                         <span id="btnTopicText">🔍 Search &amp; Analyse</span>
@@ -366,6 +377,12 @@
 </div>
 
 <script>
+    var USER_PREF_DEPT   = {{ (user_pref.department  if user_pref else '') | tojson }};
+    var USER_PREF_TOPIC  = {{ (user_pref.subject     if user_pref else '') | tojson }};
+    var USER_PREF_NARROW = {{ (user_pref.policy_area if user_pref else '') | tojson }};
+</script>
+
+<script>
     const ACTIVE_MODE = "{{ mode or 'topic' }}";
     const ALL_CONTRIBUTIONS = {{ (topic_rows or []) | tojson | safe }};
     const TOPIC_BRIEFING_TEXT = {{ (topic_briefing_as_text or '') | tojson | safe }};
@@ -638,6 +655,25 @@
             ? (window['_spData_' + key] || [])
             : (loadedPQData[name] || []);
         toggleBatchExport(btn, type, name, items);
+    }
+
+    function togglePrefPrefill(load) {
+        const topicInput  = document.querySelector('#panel-topic input[name="topic"]');
+        const narrowInput = document.querySelector('#panel-topic input[name="narrow_keyword"]');
+        const deptSelect  = document.querySelector('#panel-topic select[name="dept_filter"]');
+        if (load) {
+            if (topicInput)  topicInput.value  = USER_PREF_TOPIC;
+            if (narrowInput) narrowInput.value = USER_PREF_NARROW;
+            if (deptSelect && USER_PREF_DEPT && USER_PREF_DEPT !== 'All Departments') {
+                Array.from(deptSelect.options).forEach(opt => {
+                    opt.selected = (opt.value === USER_PREF_DEPT);
+                });
+            }
+        } else {
+            if (topicInput)  topicInput.value  = '';
+            if (narrowInput) narrowInput.value = '';
+            if (deptSelect)  Array.from(deptSelect.options).forEach(opt => opt.selected = false);
+        }
     }
 
     function showTopicLoading() {
