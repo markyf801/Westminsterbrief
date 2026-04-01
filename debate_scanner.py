@@ -956,5 +956,131 @@ def download_debate_briefing():
     mem_doc = io.BytesIO()
     doc.save(mem_doc)
     mem_doc.seek(0)
-    
+
     return send_file(mem_doc, as_attachment=True, download_name=f"Briefing_{datetime.now().strftime('%Y%m%d')}.docx", mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+
+
+# ==========================================
+# ROUTE 7: CUSTOM EXPORT — PICK & CHOOSE WORD DOC
+# ==========================================
+@debate_scanner_bp.route('/export_custom_briefing', methods=['POST'])
+def export_custom_briefing():
+    if not Document:
+        return "Word library missing.", 500
+
+    topic = request.form.get('topic', 'Parliamentary Research').strip()
+    include_briefing = request.form.get('include_briefing', '') == 'true'
+    briefing_text = request.form.get('briefing_text', '')
+    items_json = request.form.get('items', '[]')
+    try:
+        items = json.loads(items_json)
+    except Exception:
+        items = []
+
+    contributions = [i for i in items if i.get('type') in ('contribution', 'speech')]
+    pq_items = [i for i in items if i.get('type') == 'pq']
+
+    doc = Document()
+
+    # ── Title block ─────────────────────────────────────────────
+    h = doc.add_heading('Parliamentary Research Brief', 0)
+    h.alignment = 1  # centre
+    sub = doc.add_paragraph(f'Topic: {topic}')
+    sub.alignment = 1
+    sub.runs[0].bold = True
+    date_p = doc.add_paragraph(f'Generated: {datetime.now().strftime("%d %B %Y")}')
+    date_p.alignment = 1
+    doc.add_paragraph()
+
+    # ── AI Briefing ─────────────────────────────────────────────
+    if include_briefing and briefing_text:
+        doc.add_heading('AI-Generated Briefing', 1)
+        for line in briefing_text.split('\n'):
+            line = line.strip()
+            if not line:
+                doc.add_paragraph()
+                continue
+            if line.startswith('## '):
+                doc.add_heading(line[3:].strip(), level=2)
+            elif line.startswith('# '):
+                doc.add_heading(line[2:].strip(), level=2)
+            elif line.startswith('* ') or line.startswith('- '):
+                doc.add_paragraph(line[2:].strip(), style='List Bullet')
+            else:
+                doc.add_paragraph(line.replace('**', ''))
+        doc.add_paragraph()
+
+    # ── Parliamentary Contributions ──────────────────────────────
+    if contributions:
+        doc.add_heading(f'Selected Parliamentary Contributions ({len(contributions)})', 1)
+        for item in contributions:
+            d = item.get('data', {})
+            # Header row
+            p = doc.add_paragraph()
+            p.add_run(f"{d.get('hdate', '')}").bold = True
+            p.add_run(f"  ·  {d.get('source_label', '')}  ·  {d.get('debate_type', '')}")
+            # Speaker
+            p2 = doc.add_paragraph()
+            p2.add_run(f"{d.get('speaker_name', '')}").bold = True
+            party = d.get('speaker_party', '')
+            if party:
+                p2.add_run(f"  ({party})")
+            if d.get('is_minister'):
+                p2.add_run("  ✓ Minister").font.color.rgb = None  # keep default
+            # Debate title
+            title = d.get('debate_title', '')
+            if title:
+                tp = doc.add_paragraph(title)
+                tp.runs[0].italic = True
+            # Body text
+            body = d.get('body_clean', '')
+            if body:
+                doc.add_paragraph(f'"{body[:600]}{"…" if len(body) > 600 else ""}"')
+            # Link
+            url = d.get('listurl', '')
+            if url:
+                if not url.startswith('http'):
+                    url = 'https://www.theyworkforyou.com' + url
+                lp = doc.add_paragraph()
+                lp.add_run('Source: ').bold = True
+                lp.add_run(url)
+            doc.add_paragraph('─' * 60)
+
+    # ── Written Questions ────────────────────────────────────────
+    if pq_items:
+        # Group by speaker
+        by_speaker = {}
+        for item in pq_items:
+            spk = item.get('speaker', 'Unknown')
+            by_speaker.setdefault(spk, []).append(item.get('data', {}))
+
+        doc.add_heading(f'Written Questions ({len(pq_items)} questions across {len(by_speaker)} member(s))', 1)
+        for speaker, pqs in by_speaker.items():
+            doc.add_heading(f'{speaker}  ({len(pqs)} questions)', 2)
+            for pq in pqs:
+                # Status badge
+                status = pq.get('status', '')
+                dept = pq.get('dept', '')
+                date = pq.get('date', '')
+                p = doc.add_paragraph()
+                p.add_run(f"{date}  ·  {dept}  ·  ").bold = False
+                sr = p.add_run(status)
+                sr.bold = True
+                # Question text
+                doc.add_paragraph(f'"{pq.get("text", "")}"')
+                # Link
+                link = pq.get('link', '')
+                if link:
+                    lp = doc.add_paragraph()
+                    lp.add_run('Parliament link: ').bold = True
+                    lp.add_run(link)
+                doc.add_paragraph()
+
+    mem_doc = io.BytesIO()
+    doc.save(mem_doc)
+    mem_doc.seek(0)
+
+    safe_topic = re.sub(r'[^\w\s-]', '', topic)[:40].strip()
+    filename = f"Brief - {safe_topic} - {datetime.now().strftime('%Y%m%d')}.docx"
+    return send_file(mem_doc, as_attachment=True, download_name=filename,
+                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')

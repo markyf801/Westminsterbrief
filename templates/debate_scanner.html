@@ -59,7 +59,12 @@
 
         {% if topic_briefing %}
         <div style="margin-top:28px;">
-            <h3 style="color:#4a154b; margin-bottom:14px;">📋 AI Parliamentary Briefing: {{ topic }}</h3>
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+                <h3 style="color:#4a154b; margin:0;">📋 AI Parliamentary Briefing: {{ topic }}</h3>
+                <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#4a154b; cursor:pointer; background:#f5f0ff; padding:5px 12px; border-radius:20px; border:1px solid #c4b5fd;">
+                    <input type="checkbox" id="include-briefing-cb" onchange="updateExportBar()"> Include in export
+                </label>
+            </div>
 
             <div class="topic-briefing-summary">
                 {{ topic_briefing.topic_summary }}
@@ -171,7 +176,11 @@
             </div>
             {% for r in topic_rows %}
             <div class="topic-result-card" data-type="{{ r.debate_type }}" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
-                <div class="topic-source-row">
+                <div class="topic-source-row" style="position:relative;">
+                    <input type="checkbox" class="card-export-cb" data-index="{{ loop.index0 }}"
+                           onchange="updateExportBar()"
+                           style="margin-right:6px; cursor:pointer; accent-color:#1c3e6e;"
+                           title="Add to export">
                     <span class="topic-source-badge topic-source-{{ r.source }}">{{ r.source_label }}</span>
                     <span style="font-size:12px; color:#888;">{{ r.debate_type }}</span>
                     <span>{{ r.hdate }}</span>
@@ -420,10 +429,120 @@
     </div>
 </div>
 
+<!-- ===================== FLOATING EXPORT BAR ===================== -->
+<div id="export-bar" style="display:none; position:fixed; bottom:24px; right:24px; background:#1c3e6e; color:#fff; padding:12px 18px; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.35); z-index:9999; align-items:center; gap:12px;">
+    <span id="export-count-label" style="font-size:14px; font-weight:600;">0 items</span>
+    <button onclick="doExport()" style="background:#fff; color:#1c3e6e; border:none; padding:7px 14px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px;">📄 Export Word Doc</button>
+    <button onclick="clearExport()" title="Clear selection" style="background:rgba(255,255,255,0.15); color:#fff; border:none; width:26px; height:26px; border-radius:50%; cursor:pointer; font-size:14px; line-height:1;">✕</button>
+</div>
+
 <script>
     const ACTIVE_MODE = "{{ mode or 'topic' }}";
-    // All contributions from this search, keyed for speech lookup
     const ALL_CONTRIBUTIONS = {{ (topic_rows or []) | tojson | safe }};
+    const TOPIC_BRIEFING_TEXT = {{ (topic_briefing_as_text or '') | tojson | safe }};
+    const SEARCH_TOPIC = {{ (topic or '') | tojson | safe }};
+
+    // Export state
+    const exportSpeeches = {};   // speaker_name → [contribution objects]
+    const exportPQs = {};        // speaker_name → [pq objects]
+    const loadedPQData = {};     // speaker_name → pqs (populated when panel opens)
+
+    function updateExportBar() {
+        let total = document.querySelectorAll('.card-export-cb:checked').length;
+        Object.values(exportSpeeches).forEach(arr => total += arr.length);
+        Object.values(exportPQs).forEach(arr => total += arr.length);
+        const hasBriefing = document.getElementById('include-briefing-cb')?.checked;
+        const bar = document.getElementById('export-bar');
+        const label = document.getElementById('export-count-label');
+        if (total > 0 || hasBriefing) {
+            bar.style.display = 'flex';
+            const parts = [];
+            if (hasBriefing) parts.push('AI briefing');
+            if (total > 0) parts.push(`${total} item${total !== 1 ? 's' : ''}`);
+            label.textContent = parts.join(' + ');
+        } else {
+            bar.style.display = 'none';
+        }
+    }
+
+    function clearExport() {
+        document.querySelectorAll('.card-export-cb').forEach(cb => cb.checked = false);
+        const briefCb = document.getElementById('include-briefing-cb');
+        if (briefCb) briefCb.checked = false;
+        Object.keys(exportSpeeches).forEach(k => delete exportSpeeches[k]);
+        Object.keys(exportPQs).forEach(k => delete exportPQs[k]);
+        // Reset all batch buttons
+        document.querySelectorAll('.batch-export-btn').forEach(btn => {
+            btn.dataset.active = '0';
+            btn.style.background = 'none';
+            btn.style.color = btn.dataset.color || '#166534';
+            btn.textContent = btn.dataset.addLabel || '☐ Add all to export';
+        });
+        updateExportBar();
+    }
+
+    function toggleBatchExport(btn, type, name, items) {
+        const isActive = btn.dataset.active === '1';
+        if (isActive) {
+            if (type === 'speech') delete exportSpeeches[name];
+            else delete exportPQs[name];
+            btn.dataset.active = '0';
+            btn.style.background = 'none';
+            btn.textContent = btn.dataset.addLabel;
+            btn.style.color = btn.dataset.color;
+        } else {
+            if (type === 'speech') exportSpeeches[name] = items;
+            else exportPQs[name] = items;
+            btn.dataset.active = '1';
+            btn.style.background = btn.dataset.color;
+            btn.style.color = '#fff';
+            btn.textContent = `✓ ${items.length} added to export`;
+        }
+        updateExportBar();
+    }
+
+    function doExport() {
+        const items = [];
+        // Checked contribution cards
+        document.querySelectorAll('.card-export-cb:checked').forEach(cb => {
+            const idx = parseInt(cb.dataset.index);
+            if (!isNaN(idx) && ALL_CONTRIBUTIONS[idx]) {
+                items.push({type: 'contribution', data: ALL_CONTRIBUTIONS[idx]});
+            }
+        });
+        // Batched speeches
+        Object.entries(exportSpeeches).forEach(([spk, contribs]) => {
+            contribs.forEach(c => items.push({type: 'speech', data: c}));
+        });
+        // Batched PQs
+        Object.entries(exportPQs).forEach(([spk, pqs]) => {
+            pqs.forEach(pq => items.push({type: 'pq', speaker: spk, data: pq}));
+        });
+
+        const include_briefing = document.getElementById('include-briefing-cb')?.checked ? 'true' : '';
+
+        if (items.length === 0 && !include_briefing) {
+            alert('Please select at least one item to export.');
+            return;
+        }
+
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/export_custom_briefing';
+        [
+            ['topic', SEARCH_TOPIC],
+            ['include_briefing', include_briefing],
+            ['briefing_text', include_briefing ? TOPIC_BRIEFING_TEXT : ''],
+            ['items', JSON.stringify(items)]
+        ].forEach(([n, v]) => {
+            const inp = document.createElement('input');
+            inp.type = 'hidden'; inp.name = n; inp.value = v;
+            form.appendChild(inp);
+        });
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+    }
 
     function showPanel(targetId) {
         document.querySelectorAll('.scanner-panel').forEach(p => p.classList.remove('active'));
@@ -462,19 +581,26 @@
             btn.textContent = '▼ Hide Speeches';
             return;
         }
-        // Filter the already-loaded search results to this speaker
+        // Filter to spoken contributions only — exclude Written Answers
         const normName = name.toLowerCase().trim();
         const speeches = ALL_CONTRIBUTIONS.filter(r =>
             r.speaker_name && r.speaker_name.toLowerCase().trim() === normName
+            && r.source !== 'wrans'
         );
         if (speeches.length === 0) {
-            panel.innerHTML = '<p style="color:#888;font-size:12px;">No contributions from this minister found in the current search results.</p>';
+            panel.innerHTML = '<p style="color:#888;font-size:12px;">No spoken contributions from this minister found in the current search results.</p>';
         } else {
-            const srcColours = {
-                'commons': '#1a56a6', 'westminsterhall': '#b45309',
-                'lords': '#6f42c1', 'wrans': '#166534'
-            };
-            let html = `<div style="font-size:12px;color:#555;margin-bottom:8px;font-style:italic;">${speeches.length} contribution(s) in this search</div>`;
+            const srcColours = {'commons':'#1a56a6','westminsterhall':'#b45309','lords':'#6f42c1'};
+            const batchId = 'speech-batch-' + name.replace(/\s+/g,'_');
+            let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                <span style="font-size:12px;color:#555;font-style:italic;">${speeches.length} spoken contribution(s)</span>
+                <button id="${batchId}" class="batch-export-btn"
+                    data-color="#166534" data-add-label="☐ Add all to export"
+                    data-active="0"
+                    onclick="toggleBatchExport(this,'speech',${JSON.stringify(name)},window._speechData_${batchId.replace(/-/g,'_')})"
+                    style="font-size:11px;color:#166534;background:none;border:1px solid #166534;border-radius:4px;padding:2px 9px;cursor:pointer;">
+                    ☐ Add all to export
+                </button></div>`;
             speeches.forEach(s => {
                 const col = srcColours[s.source] || '#555';
                 const snippet = (s.body_clean || '').substring(0, 250);
@@ -488,6 +614,9 @@
                 </div>`;
             });
             panel.innerHTML = html;
+            // Store speeches on window so the batch button can reference them
+            const safeKey = batchId.replace(/-/g,'_');
+            window['_speechData_' + safeKey] = speeches;
         }
         panel.dataset.loaded = '1';
         panel.style.display = 'block';
@@ -519,10 +648,20 @@
                 } else if (!data.pqs || data.pqs.length === 0) {
                     panel.innerHTML = `<p style="color:#888;font-size:12px;">No written questions on this topic found in the last 6 months.</p>`;
                 } else {
+                    loadedPQData[name] = data.pqs;
                     const filterNote = data.topic_filtered
                         ? `<span style="color:#6f42c1;font-size:11px;"> · filtered to topic</span>`
                         : (data.total_pqs > data.pqs.length ? `<span style="color:#888;font-size:11px;"> · showing ${data.pqs.length} of ${data.total_pqs} (no topic match found)</span>` : '');
-                    let html = `<div style="font-size:12px;color:#555;margin-bottom:6px;">${data.role} · ${data.party} · Last 6 months (${data.pqs.length} PQs)${filterNote}</div>`;
+                    const batchId = 'pq-batch-' + name.replace(/\s+/g,'_');
+                    let html = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                        <span style="font-size:12px;color:#555;">${data.role} · ${data.party} · ${data.pqs.length} PQs${filterNote}</span>
+                        <button id="${batchId}" class="batch-export-btn"
+                            data-color="#005a8f" data-add-label="☐ Add all to export"
+                            data-active="0"
+                            onclick="toggleBatchExport(this,'pq',${JSON.stringify(name)},loadedPQData[${JSON.stringify(name)}])"
+                            style="font-size:11px;color:#005a8f;background:none;border:1px solid #005a8f;border-radius:4px;padding:2px 9px;cursor:pointer;">
+                            ☐ Add all to export
+                        </button></div>`;
                     data.pqs.forEach(q => {
                         const colour = q.status === 'ANSWERED' ? '#166534' : '#991b1b';
                         const bg = q.status === 'ANSWERED' ? '#dcfce7' : '#fee2e2';
