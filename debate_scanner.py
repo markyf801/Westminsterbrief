@@ -609,11 +609,11 @@ def debates_topic():
             date_range = get_twfy_date_range(start_date, end_date)
 
             if house_filter == 'lords_only':
-                sources = ['lords', 'wrans']
+                sources = ['lords']
             elif house_filter == 'commons_only':
-                sources = ['commons', 'westminsterhall', 'wrans']
+                sources = ['commons', 'westminsterhall']
             else:
-                sources = ['commons', 'westminsterhall', 'lords', 'wrans']
+                sources = ['commons', 'westminsterhall', 'lords']
 
             search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
 
