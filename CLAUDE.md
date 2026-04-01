@@ -40,10 +40,17 @@ static/style.css      All CSS — no inline styles in base.html or index.html
 
 ## Deployment (Railway)
 - Entry point: `gunicorn flask_app:app` (see `Procfile` and `railway.toml`)
+- **Railway project:** `invigorating-joy` — service name: `Westminsterbrief`
+- **Production URL:** `westminsterbrief-production.up.railway.app`
+- **Custom domain:** `westminsterbrief.co.uk` (GoDaddy DNS → Railway)
+  - `www` CNAME → `5jac57s9.up.railway.app`
+  - `_railway-verify` TXT record added for domain verification
+  - Root `@` A record: update or forward to www once GoDaddy allows
+- HTTPS is handled automatically by Railway (Let's Encrypt) once DNS verifies
 - Add a **PostgreSQL plugin** in Railway — it sets `DATABASE_URL` automatically
 - Set all env vars in Railway dashboard (see API table above)
 - Also set `SECRET_KEY` to a long random string in Railway env vars
-- Domain: westminsterbrief.co.uk — point GoDaddy DNS to Railway after deploy
+- GitHub repo: `markyf801/Westminsterbrief` — Railway auto-deploys on push to `master`
 
 ## Environment variables needed on Railway
 ```
