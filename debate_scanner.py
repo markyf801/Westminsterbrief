@@ -136,23 +136,55 @@ def format_briefing_as_text(briefing_dict, topic):
     lines.append(f"## 2. GOVERNMENT POSITION\n{briefing_dict.get('government_position', '')}\n")
     lines.append(f"## 3. OPPOSITION POSITION\n{briefing_dict.get('opposition_position', '')}\n")
 
-    speakers = briefing_dict.get('key_speakers', [])
-    if speakers:
-        lines.append("## 4. KEY SPEAKERS")
-        for s in speakers:
+    govt_speakers = briefing_dict.get('government_speakers', [])
+    if govt_speakers:
+        lines.append("## 4. GOVERNMENT SPEAKERS")
+        for s in govt_speakers:
+            lines.append(f"- {s.get('name', '')} ({s.get('role', '')}): {s.get('stance', '')}")
+        lines.append("")
+
+    non_govt_speakers = briefing_dict.get('non_government_speakers', [])
+    if non_govt_speakers:
+        lines.append("## 5. NON-GOVERNMENT SPEAKERS (Opposition / Backbench)")
+        for s in non_govt_speakers:
             lines.append(f"- {s.get('name', '')} ({s.get('role_or_party', '')}): {s.get('stance', '')}")
         lines.append("")
 
     quotes = briefing_dict.get('key_quotes', [])
     if quotes:
-        lines.append("## 5. KEY QUOTES")
+        lines.append("## 6. KEY QUOTES")
         for q in quotes:
             lines.append(f"- \"{q.get('quote', '')}\" — {q.get('speaker', '')} ({q.get('date', '')}, {q.get('source', '')})")
         lines.append("")
 
-    lines.append(f"## 6. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
-    lines.append(f"## 7. COVERAGE NOTE\n{briefing_dict.get('coverage_note', '')}\n")
+    lines.append(f"## 7. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
+    lines.append(f"## 8. COVERAGE NOTE\n{briefing_dict.get('coverage_note', '')}\n")
     return "\n".join(lines)
+
+def expand_search_query(topic, api_key):
+    """Use Gemini to expand a topic into related parliamentary search terms."""
+    try:
+        model_path = get_working_model(api_key)
+        ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
+        prompt = (
+            f"You are a UK Parliamentary researcher. A user wants to search Hansard for: \"{topic}\"\n"
+            "Give up to 3 short additional phrases that cover the same policy area "
+            "using different vocabulary MPs commonly use in Parliament. "
+            "Return ONLY a JSON array of strings, no explanation. "
+            f"Example for 'student loan repayments': [\"repayment threshold\", \"graduate debt\", \"loan write-off\"]"
+        )
+        payload = {"contents": [{"parts": [{"text": prompt}]}],
+                   "generationConfig": {"responseMimeType": "application/json"}}
+        resp = requests.post(ai_url, json=payload, timeout=15)
+        if resp.status_code == 200:
+            raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+            terms = json.loads(raw.strip())
+            if isinstance(terms, list) and terms:
+                all_terms = [topic] + [str(t) for t in terms[:3]]
+                return '(' + ' OR '.join(f'"{t}"' for t in all_terms) + ')'
+    except Exception:
+        pass
+    return f'"{topic}"'
 
 # ==========================================
 # ROUTE 1: SCAN AND GROUP BY THEME (STEP 1)
@@ -340,9 +372,11 @@ def debates_topic():
             else:
                 sources = ['commons', 'westminsterhall', 'lords', 'wrans']
 
+            search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
+
             all_rows = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                futures = {executor.submit(fetch_twfy_topic, topic, src, date_range): src for src in sources}
+                futures = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
                 for future in concurrent.futures.as_completed(futures):
                     all_rows.extend(future.result())
 
@@ -365,7 +399,8 @@ def debates_topic():
                         f"contributions on the topic: \"{topic}\".\n\n"
                         "Return ONLY a valid JSON object (no markdown fences) with these exact keys:\n"
                         "\"topic_summary\", \"government_position\", \"opposition_position\",\n"
-                        "\"key_speakers\" (array of {\"name\", \"role_or_party\", \"stance\"}),\n"
+                        "\"government_speakers\" (array of {\"name\", \"role\", \"stance\"} — Ministers, Secretaries of State, PPSs only),\n"
+                        "\"non_government_speakers\" (array of {\"name\", \"role_or_party\", \"stance\"} — Shadow Ministers, backbenchers, Lords not in government),\n"
                         "\"key_quotes\" (array of {\"quote\", \"speaker\", \"date\", \"source\"}),\n"
                         "\"next_steps\", \"coverage_note\"\n\n"
                         f"DATA: {json.dumps(ai_payload)}"
