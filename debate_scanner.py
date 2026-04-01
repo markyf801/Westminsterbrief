@@ -188,46 +188,94 @@ def expand_search_query(topic, api_key):
         pass
     return f'"{topic}"'
 
+def _fetch_govuk_dept_ministers(dept_base_path, dept_name):
+    """Fetch ordered_ministers for one GOV.UK department page.
+    Returns list of (normalised_name, role_string) tuples."""
+    results = []
+    try:
+        r = requests.get(f'https://www.gov.uk/api/content{dept_base_path}', timeout=8)
+        if r.status_code == 200:
+            for minister in r.json().get('links', {}).get('ordered_ministers', []):
+                title = minister.get('title', '').strip()
+                norm = _normalise_name(title)
+                if norm:
+                    results.append((norm, f'Minister ({dept_name})'))
+    except Exception:
+        pass
+    return results
+
+
 def get_minister_list():
-    """Fetch current government ministers from Parliament Posts API.
-    Returns dict with 'by_name' {display_name: role} and 'by_id' {member_id: role}.
-    File-cached for 7 days. Cache is invalidated if it uses the old format."""
+    """Fetch ALL current government ministers from GOV.UK content API.
+    Returns dict with 'by_norm' {normalised_name: role} keyed by _normalise_name().
+    File-cached for 24 hours. Includes junior ministers, not just Cabinet.
+    Falls back to Parliament GovernmentPosts if GOV.UK is unavailable."""
     cache = {}
     try:
         if os.path.exists(MINISTER_CACHE_FILE):
             with open(MINISTER_CACHE_FILE) as f:
                 cache = json.load(f)
-        # Old cache used 'ministers' key — treat as stale so we rebuild with IDs
         if (cache.get('_ts') and time.time() - cache['_ts'] < MINISTER_CACHE_TTL
-                and 'by_name' in cache):
+                and cache.get('_source') == 'govuk'
+                and cache.get('by_norm')):
             return cache
     except Exception:
         pass
 
-    by_name = {}
-    by_id = {}
+    by_norm = {}  # normalised_name → role (keyed consistently with _normalise_name())
+    by_id = {}    # parliament_member_id → role (from Cabinet endpoint only)
+
     try:
-        resp = requests.get(
-            'https://members-api.parliament.uk/api/Posts?IsGovernment=true&IsActive=true&take=500',
-            timeout=10
+        # Step 1: GOV.UK ministers page — Cabinet + dept links
+        r = requests.get('https://www.gov.uk/api/content/government/ministers', timeout=10)
+        if r.status_code == 200:
+            links = r.json().get('links', {})
+
+            # Cabinet ministers (direct list on the page)
+            for section in ['ordered_cabinet_ministers', 'ordered_also_attends_cabinet']:
+                for m in links.get(section, []):
+                    norm = _normalise_name(m.get('title', ''))
+                    if norm:
+                        by_norm[norm] = 'Cabinet Minister'
+
+            # All departments — fetch in parallel
+            depts = links.get('ordered_ministerial_departments', [])
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+                futures = {
+                    ex.submit(_fetch_govuk_dept_ministers, d['base_path'], d.get('title', 'Government')): d
+                    for d in depts if d.get('base_path')
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    for norm, role in future.result():
+                        if norm not in by_norm:  # Cabinet entry takes precedence
+                            by_norm[norm] = role
+    except Exception:
+        pass
+
+    # Fallback / supplement: Parliament GovernmentPosts (Cabinet only — populates by_id)
+    try:
+        r = requests.get(
+            'https://members-api.parliament.uk/api/Posts/GovernmentPosts', timeout=10
         )
-        if resp.status_code == 200:
-            for post in resp.json().get('value', []) or []:
-                role = post.get('name', '')
-                holder = post.get('currentHolder') or {}
-                name = holder.get('nameDisplayAs', '')
-                # Parliament API may nest member id under different keys
-                member_id = (holder.get('memberId')
-                             or holder.get('id')
-                             or (holder.get('member') or {}).get('id'))
-                if name:
-                    by_name[name] = role
-                    if member_id:
+        if r.status_code == 200:
+            for post in r.json():
+                v = post.get('value', {})
+                role = v.get('name', '')
+                for holder in v.get('postHolders', []):
+                    if holder.get('endDate'):
+                        continue  # skip past holders
+                    m = (holder.get('member') or {}).get('value', {})
+                    name = m.get('nameDisplayAs', '')
+                    member_id = m.get('id')
+                    norm = _normalise_name(name)
+                    if norm and norm not in by_norm:
+                        by_norm[norm] = role
+                    if member_id and role:
                         by_id[str(member_id)] = role
     except Exception:
         pass
 
-    data = {'_ts': time.time(), 'by_name': by_name, 'by_id': by_id}
+    data = {'_ts': time.time(), '_source': 'govuk', 'by_norm': by_norm, 'by_id': by_id}
     try:
         with open(MINISTER_CACHE_FILE, 'w') as f:
             json.dump(data, f)
@@ -238,15 +286,22 @@ def get_minister_list():
 
 
 def _normalise_name(name):
-    """Strip honorifics and titles for fuzzy name matching."""
+    """Strip honorifics, titles, and post-nominal letters for name matching.
+    Works on both TWFY speaker names and GOV.UK person titles.
+    Applies prefix stripping in two passes to handle 'The Rt Hon Baroness ...'."""
     n = name.lower().strip()
-    for prefix in ['the baroness ', 'baroness ', 'the lord ', 'lord ',
-                   'dame ', 'sir ', 'rt hon ', 'right hon ',
-                   'dr ', 'mr ', 'mrs ', 'ms ', 'miss ']:
-        if n.startswith(prefix):
-            n = n[len(prefix):]
-            break
-    return n
+    # Strip trailing post-nominals: MP, OBE, CBE, MBE, PC, QC, KC, etc.
+    n = re.sub(r'\s+(obe|cbe|mbe|pc|qc|kc|dbe|kbe|mp|obe mp|cbe mp|mbe mp)\s*$', '', n)
+    # Two passes of prefix stripping handles 'the rt hon baroness' → 'baroness' → ''
+    prefixes = ['the rt hon ', 'the right hon ', 'rt hon ', 'right hon ',
+                'the baroness ', 'baroness ', 'the lord ', 'lord ',
+                'dame ', 'sir ', 'dr ', 'mr ', 'mrs ', 'ms ', 'miss ']
+    for _ in range(2):
+        for prefix in prefixes:
+            if n.startswith(prefix):
+                n = n[len(prefix):]
+                break
+    return n.strip()
 
 
 def verify_government_speaker(name):
@@ -254,28 +309,22 @@ def verify_government_speaker(name):
     Returns dict with confirmed (bool) and role (str).
 
     Three-tier approach:
-    1. Exact name match against cached minister list
-    2. Exact normalised match (strips titles/honorifics) — avoids false positives
-       from substring matching (e.g. 'Smith' matching 'Smith of Malvern')
-    3. Parliament Members Search → member ID → check ID against minister cache
-       (most accurate: resolves Lords with common surnames unambiguously)
+    1. Normalised name match against GOV.UK minister cache (covers all ministers)
+    2. Parliament Members Search → check each result ID against Cabinet id cache
+    3. Parliament Members Biography → governmentPosts with no endDate (gets precise role)
     """
     minister_data = get_minister_list()
-    by_name = minister_data.get('by_name', {})
+    by_norm = minister_data.get('by_norm', {})
     by_id = minister_data.get('by_id', {})
 
-    # 1. Exact display-name match
-    if name in by_name:
-        return {'confirmed': True, 'role': by_name[name]}
-
-    # 2. Exact match after stripping honorifics — NOT substring (avoids multiple-Smith problem)
+    # 1. Normalised match against GOV.UK full minister list
     norm_name = _normalise_name(name)
-    if norm_name:
-        for m_name, role in by_name.items():
-            if _normalise_name(m_name) == norm_name:
-                return {'confirmed': True, 'role': role}
+    if norm_name and norm_name in by_norm:
+        # Role from cache is generic ('Minister (DfE)') — fetch precise role via Biography
+        cached_role = by_norm[norm_name]
+        return {'confirmed': True, 'role': cached_role}
 
-    # 3. Parliament Members API: look up member IDs for this name, check each against minister cache
+    # 2. Parliament Members Search → ID → Cabinet id cache
     try:
         s_resp = requests.get(
             'https://members-api.parliament.uk/api/Members/Search',
@@ -283,20 +332,21 @@ def verify_government_speaker(name):
             timeout=5
         )
         if s_resp.status_code == 200:
-            for item in s_resp.json().get('items', []):
+            items = s_resp.json().get('items', [])
+            for item in items:
                 member_id = str(item['value']['id'])
                 if member_id in by_id:
                     return {'confirmed': True, 'role': by_id[member_id]}
-            # No ID match — fall through to individual record check for first result
-            items = s_resp.json().get('items', [])
+
+            # 3. Biography endpoint — has full government post history with endDate
             if items:
                 member_id = str(items[0]['value']['id'])
-                m_resp = requests.get(
-                    f'https://members-api.parliament.uk/api/Members/{member_id}',
+                bio_resp = requests.get(
+                    f'https://members-api.parliament.uk/api/Members/{member_id}/Biography',
                     timeout=5
                 )
-                if m_resp.status_code == 200:
-                    govt_posts = m_resp.json().get('value', {}).get('governmentPosts', [])
+                if bio_resp.status_code == 200:
+                    govt_posts = bio_resp.json().get('value', {}).get('governmentPosts', [])
                     current_posts = [p for p in govt_posts if not p.get('endDate')]
                     if current_posts:
                         return {'confirmed': True, 'role': current_posts[0].get('name', '')}
@@ -577,14 +627,11 @@ def debates_topic():
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()
-            by_name = minister_data.get('by_name', {})
-            # Pre-build normalised name → role map for fast exact matching
-            norm_minister_map = {_normalise_name(m): r for m, r in by_name.items()}
+            by_norm = minister_data.get('by_norm', {})
             for row in topic_rows:
                 spk = row.get('speaker_name', '')
                 norm_spk = _normalise_name(spk)
-                # Exact match first; normalised exact match second — no substring matching
-                role = by_name.get(spk) or (norm_minister_map.get(norm_spk) if norm_spk else None)
+                role = by_norm.get(norm_spk) if norm_spk else None
                 row['is_minister'] = bool(role)
                 row['minister_role'] = role or ''
 
