@@ -90,22 +90,20 @@
         </div>
     </div>
 
-    <div class="tool-card">
+    <div class="tool-card" style="opacity:0.7;">
         <div class="tool-card-header">
             <span class="tool-card-icon">🔔</span>
             <h3 class="tool-card-title">Smart AI Radar</h3>
-            <span class="tool-card-badge">AI</span>
+            <span class="tool-card-badge" style="background:#999;">Coming Soon</span>
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Track policy topics across three live sources — Hansard debates, news media, and stakeholder
-                Bluesky accounts. AI semantic filtering surfaces only genuinely relevant updates for your brief.
+                Track policy topics across Hansard debates, news media, and stakeholder Bluesky accounts.
+                AI semantic filtering surfaces only genuinely relevant updates for your brief.
             </p>
-            {% if current_user.is_authenticated %}
-                <a href="/my_alerts" class="tool-card-link" style="background:#6f42c1;">Open My Alerts &rarr;</a>
-            {% else %}
-                <a href="/login" class="tool-card-link" style="background:#6f42c1;">Login to Access &rarr;</a>
-            {% endif %}
+            <p class="tool-card-desc" style="color:#999; font-size:13px; margin-top:8px;">
+                🚧 This feature is currently in development and not yet available.
+            </p>
         </div>
     </div>
 
