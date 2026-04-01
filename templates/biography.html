@@ -34,7 +34,7 @@
                 <p style="margin-bottom: 8px; font-weight: bold; color: #1c3e6e; border-bottom: 1px solid #ddd; padding-bottom: 4px;">Activity Links</p>
                 <a href="https://hansard.parliament.uk/search/MemberContributions?memberId={{ mp_data.id }}" target="_blank" style="display: block; margin-bottom: 6px; color: #005a8f; text-decoration: none;">🗣️ Spoken (Hansard)</a>
                 <a href="https://members.parliament.uk/member/{{ mp_data.id }}/writtenquestions" target="_blank" style="display: block; margin-bottom: 6px; color: #005a8f; text-decoration: none;">📝 Written Questions</a>
-                <a href="https://www.theyworkforyou.com/search/?pid={{ mp_data.id }}" target="_blank" style="display: block; color: #005a8f; text-decoration: none;">📊 TheyWorkForYou</a>
+                <a href="https://www.theyworkforyou.com/search/?s={{ mp_data.name | urlencode }}" target="_blank" style="display: block; color: #005a8f; text-decoration: none;">📊 TheyWorkForYou</a>
             </div>
         </div>
 
@@ -69,9 +69,10 @@
                 <input type="hidden" name="party" value="{{ mp_data.party }}">
                 <input type="hidden" name="constituency" value="{{ mp_data.constituency }}">
                 <input type="hidden" name="image_url" value="{{ mp_data.image_url }}">
+                <input type="hidden" name="member_id" value="{{ mp_data.id }}">
                 <input type="hidden" name="bio_text" id="hidden-bio-text">
                 
-                <button type="submit" class="btn-search" style="background: #1c3e6e;">📄 Export Professional Briefing</button>
+                <button type="submit" class="btn-search" style="background: #1c3e6e;">⬇ Download Biography</button>
             </form>
         </div>
     </div>
@@ -108,7 +109,7 @@
     $(document).ready(function() {
         // Initialize the searchable dropdown
         $('#member-search').select2({
-            placeholder: 'Start typing a name (e.g. Jacqui Smith)...',
+            placeholder: 'Start typing a name (e.g. Bridget Phillipson, Smith of Malvern)...',
             minimumInputLength: 3,
             ajax: {
                 url: '/api/search_members',
