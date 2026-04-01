@@ -204,9 +204,23 @@ def expand_search_query(topic, api_key):
         pass
     return f'"{topic}"'
 
+def _display_name(title):
+    """Strip honorifics/post-nominals from a GOV.UK title for clean display.
+    e.g. 'Rt Hon Bridget Phillipson MP' → 'Bridget Phillipson'"""
+    name = title.strip()
+    for prefix in ['The Rt Hon ', 'The Right Hon ', 'Rt Hon ', 'Right Hon ',
+                   'The Baroness ', 'Baroness ', 'The Lord ', 'Lord ',
+                   'Dame ', 'Sir ', 'Dr ', 'Mr ', 'Mrs ', 'Ms ', 'Miss ']:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    name = re.sub(r'\s+(MP|OBE|CBE|MBE|PC|QC|KC|DBE|KBE)(\b.*)?$', '', name)
+    return name.strip()
+
+
 def _fetch_govuk_dept_ministers(dept_base_path, dept_name):
     """Fetch ordered_ministers for one GOV.UK department page.
-    Returns list of (normalised_name, role_string) tuples."""
+    Returns list of (normalised_name, role_string, display_name, dept_name) tuples."""
     results = []
     try:
         r = requests.get(f'https://www.gov.uk/api/content{dept_base_path}', timeout=8)
@@ -214,8 +228,9 @@ def _fetch_govuk_dept_ministers(dept_base_path, dept_name):
             for minister in r.json().get('links', {}).get('ordered_ministers', []):
                 title = minister.get('title', '').strip()
                 norm = _normalise_name(title)
-                if norm:
-                    results.append((norm, f'Minister ({dept_name})'))
+                display = _display_name(title)
+                if norm and display:
+                    results.append((norm, f'Minister ({dept_name})', display, dept_name))
     except Exception:
         pass
     return results
@@ -233,13 +248,14 @@ def get_minister_list():
                 cache = json.load(f)
         if (cache.get('_ts') and time.time() - cache['_ts'] < MINISTER_CACHE_TTL
                 and cache.get('_source') == 'govuk'
-                and cache.get('by_norm')):
+                and cache.get('by_norm') and cache.get('by_dept')):
             return cache
     except Exception:
         pass
 
-    by_norm = {}  # normalised_name → role (keyed consistently with _normalise_name())
-    by_id = {}    # parliament_member_id → role (from Cabinet endpoint only)
+    by_norm = {}   # normalised_name → role
+    by_id = {}     # parliament_member_id → role
+    by_dept = {}   # dept_name → [{"name": display_name}]
 
     try:
         # Step 1: GOV.UK ministers page — Cabinet + dept links
@@ -262,9 +278,14 @@ def get_minister_list():
                     for d in depts if d.get('base_path')
                 }
                 for future in concurrent.futures.as_completed(futures):
-                    for norm, role in future.result():
-                        if norm not in by_norm:  # Cabinet entry takes precedence
+                    for norm, role, display, dept in future.result():
+                        if norm not in by_norm:
                             by_norm[norm] = role
+                        by_dept.setdefault(dept, [])
+                        if display and not any(m['name'] == display for m in by_dept[dept]):
+                            by_dept[dept].append({'name': display})
+            for dept in by_dept:
+                by_dept[dept].sort(key=lambda m: m['name'])
     except Exception:
         pass
 
@@ -291,7 +312,7 @@ def get_minister_list():
     except Exception:
         pass
 
-    data = {'_ts': time.time(), '_source': 'govuk', 'by_norm': by_norm, 'by_id': by_id}
+    data = {'_ts': time.time(), '_source': 'govuk', 'by_norm': by_norm, 'by_id': by_id, 'by_dept': by_dept}
     try:
         with open(MINISTER_CACHE_FILE, 'w') as f:
             json.dump(data, f)
@@ -432,6 +453,20 @@ def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
     result = list(unique_debates.values())
     result.sort(key=lambda x: x['date'], reverse=True)
     return result
+
+
+# ==========================================
+# ROUTE 0: MINISTERS BY DEPARTMENT API
+# ==========================================
+@debate_scanner_bp.route('/api/ministers_by_dept')
+def api_ministers_by_dept():
+    from flask import jsonify
+    minister_data = get_minister_list()
+    by_dept = minister_data.get('by_dept', {})
+    dept = request.args.get('dept', '').strip()
+    if dept:
+        return jsonify(by_dept.get(dept, []))
+    return jsonify(sorted(by_dept.keys()))
 
 
 # ==========================================

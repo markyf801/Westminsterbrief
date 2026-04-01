@@ -213,9 +213,23 @@
 
         <form method="POST" action="/debates_minister" onsubmit="showMinisterLoading()">
             <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label>Department</label>
+                    <select id="deptPicker" onchange="loadMinistersForDept(this.value)">
+                        <option value="">— All departments —</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>Select Minister</label>
+                    <select id="ministerPicker" onchange="setMinisterFromPicker(this.value)">
+                        <option value="">— Choose department first —</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
                 <div class="form-group" style="flex:2;">
-                    <label>Minister Name</label>
-                    <input type="text" name="minister_name" value="{{ minister_name }}" placeholder="e.g. Bridget Phillipson" required>
+                    <label>Or type name directly</label>
+                    <input type="text" name="minister_name" id="ministerNameInput" value="{{ minister_name }}" placeholder="e.g. Bridget Phillipson" required>
                 </div>
                 <div class="form-group">
                     <label>House / Chamber</label>
@@ -610,6 +624,48 @@
         const text = document.getElementById('btnTopicText');
         if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
         if (text) text.innerText = '⏳ Searching... (30–60 seconds)';
+    }
+
+    // Load department list when Speech Research panel is first shown
+    fetch('/api/ministers_by_dept')
+        .then(r => r.json())
+        .then(depts => {
+            const sel = document.getElementById('deptPicker');
+            depts.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d; opt.textContent = d;
+                sel.appendChild(opt);
+            });
+            // Restore selected dept if returning from a POST
+            const currentName = document.getElementById('ministerNameInput')?.value;
+            if (currentName) sel.value = '';
+        })
+        .catch(() => {});
+
+    function loadMinistersForDept(dept) {
+        const picker = document.getElementById('ministerPicker');
+        if (!dept) {
+            picker.innerHTML = '<option value="">— Choose department first —</option>';
+            return;
+        }
+        picker.innerHTML = '<option value="">Loading...</option>';
+        fetch('/api/ministers_by_dept?dept=' + encodeURIComponent(dept))
+            .then(r => r.json())
+            .then(ministers => {
+                picker.innerHTML = '<option value="">— Select a minister —</option>';
+                ministers.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.name; opt.textContent = m.name;
+                    picker.appendChild(opt);
+                });
+            })
+            .catch(() => {
+                picker.innerHTML = '<option value="">Error loading ministers</option>';
+            });
+    }
+
+    function setMinisterFromPicker(name) {
+        if (name) document.getElementById('ministerNameInput').value = name;
     }
 
     function showMinisterLoading() {
