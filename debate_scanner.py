@@ -188,46 +188,117 @@ def expand_search_query(topic, api_key):
         pass
     return f'"{topic}"'
 
-def verify_government_speaker(name):
-    """Check Parliament Members API to confirm a speaker is a current minister.
-    Returns dict with confirmed (bool) and role (str). File-cached for 7 days."""
+def get_minister_list():
+    """Fetch full list of current government ministers from Parliament Posts API.
+    Returns dict of {display_name: role_title}. File-cached for 7 days."""
     cache = {}
     try:
         if os.path.exists(MINISTER_CACHE_FILE):
             with open(MINISTER_CACHE_FILE) as f:
                 cache = json.load(f)
+        if cache.get('_ts') and time.time() - cache['_ts'] < MINISTER_CACHE_TTL:
+            return cache.get('ministers', {})
     except Exception:
-        cache = {}
+        pass
 
-    if name in cache:
-        entry = cache[name]
-        if time.time() - entry.get('ts', 0) < MINISTER_CACHE_TTL:
-            return {'confirmed': entry['confirmed'], 'role': entry.get('role', '')}
-
-    result = {'confirmed': False, 'role': ''}
+    ministers = {}
     try:
-        s_resp = requests.get(
-            f"https://members-api.parliament.uk/api/Members/Search?Name={requests.utils.quote(name)}&IsCurrentMember=true&take=5",
-            timeout=5
+        # Fetch all current government posts with member details
+        resp = requests.get(
+            'https://members-api.parliament.uk/api/Posts?IsGovernment=true&IsActive=true&take=500',
+            timeout=10
         )
-        if s_resp.status_code == 200 and s_resp.json().get('items'):
-            member_id = s_resp.json()['items'][0]['value']['id']
-            m_resp = requests.get(f"https://members-api.parliament.uk/api/Members/{member_id}", timeout=5)
-            if m_resp.status_code == 200:
-                govt_posts = m_resp.json().get('value', {}).get('governmentPosts', [])
-                if govt_posts:
-                    result['confirmed'] = True
-                    result['role'] = govt_posts[0].get('name', '')
+        if resp.status_code == 200:
+            for post in resp.json().get('value', []) or []:
+                role = post.get('name', '')
+                holder = post.get('currentHolder') or {}
+                name = holder.get('nameDisplayAs', '')
+                if name:
+                    ministers[name] = role
     except Exception:
         pass
 
     try:
-        cache[name] = {'confirmed': result['confirmed'], 'role': result['role'], 'ts': time.time()}
         with open(MINISTER_CACHE_FILE, 'w') as f:
-            json.dump(cache, f)
+            json.dump({'_ts': time.time(), 'ministers': ministers}, f)
     except Exception:
         pass
 
+    return ministers
+
+
+def verify_government_speaker(name):
+    """Check current minister list to confirm a speaker holds a government post.
+    Returns dict with confirmed (bool) and role (str)."""
+    ministers = get_minister_list()
+    # Exact match first, then partial (handles slight name variations)
+    if name in ministers:
+        return {'confirmed': True, 'role': ministers[name]}
+    for m_name, role in ministers.items():
+        if name.lower() in m_name.lower() or m_name.lower() in name.lower():
+            return {'confirmed': True, 'role': role}
+    return {'confirmed': False, 'role': ''}
+
+
+def lookup_twfy_person(name):
+    """Look up TWFY person_id by name. Checks MPs first, then Lords.
+    Returns (person_id, matched_name, is_lord) or (None, None, False)."""
+    for endpoint, is_lord in [('getMPs', False), ('getLords', True)]:
+        try:
+            resp = requests.get(
+                'https://www.theyworkforyou.com/api/' + endpoint,
+                params={'key': TWFY_API_KEY, 'search': name, 'output': 'json'},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list) and data:
+                    return data[0].get('person_id'), data[0].get('name'), is_lord
+        except Exception:
+            pass
+    return None, None, False
+
+
+def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
+    """Fetch debates where a minister spoke, deduped by unique debate section."""
+    sources = []
+    if house_filter in ('all', 'commons'):
+        sources.extend(['commons', 'westminsterhall'])
+    if house_filter in ('all', 'lords'):
+        sources.append('lords')
+
+    all_rows = []
+    for source in sources:
+        try:
+            params = {
+                'key': TWFY_API_KEY, 'person': person_id,
+                'type': source, 'order': 'd', 'num': 100, 'output': 'json'
+            }
+            query = f"{topic} {date_range}".strip() if topic else date_range.strip()
+            if query:
+                params['search'] = query
+            resp = requests.get(TWFY_API_URL, params=params, timeout=15)
+            if resp.status_code == 200:
+                all_rows.extend(resp.json().get('rows', []))
+        except Exception:
+            pass
+
+    unique_debates = {}
+    for r in all_rows:
+        parent_body = re.sub(r'<[^>]+>', '', (r.get('parent') or {}).get('body', '') or '')
+        date_val = r.get('hdate', '')
+        key = f"{parent_body}_{date_val}"
+        url = 'https://www.theyworkforyou.com' + r.get('listurl', '')
+        if key not in unique_debates:
+            unique_debates[key] = {
+                'title': parent_body, 'date': date_val, 'url': url,
+                'type': get_debate_type(parent_body), 'contributions': 1
+            }
+        else:
+            unique_debates[key]['contributions'] += 1
+
+    result = list(unique_debates.values())
+    result.sort(key=lambda x: x['date'], reverse=True)
     return result
 
 
@@ -577,7 +648,133 @@ def analyze_selected():
 
 
 # ==========================================
-# ROUTE 4: EXPORT BRIEFING TO WORD DOC
+# ROUTE 4: MINISTERIAL RECORD — DEBATE LIST
+# ==========================================
+@debate_scanner_bp.route('/debates_minister', methods=['GET', 'POST'])
+def debates_minister():
+    minister_debates = []
+    minister_info = None
+    error_message = None
+    minister_name = ""
+    topic = ""
+    start_date = ""
+    end_date = ""
+    house_filter = "all"
+
+    if request.method == 'POST':
+        minister_name = request.form.get('minister_name', '').strip()
+        topic = request.form.get('topic', '').strip()
+        start_date = request.form.get('start_date', '').strip()
+        end_date = request.form.get('end_date', '').strip()
+        house_filter = request.form.get('house_filter', 'all')
+
+        if not minister_name:
+            error_message = "Please enter a minister's name."
+        elif not TWFY_API_KEY:
+            error_message = "TWFY API key is not configured."
+        else:
+            person_id, matched_name, is_lord = lookup_twfy_person(minister_name)
+            if not person_id:
+                error_message = f"Could not find '{minister_name}' on TheyWorkForYou. Try their full name."
+            else:
+                minister_info = {'name': matched_name, 'person_id': person_id, 'is_lord': is_lord}
+                date_range = get_twfy_date_range(start_date, end_date)
+                minister_debates = fetch_minister_debates(person_id, topic, date_range, house_filter)
+                if not minister_debates:
+                    error_message = f"No debates found for {matched_name}. Try a broader topic or date range."
+
+    return render_template('debate_scanner.html',
+                           mode='minister',
+                           minister_name=minister_name, minister_info=minister_info,
+                           minister_debates=minister_debates,
+                           topic=topic, start_date=start_date, end_date=end_date,
+                           house_filter=house_filter, error_message=error_message,
+                           grouped_debates={}, departments=DEPARTMENTS_TWFY,
+                           selected_dept="All Departments", selected_house="all",
+                           content_type="exclude_bills", is_post=(request.method == 'POST'),
+                           topic_rows=[], topic_briefing=None, topic_briefing_as_text='')
+
+
+# ==========================================
+# ROUTE 5: MINISTERIAL RECORD — ANALYSE SELECTED
+# ==========================================
+@debate_scanner_bp.route('/debates_minister_analyze', methods=['POST'])
+def debates_minister_analyze():
+    selected = request.form.getlist('selected_debates')
+    minister_name = request.form.get('minister_name', 'the Minister').strip()
+
+    if not selected:
+        return "Please select at least one debate.", 400
+
+    full_transcript_text = ""
+    for item in selected:
+        parts = item.split('||')
+        url = parts[0]
+        title = parts[1] if len(parts) > 1 else "Unknown"
+        date_val = parts[2] if len(parts) > 2 else ""
+
+        cached = CachedTranscript.get(url)
+        if cached:
+            full_transcript_text += f"### {cached.title} ({cached.date})\n\n{cached.transcript_text}\n\n"
+            continue
+
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.status_code == 200:
+                html = resp.text
+                for tag in ['head', 'script', 'style', 'nav', 'header', 'footer']:
+                    html = re.sub(rf'<{tag}.*?>.*?</{tag}>', '', html, flags=re.DOTALL | re.IGNORECASE)
+                clean_text = re.sub(r'<[^>]+>', ' ', html)
+                clean_text = re.sub(r'\s+', ' ', clean_text).strip()[:60000]
+                try:
+                    CachedTranscript.store(url=url, title=title, date=date_val, house='', transcript_text=clean_text)
+                except Exception:
+                    pass
+                full_transcript_text += f"### {title} ({date_val})\n\n{clean_text}\n\n"
+        except Exception:
+            pass
+
+    if not full_transcript_text:
+        return "Could not extract content from the selected debates.", 400
+
+    if not GEMINI_API_KEY:
+        return "Gemini API key is not configured.", 500
+
+    prompt = (
+        f"You are a senior UK Parliamentary Researcher. Analyze the following Hansard transcripts "
+        f"focusing specifically on contributions by {minister_name}.\n\n"
+        "Ignore any website navigation text. Focus only on debate content.\n\n"
+        "Structure your response in Markdown exactly as follows:\n\n"
+        f"## MINISTERIAL RECORD: {minister_name.upper()}\n\n"
+        "## 1. Q&A EXCHANGES\n"
+        "For each exchange where a member asked a question and the minister responded, show:\n"
+        "**Q [{questioner name} ({party})]:** The question\n"
+        f"**A [{minister_name}]:** The minister's response\n\n"
+        "## 2. MINISTERIAL SPEECHES & STATEMENTS\n"
+        f"Any standalone speeches or statements by {minister_name} not part of a direct Q&A\n\n"
+        "## 3. COMMUNICATION STYLE ANALYSIS\n"
+        "Tone and register, how the minister handles difficult or hostile questions, "
+        "recurring phrases or framing, approach to statistics and evidence\n\n"
+        "## 4. KEY POLICY POSITIONS STATED\n"
+        f"Bullet points of the specific positions and commitments {minister_name} has expressed\n\n"
+        f"TRANSCRIPTS:\n{full_transcript_text}"
+    )
+
+    model_path = get_working_model(GEMINI_API_KEY)
+    ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={GEMINI_API_KEY}"
+    ai_resp = requests.post(ai_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=120)
+
+    if ai_resp.status_code == 200:
+        briefing_content = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+    else:
+        briefing_content = f"AI Analysis failed (Error {ai_resp.status_code})."
+
+    return render_template('debate_briefing.html', briefing=briefing_content, selected_count=len(selected))
+
+
+# ==========================================
+# ROUTE 6: EXPORT BRIEFING TO WORD DOC
 # ==========================================
 @debate_scanner_bp.route('/download_debate_briefing', methods=['POST'])
 def download_debate_briefing():

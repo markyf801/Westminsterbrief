@@ -5,7 +5,8 @@
     <h2>🗣️ Parliamentary Research Tool</h2>
 
     <div class="scanner-tabs">
-        <button class="scanner-tab" data-target="panel-topic">Topic Search <span class="badge-ai">NEW</span></button>
+        <button class="scanner-tab" data-target="panel-topic">Topic Search <span class="badge-ai">AI</span></button>
+        <button class="scanner-tab" data-target="panel-minister">Ministerial Record <span class="badge-ai">AI</span></button>
         <button class="scanner-tab" data-target="panel-dept">Department Scan</button>
     </div>
 
@@ -88,7 +89,7 @@
                                 {% if s.confirmed_role %}<span class="topic-party-badge">{{ s.confirmed_role }}</span>{% endif %}
                             {% else %}
                                 <span class="topic-party-badge">{{ s.role }}</span>
-                                <span style="background:#fef9c3; color:#854d0e; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; margin-left:4px;">⚠ Unverified</span>
+                                <span style="background:#fef9c3; color:#854d0e; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; margin-left:4px;">Government (AI)</span>
                             {% endif %}
                             <br><span style="font-size:12px; color:#555;">{{ s.stance }}</span>
                         </li>
@@ -185,7 +186,92 @@
         {% endif %}
     </div>
 
-    <!-- ===================== MODE 2: DEPARTMENT SCAN ===================== -->
+    <!-- ===================== MODE 2: MINISTERIAL RECORD ===================== -->
+    <div id="panel-minister" class="scanner-panel">
+        <div class="info-box" style="margin-bottom:20px;">
+            <p style="margin:0; font-size:14.5px; line-height:1.6;">
+                Search for a minister by name to find every debate they have spoken in.
+                Select the sessions you want, then generate a full Q&amp;A transcript with
+                communication style analysis — ideal for debate preparation.
+            </p>
+        </div>
+
+        <form method="POST" action="/debates_minister" onsubmit="showMinisterLoading()">
+            <div class="form-row">
+                <div class="form-group" style="flex:2;">
+                    <label>Minister Name</label>
+                    <input type="text" name="minister_name" value="{{ minister_name }}" placeholder="e.g. Bridget Phillipson" required>
+                </div>
+                <div class="form-group">
+                    <label>House / Chamber</label>
+                    <select name="house_filter">
+                        <option value="all" {% if house_filter == 'all' %}selected{% endif %}>All Chambers</option>
+                        <option value="commons" {% if house_filter == 'commons' %}selected{% endif %}>Commons + Westminster Hall</option>
+                        <option value="lords" {% if house_filter == 'lords' %}selected{% endif %}>Lords</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Topic Filter (optional)</label>
+                    <input type="text" name="topic" value="{{ topic }}" placeholder="e.g. student loans">
+                </div>
+                <div class="form-group">
+                    <label>Start Date</label>
+                    <input type="date" name="start_date" value="{{ start_date }}">
+                </div>
+                <div class="form-group">
+                    <label>End Date</label>
+                    <input type="date" name="end_date" value="{{ end_date }}">
+                </div>
+                <div class="form-group" style="align-self:flex-end;">
+                    <button type="submit" class="btn btn-primary btn-full" id="btnMinister">
+                        <span id="btnMinisterText">🔍 Find Debates</span>
+                    </button>
+                </div>
+            </div>
+        </form>
+
+        {% if error_message and mode == 'minister' %}
+        <div class="error" style="margin-top:16px;">{{ error_message }}</div>
+        {% endif %}
+
+        {% if minister_info %}
+        <div style="background:#f0f7ff; border-left:4px solid #005a8f; padding:12px 16px; border-radius:0 6px 6px 0; margin-top:20px; margin-bottom:16px; font-size:14px;">
+            Showing debates for <strong>{{ minister_info.name }}</strong>
+            {% if minister_info.is_lord %}<span class="topic-party-badge">Lords</span>{% endif %}
+            — {{ minister_debates|length }} sessions found
+        </div>
+        {% endif %}
+
+        {% if minister_debates %}
+        <form method="POST" action="/debates_minister_analyze" onsubmit="showMinisterAnalyzeLoading()">
+            <input type="hidden" name="minister_name" value="{{ minister_info.name }}">
+            <div style="border:1px solid #e0e0e0; border-radius:6px; background:#fafafa; padding:10px;">
+                {% for d in minister_debates %}
+                <div style="display:flex; align-items:flex-start; gap:15px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #f0f0f0;">
+                    <input type="checkbox" name="selected_debates" value="{{ d.url }}||{{ d.title }}||{{ d.date }}" style="width:18px; height:18px; margin-top:3px; cursor:pointer;">
+                    <div style="flex:1;">
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span style="background:#eef2f5; color:#005a8f; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:700;">{{ d.type }}</span>
+                            <strong style="font-size:14px; color:#222;">{{ d.title }}</strong>
+                        </div>
+                        <div style="font-size:12px; color:#777; margin-top:4px;">
+                            📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
+                            &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on TheyWorkForYou</a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="submit" id="btnMinisterAnalyze" class="btn btn-purple" style="margin-top:16px; width:100%; padding:14px;">
+                <span id="btnMinisterAnalyzeText">📋 Get Full Script &amp; Follow-up Questions</span>
+            </button>
+        </form>
+        {% endif %}
+    </div>
+
+    <!-- ===================== MODE 3: DEPARTMENT SCAN ===================== -->
     <div id="panel-dept" class="scanner-panel">
         <div class="info-box" style="margin-bottom:20px;">
             <p style="margin:0; font-size:14.5px; line-height:1.6;">
@@ -308,10 +394,12 @@
     });
 
     // Restore correct tab after POST
-    if (ACTIVE_MODE === 'topic') {
-        showPanel('panel-topic');
-    } else {
+    if (ACTIVE_MODE === 'minister') {
+        showPanel('panel-minister');
+    } else if (ACTIVE_MODE === 'dept') {
         showPanel('panel-dept');
+    } else {
+        showPanel('panel-topic');
     }
 
     function togglePQs(btn, name) {
@@ -381,6 +469,20 @@
         const text = document.getElementById('btnTopicText');
         if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
         if (text) text.innerText = '⏳ Searching... (30–60 seconds)';
+    }
+
+    function showMinisterLoading() {
+        const btn = document.getElementById('btnMinister');
+        const text = document.getElementById('btnMinisterText');
+        if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
+        if (text) text.innerText = '⏳ Searching TheyWorkForYou...';
+    }
+
+    function showMinisterAnalyzeLoading() {
+        const btn = document.getElementById('btnMinisterAnalyze');
+        const text = document.getElementById('btnMinisterAnalyzeText');
+        if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
+        if (text) text.innerText = '🤖 Fetching transcripts & analysing style... (up to 60 seconds)';
     }
 
     function showLoadingSearch() {
