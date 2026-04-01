@@ -104,6 +104,10 @@ with app.app_context():
 def home():
     return render_template('home.html')
 
+@app.route('/robots.txt')
+def robots():
+    return app.send_static_file('robots.txt')
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
