@@ -94,6 +94,27 @@ def _fetch_recent_pqs(member_id, limit=20):
     return []
 
 
+def _fetch_registered_interests(member_id):
+    try:
+        resp = requests.get(
+            f"https://members-api.parliament.uk/api/Members/{member_id}/RegisteredInterests",
+            timeout=8
+        )
+        if resp.status_code == 200:
+            categories = resp.json().get('value', {}).get('categories', []) or []
+            lines = []
+            for cat in categories:
+                cat_name = cat.get('name', '')
+                for interest in (cat.get('interests') or []):
+                    desc = (interest.get('interest') or '').strip()
+                    if desc:
+                        lines.append(f"  [{cat_name}] {desc[:200]}")
+            return lines
+    except:
+        pass
+    return []
+
+
 def _fetch_wikipedia(mp_name):
     if not wikipedia:
         return ""
@@ -116,21 +137,38 @@ def _format_posts(posts, label):
     for p in posts:
         name = p.get('name', '')
         start = (p.get('startDate') or '').split('T')[0][:7]
-        end = (p.get('endDate') or '').split('T')[0][:7] or 'present'
+        end = (p.get('endDate') or '').split('T')[0][:7]
+        date_str = f"{start}–{end}" if end else f"{start}–present"
         if name:
-            lines.append(f"  - {name} ({start}–{end})")
+            lines.append(f"  - {name} ({date_str})")
+    return '\n'.join(lines)
+
+
+def _format_committees(committees):
+    if not committees:
+        return ""
+    lines = ["\nCommittee Memberships (current and historical):"]
+    for c in committees:
+        name = c.get('name', '')
+        start = (c.get('startDate') or '').split('T')[0][:7]
+        end = (c.get('endDate') or '').split('T')[0][:7]
+        date_str = f"{start}–{end}" if end else f"{start}–present"
+        if name:
+            lines.append(f"  - {name} ({date_str})")
     return '\n'.join(lines)
 
 
 # ── Main biography generator ──────────────────────────────────────────────────
 
 def generate_mp_biography(mp_name, member_id):
-    # Parallel fetch: Parliament biography API + recent PQs + Wikipedia
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+    # Parallel fetch: Parliament biography API + registered interests + recent PQs + Wikipedia
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
         f_bio = ex.submit(_fetch_parliament_biography, member_id)
+        f_interests = ex.submit(_fetch_registered_interests, member_id)
         f_pqs = ex.submit(_fetch_recent_pqs, member_id)
         f_wiki = ex.submit(_fetch_wikipedia, mp_name)
         parl_bio = f_bio.result()
+        interests = f_interests.result()
         pqs = f_pqs.result()
         wiki_text = f_wiki.result()
 
@@ -138,11 +176,11 @@ def generate_mp_biography(mp_name, member_id):
     parl_context = ""
     parl_context += _format_posts(parl_bio.get('governmentPosts', []), "Government Roles")
     parl_context += _format_posts(parl_bio.get('oppositionPosts', []), "Opposition Roles")
+    parl_context += _format_committees(parl_bio.get('committeeMemberships', []))
 
-    committees = parl_bio.get('committeeMemberships', [])
-    if committees:
-        names = [c.get('name', '') for c in committees if c.get('name')]
-        parl_context += f"\nCommittee Memberships: {', '.join(names[:10])}"
+    interests_context = ""
+    if interests:
+        interests_context = "\nRegistered Interests:\n" + "\n".join(f"  • {i}" for i in interests[:20])
 
     pq_context = ""
     if pqs:
@@ -158,8 +196,9 @@ Use ALL of the source data below. Clearly distinguish between their pre-parliame
 --- WIKIPEDIA EXTRACT (use for background, education, pre-parliament career) ---
 {wiki_text[:3500] if wiki_text else "No Wikipedia data available."}
 
---- PARLIAMENT API DATA (use for roles, committees, recent activity) ---
-{parl_context if parl_context else "No parliamentary posts data available."}
+--- PARLIAMENT API DATA ---
+{parl_context if parl_context else "No parliamentary posts or committee data available."}
+{interests_context}
 {pq_context}
 
 ---
@@ -173,10 +212,13 @@ Background, profession, education — draw on Wikipedia. If no data available, s
 When elected/appointed, party, constituency or peerage. Key milestones.
 
 ## Government & Opposition Roles
-All ministerial or shadow roles held, with approximate dates. If none, say so.
+All ministerial or shadow ministerial roles held, with dates. Distinguish clearly between government and opposition roles. If none, say so.
 
-## Committee Work
-Select committees and other parliamentary roles. If none on record, say so.
+## Committee Memberships
+List all select committees and other parliamentary committees, with dates (include historical ones). If none on record, say so.
+
+## Registered Interests
+Summarise their declared financial and other interests by category. If none declared, say so.
 
 ## Policy Interests & Focus Areas
 Based on their written questions and stated interests — be specific, not generic.
