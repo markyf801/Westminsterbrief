@@ -375,12 +375,22 @@ def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
 def scan_debates():
     grouped_debates = {}
     error_message = None
-    
+
     start_date = ""
     end_date = ""
     selected_dept = "All Departments"
     selected_house = "all"
     content_type = "exclude_bills"
+
+    # Handle stakeholder tab GET (search form submits here via GET)
+    if request.method == 'GET' and request.args.get('mode') == 'stakeholder':
+        return render_template('debate_scanner.html',
+                               mode='stakeholder',
+                               stakeholder_topic=request.args.get('stakeholder_topic', ''),
+                               grouped_debates={}, error_message=None,
+                               start_date='', end_date='',
+                               departments=DEPARTMENTS_TWFY, selected_dept='All Departments',
+                               selected_house='all', content_type='exclude_bills')
 
     if request.method == 'POST':
         action = request.form.get('action', 'search')
@@ -515,9 +525,10 @@ def scan_debates():
                            departments=DEPARTMENTS_TWFY, selected_dept=selected_dept,
                            selected_house=selected_house, content_type=content_type,
                            is_post=(request.method == 'POST'),
-                           # Topic mode defaults
+                           # Other tab defaults
                            topic='', topic_rows=[], topic_briefing=None,
-                           topic_briefing_as_text='', house_filter='all')
+                           topic_briefing_as_text='', house_filter='all',
+                           stakeholder_topic='')
 
 
 # ==========================================
@@ -653,7 +664,8 @@ def debates_topic():
                            # Dept scan defaults (needed so template doesn't crash)
                            grouped_debates={}, departments=DEPARTMENTS_TWFY,
                            selected_dept="All Departments", selected_house="all",
-                           content_type="exclude_bills", is_post=True)
+                           content_type="exclude_bills", is_post=True,
+                           stakeholder_topic='')
 
 
 # ==========================================
@@ -786,7 +798,8 @@ def debates_minister():
                            grouped_debates={}, departments=DEPARTMENTS_TWFY,
                            selected_dept="All Departments", selected_house="all",
                            content_type="exclude_bills", is_post=(request.method == 'POST'),
-                           topic_rows=[], topic_briefing=None, topic_briefing_as_text='')
+                           topic_rows=[], topic_briefing=None, topic_briefing_as_text='',
+                           stakeholder_topic='')
 
 
 # ==========================================

@@ -5,9 +5,10 @@
     <h2>🗣️ Parliamentary Research Tool</h2>
 
     <div class="scanner-tabs">
-        <button class="scanner-tab" data-target="panel-topic">Topic Search <span class="badge-ai">AI</span></button>
-        <button class="scanner-tab" data-target="panel-minister">Ministerial Record <span class="badge-ai">AI</span></button>
+        <button class="scanner-tab" data-target="panel-topic">Hansard Research <span class="badge-ai">AI</span></button>
+        <button class="scanner-tab" data-target="panel-minister">Speech Research <span class="badge-ai">AI</span></button>
         <button class="scanner-tab" data-target="panel-dept">Department Scan</button>
+        <button class="scanner-tab" data-target="panel-stakeholder">Stakeholder Research</button>
     </div>
 
     <!-- ===================== MODE 1: TOPIC SEARCH ===================== -->
@@ -379,6 +380,42 @@
         </div>
         {% endif %}
     </div>
+
+    <!-- ===================== MODE 4: STAKEHOLDER RESEARCH ===================== -->
+    <div id="panel-stakeholder" class="scanner-panel">
+        <div class="info-box" style="margin-bottom: 20px;">
+            <p style="margin:0; font-size:14.5px; line-height:1.6;">
+                Search for what <strong>external stakeholders</strong> — campaign groups, trade bodies, charities,
+                think tanks and sector voices — are saying about a topic across news and social media.
+                Use this alongside Hansard Research to build a complete picture for your brief.
+            </p>
+        </div>
+
+        <form method="GET" action="/debates" style="margin-bottom: 24px;">
+            <input type="hidden" name="mode" value="stakeholder">
+            <label style="display:block; margin-bottom:8px; font-weight:600; color:#444;">Topic or keyword:</label>
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px;">
+                <input type="text" name="stakeholder_topic" placeholder="e.g. student loan repayments, SEND funding, net zero..."
+                       value="{{ stakeholder_topic or '' }}"
+                       style="flex-grow:1; padding:10px 14px; border:1px solid #ccc; border-radius:4px; font-size:15px;">
+                <button type="submit" class="btn-search">Search &rarr;</button>
+            </div>
+        </form>
+
+        <div style="text-align:center; padding:40px 20px; background:#f8f9fa; border-radius:8px; border:2px dashed #dee2e6;">
+            <div style="font-size:40px; margin-bottom:12px;">🔔</div>
+            <h3 style="color:#444; margin-bottom:8px;">Stakeholder Research — Coming Soon</h3>
+            <p style="color:#666; font-size:14px; max-width:500px; margin:0 auto 16px;">
+                This section will search news media and stakeholder social accounts for contributions
+                on your topic — surfacing what campaign groups, trade bodies, and sector voices are saying
+                alongside the parliamentary record.
+            </p>
+            <p style="color:#888; font-size:13px;">
+                In the meantime, use the <strong>Smart AI Radar</strong> on the home page to track
+                topics across Hansard, news, and Bluesky continuously.
+            </p>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -397,11 +434,13 @@
         tab.addEventListener('click', () => showPanel(tab.dataset.target));
     });
 
-    // Restore correct tab after POST
+    // Restore correct tab after POST/GET
     if (ACTIVE_MODE === 'minister') {
         showPanel('panel-minister');
     } else if (ACTIVE_MODE === 'dept') {
         showPanel('panel-dept');
+    } else if (ACTIVE_MODE === 'stakeholder') {
+        showPanel('panel-stakeholder');
     } else {
         showPanel('panel-topic');
     }
