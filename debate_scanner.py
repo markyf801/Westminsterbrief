@@ -665,6 +665,7 @@ def debates_topic():
     topic_briefing_as_text = ""
     error_message = None
     topic = ""
+    narrow_keyword = ""
     start_date = ""
     end_date = ""
     house_filter = "all"
@@ -672,6 +673,7 @@ def debates_topic():
 
     if request.method == 'POST':
         topic = request.form.get('topic', '').strip()
+        narrow_keyword = request.form.get('narrow_keyword', '').strip()
         start_date = request.form.get('start_date', '').strip()
         end_date = request.form.get('end_date', '').strip()
         house_filter = request.form.get('house_filter', 'all')
@@ -692,6 +694,10 @@ def debates_topic():
                 sources = ['commons', 'westminsterhall', 'lords']
 
             search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
+
+            # Append narrow keyword if provided
+            if narrow_keyword:
+                search_query = f'{search_query} AND "{narrow_keyword}"'
 
             # Append department keywords to narrow the search
             if selected_depts:
@@ -790,6 +796,7 @@ def debates_topic():
                            topic_briefing_as_text=topic_briefing_as_text,
                            start_date=start_date, end_date=end_date,
                            house_filter=house_filter,
+                           narrow_keyword=narrow_keyword,
                            selected_depts=selected_depts,
                            error_message=error_message,
                            # Dept scan defaults (needed so template doesn't crash)

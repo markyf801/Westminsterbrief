@@ -27,7 +27,11 @@
             <div class="form-row">
                 <div class="form-group" style="flex: 2;">
                     <label>Search Topic</label>
-                    <input type="text" name="topic" value="{{ topic }}" placeholder="e.g. student loan repayments" required>
+                    <input type="text" name="topic" value="{{ topic }}" placeholder="e.g. free speech" required>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Narrow by keyword <span style="font-weight:normal; color:#888; font-size:12px;">(optional)</span></label>
+                    <input type="text" name="narrow_keyword" value="{{ narrow_keyword }}" placeholder="e.g. higher education, universities">
                 </div>
                 <div class="form-group">
                     <label>House / Chamber</label>
