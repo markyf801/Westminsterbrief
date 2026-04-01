@@ -42,7 +42,7 @@ def add_hyperlink(paragraph, url, text):
     new_run.append(rPr); new_run.text = text; hyperlink.append(new_run)
     paragraph._p.append(hyperlink)
 
-@hansard_bp.route('/', methods=['GET', 'POST'])
+@hansard_bp.route('/questions', methods=['GET', 'POST'])
 def index():
     results, error_message = [], None
     selected_dept_id = ""

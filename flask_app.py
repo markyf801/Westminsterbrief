@@ -99,6 +99,7 @@ with app.app_context():
 # ==========================================
 # 5. ROUTES
 # ==========================================
+@app.route('/')
 @app.route('/home')
 def home():
     return render_template('home.html')

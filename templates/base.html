@@ -12,7 +12,7 @@
     <nav class="navbar">
         <a href="/home" class="brand">🏛️ Westminster Brief</a>
 
-        <a href="/"         {% if request.path == '/' %}class="nav-active"{% endif %}>Written Questions</a>
+        <a href="/questions" {% if request.path == '/questions' %}class="nav-active"{% endif %}>Written Questions</a>
         <a href="/tracker"  {% if request.path == '/tracker' %}class="nav-active"{% endif %}>Today's PQs <span class="badge-ai">AI</span></a>
         <a href="/mp_search"{% if request.path == '/mp_search' %}class="nav-active"{% endif %}>MP PQ Research</a>
         <a href="/biography"{% if request.path == '/biography' %}class="nav-active"{% endif %}>Biographies</a>
