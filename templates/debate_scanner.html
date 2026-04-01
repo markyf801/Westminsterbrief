@@ -167,13 +167,17 @@
                 </div>
             </div>
             {% for r in topic_rows %}
-            <div class="topic-result-card" data-type="{{ r.debate_type }}">
+            <div class="topic-result-card" data-type="{{ r.debate_type }}" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
                 <div class="topic-source-row">
                     <span class="topic-source-badge topic-source-{{ r.source }}">{{ r.source_label }}</span>
                     <span style="font-size:12px; color:#888;">{{ r.debate_type }}</span>
                     <span>{{ r.hdate }}</span>
                     <strong>{{ r.speaker_name }}</strong>
-                    {% if r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                    {% if r.is_minister %}
+                        <span style="background:#dcfce7; color:#166534; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px;">✓ Minister</span>
+                    {% elif r.speaker_party %}
+                        <span class="topic-party-badge">{{ r.speaker_party }}</span>
+                    {% endif %}
                 </div>
                 <div class="topic-card-title">{{ r.debate_title }}</div>
                 <div class="topic-card-body">{{ r.body_clean }}</div>

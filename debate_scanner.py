@@ -497,26 +497,43 @@ def debates_topic():
                     all_rows.extend(future.result())
 
             topic_rows = deduplicate_by_listurl(all_rows)
-            topic_rows.sort(key=lambda x: x.get('relevance', 0), reverse=True)
+
+            # Flag ministerial speakers and sort them to the top
+            current_ministers = get_minister_list()
+            minister_names = list(current_ministers.keys())
+            for row in topic_rows:
+                spk = row.get('speaker_name', '')
+                row['is_minister'] = bool(spk and any(
+                    spk.lower() in m.lower() or m.lower() in spk.lower()
+                    for m in minister_names
+                ))
+                row['minister_role'] = current_ministers.get(spk, '')
+
+            # Ministers always first, then by relevance within each group
+            topic_rows.sort(key=lambda x: (not x.get('is_minister', False), -x.get('relevance', 0)))
 
             if not topic_rows:
                 error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
             elif GEMINI_API_KEY:
                 try:
-                    # Balanced selection: up to 10 per source so Lords/WH aren't crowded out by Commons
+                    # Always include ALL ministerial contributions, then balance remaining slots by source
+                    minister_rows = [r for r in topic_rows if r.get('is_minister')]
+                    non_minister_rows = [r for r in topic_rows if not r.get('is_minister')]
                     seen_sources = {}
-                    balanced = []
-                    for r in topic_rows:
+                    balanced_rest = []
+                    for r in non_minister_rows:
                         src = r['source']
-                        if seen_sources.get(src, 0) < 10:
-                            balanced.append(r)
+                        if seen_sources.get(src, 0) < 8:
+                            balanced_rest.append(r)
                             seen_sources[src] = seen_sources.get(src, 0) + 1
-                        if len(balanced) >= 40:
+                        if len(balanced_rest) >= 30:
                             break
+                    balanced = minister_rows + balanced_rest
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
                          'party': r['speaker_party'], 'date': r['hdate'],
-                         'source': r['source_label'], 'text': r['body_clean']}
+                         'source': r['source_label'], 'text': r['body_clean'],
+                         'is_minister': r.get('is_minister', False)}
                         for r in balanced
                     ]
                     prompt = (
