@@ -87,100 +87,78 @@ def morning_tracker():
     sorted_grouped_results = {}
     error_message = None
     selected_dept = ""
-    search_mp = ""
-    
+
     if request.method == 'POST':
         selected_dept = request.form.get('department', '').strip()
-        search_mp = request.form.get('mp_name', '').strip()
         results = []
-        
-        params = {'take': 200}
-        # Look back 14 days to cover weekends and recesses — we'll find the most
-        # recent date with actual results and show only that.
+
+        # Fetch by due date over last 14 days, then narrow to the most recent
+        # day with results (handles weekends and recess automatically)
         window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
         today = datetime.now().strftime('%Y-%m-%d')
+        params = {
+            'take': 200,
+            'dateForAnswerFrom': window_start,
+            'dateForAnswerTo': today,
+            'questionStatus': 'NotAnswered',
+        }
+        if selected_dept:
+            params['answeringBodies'] = [int(selected_dept)]
 
-        # --- NEW: MP SEARCH LOGIC ---
-        if search_mp:
-            try:
-                search_url = f"https://members-api.parliament.uk/api/Members/Search?Name={search_mp}"
-                s_resp = requests.get(search_url, timeout=5)
-                if s_resp.status_code == 200 and s_resp.json().get('items'):
-                    member_id = s_resp.json()['items'][0]['value']['id']
-                    params['askingMemberIds'] = [member_id]
-                else:
-                    error_message = f"Could not find an MP or Peer matching '{search_mp}'. Please check the spelling."
-            except Exception as e:
-                error_message = "Error searching for MP database."
-        else:
-            # Default Morning Tracker Mode — fetch by due date over last 14 days,
-            # then narrow to the most recent day with results (handles weekends/recess)
-            params['dateForAnswerFrom'] = window_start
-            params['dateForAnswerTo'] = today
-            params['questionStatus'] = 'NotAnswered'
-            if selected_dept:
-                params['answeringBodies'] = [int(selected_dept)]
+        try:
+            url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+            resp = requests.get(url, params=params, timeout=30)
 
-        if not error_message:
-            try:
-                url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
-                resp = requests.get(url, params=params, timeout=30)
-                
-                if resp.status_code == 200:
-                    data = resp.json().get('results') or []
+            if resp.status_code == 200:
+                data = resp.json().get('results') or []
 
-                    # Narrow to the single most recent due date (last sitting day)
-                    if not search_mp and data:
-                        due_dates = [
-                            (item.get('value') or {}).get('dateForAnswer', '').split('T')[0]
-                            for item in data
-                            if (item.get('value') or {}).get('dateForAnswer')
-                        ]
-                        if due_dates:
-                            last_sitting_day = max(due_dates)
-                            data = [item for item in data
-                                    if (item.get('value') or {}).get('dateForAnswer', '').split('T')[0] == last_sitting_day]
+                # Narrow to the single most recent due date (last sitting day)
+                if data:
+                    due_dates = [
+                        (item.get('value') or {}).get('dateForAnswer', '').split('T')[0]
+                        for item in data
+                        if (item.get('value') or {}).get('dateForAnswer')
+                    ]
+                    if due_dates:
+                        last_sitting_day = max(due_dates)
+                        data = [item for item in data
+                                if (item.get('value') or {}).get('dateForAnswer', '').split('T')[0] == last_sitting_day]
 
-                    m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-                        executor.map(get_member_name, m_ids)
+                m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+                    executor.map(get_member_name, m_ids)
 
-                    for item in data:
-                        val = item.get('value') or {}
-                        
-                        # Apply strict filters ONLY if we aren't doing an MP deep-dive search
-                        if not search_mp:
-                            if val.get('answerText') or val.get('dateAnswered'): continue
-                            if selected_dept and str(val.get('answeringBodyId')) != selected_dept: continue
+                for item in data:
+                    val = item.get('value') or {}
+                    if val.get('answerText') or val.get('dateAnswered'): continue
+                    if selected_dept and str(val.get('answeringBodyId')) != selected_dept: continue
 
-                        member_id = val.get('askingMemberId')
-                        member_name = get_member_name(member_id)
+                    member_id = val.get('askingMemberId')
+                    member_name = get_member_name(member_id)
 
-                        due_date_str = (val.get('dateForAnswer') or '').split('T')[0]
-                        tabled_str = (val.get('dateTabled') or '').split('T')[0]
-                        # Group by due date (the day we must answer); fall back to tabled date for MP search mode
-                        group_date_str = due_date_str if (due_date_str and not search_mp) else tabled_str
+                    due_date_str = (val.get('dateForAnswer') or '').split('T')[0]
+                    group_date_str = due_date_str
 
-                        try:
-                            date_obj = datetime.fromisoformat(group_date_str)
-                            f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
-                        except:
-                            f_date = "N/A"
+                    try:
+                        date_obj = datetime.fromisoformat(group_date_str)
+                        f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
+                    except:
+                        f_date = "N/A"
 
-                        is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
+                    is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
 
-                        results.append({
-                            'dept': val.get('answeringBodyName'),
-                            'uin': str(val.get('uin')),
-                            'member': member_name,
-                            'member_id': member_id,
-                            'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
-                            'raw_date': group_date_str,
-                            'date_asked': f_date,
-                            'due_date': due_date_str or 'TBC',
-                            'is_answered': is_answered,
-                            'status': "ANSWERED" if is_answered else "UNANSWERED"
-                        })
+                    results.append({
+                        'dept': val.get('answeringBodyName'),
+                        'uin': str(val.get('uin')),
+                        'member': member_name,
+                        'member_id': member_id,
+                        'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
+                        'raw_date': group_date_str,
+                        'date_asked': f_date,
+                        'due_date': due_date_str or 'TBC',
+                        'is_answered': is_answered,
+                        'status': "ANSWERED" if is_answered else "UNANSWERED"
+                    })
                         
                 categories = {}
                 ai_status = "" 
@@ -233,9 +211,9 @@ def morning_tracker():
                     for date_key in sorted(temp_group.keys(), reverse=True):
                         sorted_grouped_results[date_key] = temp_group[date_key]
                     
-            except Exception as e: error_message = f"Search error: {str(e)}"
+        except Exception as e: error_message = f"Search error: {str(e)}"
 
-    return render_template('tracker.html', sorted_grouped_results=sorted_grouped_results, error_message=error_message, departments=DEPARTMENTS, selected_dept=selected_dept, search_mp=search_mp, is_post=(request.method == 'POST'))
+    return render_template('tracker.html', sorted_grouped_results=sorted_grouped_results, error_message=error_message, departments=DEPARTMENTS, selected_dept=selected_dept, is_post=(request.method == 'POST'))
 
 @tracker_bp.route('/download_tracker_word', methods=['POST'])
 def download_tracker_word():
