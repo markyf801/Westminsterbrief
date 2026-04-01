@@ -401,7 +401,7 @@ def debates_topic():
                         "\"topic_summary\", \"government_position\", \"opposition_position\",\n"
                         "\"government_speakers\" (array of {\"name\", \"role\", \"stance\"} — Ministers, Secretaries of State, PPSs only),\n"
                         "\"non_government_speakers\" (array of {\"name\", \"role_or_party\", \"stance\"} — Shadow Ministers, backbenchers, Lords not in government),\n"
-                        "\"key_quotes\" (array of {\"quote\", \"speaker\", \"date\", \"source\"}),\n"
+                        "\"key_quotes\" (array of {\"quote\", \"speaker\", \"date\", \"source\", \"listurl\" — the listurl value from the matching DATA entry}),\n"
                         "\"next_steps\", \"coverage_note\"\n\n"
                         f"DATA: {json.dumps(ai_payload)}"
                     )
