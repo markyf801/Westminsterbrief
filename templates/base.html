@@ -15,8 +15,8 @@
         <a href="/questions" {% if request.path == '/questions' %}class="nav-active"{% endif %}>Written Questions</a>
         <a href="/tracker"  {% if request.path == '/tracker' %}class="nav-active"{% endif %}>Today's PQs <span class="badge-ai">AI</span></a>
         <a href="/mp_search"{% if request.path == '/mp_search' %}class="nav-active"{% endif %}>MP PQ Research</a>
-        <a href="/biography"{% if request.path == '/biography' %}class="nav-active"{% endif %}>Biographies</a>
-        <a href="/debates"  {% if request.path == '/debates' %}class="nav-active"{% endif %}>Debate Scanner</a>
+        <a href="/biography"{% if request.path == '/biography' %}class="nav-active"{% endif %}>Member Profiles</a>
+        <a href="/debates"  {% if request.path.startswith('/debates') %}class="nav-active"{% endif %}>Parliamentary Research</a>
 
         {% if current_user.is_authenticated %}
             <a href="/my_alerts" class="nav-auth-alerts {% if request.path == '/my_alerts' %}nav-active{% endif %}">👤 My Alerts</a>
