@@ -149,6 +149,28 @@ def login():
         flash('Invalid email or password')
     return render_template('login.html')
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        email    = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        confirm  = request.form.get('confirm_password', '')
+        if not email or not password:
+            flash('Email and password are required.')
+        elif password != confirm:
+            flash('Passwords do not match.')
+        elif len(password) < 8:
+            flash('Password must be at least 8 characters.')
+        elif User.query.filter_by(email=email).first():
+            flash('An account with that email already exists.')
+        else:
+            user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'))
+            db.session.add(user)
+            db.session.commit()
+            login_user(user)
+            return redirect(url_for('onboarding'))
+    return render_template('register.html')
+
 @app.route('/logout')
 @login_required
 def logout():

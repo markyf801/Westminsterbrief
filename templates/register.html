@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Register — Westminster Brief{% endblock %}
+
+{% block content %}
+<div style="display:flex; justify-content:center; align-items:center; min-height:60vh;">
+    <div class="box" style="width:100%; max-width:450px; border-top:5px solid #6f42c1;">
+        <div style="text-align:center; margin-bottom:25px;">
+            <h2 style="margin-bottom:10px;">🏛️ Create an Account</h2>
+            <p style="color:#666; font-size:14px;">Free access for UK government and parliamentary staff.</p>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            {% for message in messages %}
+              <div style="background:#fff3cd; border:1px solid #ffc107; color:#856404; padding:10px 14px; border-radius:4px; margin-bottom:16px; font-size:13px;">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="/register">
+            <div style="margin-bottom:18px;">
+                <label style="display:block; font-weight:600; color:#1c3e6e; margin-bottom:8px;">Email Address</label>
+                <input type="email" name="email" placeholder="you@example.gov.uk" required
+                       style="width:100%; border:1px solid #ccd0d5; padding:12px; border-radius:4px; font-size:14px; box-sizing:border-box;">
+            </div>
+
+            <div style="margin-bottom:18px;">
+                <label style="display:block; font-weight:600; color:#1c3e6e; margin-bottom:8px;">Password</label>
+                <input type="password" name="password" placeholder="At least 8 characters" required minlength="8"
+                       style="width:100%; border:1px solid #ccd0d5; padding:12px; border-radius:4px; font-size:14px; box-sizing:border-box;">
+            </div>
+
+            <div style="margin-bottom:28px;">
+                <label style="display:block; font-weight:600; color:#1c3e6e; margin-bottom:8px;">Confirm Password</label>
+                <input type="password" name="confirm_password" placeholder="Repeat your password" required
+                       style="width:100%; border:1px solid #ccd0d5; padding:12px; border-radius:4px; font-size:14px; box-sizing:border-box;">
+            </div>
+
+            <button type="submit" class="btn-search" style="background:#6f42c1; padding:16px; font-size:16px; width:100%;">
+                Create Account
+            </button>
+        </form>
+
+        <div style="margin-top:20px; text-align:center;">
+            <p style="font-size:14px; color:#555; margin:0;">
+                Already have an account? <a href="/login" style="color:#6f42c1; font-weight:600;">Sign in</a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
