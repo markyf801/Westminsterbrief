@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, make_response
 from docx import Document
 from docx.oxml.shared import OxmlElement, qn
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from cache_models import CachedQuestion, CachedMember
 
 hansard_bp = Blueprint('hansard', __name__)
@@ -13,6 +14,19 @@ DEPARTMENTS = {
     "Department for Science, Innovation and Technology": "216", "Cabinet Office": "53"
 }
 MEMBER_CACHE = {}
+
+def prefetch_members(member_ids):
+    """Parallel-fetch member details for all IDs not already cached."""
+    unknown = [mid for mid in member_ids if mid and mid not in MEMBER_CACHE and not CachedMember.get(mid)]
+    if not unknown:
+        return
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(get_member_details, mid, 'Commons'): mid for mid in unknown}
+        for f in as_completed(futures):
+            try:
+                f.result()
+            except Exception:
+                pass
 
 def get_member_details(member_id, fallback_house):
     if not member_id: return "Unknown", "No Party", "Unknown", fallback_house
@@ -89,7 +103,15 @@ def index():
                             seen_uins.add(uin)
                             all_raw_results.append(item)
 
-            # Step 2: THE STRICT PYTHON DATE & DEPT FILTER
+            # Step 2: Pre-warm member cache in parallel before processing
+            unique_member_ids = list({
+                item.get('value', {}).get('askingMemberId')
+                for item in all_raw_results
+                if item.get('value', {}).get('askingMemberId')
+            })
+            prefetch_members(unique_member_ids)
+
+            # Step 3: THE STRICT PYTHON DATE & DEPT FILTER
             for item in all_raw_results:
                 val = item.get('value') or {}
                 

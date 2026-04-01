@@ -6,8 +6,26 @@ from cache_models import CachedTranscript
 # Import Word Document libraries
 try:
     from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
 except ImportError:
     Document = None
+    OxmlElement = None
+    qn = None
+
+def _add_hyperlink(paragraph, url, text):
+    part = paragraph.part
+    r_id = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
+    hyperlink = OxmlElement('w:hyperlink')
+    hyperlink.set(qn('r:id'), r_id)
+    new_run = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    c = OxmlElement('w:color'); c.set(qn('w:val'), '0000FF'); rPr.append(c)
+    u = OxmlElement('w:u'); u.set(qn('w:val'), 'single'); rPr.append(u)
+    new_run.append(rPr)
+    t = OxmlElement('w:t'); t.text = text; new_run.append(t)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
 
 debate_scanner_bp = Blueprint('debates', __name__)
 
@@ -1041,7 +1059,7 @@ def export_custom_briefing():
                     url = 'https://www.theyworkforyou.com' + url
                 lp = doc.add_paragraph()
                 lp.add_run('Source: ').bold = True
-                lp.add_run(url)
+                _add_hyperlink(lp, url, url)
             doc.add_paragraph('─' * 60)
 
     # ── Written Questions ────────────────────────────────────────
@@ -1071,7 +1089,7 @@ def export_custom_briefing():
                 if link:
                     lp = doc.add_paragraph()
                     lp.add_run('Parliament link: ').bold = True
-                    lp.add_run(link)
+                    _add_hyperlink(lp, link, link)
                 doc.add_paragraph()
 
     mem_doc = io.BytesIO()

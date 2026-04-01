@@ -7,7 +7,6 @@
     <div class="scanner-tabs">
         <button class="scanner-tab" data-target="panel-topic">Hansard Research <span class="badge-ai">AI</span></button>
         <button class="scanner-tab" data-target="panel-minister">Speech Research <span class="badge-ai">AI</span></button>
-        <button class="scanner-tab" data-target="panel-dept">Department Scan</button>
         <button class="scanner-tab" data-target="panel-stakeholder">Stakeholder Research</button>
     </div>
 
@@ -191,7 +190,7 @@
                         <span class="topic-party-badge">{{ r.speaker_party }}</span>
                     {% endif %}
                 </div>
-                <div class="topic-card-title">{{ r.debate_title }}</div>
+                <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
                 <div class="topic-card-body">{{ r.body_clean }}</div>
                 {% if r.listurl %}
                 <a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px; color:#005a8f; text-decoration:none; display:inline-block; margin-top:6px;">🔗 View on TheyWorkForYou</a>
@@ -284,111 +283,6 @@
                 <span id="btnMinisterAnalyzeText">📋 Get Full Script &amp; Follow-up Questions</span>
             </button>
         </form>
-        {% endif %}
-    </div>
-
-    <!-- ===================== MODE 3: DEPARTMENT SCAN ===================== -->
-    <div id="panel-dept" class="scanner-panel">
-        <div class="info-box" style="margin-bottom:20px;">
-            <p style="margin:0; font-size:14.5px; line-height:1.6;">
-                <strong>Step 1:</strong> Select a Department and Date Range. The AI will group the sessions by <strong>Theme</strong>.<br>
-                <strong>Step 2:</strong> Tick the specific debates you want to analyse in detail, then generate a full briefing.
-            </p>
-        </div>
-
-        <form method="POST" action="/debates" onsubmit="showLoadingSearch()">
-            <input type="hidden" name="action" value="search">
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label>1. Content Type</label>
-                    <select name="content_type">
-                        <option value="exclude_bills" {% if content_type == 'exclude_bills' %}selected{% endif %}>📌 Hide Bills &amp; Amendments</option>
-                        <option value="all_content" {% if content_type == 'all_content' %}selected{% endif %}>📂 Include Everything</option>
-                        <option value="only_bills" {% if content_type == 'only_bills' %}selected{% endif %}>⚖️ Only Bills &amp; Amendments</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>2. House / Chamber</label>
-                    <select name="house">
-                        <option value="all" {% if selected_house == 'all' %}selected{% endif %}>Both Houses / All</option>
-                        <option value="lords" {% if selected_house == 'lords' %}selected{% endif %}>House of Lords</option>
-                        <option value="commons" {% if selected_house == 'commons' %}selected{% endif %}>House of Commons</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>3. Department</label>
-                    <select name="department">
-                        {% for dept in departments %}
-                        <option value="{{ dept }}" {% if selected_dept == dept %}selected{% endif %}>{{ dept }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label>4. Start Date</label>
-                    <input type="date" name="start_date" value="{{ start_date }}">
-                </div>
-                <div class="form-group">
-                    <label>5. End Date</label>
-                    <input type="date" name="end_date" value="{{ end_date }}">
-                </div>
-                <div class="form-group" style="align-self:flex-end;">
-                    <button type="submit" class="btn btn-primary btn-full" id="btnSearch">
-                        <span id="btnSearchText">🔍 Fetch Records &amp; Group by AI Theme</span>
-                    </button>
-                </div>
-            </div>
-        </form>
-
-        {% if error_message and mode != 'topic' %}
-        <div class="error" style="margin-top:16px;">{{ error_message }}</div>
-        {% endif %}
-
-        {% if is_post and grouped_debates %}
-        <div style="margin-top:24px;">
-            <h3 style="color:#6f42c1; margin-bottom:10px;">🤖 AI Thematic Breakdown</h3>
-            <p style="font-size:14px; color:#666; margin-bottom:16px;">Click a theme to expand it, then select the debates to analyse.</p>
-
-            <form method="POST" action="/debates_analyze" onsubmit="showLoadingAnalyze()">
-                <input type="hidden" name="action" value="analyze">
-                <div style="border:1px solid #e0e0e0; border-radius:6px; background:#fafafa; padding:10px;">
-                    {% for theme, d_list in grouped_debates.items() %}
-                    <details style="margin-bottom:10px; background:white; border:1px solid #e0e0e0; border-radius:6px; overflow:hidden;">
-                        <summary style="padding:15px; font-weight:bold; cursor:pointer; background:#fdfbff; color:#1c3e6e; font-size:16px; border-left:4px solid #6f42c1; list-style:none; display:flex; align-items:center; gap:8px;">
-                            <span style="display:inline-block; width:15px;">▶</span>
-                            {{ theme }}
-                            <span style="font-size:13px; color:#888; font-weight:normal; margin-left:5px;">({{ d_list|length }} sessions)</span>
-                        </summary>
-                        <div style="padding:15px; border-top:1px solid #eee;">
-                            {% for d in d_list %}
-                            <div style="display:flex; align-items:flex-start; gap:15px; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid #f8f9fa;">
-                                <input type="checkbox" name="selected_debates" value="{{ d.url }}||{{ d.title }}||{{ d.date }}" style="width:18px; height:18px; margin-top:2px; cursor:pointer;">
-                                <div style="flex:1;">
-                                    <h4 style="margin:0 0 5px 0; color:#333; font-size:15px; display:flex; align-items:center; gap:10px;">
-                                        <span style="background:#eef2f5; color:#005a8f; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:bold; border:1px solid #d0dce6; white-space:nowrap;">{{ d.type }}</span>
-                                        {{ d.title }}
-                                    </h4>
-                                    <div style="font-size:13px; color:#666; display:flex; gap:15px; flex-wrap:wrap; margin-top:6px;">
-                                        <span>📅 {{ d.date }}</span>
-                                        <span style="color:#d9534f; font-weight:bold;">🎤 {{ d.minister }}</span>
-                                        <span>🗣️ {{ d.contributions }} contributions</span>
-                                        <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">🔗 View Hansard Record</a>
-                                    </div>
-                                </div>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </details>
-                    {% endfor %}
-                </div>
-                <button type="submit" id="btnAnalyze" class="btn btn-purple" style="margin-top:20px; width:100%; padding:14px;">
-                    <span id="btnAnalyzeText">📄 Extract Transcripts &amp; Generate Briefing</span>
-                </button>
-            </form>
-        </div>
         {% endif %}
     </div>
 
@@ -560,8 +454,6 @@
     // Restore correct tab after POST/GET
     if (ACTIVE_MODE === 'minister') {
         showPanel('panel-minister');
-    } else if (ACTIVE_MODE === 'dept') {
-        showPanel('panel-dept');
     } else if (ACTIVE_MODE === 'stakeholder') {
         showPanel('panel-stakeholder');
     } else {
@@ -596,8 +488,10 @@
                 <span style="font-size:12px;color:#555;font-style:italic;">${speeches.length} spoken contribution(s)</span>
                 <button id="${batchId}" class="batch-export-btn"
                     data-color="#166534" data-add-label="☐ Add all to export"
-                    data-active="0"
-                    onclick="toggleBatchExport(this,'speech',${JSON.stringify(name)},window._speechData_${batchId.replace(/-/g,'_')})"
+                    data-active="0" data-type="speech"
+                    data-name="${name.replace(/"/g,'&quot;')}"
+                    data-key="${batchId.replace(/-/g,'_')}"
+                    onclick="onBatchBtnClick(this)"
                     style="font-size:11px;color:#166534;background:none;border:1px solid #166534;border-radius:4px;padding:2px 9px;cursor:pointer;">
                     ☐ Add all to export
                 </button></div>`;
@@ -608,9 +502,9 @@
                 html += `<div style="border-left:3px solid ${col};padding:7px 10px;margin-bottom:8px;background:#f9fafb;border-radius:0 4px 4px 0;">
                     <span style="background:${col};color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;">${s.source_label}</span>
                     <span style="font-size:11px;color:#888;margin-left:6px;">${s.hdate}</span>
-                    <span style="font-size:11px;color:#555;margin-left:4px;">· ${s.debate_title || ''}</span>
+                    <span style="font-size:11px;color:#555;margin-left:4px;">· <a href="https://www.theyworkforyou.com${s.listurl}" target="_blank" style="color:#555;text-decoration:none;">${s.debate_title || ''}</a></span>
                     <p style="margin:5px 0 4px 0;font-size:12px;font-style:italic;">"${snippet}${ellipsis}"</p>
-                    <a href="${s.listurl}" target="_blank" style="font-size:11px;color:${col};">↗ View on Hansard/TWFY</a>
+                    <a href="https://www.theyworkforyou.com${s.listurl}" target="_blank" style="font-size:11px;color:${col};">↗ View on TheyWorkForYou</a>
                 </div>`;
             });
             panel.innerHTML = html;
@@ -657,8 +551,9 @@
                         <span style="font-size:12px;color:#555;">${data.role} · ${data.party} · ${data.pqs.length} PQs${filterNote}</span>
                         <button id="${batchId}" class="batch-export-btn"
                             data-color="#005a8f" data-add-label="☐ Add all to export"
-                            data-active="0"
-                            onclick="toggleBatchExport(this,'pq',${JSON.stringify(name)},loadedPQData[${JSON.stringify(name)}])"
+                            data-active="0" data-type="pq"
+                            data-name="${name.replace(/"/g,'&quot;')}"
+                            onclick="onBatchBtnClick(this)"
                             style="font-size:11px;color:#005a8f;background:none;border:1px solid #005a8f;border-radius:4px;padding:2px 9px;cursor:pointer;">
                             ☐ Add all to export
                         </button></div>`;
@@ -698,6 +593,16 @@
         });
         const counter = document.getElementById('visibleCount');
         if (counter) counter.textContent = visible;
+    }
+
+    function onBatchBtnClick(btn) {
+        const type = btn.dataset.type;
+        const name = btn.dataset.name;
+        const key = btn.dataset.key;
+        const items = type === 'speech'
+            ? (window['_spData_' + key] || [])
+            : (loadedPQData[name] || []);
+        toggleBatchExport(btn, type, name, items);
     }
 
     function showTopicLoading() {

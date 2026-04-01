@@ -94,9 +94,12 @@ def morning_tracker():
         search_mp = request.form.get('mp_name', '').strip()
         results = []
         
-        params = {'take': 200} # Fetch up to 200 to give the AI good data
-        cutoff_date = (datetime.now() - timedelta(days=4)).strftime('%Y-%m-%d')
-        
+        params = {'take': 200}
+        # Look back 14 days to cover weekends and recesses — we'll find the most
+        # recent date with actual results and show only that.
+        window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d')
+
         # --- NEW: MP SEARCH LOGIC ---
         if search_mp:
             try:
@@ -110,8 +113,10 @@ def morning_tracker():
             except Exception as e:
                 error_message = "Error searching for MP database."
         else:
-            # Default Morning Tracker Mode
-            params['tabledWhenFrom'] = cutoff_date
+            # Default Morning Tracker Mode — fetch by due date over last 14 days,
+            # then narrow to the most recent day with results (handles weekends/recess)
+            params['dateForAnswerFrom'] = window_start
+            params['dateForAnswerTo'] = today
             params['questionStatus'] = 'NotAnswered'
             if selected_dept:
                 params['answeringBodies'] = [int(selected_dept)]
@@ -123,7 +128,19 @@ def morning_tracker():
                 
                 if resp.status_code == 200:
                     data = resp.json().get('results') or []
-                    
+
+                    # Narrow to the single most recent due date (last sitting day)
+                    if not search_mp and data:
+                        due_dates = [
+                            (item.get('value') or {}).get('dateForAnswer', '').split('T')[0]
+                            for item in data
+                            if (item.get('value') or {}).get('dateForAnswer')
+                        ]
+                        if due_dates:
+                            last_sitting_day = max(due_dates)
+                            data = [item for item in data
+                                    if (item.get('value') or {}).get('dateForAnswer', '').split('T')[0] == last_sitting_day]
+
                     m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
                     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
                         executor.map(get_member_name, m_ids)
@@ -131,34 +148,36 @@ def morning_tracker():
                     for item in data:
                         val = item.get('value') or {}
                         
-                        raw_date = val.get('dateTabled') or ''
-                        raw_date_str = raw_date.split('T')[0] if raw_date else ''
-                        
                         # Apply strict filters ONLY if we aren't doing an MP deep-dive search
                         if not search_mp:
                             if val.get('answerText') or val.get('dateAnswered'): continue
-                            if raw_date_str < cutoff_date: continue
                             if selected_dept and str(val.get('answeringBodyId')) != selected_dept: continue
 
                         member_id = val.get('askingMemberId')
                         member_name = get_member_name(member_id)
-                        
+
+                        due_date_str = (val.get('dateForAnswer') or '').split('T')[0]
+                        tabled_str = (val.get('dateTabled') or '').split('T')[0]
+                        # Group by due date (the day we must answer); fall back to tabled date for MP search mode
+                        group_date_str = due_date_str if (due_date_str and not search_mp) else tabled_str
+
                         try:
-                            date_obj = datetime.fromisoformat(raw_date_str)
+                            date_obj = datetime.fromisoformat(group_date_str)
                             f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
-                        except: f_date = "N/A"
-                        
+                        except:
+                            f_date = "N/A"
+
                         is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
-                        
+
                         results.append({
                             'dept': val.get('answeringBodyName'),
-                            'uin': str(val.get('uin')), 
+                            'uin': str(val.get('uin')),
                             'member': member_name,
-                            'member_id': member_id, 
-                            'text': val.get('questionText', '').replace('<p>','').replace('</p>',''),
-                            'raw_date': raw_date_str,
+                            'member_id': member_id,
+                            'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
+                            'raw_date': group_date_str,
                             'date_asked': f_date,
-                            'due_date': val.get('dateForAnswer', '').split('T')[0] if val.get('dateForAnswer') else 'TBC',
+                            'due_date': due_date_str or 'TBC',
                             'is_answered': is_answered,
                             'status': "ANSWERED" if is_answered else "UNANSWERED"
                         })
