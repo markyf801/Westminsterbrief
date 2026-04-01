@@ -668,12 +668,14 @@ def debates_topic():
     start_date = ""
     end_date = ""
     house_filter = "all"
+    selected_depts = []
 
     if request.method == 'POST':
         topic = request.form.get('topic', '').strip()
         start_date = request.form.get('start_date', '').strip()
         end_date = request.form.get('end_date', '').strip()
         house_filter = request.form.get('house_filter', 'all')
+        selected_depts = request.form.getlist('dept_filter')
 
         if not topic:
             error_message = "Please enter a topic to search."
@@ -690,6 +692,13 @@ def debates_topic():
                 sources = ['commons', 'westminsterhall', 'lords']
 
             search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
+
+            # Append department keywords to narrow the search
+            if selected_depts:
+                dept_kw_parts = [DEPT_KEYWORDS[d] for d in selected_depts if d in DEPT_KEYWORDS]
+                if dept_kw_parts:
+                    dept_kw = ' OR '.join(dept_kw_parts) if len(dept_kw_parts) > 1 else dept_kw_parts[0]
+                    search_query = f"{search_query} AND ({dept_kw})"
 
             all_rows = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
@@ -781,6 +790,7 @@ def debates_topic():
                            topic_briefing_as_text=topic_briefing_as_text,
                            start_date=start_date, end_date=end_date,
                            house_filter=house_filter,
+                           selected_depts=selected_depts,
                            error_message=error_message,
                            # Dept scan defaults (needed so template doesn't crash)
                            grouped_debates={}, departments=DEPARTMENTS_TWFY,
