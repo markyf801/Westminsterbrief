@@ -693,11 +693,11 @@ def debates_topic():
             else:
                 sources = ['commons', 'westminsterhall', 'lords']
 
-            search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
-
-            # Append narrow keyword if provided
+            # If a narrow keyword is set, skip AI expansion to keep results precise
             if narrow_keyword:
-                search_query = f'{search_query} AND "{narrow_keyword}"'
+                search_query = f'"{topic}" AND "{narrow_keyword}"'
+            else:
+                search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
 
             # Append department keywords to narrow the search
             if selected_depts:
@@ -706,6 +706,9 @@ def debates_topic():
                     dept_kw = ' OR '.join(dept_kw_parts) if len(dept_kw_parts) > 1 else dept_kw_parts[0]
                     search_query = f"{search_query} AND ({dept_kw})"
 
+            # Post-filter: if narrow keyword is set, drop any row that doesn't mention
+            # the topic or narrow keyword in its body text (catches TWFY false positives)
+
             all_rows = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
                 futures = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
@@ -713,6 +716,14 @@ def debates_topic():
                     all_rows.extend(future.result())
 
             topic_rows = deduplicate_by_listurl(all_rows)
+
+            # Post-filter: drop rows that don't mention both topic and narrow keyword
+            if narrow_keyword:
+                must_have = [topic.lower(), narrow_keyword.lower()]
+                topic_rows = [
+                    r for r in topic_rows
+                    if all(kw in (r.get('body_clean') or '').lower() for kw in must_have)
+                ]
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()
