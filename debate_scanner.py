@@ -503,12 +503,21 @@ def debates_topic():
                 error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
             elif GEMINI_API_KEY:
                 try:
-                    top_25 = topic_rows[:25]
+                    # Balanced selection: up to 10 per source so Lords/WH aren't crowded out by Commons
+                    seen_sources = {}
+                    balanced = []
+                    for r in topic_rows:
+                        src = r['source']
+                        if seen_sources.get(src, 0) < 10:
+                            balanced.append(r)
+                            seen_sources[src] = seen_sources.get(src, 0) + 1
+                        if len(balanced) >= 40:
+                            break
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
                          'party': r['speaker_party'], 'date': r['hdate'],
                          'source': r['source_label'], 'text': r['body_clean']}
-                        for r in top_25
+                        for r in balanced
                     ]
                     prompt = (
                         f"You are a senior UK Parliamentary Researcher. Below are the most relevant parliamentary "
