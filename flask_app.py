@@ -4,6 +4,7 @@ import re
 import numpy as np
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash
+from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from extensions import db
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -102,6 +103,13 @@ from cache_models import CachedTranscript, CachedQuestion, CachedMember
 # ==========================================
 with app.app_context():
     db.create_all()
+    # Add has_completed_onboarding to existing user tables that predate this column
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN has_completed_onboarding BOOLEAN DEFAULT FALSE NOT NULL'))
+            conn.commit()
+    except Exception:
+        pass  # Column already exists — nothing to do
     if not User.query.filter_by(email='joe@university.ac.uk').first():
         joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
         joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
