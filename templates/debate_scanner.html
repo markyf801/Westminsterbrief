@@ -113,12 +113,25 @@
         {% endif %}
 
         {% if topic_rows %}
+        {% set debate_types = topic_rows | map(attribute='debate_type') | unique | sort | list %}
         <div style="margin-top:28px;">
-            <h4 style="margin-bottom:12px; color:#444;">{{ topic_rows|length }} contributions found for "{{ topic }}"</h4>
+            <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px; flex-wrap:wrap;">
+                <h4 style="margin:0; color:#444;"><span id="visibleCount">{{ topic_rows|length }}</span> contributions found for "{{ topic }}"</h4>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <label style="font-size:13px; color:#666; white-space:nowrap;">Filter by type:</label>
+                    <select id="typeFilter" onchange="filterCards()" style="font-size:13px; padding:5px 10px; border:1px solid #ddd; border-radius:6px;">
+                        <option value="all">All Types</option>
+                        {% for dt in debate_types %}
+                        <option value="{{ dt }}">{{ dt }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
             {% for r in topic_rows %}
-            <div class="topic-result-card">
+            <div class="topic-result-card" data-type="{{ r.debate_type }}">
                 <div class="topic-source-row">
                     <span class="topic-source-badge topic-source-{{ r.source }}">{{ r.source_label }}</span>
+                    <span style="font-size:12px; color:#888;">{{ r.debate_type }}</span>
                     <span>{{ r.hdate }}</span>
                     <strong>{{ r.speaker_name }}</strong>
                     {% if r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
@@ -261,6 +274,19 @@
         showPanel('panel-topic');
     } else {
         showPanel('panel-dept');
+    }
+
+    function filterCards() {
+        const val = document.getElementById('typeFilter').value;
+        const cards = document.querySelectorAll('.topic-result-card');
+        let visible = 0;
+        cards.forEach(card => {
+            const show = val === 'all' || card.dataset.type === val;
+            card.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+        const counter = document.getElementById('visibleCount');
+        if (counter) counter.textContent = visible;
     }
 
     function showTopicLoading() {

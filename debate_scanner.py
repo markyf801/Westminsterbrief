@@ -102,6 +102,7 @@ def fetch_twfy_topic(search, source_type, date_range, num=50):
             debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
             if source_type == 'wrans':
                 debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
+            dtype = 'Written Answer' if source_type == 'wrans' else get_debate_type(debate_title)
             results.append({
                 'listurl': r.get('listurl', ''),
                 'body_clean': clean_body_text(body_raw)[:500],
@@ -112,6 +113,7 @@ def fetch_twfy_topic(search, source_type, date_range, num=50):
                 'source': source_type,
                 'source_label': get_source_label(source_type),
                 'relevance': r.get('relevance', 0),
+                'debate_type': dtype,
             })
         return results
     except Exception:
