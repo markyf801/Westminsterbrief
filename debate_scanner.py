@@ -408,6 +408,16 @@ def lookup_twfy_person(name):
     if norm_title and norm_title not in variants:
         variants.append(norm_title)
 
+    # If the name has no Lords title prefix, also try with common prefixes.
+    # This handles "Smith of Malvern" → "Baroness Smith of Malvern" for TWFY getLords.
+    lords_prefixes = ['Baroness ', 'Lord ', 'Baron ']
+    has_lords_prefix = any(name.lower().startswith(p.lower()) for p in lords_prefixes + ['The '])
+    if not has_lords_prefix:
+        for prefix in lords_prefixes:
+            candidate = prefix + name
+            if candidate not in variants:
+                variants.append(candidate)
+
     for variant in variants:
         for endpoint, is_lord in [('getMPs', False), ('getLords', True)]:
             try:
