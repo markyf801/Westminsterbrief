@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="box" style="border-top: 8px solid #6f42c1;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="color: #6f42c1; margin: 0;">🏛️ Parliamentary Intelligence Briefing</h2>
+        <span style="background: #eee; padding: 5px 12px; border-radius: 20px; font-size: 13px; font-weight: bold;">
+            Based on {{ selected_count }} Selected Sessions
+        </span>
+    </div>
+
+    <div style="background: white; padding: 25px; border: 1px solid #e0e0e0; border-radius: 8px; line-height: 1.7; font-size: 15.5px; white-space: pre-wrap; color: #333;">
+        {{ briefing | safe }}
+    </div>
+
+    <div style="margin-top: 30px; display: flex; gap: 15px; flex-wrap: wrap;">
+        
+        <button onclick="window.print()" class="btn-search" style="background: #444; flex: 1; min-width: 200px; padding: 14px;">
+            🖨️ Print to PDF
+        </button>
+        
+        <form action="/download_debate_briefing" method="POST" style="flex: 1; display: flex; min-width: 200px; margin: 0;">
+            <input type="hidden" name="briefing_text" value="{{ briefing }}">
+            <button type="submit" class="btn-search" style="background: #28a745; width: 100%; padding: 14px;">
+                📄 Download as Word Document
+            </button>
+        </form>
+
+        <a href="/debates" class="btn-search" style="text-align: center; text-decoration: none; flex: 1; background: #005a8f; min-width: 200px; display: flex; align-items: center; justify-content: center; padding: 14px;">
+            🔙 Back to Scanner
+        </a>
+        
+    </div>
+</div>
+{% endblock %}

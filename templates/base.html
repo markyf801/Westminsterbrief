@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Westminster Brief{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+    <nav class="navbar">
+        <a href="/home" class="brand">🏛️ Westminster Brief</a>
+
+        <a href="/"         {% if request.path == '/' %}class="nav-active"{% endif %}>Written Questions</a>
+        <a href="/tracker"  {% if request.path == '/tracker' %}class="nav-active"{% endif %}>Today's PQs <span class="badge-ai">AI</span></a>
+        <a href="/mp_search"{% if request.path == '/mp_search' %}class="nav-active"{% endif %}>MP PQ Research</a>
+        <a href="/biography"{% if request.path == '/biography' %}class="nav-active"{% endif %}>Biographies</a>
+        <a href="/debates"  {% if request.path == '/debates' %}class="nav-active"{% endif %}>Debate Scanner</a>
+
+        {% if current_user.is_authenticated %}
+            <a href="/my_alerts" class="nav-auth-alerts {% if request.path == '/my_alerts' %}nav-active{% endif %}">👤 My Alerts</a>
+            <a href="/logout" class="nav-logout">Logout</a>
+        {% else %}
+            <a href="/login" class="nav-auth-login {% if request.path == '/login' %}nav-active{% endif %}">Login</a>
+        {% endif %}
+    </nav>
+
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <ul class="flash-messages">
+              {% for category, message in messages %}
+                <li class="flash-{{ category if category != 'message' else 'error' }}">{{ message }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <div class="footer">
+        Contains Parliamentary information licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank">Open Parliament Licence v3.0</a>.
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="box">
+    <h2>☀️ Today’s Unanswered PQs & MP Tracker</h2>
+    
+    <div style="background-color: #f0f7ff; border-left: 4px solid #005a8f; padding: 15px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
+        <p style="margin: 0; color: #1c3e6e; font-size: 14.5px; line-height: 1.6;">
+            <strong>How to use this tracker:</strong><br>
+            • <strong>Department Scan:</strong> Select a department to see questions awaiting a response from the last 4 days.<br>
+            • <strong>MP Search:</strong> Type an MP's name to view their recent question history (both answered and unanswered).<br>
+            Tick the checkboxes next to the policy themes you want, then click <strong>'Generate Word Briefing'</strong> to add AI political analysis or history.
+        </p>
+    </div>
+    
+    <form method="POST" id="trackerForm" onsubmit="showLoading()">
+        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
+            
+            <div style="flex: 1; min-width: 250px;">
+                <label style="display:block; margin-bottom: 8px; font-weight: 600; color: #333;">1. Filter by Department (Last 4 Days):</label>
+                <select name="department" style="padding: 12px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+                    {% for name, id in departments.items() %}
+                        <option value="{{ id }}" {% if selected_dept == id %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="flex: 1; min-width: 250px;">
+                <label style="display:block; margin-bottom: 8px; font-weight: 600; color: #333;">2. OR Search Recent PQs by MP/Peer:</label>
+                <input type="text" name="mp_name" value="{{ search_mp }}" placeholder="e.g., Jack Rankin" style="padding: 12px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+            </div>
+
+        </div>
+        
+        <button type="submit" class="btn-search" id="submitBtn" style="width: 100%; display: flex; justify-content: center; align-items: center; gap: 10px; padding: 14px; margin-top: 10px;">
+            <span id="btnText">Scan & Categorize via AI</span>
+        </button>
+    </form>
+    
+    {% if error_message %}
+        <p style="color: #d9534f; margin-top: 15px; font-weight: bold; background: #ffebeb; padding: 10px; border-radius: 4px;">⚠️ {{ error_message }}</p>
+    {% endif %}
+</div>
+
+{% if is_post and not error_message %}
+    {% if sorted_grouped_results %}
+        
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
+            <button type="button" onclick="openExportModal()" class="btn-search" style="background-color: #28a745; border-radius: 6px; padding: 12px 24px;">
+                ⚙️ Generate Word Briefing...
+            </button>
+        </div>
+
+        {% for raw_date, date_data in sorted_grouped_results.items() %}
+            <div class="box" style="margin-top: 15px; padding: 25px;">
+                <h3 style="color: #1c3e6e; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; margin-top: 0; text-align: left;">
+                    📅 Tabled on: {{ date_data.display_date }}
+                </h3>
+                
+                {% for theme, questions in date_data.themes.items() %}
+                    <details class="theme-block" data-date="{{ date_data.display_date }}" data-theme="{{ theme }}" style="margin-top: 15px; background: #fdfdfd; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; text-align: left;">
+                        
+                        <summary style="padding: 16px; font-weight: bold; color: #005a8f; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background-color: #f8f9fa;">
+                            <div style="flex: 1; text-align: left; padding-right: 15px;">
+                                <span style="line-height: 1.4;">🏷️ {{ theme }}</span>
+                            </div>
+                            <div style="display: flex; align-items: center; justify-content: flex-end; gap: 15px; flex-shrink: 0;">
+                                <input type="checkbox" class="theme-checkbox" onclick="event.stopPropagation();" style="transform: scale(1.3); cursor: pointer; margin: 0;" title="Tick to include in Word download">
+                                <span style="font-size: 13px; color: #666; font-weight: normal; background: #eee; padding: 4px 10px; border-radius: 12px; white-space: nowrap;">
+                                    {{ questions|length }} question(s) ▾
+                                </span>
+                            </div>
+                        </summary>
+                        
+                        <div style="padding: 20px; background: #ffffff; border-top: 1px solid #ddd; text-align: left;">
+                            {% for r in questions %}
+                                <div class="question-item" data-member="{{ r.member }}" data-member_id="{{ r.member_id }}" data-uin="{{ r.uin }}" data-text="{{ r.text }}" data-due="{{ r.due_date }}" data-status="{{ r.status }}" 
+                                     style="border-left: 4px solid {% if r.is_answered %}#28a745{% else %}#d9534f{% endif %}; margin-bottom: 20px; padding: 18px; background: #fafafa; border-radius: 0 6px 6px 0;">
+                                    
+                                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 12px;">
+                                        <div>
+                                            <span style="font-weight: bold; color: {% if r.is_answered %}#28a745{% else %}#d9534f{% endif %}; font-size: 12px; text-transform: uppercase;">[{{ r.status }}]</span> 
+                                            <strong style="color: #1c3e6e; margin-left: 8px;">{{ r.member }}</strong>
+                                        </div>
+                                        <span style="font-size: 13px; color: #888;">UIN: {{ r.uin }}</span>
+                                    </div>
+                                    <p style="margin: 0 0 15px 0; font-style: italic; color: #333; line-height: 1.6;">"{{ r.text }}"</p>
+                                    <div style="font-size: 13px; color: #555;">
+                                        {% if r.dept %}<strong>To:</strong> {{ r.dept }} | {% endif %}
+                                        <strong>Target Answer Date:</strong> {{ r.due_date }}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </details>
+                {% endfor %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="box" style="margin-top: 25px; text-align: center; padding: 40px;">
+            <p style="color: #28a745; font-size: 18px; font-weight: bold;">✅ No recent questions found for this search.</p>
+        </div>
+    {% endif %}
+{% endif %}
+
+<div id="exportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: white; padding: 30px; border-radius: 8px; width: 500px; max-width: 90%; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+        <h3 style="margin-top: 0; color: #1c3e6e; border-bottom: 2px solid #eee; padding-bottom: 10px;">Enhance Word Briefing</h3>
+        <p style="color: #555; font-size: 14px; margin-bottom: 20px;">Select how you want to enhance the downloaded document. <em>Note: Adding AI or History options will cause the download to take 10-15 seconds.</em></p>
+        
+        <form id="downloadForm" action="/download_tracker_word" method="POST">
+            <input type="hidden" name="export_data" id="export_data">
+            <input type="hidden" name="selected_dept" id="selected_dept_export">
+            
+            <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; cursor: pointer; background: #f8f9fa; padding: 12px; border-radius: 6px; border: 1px solid #ddd;">
+                <input type="checkbox" name="include_history" value="true" style="transform: scale(1.2);">
+                <div>
+                    <strong style="display: block; color: #333;">🔍 Include 3-Month Topic History</strong>
+                    <span style="font-size: 12px; color: #666;">Scans for similar questions asked by this MP previously.</span>
+                </div>
+            </label>
+            
+            <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 25px; cursor: pointer; background: #f8f9fa; padding: 12px; border-radius: 6px; border: 1px solid #ddd;">
+                <input type="checkbox" name="include_ai_context" value="true" style="transform: scale(1.2);">
+                <div>
+                    <strong style="display: block; color: #333;">🤖 Add AI Political Context</strong>
+                    <span style="font-size: 12px; color: #666;">Generates a 2-sentence theory on why the MP is asking this right now.</span>
+                </div>
+            </label>
+            
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" onclick="closeExportModal()" style="padding: 10px 15px; background: #ccc; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
+                <button type="button" id="confirmDownloadBtn" onclick="submitDownload()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                    Generate Document
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    details[open] > summary { background-color: #e9ecef; border-bottom: 1px solid #ddd; }
+</style>
+
+<script>
+    function showLoading() {
+        const btn = document.getElementById('submitBtn');
+        const text = document.getElementById('btnText');
+        btn.style.opacity = '0.8';
+        btn.style.cursor = 'wait';
+        text.innerText = "🤖 Organizing by Date & Theme... (Please wait)";
+    }
+
+    function openExportModal() {
+        const selectedThemes = [];
+        const blocks = document.querySelectorAll('.theme-block');
+        
+        blocks.forEach(block => {
+            const checkbox = block.querySelector('.theme-checkbox');
+            if (checkbox && checkbox.checked) {
+                const date = block.getAttribute('data-date');
+                const theme = block.getAttribute('data-theme');
+                const questions = [];
+                
+                block.querySelectorAll('.question-item').forEach(q => {
+                    questions.push({
+                        member: q.getAttribute('data-member'),
+                        member_id: q.getAttribute('data-member_id'),
+                        uin: q.getAttribute('data-uin'),
+                        text: q.getAttribute('data-text'),
+                        due_date: q.getAttribute('data-due'),
+                        status: q.getAttribute('data-status') // Passes Answered vs Unanswered
+                    });
+                });
+                selectedThemes.push({ date: date, theme: theme, questions: questions });
+            }
+        });
+        
+        if (selectedThemes.length === 0) {
+            alert("Please tick the box next to at least one theme to download it.");
+            return;
+        }
+        
+        document.getElementById('export_data').value = JSON.stringify(selectedThemes);
+        document.getElementById('exportModal').style.display = 'flex';
+    }
+
+    function closeExportModal() {
+        document.getElementById('exportModal').style.display = 'none';
+        document.getElementById('confirmDownloadBtn').innerText = "Generate Document";
+        document.getElementById('confirmDownloadBtn').style.opacity = '1';
+    }
+
+    function submitDownload() {
+        const btn = document.getElementById('confirmDownloadBtn');
+        btn.innerText = "Generating... Please wait";
+        btn.style.opacity = '0.7';
+        
+        const currentDept = document.querySelector('select[name="department"]').value;
+        document.getElementById('selected_dept_export').value = currentDept;
+
+        document.getElementById('downloadForm').submit();
+        
+        setTimeout(closeExportModal, 3000);
+    }
+</script>
+{% endblock %}

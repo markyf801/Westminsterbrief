@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Westminster Brief — Parliamentary Research Tools{% endblock %}
+
+{% block content %}
+
+<div class="home-hero">
+    <div class="home-hero-icon">🏛️</div>
+    <div>
+        <h1 class="home-hero-title">Westminster Brief</h1>
+        <p class="home-hero-subtitle">
+            AI-powered tools to search Hansard, track Written Questions, analyse debates, and generate briefings —
+            built for UK government officials and parliamentary researchers.
+        </p>
+    </div>
+</div>
+
+<div class="tool-grid">
+
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon">📝</span>
+            <h3 class="tool-card-title">Written Questions Scanner</h3>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Search Parliamentary Written Questions across both Houses by keyword, department, and date range.
+                Export results to CSV or a formatted Word document for briefings.
+            </p>
+            <a href="/" class="tool-card-link">Open Scanner &rarr;</a>
+        </div>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon">☀️</span>
+            <h3 class="tool-card-title">Today's PQs Tracker</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Morning briefing tool: fetches unanswered questions from the last 4 days and uses AI to group them
+                by policy theme. Includes MP history and one-click Word briefing generation.
+            </p>
+            <a href="/tracker" class="tool-card-link">Open Tracker &rarr;</a>
+        </div>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon">🔍</span>
+            <h3 class="tool-card-title">MP PQ Research</h3>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Search all Written Questions asked by a specific MP or Peer, filtered by department and date.
+                Export a full question history to Word with Parliament.uk links.
+            </p>
+            <a href="/mp_search" class="tool-card-link">Open MP Research &rarr;</a>
+        </div>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon">👤</span>
+            <h3 class="tool-card-title">MP &amp; Lords Biographies</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Generate professional member profiles with AI-synthesised career history, policy interests, and
+                parliamentary activity. Export a polished Word briefing document instantly.
+            </p>
+            <a href="/biography" class="tool-card-link">Open Biographies &rarr;</a>
+        </div>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon">🗣️</span>
+            <h3 class="tool-card-title">Debate Scanner &amp; Analyser</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Search Commons and Lords debates by department and date. AI groups sessions by policy theme,
+                scrapes Hansard transcripts, and generates executive briefings covering ministerial commitments,
+                opposition critique, and key exchanges.
+            </p>
+            <a href="/debates" class="tool-card-link">Open Debate Scanner &rarr;</a>
+        </div>
+    </div>
+
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon">🔔</span>
+            <h3 class="tool-card-title">Smart AI Radar</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Track policy topics across three live sources — Hansard debates, news media, and stakeholder
+                Bluesky accounts. AI semantic filtering surfaces only genuinely relevant updates for your brief.
+            </p>
+            {% if current_user.is_authenticated %}
+                <a href="/my_alerts" class="tool-card-link" style="background:#6f42c1;">Open My Alerts &rarr;</a>
+            {% else %}
+                <a href="/login" class="tool-card-link" style="background:#6f42c1;">Login to Access &rarr;</a>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}

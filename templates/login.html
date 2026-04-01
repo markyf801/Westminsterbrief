@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display: flex; justify-content: center; align-items: center; min-height: 60vh;">
+    <div class="box" style="width: 100%; max-width: 450px; border-top: 5px solid #6f42c1;">
+        <div style="text-align: center; margin-bottom: 25px;">
+            <h2 style="margin-bottom: 10px;">🔐 Intelligence Portal</h2>
+            <p style="color: #666; font-size: 14px;">Log in to access your personalized policy alerts and tracked topics.</p>
+        </div>
+
+        <form method="POST" action="/login">
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; font-weight: 600; color: #1c3e6e; margin-bottom: 8px;">University Email Address</label>
+                <input type="email" name="email" placeholder="joe@university.ac.uk" required 
+                       style="border: 1px solid #ccd0d5; padding: 12px;">
+            </div>
+
+            <div style="margin-bottom: 25px;">
+                <label style="display: block; font-weight: 600; color: #1c3e6e; margin-bottom: 8px;">Security Password</label>
+                <input type="password" name="password" placeholder="••••••••" required
+                       style="border: 1px solid #ccd0d5; padding: 12px;">
+            </div>
+
+            <button type="submit" class="btn-search" style="background: #6f42c1; padding: 16px; font-size: 16px;">
+                Secure Sign In
+            </button>
+        </form>
+
+        <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
+            <p style="font-size: 13px; color: #888; margin: 0;">
+                Authorized personnel only. Access is monitored for parliamentary compliance.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

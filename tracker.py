@@ -1,0 +1,312 @@
+import requests, os, json, re, concurrent.futures, io
+from flask import Blueprint, render_template, request, send_file
+from datetime import datetime, timedelta
+
+try:
+    import docx
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+except ImportError:
+    Document = None
+
+tracker_bp = Blueprint('tracker', __name__)
+api_key = os.environ.get("GEMINI_API_KEY")
+
+DEPARTMENTS = {
+    "All Departments": "", "Department for Education": "60", "Department of Health and Social Care": "17",
+    "HM Treasury": "14", "Home Office": "1", "Ministry of Defence": "11", "Ministry of Justice": "54",
+    "Department for Science, Innovation and Technology": "216", "Cabinet Office": "53"
+}
+MEMBER_CACHE = {}
+
+def add_hyperlink(paragraph, url, text):
+    part = paragraph.part
+    r_id = part.relate_to(url, docx.opc.constants.RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+    hyperlink = OxmlElement('w:hyperlink')
+    hyperlink.set(qn('r:id'), r_id)
+    new_run = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    c = OxmlElement('w:color')
+    c.set(qn('w:val'), '0000FF')
+    rPr.append(c)
+    u = OxmlElement('w:u')
+    u.set(qn('w:val'), 'single')
+    rPr.append(u)
+    new_run.append(rPr)
+    text_element = OxmlElement('w:t')
+    text_element.text = text
+    new_run.append(text_element)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+    return hyperlink
+
+def get_working_model(api_key):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            available = [m['name'] for m in resp.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            for pref in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro', 'models/gemini-1.0-pro']:
+                if pref in available: return pref
+            if available: return available[0]
+    except: pass
+    return "models/gemini-pro"
+
+def get_member_name(member_id):
+    if not member_id: return "Unknown Member"
+    if member_id in MEMBER_CACHE: return MEMBER_CACHE[member_id]
+    try:
+        url = f"https://members-api.parliament.uk/api/Members/{member_id}"
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            name = resp.json().get('value', {}).get('nameDisplayAs', 'Unknown Member')
+            MEMBER_CACHE[member_id] = name
+            return name
+    except: pass
+    return "Unknown Member"
+
+@tracker_bp.route('/tracker', methods=['GET', 'POST'])
+def morning_tracker():
+    sorted_grouped_results = {}
+    error_message = None
+    selected_dept = ""
+    search_mp = ""
+    
+    if request.method == 'POST':
+        selected_dept = request.form.get('department', '').strip()
+        search_mp = request.form.get('mp_name', '').strip()
+        results = []
+        
+        params = {'take': 200} # Fetch up to 200 to give the AI good data
+        cutoff_date = (datetime.now() - timedelta(days=4)).strftime('%Y-%m-%d')
+        
+        # --- NEW: MP SEARCH LOGIC ---
+        if search_mp:
+            try:
+                search_url = f"https://members-api.parliament.uk/api/Members/Search?Name={search_mp}"
+                s_resp = requests.get(search_url, timeout=5)
+                if s_resp.status_code == 200 and s_resp.json().get('items'):
+                    member_id = s_resp.json()['items'][0]['value']['id']
+                    params['askingMemberIds'] = [member_id]
+                else:
+                    error_message = f"Could not find an MP or Peer matching '{search_mp}'. Please check the spelling."
+            except Exception as e:
+                error_message = "Error searching for MP database."
+        else:
+            # Default Morning Tracker Mode
+            params['tabledWhenFrom'] = cutoff_date
+            params['questionStatus'] = 'NotAnswered'
+            if selected_dept:
+                params['answeringBodies'] = [int(selected_dept)]
+
+        if not error_message:
+            try:
+                url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+                resp = requests.get(url, params=params, timeout=30)
+                
+                if resp.status_code == 200:
+                    data = resp.json().get('results') or []
+                    
+                    m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+                        executor.map(get_member_name, m_ids)
+
+                    for item in data:
+                        val = item.get('value') or {}
+                        
+                        raw_date = val.get('dateTabled') or ''
+                        raw_date_str = raw_date.split('T')[0] if raw_date else ''
+                        
+                        # Apply strict filters ONLY if we aren't doing an MP deep-dive search
+                        if not search_mp:
+                            if val.get('answerText') or val.get('dateAnswered'): continue
+                            if raw_date_str < cutoff_date: continue
+                            if selected_dept and str(val.get('answeringBodyId')) != selected_dept: continue
+
+                        member_id = val.get('askingMemberId')
+                        member_name = get_member_name(member_id)
+                        
+                        try:
+                            date_obj = datetime.fromisoformat(raw_date_str)
+                            f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
+                        except: f_date = "N/A"
+                        
+                        is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
+                        
+                        results.append({
+                            'dept': val.get('answeringBodyName'),
+                            'uin': str(val.get('uin')), 
+                            'member': member_name,
+                            'member_id': member_id, 
+                            'text': val.get('questionText', '').replace('<p>','').replace('</p>',''),
+                            'raw_date': raw_date_str,
+                            'date_asked': f_date,
+                            'due_date': val.get('dateForAnswer', '').split('T')[0] if val.get('dateForAnswer') else 'TBC',
+                            'is_answered': is_answered,
+                            'status': "ANSWERED" if is_answered else "UNANSWERED"
+                        })
+                        
+                categories = {}
+                ai_status = "" 
+                
+                if results and api_key:
+                    try:
+                        questions_data = [{"uin": r['uin'], "text": r['text'][:200]} for r in results]
+                        prompt = (
+                            "Categorize these UK Parliamentary questions into highly specific policy themes "
+                            "(e.g., 'SEND', 'Early Years', 'Higher Education Finance'). "
+                            "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
+                            f"Data: {json.dumps(questions_data)}"
+                        )
+                        
+                        model_path = get_working_model(api_key)
+                        ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
+                        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                        
+                        if "1.5" in model_path: payload["generationConfig"] = {"responseMimeType": "application/json"}
+                        
+                        ai_resp = requests.post(ai_url, json=payload, timeout=90)
+                        
+                        if ai_resp.status_code == 200:
+                            raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+                            match = re.search(r'\{.*\}|\[.*\]', raw_text.replace('\n', ' '), re.DOTALL)
+                            if match:
+                                parsed = json.loads(match.group(0))
+                                if isinstance(parsed, list):
+                                    for item in parsed:
+                                        k = str(item.get('uin', item.get('id', '')))
+                                        v = str(item.get('theme', 'Uncategorized'))
+                                        if k: categories[k] = v
+                                elif isinstance(parsed, dict):
+                                    for k, v in parsed.items():
+                                        categories[str(k)] = str(v)
+                            else: ai_status = "(AI Data Mismatch)"
+                        else: ai_status = f"(AI System Code {ai_resp.status_code} on {model_path})"
+                    except Exception as e: ai_status = f"(AI Error: {str(e)[:30]})"
+
+                if results:
+                    temp_group = {}
+                    for r in results:
+                        r_date = r['raw_date']
+                        theme = categories.get(r['uin'])
+                        if not theme: theme = f"Uncategorized {ai_status}".strip()
+                        if r_date not in temp_group: temp_group[r_date] = {'display_date': r['date_asked'], 'themes': {}}
+                        if theme not in temp_group[r_date]['themes']: temp_group[r_date]['themes'][theme] = []
+                        temp_group[r_date]['themes'][theme].append(r)
+                    
+                    for date_key in sorted(temp_group.keys(), reverse=True):
+                        sorted_grouped_results[date_key] = temp_group[date_key]
+                    
+            except Exception as e: error_message = f"Search error: {str(e)}"
+
+    return render_template('tracker.html', sorted_grouped_results=sorted_grouped_results, error_message=error_message, departments=DEPARTMENTS, selected_dept=selected_dept, search_mp=search_mp, is_post=(request.method == 'POST'))
+
+@tracker_bp.route('/download_tracker_word', methods=['POST'])
+def download_tracker_word():
+    if not Document:
+        return "Word generator library missing! Please run 'pip install python-docx' in your PythonAnywhere bash console.", 500
+
+    export_data_str = request.form.get('export_data')
+    include_history = request.form.get('include_history') == 'true'
+    include_ai_context = request.form.get('include_ai_context') == 'true'
+    selected_dept = request.form.get('selected_dept', '').strip()
+
+    if not export_data_str: return "No data provided to download.", 400
+    export_data = json.loads(export_data_str)
+    
+    ai_context_dict = {}
+    if include_ai_context and api_key:
+        flat_questions = []
+        for section in export_data:
+            for q in section['questions']:
+                flat_questions.append({"uin": q['uin'], "member": q['member'], "text": q['text']})
+        
+        try:
+            prompt = (
+                "You are an expert UK political analyst. For each of the following parliamentary questions, "
+                "provide a brief 2-sentence explanation of WHY this specific MP might be asking this right now. "
+                "Consider local constituency issues, party political campaigns, or recent national news. "
+                "Return a pure JSON dictionary where the keys are the UIN strings and the values are your analysis. "
+                f"Data: {json.dumps(flat_questions)}"
+            )
+            model_path = get_working_model(api_key)
+            ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+            if "1.5" in model_path: payload["generationConfig"] = {"responseMimeType": "application/json"}
+            
+            ai_resp = requests.post(ai_url, json=payload, timeout=60)
+            if ai_resp.status_code == 200:
+                raw_text = ai_resp.json()['candidates'][0]['content']['parts'][0]['text']
+                match = re.search(r'\{.*\}', raw_text.replace('\n', ' '), re.DOTALL)
+                if match: ai_context_dict = json.loads(match.group(0))
+        except Exception as e: print(f"AI Context Error: {e}")
+
+    doc = Document()
+    doc.add_heading('Today’s PQs (Enhanced Briefing)', 0)
+    three_months_ago = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+    
+    ignore_words = {'school', 'schools', 'education', 'student', 'students', 'university', 'universities', 'college', 'health', 'nhs', 'funding', 'fund', 'policy', 'department', 'support', 'review', 'system', 'provision', 'england'}
+
+    for section in export_data:
+        theme = section['theme']
+        doc.add_heading(f"📅 {section['date']} - 🏷️ {theme}", level=1)
+        
+        for q in section['questions']:
+            p = doc.add_paragraph()
+            # NEW: Print dynamic status (Answered or Unanswered)
+            p.add_run(f"[{q.get('status', 'UNANSWERED')}] {q['member']} (UIN: {q['uin']})\n").bold = True
+            p.add_run(f"\"{q['text']}\"\n").italic = True
+            p.add_run(f"Due: {q['due_date']}")
+            
+            if include_ai_context:
+                analysis = ai_context_dict.get(str(q['uin']))
+                if analysis:
+                    ai_p = doc.add_paragraph()
+                    ai_run = ai_p.add_run(f"   🤖 AI Political Context: {analysis}")
+                    ai_run.font.color.rgb = RGBColor(100, 100, 100)
+            
+            if include_history and q.get('member_id') and str(q['member_id']).isdigit():
+                try:
+                    hist_params = {'askingMemberId': int(q['member_id']), 'tabledWhenFrom': three_months_ago, 'take': 50}
+                    if selected_dept: hist_params['answeringBodies'] = [int(selected_dept)]
+
+                    hist_resp = requests.get("https://questions-statements-api.parliament.uk/api/writtenquestions/questions", params=hist_params, timeout=10)
+                    
+                    if hist_resp.status_code == 200:
+                        similar_questions_data = []
+                        keywords = [w.lower() for w in re.findall(r'\w+', theme) if len(w) > 3 and w.lower() not in ignore_words and w.lower() != 'uncategorized']
+                        if not keywords: keywords = [w.lower() for w in re.findall(r'\w+', q['text']) if len(w) > 4 and w.lower() not in ignore_words]
+
+                        for h_item in hist_resp.json().get('results', []):
+                            h_val = h_item.get('value', {})
+                            h_uin = str(h_val.get('uin'))
+                            if h_uin == q['uin']: continue 
+                            h_text = h_val.get('questionText', '').replace('<p>','').replace('</p>','')
+                            
+                            if keywords and any(kw in h_text.lower() for kw in keywords):
+                                h_date = (h_val.get('dateTabled') or '').split('T')[0]
+                                h_link = f"https://questions-statements.parliament.uk/written-questions?SearchTerm={h_uin}"
+                                similar_questions_data.append({'uin': h_uin, 'date': h_date, 'text': h_text, 'link': h_link})
+                        
+                        if similar_questions_data:
+                            hp = doc.add_paragraph()
+                            hp.add_run(f"   ↳ 🔍 Previous questions by {q['member']} on this topic (Last 3 Months):").bold = True
+                            for sq in similar_questions_data:
+                                sq_p = doc.add_paragraph()
+                                sq_p.add_run(f"      • [UIN: {sq['uin']} | {sq['date']}] \"{sq['text']}\"\n").italic = True
+                                sq_p.add_run(f"         Link: ").italic = True
+                                add_hyperlink(sq_p, sq['link'], sq['link'])
+                except Exception as e: print(f"History fetch error: {e}")
+            
+    mem_doc = io.BytesIO()
+    doc.save(mem_doc)
+    mem_doc.seek(0)
+    
+    return send_file(
+        mem_doc,
+        as_attachment=True,
+        download_name=f"Today_PQs_Briefing_{datetime.now().strftime('%Y%m%d')}.docx",
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )

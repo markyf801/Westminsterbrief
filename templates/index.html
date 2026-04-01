@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Written Questions Scanner — Westminster Brief{% endblock %}
+
+{% block content %}
+<div class="box">
+    <h2>Written Questions Scanner</h2>
+
+    <form method="POST" action="/">
+        <div class="form-group">
+            <label class="form-label">Search Topic:</label>
+            <input type="text" name="subject" placeholder="Enter subjects separated by commas"
+                   value="{{ request.form.get('subject', '') }}">
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Filter by Department:</label>
+                <select name="department">
+                    {% for name, id in departments.items() %}
+                        <option value="{{ id }}" {% if selected_dept == id %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Filter by House:</label>
+                <select name="house_filter">
+                    <option value="All"     {% if selected_house == 'All'     %}selected{% endif %}>Both Houses</option>
+                    <option value="Commons" {% if selected_house == 'Commons' %}selected{% endif %}>House of Commons</option>
+                    <option value="Lords"   {% if selected_house == 'Lords'   %}selected{% endif %}>House of Lords</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">From Date:</label>
+                <input type="date" name="start_date" value="{{ request.form.get('start_date', '') }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">To Date:</label>
+                <input type="date" name="end_date" value="{{ request.form.get('end_date', '') }}">
+            </div>
+        </div>
+
+        <div class="form-row" style="gap: 10px;">
+            <button type="submit" name="action" value="search" class="btn btn-primary btn-full">Search</button>
+            <button type="submit" name="action" value="csv"    class="btn btn-success btn-full">Export CSV</button>
+            <button type="submit" name="action" value="word"   class="btn btn-purple  btn-full">Export Word</button>
+            <a href="/" class="btn btn-muted btn-full">Clear</a>
+        </div>
+    </form>
+
+    {% if error_message %}
+        <p style="color:#d9534f; margin-top:10px; font-weight:600;">{{ error_message }}</p>
+    {% endif %}
+</div>
+
+{% if results %}
+    <div style="margin-top: 20px;">
+    {% for r in results %}
+        <div class="result-card">
+            <div class="result-card-header">
+                <span class="result-card-dept">{{ r.dept }}</span>
+                <span class="result-card-date">{{ r.date }}</span>
+            </div>
+            <div class="result-card-body">
+                <p style="margin-bottom: 8px;">
+                    <strong>{{ r.name }}</strong> ({{ r.party }}, {{ r.role }}) asked:
+                </p>
+                <p class="result-card-quote">"{{ r.text }}"</p>
+                <a href="{{ r.url }}" target="_blank" class="result-card-link">
+                    Read full answer on Parliament.uk &rarr;
+                </a>
+            </div>
+        </div>
+    {% endfor %}
+    </div>
+{% elif request.method == 'POST' and not error_message %}
+    <div class="box empty-state" style="margin-top: 20px;">
+        <p>No questions found matching those filters.</p>
+    </div>
+{% endif %}
+{% endblock %}

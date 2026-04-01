@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Parliamentary Biographies</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+        input { padding: 10px; width: 300px; font-size: 16px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+        .result { background-color: #f9f9f9; padding: 20px; margin-top: 20px; border-radius: 8px; }
+        pre { white-space: pre-wrap; font-family: inherit; }
+    </style>
+</head>
+<body>
+
+    <h2>Search for a Parliamentarian</h2>
+    
+    <form method="POST">
+        <input type="text" name="mp_name" placeholder="e.g. Keir Starmer" required>
+        <button type="submit">Search</button>
+    </form>
+
+    {% if biography %}
+        <div class="result">
+            <h3>Results for {{ search_name }}:</h3>
+            <pre>{{ biography }}</pre>
+        </div>
+    {% endif %}
+
+</body>
+</html>

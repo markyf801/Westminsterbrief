@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="box" style="background: #e8f4fd; border-left: 5px solid #005a8f; margin-bottom: 25px; padding: 20px;">
+    <h3 style="color: #005a8f; margin-top: 0; margin-bottom: 10px;">🧠 How to use the Smart Radar</h3>
+    <p style="font-size: 14px; color: #333; line-height: 1.5; margin-bottom: 10px;">
+        This system uses <strong>Semantic AI Embeddings</strong>. It doesn't just look for exact words; it understands the <em>meaning</em> of your search across Parliament, Global News, and Bluesky.
+    </p>
+    <ul style="font-size: 13px; color: #555; margin-top: 0; padding-left: 20px; margin-bottom: 0;">
+        <li style="margin-bottom: 5px;"><strong>Don't use single words:</strong> Instead of "funding", use full concepts like <em>"Discussions about universities facing financial bankruptcy or tuition fee caps."</em></li>
+        <li style="margin-bottom: 5px;"><strong>The AI filters the noise:</strong> The scanner will pull broad news for your chosen department, but the AI will only show you the results that conceptually match your prompt.</li>
+        <li><strong>Stakeholder Tracking:</strong> Track specific accounts to see if their public statements align with your policy topics.</li>
+    </ul>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px;">
+    <div class="box" style="margin-bottom: 0; border-top: 5px solid #005a8f;">
+        <h3 style="color: #005a8f; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+            🎯 Smart Policy Radar
+        </h3>
+        
+        <form method="POST" action="/add_topic">
+            <div style="margin-bottom: 10px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Semantic Prompt (Describe what you are looking for)</label>
+                <textarea name="keyword" placeholder="e.g., Are there any debates about capping international student visas to protect domestic numbers?" required style="width: 100%; height: 60px; margin-top: 5px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; resize: none;"></textarea>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Broad API Category (For fetching data)</label>
+                <select name="department" style="margin-top: 5px; width: 100%; padding: 8px;">
+                    <option value="Education">Education</option>
+                    <option value="Treasury">Treasury</option>
+                    <option value="Home Office">Home Office</option>
+                </select>
+            </div>
+            <button type="submit" class="btn-search" style="background: #005a8f; padding: 10px; font-size: 14px; width: 100%; color: white; border: none; border-radius: 4px; cursor: pointer;">Add Smart Topic</button>
+        </form>
+    </div>
+
+    <div class="box" style="margin-bottom: 0; border-top: 5px solid #6f42c1;">
+        <h3 style="color: #6f42c1; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+            👥 Stakeholder Radar
+        </h3>
+        
+        <form method="POST" action="/add_stakeholder">
+            <div style="margin-bottom: 10px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Organization Name</label>
+                <input type="text" name="name" placeholder="e.g., Universities UK" required style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Bluesky Handle</label>
+                <input type="text" name="bsky_handle" placeholder="@uuk.bsky.social" style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+            <button type="submit" class="btn-search" style="background: #6f42c1; padding: 10px; font-size: 14px; width: 100%; color: white; border: none; border-radius: 4px; cursor: pointer;">Add Stakeholder</button>
+        </form>
+    </div>
+</div>
+
+<div class="box" style="text-align: center; background: #fdfbff; border: 1px solid #dcdde1; padding: 20px;">
+    <form method="POST" action="/run_manual_scan" onsubmit="this.querySelector('button').innerText = '🛰️ Running Semantic Analysis...'; this.querySelector('button').style.opacity='0.8';">
+        <button type="submit" style="background: #1c3e6e; color: white; border: none; padding: 15px 35px; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 15px rgba(28,62,110,0.2); transition: 0.3s;">
+            🔄 Run Smart AI Scan (Last 72 Hours)
+        </button>
+    </form>
+    
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for message in messages %}
+          <div style="margin-top: 15px; color: #28a745; font-weight: bold; font-size: 14px; background: #e8f5e9; padding: 10px; border-radius: 8px; display: inline-block;">
+              ✅ {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+</div>
+
+<div class="box">
+    <h3 style="margin-bottom: 20px; color: #1c3e6e; border-bottom: 2px solid #f0f2f5; padding-bottom: 10px;">
+        📂 AI Intelligence Feed
+    </h3>
+    
+    {% if topics %}
+        {% for topic in topics %}
+        <div style="border: 1px solid #e1e4e8; border-radius: 12px; margin-bottom: 25px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.03);">
+            <div style="background: #f8f9fa; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e1e4e8;">
+                <div>
+                    <span style="text-transform: uppercase; font-size: 10px; font-weight: 800; color: #7f8c8d; letter-spacing: 1px;">Semantic Prompt Focus</span>
+                    <h4 style="margin: 0; color: #2c3e50; font-size: 16px;">"{{ topic.keyword }}"</h4>
+                </div>
+                <form action="{{ url_for('remove_topic', topic_id=topic.id) }}" method="POST" onsubmit="return confirm('Stop tracking this topic?');">
+                    <button type="submit" style="background: none; border: 1px solid #ff7675; color: #d63031; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold;">🗑️ Remove</button>
+                </form>
+            </div>
+
+            <div style="padding: 20px;">
+                {% if topic.alerts %}
+                    {% for alert in topic.alerts|sort(attribute='date_found', reverse=True) %}
+                    <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #f1f2f6;">
+                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                            {% if alert.source == 'Hansard' %}
+                                <span style="background: #1c3e6e; color: white; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: bold;">🏛️ PARLIAMENT</span>
+                            {% elif alert.source == 'Media' %}
+                                <span style="background: #00b4d8; color: white; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: bold;">📰 MEDIA</span>
+                            {% else %}
+                                <span style="background: #6f42c1; color: white; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: bold;">📱 BLUESKY</span>
+                            {% endif %}
+                            <span style="font-size: 11px; color: #95a5a6;">{{ alert.date_found.strftime('%d %b %H:%M') }}</span>
+                            <span style="font-size: 10px; color: #27ae60; border: 1px solid #27ae60; border-radius: 10px; padding: 1px 6px;">AI Verified</span>
+                        </div>
+                        
+                        <a href="{{ alert.url }}" target="_blank" style="text-decoration: none; color: #2980b9;">
+                            <h5 style="margin: 0 0 5px 0; font-size: 15px; line-height: 1.3;">{{ alert.title }}</h5>
+                        </a>
+                        <p style="font-size: 13px; color: #576574; margin: 5px 0; line-height: 1.5;">"{{ alert.snippet }}"</p>
+                        <small style="color: #1c3e6e; font-weight: 700;">— {{ alert.speaker }}</small>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p style="color: #bdc3c7; font-style: italic; font-size: 13px; text-align: center; padding: 10px;">
+                        No relevant activity detected. The AI has filtered out unrelated noise.
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div style="text-align: center; padding: 50px; color: #bdc3c7;">
+            <p style="font-size: 18px; margin-bottom: 10px;">Your Smart Radar is empty.</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

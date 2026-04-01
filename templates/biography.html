@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+
+<div class="box">
+    <h2>MP Profiler</h2>
+    <p style="color: #666; font-size: 15px; margin-bottom: 20px;">
+        Search for any Member (MP or Peer) to generate a professional profile.
+    </p>
+
+    <form method="POST" action="/biography">
+        <label style="display:block; margin-bottom: 8px; font-weight: 600; color: #444;">Member Name:</label>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <select name="member_id" id="member-search" style="flex-grow: 1;" required></select>
+            <button type="submit" class="btn-search">Find Member</button>
+        </div>
+    </form>
+    
+    {% if error_message %}
+    <p style="color: #d9534f; margin-top: 10px; font-weight: bold;">{{ error_message }}</p>
+    {% endif %}
+</div>
+
+{% if mp_data %}
+<div class="box" style="margin-top: 20px;">
+    <div style="display: flex; gap: 20px; align-items: flex-start;">
+        <div style="text-align: center; min-width: 160px;">
+            {% if mp_data.image_url %}
+            <img src="{{ mp_data.image_url }}" alt="{{ mp_data.name }}" style="max-width: 150px; border-radius: 5px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            {% endif %}
+            
+            <div style="font-size: 13px; text-align: left; padding: 10px; background: #fdfdfd; border-radius: 5px; border: 1px solid #eee;">
+                <p style="margin-bottom: 8px; font-weight: bold; color: #1c3e6e; border-bottom: 1px solid #ddd; padding-bottom: 4px;">Activity Links</p>
+                <a href="https://hansard.parliament.uk/search/MemberContributions?memberId={{ mp_data.id }}" target="_blank" style="display: block; margin-bottom: 6px; color: #005a8f; text-decoration: none;">🗣️ Spoken (Hansard)</a>
+                <a href="https://members.parliament.uk/member/{{ mp_data.id }}/writtenquestions" target="_blank" style="display: block; margin-bottom: 6px; color: #005a8f; text-decoration: none;">📝 Written Questions</a>
+                <a href="https://www.theyworkforyou.com/search/?pid={{ mp_data.id }}" target="_blank" style="display: block; color: #005a8f; text-decoration: none;">📊 TheyWorkForYou</a>
+            </div>
+        </div>
+
+        <div style="flex-grow: 1;">
+            <h2 style="margin-top: 0;">{{ mp_data.name }}</h2>
+            <p style="margin: 5px 0;"><strong>Party:</strong> {{ mp_data.party }}</p>
+            <p style="margin: 5px 0;"><strong>Constituency/Membership:</strong> {{ mp_data.constituency }}</p>
+            
+            <button id="generateBtn" class="btn-search" style="margin-top: 15px; display: inline-flex; align-items: center; gap: 10px;" onclick="generateProfile()">
+                <span id="btnText">Generate AI Profile</span>
+                <span id="btnSpinner" class="spinner"></span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="ai-section" class="box" style="margin-top: 20px; border-top: 4px solid #005a8f; display: none;">
+    <h3 style="margin-bottom: 15px;">🤖 AI-Enhanced History & Interests</h3>
+    
+    <div id="bio-loading-container">
+        <p id="bio-status-label" style="color: #666; font-style: italic;">
+            Analyzing parliamentary records... (may take up to 30 seconds)
+        </p>
+    </div>
+
+    <div id="bio-content" style="display: none;">
+        <div id="bio-text" style="font-size: 15px; line-height: 1.6;"></div>
+        
+        <div style="margin-top: 25px; text-align: right; border-top: 1px solid #eee; padding-top: 15px;">
+            <form method="POST" action="/export_biography_word">
+                <input type="hidden" name="mp_name" value="{{ mp_data.name }}">
+                <input type="hidden" name="party" value="{{ mp_data.party }}">
+                <input type="hidden" name="constituency" value="{{ mp_data.constituency }}">
+                <input type="hidden" name="image_url" value="{{ mp_data.image_url }}">
+                <input type="hidden" name="bio_text" id="hidden-bio-text">
+                
+                <button type="submit" class="btn-search" style="background: #1c3e6e;">📄 Export Professional Briefing</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+    .spinner {
+        display: none; 
+        width: 16px; 
+        height: 16px; 
+        border: 2px solid rgba(255,255,255,0.3); 
+        border-top: 2px solid #fff; 
+        border-radius: 50%; 
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    
+    /* Dropdown Styling */
+    .select2-container--default .select2-selection--single {
+        height: 40px;
+        padding: 5px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+    .box a:hover { text-decoration: underline !important; }
+</style>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<script>
+    $(document).ready(function() {
+        // Initialize the searchable dropdown
+        $('#member-search').select2({
+            placeholder: 'Start typing a name (e.g. Jacqui Smith)...',
+            minimumInputLength: 3,
+            ajax: {
+                url: '/api/search_members',
+                dataType: 'json',
+                delay: 250,
+                processResults: function (data) {
+                    return { results: data.results };
+                }
+            }
+        });
+    });
+
+    async function generateProfile() {
+        const btn = document.getElementById('generateBtn');
+        const text = document.getElementById('btnText');
+        const spinner = document.getElementById('btnSpinner');
+        const section = document.getElementById('ai-section');
+        const bioContent = document.getElementById('bio-content');
+        const loadingContainer = document.getElementById('bio-loading-container');
+
+        btn.disabled = true;
+        text.innerText = "Processing...";
+        spinner.style.display = 'block';
+        section.style.display = 'block';
+        loadingContainer.style.display = 'block';
+        bioContent.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/biography', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    mp_name: "{{ mp_data.name if mp_data else '' }}", 
+                    member_id: "{{ mp_data.id if mp_data else '' }}"
+                })
+            });
+            const data = await response.json();
+            
+            if (data.biography) {
+                document.getElementById('bio-text').innerHTML = marked.parse(data.biography);
+                document.getElementById('hidden-bio-text').value = data.biography;
+                loadingContainer.style.display = 'none';
+                bioContent.style.display = 'block';
+            }
+        } catch (error) {
+            document.getElementById('bio-status-label').textContent = "Connection error. Please reload and try again.";
+        } finally {
+            btn.disabled = false;
+            text.innerText = "Update AI Profile";
+            spinner.style.display = 'none';
+        }
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="box">
+    <h2>🔍 Search PQs by MP or Peer</h2>
+    
+    <div style="background-color: #f0f7ff; border-left: 4px solid #005a8f; padding: 15px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
+        <p style="margin: 0; color: #1c3e6e; font-size: 14.5px; line-height: 1.6;">
+            <strong>How to use this tool:</strong> Enter the name of an MP or Peer to retrieve their recent Written Questions. 
+            You can optionally narrow the results by selecting a specific Department or a Date Range. Once loaded, click the green button to export a clean briefing document.
+        </p>
+    </div>
+    
+    <form method="POST" onsubmit="showLoading()">
+        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 250px;">
+                <label style="display:block; margin-bottom: 8px; font-weight: 600;">1. MP or Peer Name (Required):</label>
+                <input type="text" name="mp_name" value="{{ search_mp }}" placeholder="e.g., Layla Moran" required style="padding: 12px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+            </div>
+            <div style="flex: 1; min-width: 250px;">
+                <label style="display:block; margin-bottom: 8px; font-weight: 600;">2. Filter by Department (Optional):</label>
+                <select name="department" style="padding: 12px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+                    {% for name, id in departments.items() %}
+                        <option value="{{ id }}" {% if selected_dept == id %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 250px;">
+                <label style="display:block; margin-bottom: 8px; font-weight: 600;">3. Start Date (Optional):</label>
+                <input type="date" name="start_date" value="{{ start_date }}" style="padding: 12px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+            </div>
+            <div style="flex: 1; min-width: 250px;">
+                <label style="display:block; margin-bottom: 8px; font-weight: 600;">4. End Date (Optional):</label>
+                <input type="date" name="end_date" value="{{ end_date }}" style="padding: 12px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+            </div>
+        </div>
+        
+        <button type="submit" class="btn-search" id="submitBtn" style="width: 100%; display: flex; justify-content: center; align-items: center; gap: 10px; padding: 14px; margin-top: 10px;">
+            <span id="btnText">Search Parliamentary Record</span>
+        </button>
+    </form>
+    
+    {% if error_message %}
+        <p style="color: #d9534f; margin-top: 15px; font-weight: bold; background: #ffebeb; padding: 10px; border-radius: 4px;">⚠️ {{ error_message }}</p>
+    {% endif %}
+</div>
+
+{% if is_post and not error_message %}
+    {% if results %}
+        
+        <div class="box" style="margin-top: 20px; padding: 20px; background: #fdfdfd; border-left: 5px solid #1c3e6e;">
+            <h2 style="margin-top: 0; color: #1c3e6e; margin-bottom: 10px;">👤 {{ mp_details.name }}</h2>
+            <div style="display: flex; gap: 20px; font-size: 15px; color: #555;">
+                <span><strong>Party:</strong> {{ mp_details.party }}</span>
+                <span><strong>Role:</strong> {{ mp_details.role }}</span>
+                <span><strong>Total PQs Found:</strong> {{ results|length }}</span>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
+            <form id="downloadForm" action="/download_mp_word" method="POST">
+                <input type="hidden" name="export_data" id="export_data">
+                <button type="button" onclick="downloadWord()" class="btn-search" style="background-color: #28a745; border-radius: 6px; padding: 12px 24px;">
+                    ⬇️ Download to Word
+                </button>
+            </form>
+        </div>
+
+        <div class="box" style="margin-top: 15px; padding: 25px;">
+            {% for r in results %}
+                <div class="question-item" data-uin="{{ r.uin }}" data-dept="{{ r.dept }}" data-text="{{ r.text }}" data-date="{{ r.date }}" data-status="{{ r.status }}" data-link="{{ r.link }}"
+                     style="border-left: 4px solid {% if r.status == 'ANSWERED' %}#28a745{% else %}#d9534f{% endif %}; margin-bottom: 20px; padding: 18px; background: #fafafa; border-radius: 0 6px 6px 0;">
+                    
+                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 12px;">
+                        <div>
+                            <span style="font-weight: bold; color: {% if r.status == 'ANSWERED' %}#28a745{% else %}#d9534f{% endif %}; font-size: 12px; text-transform: uppercase;">[{{ r.status }}]</span> 
+                            <strong style="color: #1c3e6e; margin-left: 8px;">To: {{ r.dept }}</strong>
+                        </div>
+                        <span style="font-size: 13px; color: #888;">Date: {{ r.date }} | UIN: {{ r.uin }}</span>
+                    </div>
+                    <p style="margin: 0 0 15px 0; font-style: italic; color: #333; line-height: 1.6;">"{{ r.text }}"</p>
+                    <div style="font-size: 13px;">
+                        <a href="{{ r.link }}" target="_blank" style="color: #005a8f; text-decoration: none; font-weight: bold;">🔗 View on Parliament Website</a>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+        
+        <script>
+            // Pass MP info to JS so we can send it to the Word document exporter
+            const mpDetails = {{ mp_details|tojson|safe }};
+            
+            function downloadWord() {
+                const questions = [];
+                document.querySelectorAll('.question-item').forEach(q => {
+                    questions.push({
+                        uin: q.getAttribute('data-uin'),
+                        dept: q.getAttribute('data-dept'),
+                        text: q.getAttribute('data-text'),
+                        date: q.getAttribute('data-date'),
+                        status: q.getAttribute('data-status'),
+                        link: q.getAttribute('data-link')
+                    });
+                });
+                
+                const payload = {
+                    mp_details: mpDetails,
+                    questions: questions
+                };
+                
+                document.getElementById('export_data').value = JSON.stringify(payload);
+                document.getElementById('downloadForm').submit();
+            }
+        </script>
+
+    {% else %}
+        <div class="box" style="margin-top: 25px; text-align: center; padding: 40px;">
+            <p style="color: #28a745; font-size: 18px; font-weight: bold;">✅ No questions found for this search criteria.</p>
+        </div>
+    {% endif %}
+{% endif %}
+
+<script>
+    function showLoading() {
+        const btn = document.getElementById('submitBtn');
+        const text = document.getElementById('btnText');
+        btn.style.opacity = '0.8';
+        btn.style.cursor = 'wait';
+        text.innerText = "🔍 Searching Database... (Please wait)";
+    }
+</script>
+{% endblock %}

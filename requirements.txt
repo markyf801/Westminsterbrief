@@ -1,0 +1,14 @@
+Flask==3.0.2
+gunicorn==21.2.0
+Flask-SQLAlchemy==3.1.1
+Flask-Login==0.6.3
+requests==2.31.0
+python-docx==1.1.0
+wikipedia==1.4.0
+google-generativeai==0.8.3
+google-genai==1.0.0
+python-dotenv==1.0.1
+newsapi-python==0.2.7
+atproto==0.0.55
+numpy==1.26.4
+werkzeug==3.0.1
