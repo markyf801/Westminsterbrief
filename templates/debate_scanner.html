@@ -92,7 +92,9 @@
                                 <span class="topic-party-badge">{{ s.role }}</span>
                                 <span style="background:#fef9c3; color:#854d0e; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; margin-left:4px;">Government (AI)</span>
                             {% endif %}
+                            <button onclick="toggleSpeeches(this, '{{ s.name | e }}')" style="font-size:11px; color:#166534; background:none; border:1px solid #166534; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View Speeches</button>
                             <br><span style="font-size:12px; color:#555;">{{ s.stance }}</span>
+                            <div class="speech-expand" style="display:none; margin-top:8px;"></div>
                         </li>
                         {% endfor %}
                     </ul>
@@ -420,6 +422,8 @@
 
 <script>
     const ACTIVE_MODE = "{{ mode or 'topic' }}";
+    // All contributions from this search, keyed for speech lookup
+    const ALL_CONTRIBUTIONS = {{ (topic_rows or []) | tojson | safe }};
 
     function showPanel(targetId) {
         document.querySelectorAll('.scanner-panel').forEach(p => p.classList.remove('active'));
@@ -443,6 +447,51 @@
         showPanel('panel-stakeholder');
     } else {
         showPanel('panel-topic');
+    }
+
+    function toggleSpeeches(btn, name) {
+        const li = btn.closest('li');
+        const panel = li.querySelector('.speech-expand');
+        if (panel.style.display !== 'none') {
+            panel.style.display = 'none';
+            btn.textContent = '▶ View Speeches';
+            return;
+        }
+        if (panel.dataset.loaded) {
+            panel.style.display = 'block';
+            btn.textContent = '▼ Hide Speeches';
+            return;
+        }
+        // Filter the already-loaded search results to this speaker
+        const normName = name.toLowerCase().trim();
+        const speeches = ALL_CONTRIBUTIONS.filter(r =>
+            r.speaker_name && r.speaker_name.toLowerCase().trim() === normName
+        );
+        if (speeches.length === 0) {
+            panel.innerHTML = '<p style="color:#888;font-size:12px;">No contributions from this minister found in the current search results.</p>';
+        } else {
+            const srcColours = {
+                'commons': '#1a56a6', 'westminsterhall': '#b45309',
+                'lords': '#6f42c1', 'wrans': '#166534'
+            };
+            let html = `<div style="font-size:12px;color:#555;margin-bottom:8px;font-style:italic;">${speeches.length} contribution(s) in this search</div>`;
+            speeches.forEach(s => {
+                const col = srcColours[s.source] || '#555';
+                const snippet = (s.body_clean || '').substring(0, 250);
+                const ellipsis = (s.body_clean || '').length > 250 ? '…' : '';
+                html += `<div style="border-left:3px solid ${col};padding:7px 10px;margin-bottom:8px;background:#f9fafb;border-radius:0 4px 4px 0;">
+                    <span style="background:${col};color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;">${s.source_label}</span>
+                    <span style="font-size:11px;color:#888;margin-left:6px;">${s.hdate}</span>
+                    <span style="font-size:11px;color:#555;margin-left:4px;">· ${s.debate_title || ''}</span>
+                    <p style="margin:5px 0 4px 0;font-size:12px;font-style:italic;">"${snippet}${ellipsis}"</p>
+                    <a href="${s.listurl}" target="_blank" style="font-size:11px;color:${col};">↗ View on Hansard/TWFY</a>
+                </div>`;
+            });
+            panel.innerHTML = html;
+        }
+        panel.dataset.loaded = '1';
+        panel.style.display = 'block';
+        btn.textContent = '▼ Hide Speeches';
     }
 
     function togglePQs(btn, name, topic) {
