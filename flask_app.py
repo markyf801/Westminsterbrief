@@ -111,6 +111,14 @@ def home():
 def robots():
     return app.send_static_file('robots.txt')
 
+@app.route('/terms')
+def terms():
+    return render_template('terms.html')
+
+@app.route('/privacy')
+def privacy():
+    return render_template('privacy.html')
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':

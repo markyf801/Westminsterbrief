@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Privacy Policy — Westminster Brief{% endblock %}
+
+{% block content %}
+<div class="box">
+    <h2>Privacy Policy</h2>
+    <p style="color:#888; font-size:13px; margin-bottom:28px;">Last updated: April 2026</p>
+
+    <h3>1. Who We Are</h3>
+    <p>Westminster Brief (<strong>westminsterbrief.co.uk</strong>) is an independent parliamentary research tool. This policy explains what personal data we collect, why, and how we protect it.</p>
+
+    <h3>2. Data We Collect</h3>
+    <h4>Account data</h4>
+    <p>When you register, we store:</p>
+    <ul>
+        <li>Your <strong>email address</strong> — used to identify your account and for any service communications</li>
+        <li>A <strong>hashed password</strong> — we never store your password in plain text</li>
+    </ul>
+    <h4>Usage data (Smart Alerts)</h4>
+    <p>If you use the Smart Alerts feature, we store the keywords and stakeholders you choose to track so we can run scans on your behalf. This data is linked to your account and deleted if you remove the item or close your account.</p>
+    <h4>Cached parliamentary data</h4>
+    <p>To reduce API load times, we cache publicly available parliamentary data (questions, member details, debate transcripts). This contains no personal data about you — it is public record data about MPs and parliamentary proceedings.</p>
+    <h4>Data we do NOT collect</h4>
+    <ul>
+        <li>We do not use cookies for tracking or analytics</li>
+        <li>We do not collect IP addresses or browsing behaviour</li>
+        <li>We do not share any data with third parties for advertising</li>
+    </ul>
+
+    <h3>3. How We Use Your Data</h3>
+    <ul>
+        <li><strong>Email address</strong> — to manage your account login and, if you opt in, send service updates</li>
+        <li><strong>Tracked topics / stakeholders</strong> — solely to power your Smart Alerts scans</li>
+    </ul>
+    <p>We do not sell, rent, or share your personal data with any third party, except as required to operate the service (see section 4).</p>
+
+    <h3>4. Third-Party Services</h3>
+    <p>Westminster Brief is hosted on <strong>Railway</strong> (railway.app), which processes data on servers in the United States. By using this service you consent to this transfer. Railway's privacy policy is available at <a href="https://railway.app/legal/privacy" target="_blank">railway.app/legal/privacy</a>.</p>
+    <p>Search queries (not your account data) are sent to <strong>Google Gemini API</strong> to generate AI summaries. Google's data handling for API calls is governed by Google's API terms of service. We do not send your email address or account information to Google.</p>
+
+    <h3>5. Data Retention</h3>
+    <ul>
+        <li>Account data is retained for as long as your account is active</li>
+        <li>Alert history is retained until you delete the alert or your account</li>
+        <li>Cached parliamentary data has a rolling 7-day TTL for member data; transcript and question caches are permanent (they are public records that do not change)</li>
+    </ul>
+
+    <h3>6. Your Rights (UK GDPR)</h3>
+    <p>Under UK GDPR you have the right to:</p>
+    <ul>
+        <li><strong>Access</strong> the personal data we hold about you</li>
+        <li><strong>Correct</strong> inaccurate data</li>
+        <li><strong>Delete</strong> your account and associated personal data</li>
+        <li><strong>Object</strong> to processing in certain circumstances</li>
+    </ul>
+    <p>To exercise any of these rights, contact us via the feedback link on the home page. We will respond within 30 days.</p>
+
+    <h3>7. Security</h3>
+    <p>Passwords are stored using industry-standard one-way hashing (PBKDF2-SHA256). All data in transit is encrypted via HTTPS. We take reasonable technical precautions to protect your data, but no internet service can guarantee absolute security.</p>
+
+    <h3>8. Changes to This Policy</h3>
+    <p>We may update this policy as the service evolves. The date at the top of this page reflects the most recent revision. Significant changes will be communicated via the service.</p>
+
+    <h3>9. Contact</h3>
+    <p>For any privacy-related queries, please use the feedback link on the home page.</p>
+</div>
+{% endblock %}
