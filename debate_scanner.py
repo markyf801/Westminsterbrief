@@ -1,13 +1,11 @@
 import requests, os, json, re, io, concurrent.futures, time
-from flask import Blueprint, render_template, request, send_file, jsonify
+from flask import Blueprint, render_template, request, send_file
 from datetime import datetime
 from cache_models import CachedTranscript
 
 # Import Word Document libraries
 try:
-    import docx
     from docx import Document
-    from docx.shared import Pt, RGBColor
 except ImportError:
     Document = None
 
