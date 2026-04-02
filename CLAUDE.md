@@ -161,6 +161,27 @@ This is a live, high-stakes policy area (student loan repayments is currently a 
 - Debates are the unit of meaning, not individual speeches
 - Lords ministers (e.g. Baroness Smith of Malvern) are easy to miss — name normalisation must handle "Baroness X of Y" patterns
 
+### Minister substitution — a known real-world complication
+Ministers are regularly absent (illness, clashes, recess duties) and are covered by substitutes. This breaks name-based minister detection in several ways:
+
+**In the Lords specifically:**
+- Each department has a Lords spokesperson (e.g. Baroness Smith of Malvern for DfE)
+- If they are absent or unwell, ANY government peer may cover — a whip, a Lord from a different dept, or a junior minister
+- The covering peer will NOT appear in GOV.UK's DfE minister listing
+- The Hansard record gives NO indication they were covering — it just shows their name
+- Confirmed real case: Baroness Smith of Malvern (DfE, Skills) has been unwell; another Lords peer has covered her education duties
+
+**In the Commons:**
+- Secretary of State may answer instead of Minister of State
+- A PPS or adjacent minister may cover for a specific session
+
+**Implications for the tool:**
+- Do NOT rely solely on GOV.UK department listings to identify ministerial voices in Lords debates
+- A government peer (Lord in Waiting, Baroness in Waiting, any government whip) speaking in a DfE-topic Lords debate should be treated as a probable departmental spokesperson
+- Name-based minister search ("find all Baroness Smith debates") will miss debates where her substitute spoke
+- Topic search → full session fetch is MORE reliable than name search for Lords, precisely because it finds the session first and shows whoever spoke for the government in it
+- When displaying Lords results, consider flagging government peers broadly, not just the named departmental minister
+
 ## Things to avoid
 - Don't use port 5432 for Supabase if ever added — use the connection pooler on 6543
 - Don't hardcode API keys or .env paths
