@@ -55,6 +55,19 @@ DEPT_KEYWORDS = {
     "Cabinet Office": '("Cabinet Office" OR "Civil Service")'
 }
 
+PARLIAMENT_WQ_API = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+PARLIAMENT_DEPT_IDS = {
+    "Department for Education": 60, "Department of Health and Social Care": 17,
+    "HM Treasury": 14, "Home Office": 1, "Ministry of Defence": 11,
+    "Ministry of Justice": 54, "Department for Science, Innovation and Technology": 216,
+    "Cabinet Office": 53,
+}
+PARTY_COLOURS_RESEARCH = {
+    'Labour': '#E4003B', 'Conservative': '#0087DC', 'Liberal Democrat': '#FAA61A',
+    'Scottish National Party': '#FDF38E', 'Green Party': '#02A95B', 'Reform UK': '#12B6CF',
+    'Plaid Cymru': '#005B54', 'Democratic Unionist Party': '#D46A4C',
+}
+
 def get_working_model(api_key):
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
@@ -226,6 +239,66 @@ def expand_search_query(topic, api_key):
     except Exception:
         pass
     return f'"{topic}"'
+
+
+def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
+    """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count)."""
+    try:
+        params = {'searchTerm': topic, 'take': limit, 'skip': 0}
+        if start_date:
+            params['tabledWhenFrom'] = start_date
+        if end_date:
+            params['tabledWhenTo'] = end_date
+        dept_ids = [PARLIAMENT_DEPT_IDS[d] for d in selected_depts if d in PARLIAMENT_DEPT_IDS]
+        if dept_ids:
+            params['answeringBodies'] = dept_ids
+        resp = requests.get(PARLIAMENT_WQ_API, params=params, timeout=20)
+        if resp.status_code != 200:
+            return [], 0
+        data = resp.json()
+        total = data.get('totalResults', 0)
+        results = []
+        for item in data.get('results', []):
+            val = item.get('value', {})
+            raw_date = (val.get('dateTabled') or '').split('T')[0]
+            date_ans = (val.get('dateAnswered') or '').split('T')[0]
+            is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
+            is_withdrawn = bool(val.get('isWithdrawn'))
+            is_holding = (is_answered and not is_withdrawn and
+                          'i will write' in (val.get('answerText') or '').lower()[:200])
+            uin = str(val.get('uin', ''))
+            answer_raw = val.get('answerText') or ''
+            answer_clean = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', answer_raw)).strip()
+            q_text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', val.get('questionText') or '')).strip()
+            asking = val.get('askingMember') or {}
+            party = asking.get('party', '')
+            membership = asking.get('latestHouseMembership') or {}
+            house = 'Lords' if membership.get('house') == 2 else 'Commons'
+            constituency = membership.get('membershipFrom', '')
+            role = 'Life Peer' if house == 'Lords' else (f'MP for {constituency}' if constituency else 'MP')
+            minister = val.get('answeringMember') or {}
+            results.append({
+                'uin': uin,
+                'dept': val.get('answeringBodyName', ''),
+                'question_text': q_text,
+                'answer_text': answer_clean[:1500],
+                'answering_minister': minister.get('name', ''),
+                'asking_mp': asking.get('name') or asking.get('listAs', ''),
+                'role': role,
+                'party': party,
+                'party_colour': PARTY_COLOURS_RESEARCH.get(party, '#888'),
+                'date_tabled': raw_date,
+                'date_answered': date_ans,
+                'is_answered': is_answered,
+                'is_holding': is_holding,
+                'is_withdrawn': is_withdrawn,
+                'heading': val.get('heading', ''),
+                'url': f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date}/{uin}",
+            })
+        return results, total
+    except Exception:
+        return [], 0
+
 
 def _display_name(title):
     """Strip honorifics/post-nominals from a GOV.UK title for clean display.
@@ -684,6 +757,11 @@ def scan_debates():
 @debate_scanner_bp.route('/debates_topic', methods=['GET', 'POST'])
 def debates_topic():
     topic_rows = []
+    oral_rows = []
+    statement_rows = []
+    debate_rows = []
+    wq_rows = []
+    wq_total = 0
     topic_briefing = None
     topic_briefing_as_text = ""
     error_message = None
@@ -713,9 +791,9 @@ def debates_topic():
             if house_filter == 'lords_only':
                 sources = ['lords', 'wms']
             elif house_filter == 'commons_only':
-                sources = ['commons', 'westminsterhall', 'wrans', 'wms']
+                sources = ['commons', 'westminsterhall', 'wms']
             else:
-                sources = ['commons', 'westminsterhall', 'lords', 'wrans', 'wms']
+                sources = ['commons', 'westminsterhall', 'lords', 'wms']
 
             # If a narrow keyword is set, skip AI expansion to keep results precise
             if narrow_keyword:
@@ -730,14 +808,24 @@ def debates_topic():
                     dept_kw = ' OR '.join(dept_kw_parts) if len(dept_kw_parts) > 1 else dept_kw_parts[0]
                     search_query = f"{search_query} AND ({dept_kw})"
 
-            # Post-filter: if narrow keyword is set, drop any row that doesn't mention
-            # the topic or narrow keyword in its body text (catches TWFY false positives)
-
+            # Run TWFY debate search AND Parliament WQ API in parallel
             all_rows = []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                futures = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
-                for future in concurrent.futures.as_completed(futures):
-                    all_rows.extend(future.result())
+
+            def _do_wq_fetch():
+                return _fetch_topic_wqs(topic, start_date, end_date, selected_depts)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                twfy_futs = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
+                wq_fut = executor.submit(_do_wq_fetch)
+                all_futs = list(twfy_futs.keys()) + [wq_fut]
+                for future in concurrent.futures.as_completed(all_futs):
+                    if future is wq_fut:
+                        try:
+                            wq_rows, wq_total = future.result()
+                        except Exception:
+                            pass
+                    else:
+                        all_rows.extend(future.result())
 
             topic_rows = deduplicate_by_listurl(all_rows)
 
@@ -816,9 +904,18 @@ def debates_topic():
                 except Exception:
                     topic_briefing = None
 
+            # Split TWFY rows into display sections
+            oral_rows = [r for r in topic_rows if r.get('debate_type') == '🗣️ Oral Question']
+            statement_rows = [r for r in topic_rows if r.get('source') == 'wms']
+            debate_rows = [r for r in topic_rows
+                           if r.get('debate_type') != '🗣️ Oral Question' and r.get('source') != 'wms']
+
     return render_template('debate_scanner.html',
                            mode='topic',
                            topic=topic, topic_rows=topic_rows,
+                           oral_rows=oral_rows, statement_rows=statement_rows,
+                           debate_rows=debate_rows,
+                           wq_rows=wq_rows, wq_total=wq_total,
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
                            start_date=start_date, end_date=end_date,
@@ -827,7 +924,6 @@ def debates_topic():
                            selected_depts=selected_depts,
                            user_pref=user_pref,
                            error_message=error_message,
-                           # Dept scan defaults (needed so template doesn't crash)
                            grouped_debates={}, departments=DEPARTMENTS_TWFY,
                            selected_dept="All Departments", selected_house="all",
                            content_type="exclude_bills", is_post=True,
@@ -1206,5 +1302,120 @@ def export_custom_briefing():
 
     safe_topic = re.sub(r'[^\w\s-]', '', topic)[:40].strip()
     filename = f"Brief - {safe_topic} - {datetime.now().strftime('%Y%m%d')}.docx"
+    return send_file(mem_doc, as_attachment=True, download_name=filename,
+                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+
+
+# ==========================================
+# ROUTE 8: SECTIONED RESEARCH BRIEF DOWNLOAD
+# ==========================================
+@debate_scanner_bp.route('/download_research_brief', methods=['POST'])
+def download_research_brief():
+    if not Document:
+        return "Word library missing.", 500
+
+    topic = request.form.get('topic', 'Parliamentary Research').strip()
+    briefing_text = request.form.get('briefing_text', '')
+    sections_json = request.form.get('sections_json', '[]')
+    try:
+        sections = json.loads(sections_json)
+    except Exception:
+        sections = []
+
+    doc = Document()
+
+    # Title block
+    h = doc.add_heading('Parliamentary Research Brief', 0)
+    h.alignment = 1
+    sub = doc.add_paragraph(f'Topic: {topic}')
+    sub.alignment = 1
+    sub.runs[0].bold = True
+    date_p = doc.add_paragraph(f'Generated: {datetime.now().strftime("%d %B %Y")}')
+    date_p.alignment = 1
+    doc.add_paragraph()
+
+    # AI Briefing
+    if briefing_text:
+        doc.add_heading('AI Summary', 1)
+        for line in briefing_text.split('\n'):
+            line = line.strip()
+            if not line:
+                doc.add_paragraph()
+                continue
+            if line.startswith('## '):
+                doc.add_heading(line[3:].strip(), level=2)
+            elif line.startswith('* ') or line.startswith('- '):
+                doc.add_paragraph(line[2:].strip(), style='List Bullet')
+            else:
+                doc.add_paragraph(line.replace('**', ''))
+        doc.add_paragraph()
+
+    SECTION_TITLES = {
+        'wq': 'Written Questions & Answers',
+        'oral': 'Oral Questions',
+        'statement': 'Ministerial Statements',
+        'debate': 'Parliamentary Debates',
+    }
+
+    for section in sections:
+        sec_type = section.get('type', '')
+        items = section.get('items', [])
+        if not items:
+            continue
+        title = SECTION_TITLES.get(sec_type, sec_type.title())
+        doc.add_heading(f'{title} ({len(items)})', 1)
+
+        if sec_type == 'wq':
+            for q in items:
+                status = 'ANSWERED' if q.get('is_answered') else 'UNANSWERED'
+                if q.get('is_withdrawn'): status = 'WITHDRAWN'
+                if q.get('is_holding'): status = 'HOLDING'
+                p = doc.add_paragraph()
+                p.add_run(f"[{status}]  {q.get('date_tabled', '')}  ·  {q.get('dept', '')}").bold = True
+                p2 = doc.add_paragraph()
+                p2.add_run(f"Q ({q.get('asking_mp', '')} — {q.get('party', '')}, {q.get('role', '')}): ").bold = True
+                p2.add_run(f'"{q.get("question_text", "")}"').italic = True
+                if q.get('answer_text'):
+                    p3 = doc.add_paragraph()
+                    minister = q.get('answering_minister', '')
+                    ans_date = q.get('date_answered', '')
+                    label = f"A ({minister}{', ' + ans_date if ans_date else ''}): "
+                    p3.add_run(label).bold = True
+                    p3.add_run(f'"{q.get("answer_text", "")}"').italic = True
+                if q.get('url'):
+                    lp = doc.add_paragraph()
+                    lp.add_run('Parliament.uk: ').bold = True
+                    _add_hyperlink(lp, q['url'], q['url'])
+                doc.add_paragraph('─' * 60)
+        else:
+            for r in items:
+                p = doc.add_paragraph()
+                p.add_run(f"{r.get('hdate', '')}  ·  {r.get('source_label', '')}  ·  {r.get('debate_type', '')}").bold = True
+                p2 = doc.add_paragraph()
+                p2.add_run(f"{r.get('speaker_name', '')}").bold = True
+                party = r.get('speaker_party', '')
+                if party: p2.add_run(f"  ({party})")
+                if r.get('is_minister'): p2.add_run("  ✓ Minister")
+                if r.get('debate_title'):
+                    tp = doc.add_paragraph(r['debate_title'])
+                    tp.runs[0].italic = True
+                body = r.get('body_clean', '')
+                if body:
+                    doc.add_paragraph(f'"{body[:600]}{"…" if len(body) > 600 else ""}"')
+                url = r.get('listurl', '')
+                if url:
+                    if not url.startswith('http'):
+                        url = 'https://www.theyworkforyou.com' + url
+                    lp = doc.add_paragraph()
+                    lp.add_run('Source: ').bold = True
+                    _add_hyperlink(lp, url, url)
+                doc.add_paragraph('─' * 60)
+        doc.add_paragraph()
+
+    mem_doc = io.BytesIO()
+    doc.save(mem_doc)
+    mem_doc.seek(0)
+    safe_topic = re.sub(r'[^\w\s-]', '', topic)[:40].strip()
+    filename = f"Research - {safe_topic} - {datetime.now().strftime('%Y%m%d')}.docx"
     return send_file(mem_doc, as_attachment=True, download_name=filename,
                      mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')

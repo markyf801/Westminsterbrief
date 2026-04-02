@@ -93,9 +93,6 @@
         <div style="margin-top:28px;">
             <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
                 <h3 style="color:#4a154b; margin:0;">📋 AI Parliamentary Briefing: {{ topic }}</h3>
-                <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#4a154b; cursor:pointer; background:#f5f0ff; padding:5px 12px; border-radius:20px; border:1px solid #c4b5fd;">
-                    <input type="checkbox" id="include-briefing-cb" onchange="updateExportBar()"> Include in export
-                </label>
             </div>
 
             <div class="topic-briefing-summary">
@@ -184,52 +181,145 @@
                 </div>
             </div>
 
-            <form method="POST" action="/download_debate_briefing" style="margin-top:16px;">
-                <input type="hidden" name="briefing_text" value="{{ topic_briefing_as_text | e }}">
-                <button type="submit" class="btn btn-purple">⬇️ Download Briefing as Word Doc</button>
-            </form>
         </div>
         {% endif %}
 
-        {% if topic_rows %}
-        {% set debate_types = topic_rows | map(attribute='debate_type') | unique | sort | list %}
-        <div style="margin-top:28px;">
-            <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px; flex-wrap:wrap;">
-                <h4 style="margin:0; color:#444;"><span id="visibleCount">{{ topic_rows|length }}</span> contributions found for "{{ topic }}"</h4>
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <label style="font-size:13px; color:#666; white-space:nowrap;">Filter by type:</label>
-                    <select id="typeFilter" onchange="filterCards()" style="font-size:13px; padding:5px 10px; border:1px solid #ddd; border-radius:6px;">
-                        <option value="all">All Types</option>
-                        {% for dt in debate_types %}
-                        <option value="{{ dt }}">{{ dt }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-            {% for r in topic_rows %}
-            <div class="topic-result-card" data-type="{{ r.debate_type }}" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
-                <div class="topic-source-row" style="position:relative;">
-                    <input type="checkbox" class="card-export-cb" data-index="{{ loop.index0 }}"
-                           onchange="updateExportBar()"
-                           style="margin-right:6px; cursor:pointer; accent-color:#1c3e6e;"
-                           title="Add to export">
-                    <span class="topic-source-badge topic-source-{{ r.source }}">{{ r.source_label }}</span>
-                    <span style="font-size:12px; color:#888;">{{ r.debate_type }}</span>
-                    <span>{{ r.hdate }}</span>
-                    <strong>{{ r.speaker_name }}</strong>
-                    {% if r.is_minister %}
-                        <span style="background:#dcfce7; color:#166534; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px;">✓ Minister</span>
-                    {% elif r.speaker_party %}
-                        <span class="topic-party-badge">{{ r.speaker_party }}</span>
+        {% if wq_rows or oral_rows or statement_rows or debate_rows %}
+        <div class="research-sections">
+
+            <!-- Written Questions & Answers -->
+            {% if wq_rows %}
+            <details class="research-section" open>
+                <summary class="research-section-header">
+                    <span class="research-section-title">Written Questions &amp; Answers</span>
+                    <span class="research-section-count">{{ wq_rows|length }}{% if wq_total > wq_rows|length %}+{% endif %}</span>
+                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('wq')">⬇ Download</button>
+                </summary>
+                <div class="research-section-body">
+                    {% for q in wq_rows %}
+                    <div class="result-card" style="border-left:4px solid {% if q.is_withdrawn %}#6c757d{% elif q.is_holding %}#fd7e14{% elif q.is_answered %}#28a745{% else %}#d9534f{% endif %}; margin-bottom:12px;">
+                        <div class="result-card-header">
+                            <span class="wq-status-badge wq-status-{% if q.is_withdrawn %}withdrawn{% elif q.is_holding %}holding{% elif q.is_answered %}answered{% else %}unanswered{% endif %}">
+                                {% if q.is_withdrawn %}WITHDRAWN{% elif q.is_holding %}HOLDING{% elif q.is_answered %}ANSWERED{% else %}UNANSWERED{% endif %}
+                            </span>
+                            <span class="result-card-dept">{{ q.dept }}</span>
+                            <span class="result-card-date">{{ q.date_tabled }}</span>
+                        </div>
+                        {% if q.heading %}<div class="wq-heading">{{ q.heading }}</div>{% endif %}
+                        <div class="result-card-body">
+                            <p style="margin-bottom:6px;">
+                                <span class="wq-party-dot" style="background:{{ q.party_colour }};"></span>
+                                <strong>{{ q.asking_mp }}</strong>
+                                <span class="wq-party-label">({{ q.party }}, {{ q.role }})</span> asked:
+                            </p>
+                            <p class="result-card-quote">"{{ q.question_text }}"</p>
+                            {% if q.answer_text %}
+                            <details class="wq-answer-details">
+                                <summary class="wq-answer-summary">Answered{% if q.answering_minister %} by {{ q.answering_minister }}{% endif %}{% if q.date_answered %} · {{ q.date_answered }}{% endif %}</summary>
+                                <div class="wq-answer-text">{{ q.answer_text }}</div>
+                            </details>
+                            {% elif q.is_answered %}
+                            <p class="wq-answered-note">Answered{% if q.date_answered %} {{ q.date_answered }}{% endif %}{% if q.answering_minister %} by {{ q.answering_minister }}{% endif %} — <a href="{{ q.url }}" target="_blank">read on Parliament.uk</a></p>
+                            {% endif %}
+                            <a href="{{ q.url }}" target="_blank" class="result-card-link">View on Parliament.uk →</a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% if wq_total > wq_rows|length %}
+                    <div class="research-load-more">
+                        Showing {{ wq_rows|length }} of {{ wq_total }} matching questions.
+                        <a href="/questions?subject={{ topic|urlencode }}" target="_blank">Search all {{ wq_total }} in the Written Questions Scanner →</a>
+                    </div>
                     {% endif %}
                 </div>
-                <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
-                <div class="topic-card-body">{{ r.body_clean }}</div>
-                {% if r.listurl %}
-                <a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px; color:#005a8f; text-decoration:none; display:inline-block; margin-top:6px;">🔗 View on TheyWorkForYou</a>
-                {% endif %}
-            </div>
-            {% endfor %}
+            </details>
+            {% endif %}
+
+            <!-- Ministerial Statements -->
+            {% if statement_rows %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">Ministerial Statements</span>
+                    <span class="research-section-count">{{ statement_rows|length }}</span>
+                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('statement')">⬇ Download</button>
+                </summary>
+                <div class="research-section-body">
+                    {% for r in statement_rows %}
+                    <div class="topic-result-card" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
+                        <div class="topic-source-row">
+                            <span class="topic-source-badge topic-source-wms">Ministerial Statement</span>
+                            <span>{{ r.hdate }}</span>
+                            <strong>{{ r.speaker_name }}</strong>
+                            {% if r.is_minister %}<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">✓ Minister</span>{% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                        </div>
+                        <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
+                        <div class="topic-card-body">{{ r.body_clean }}</div>
+                        {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px;color:#005a8f;text-decoration:none;display:inline-block;margin-top:6px;">🔗 View on TheyWorkForYou</a>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            <!-- Oral Questions -->
+            {% if oral_rows %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">Oral Questions</span>
+                    <span class="research-section-count">{{ oral_rows|length }}</span>
+                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('oral')">⬇ Download</button>
+                </summary>
+                <div class="research-section-body">
+                    {% for r in oral_rows %}
+                    <div class="topic-result-card" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
+                        <div class="topic-source-row">
+                            <span class="topic-source-badge topic-source-{{ r.source }}">{{ r.source_label }}</span>
+                            <span>{{ r.hdate }}</span>
+                            <strong>{{ r.speaker_name }}</strong>
+                            {% if r.is_minister %}<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">✓ Minister</span>{% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                        </div>
+                        <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
+                        <div class="topic-card-body">{{ r.body_clean }}</div>
+                        {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px;color:#005a8f;text-decoration:none;display:inline-block;margin-top:6px;">🔗 View on TheyWorkForYou</a>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            <!-- Parliamentary Debates -->
+            {% if debate_rows %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">Parliamentary Debates</span>
+                    <span class="research-section-count">{{ debate_rows|length }}</span>
+                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('debate')">⬇ Download</button>
+                </summary>
+                <div class="research-section-body">
+                    {% for r in debate_rows %}
+                    <div class="topic-result-card" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
+                        <div class="topic-source-row">
+                            <span class="topic-source-badge topic-source-{{ r.source }}">{{ r.source_label }}</span>
+                            <span style="font-size:12px;color:#888;">{{ r.debate_type }}</span>
+                            <span>{{ r.hdate }}</span>
+                            <strong>{{ r.speaker_name }}</strong>
+                            {% if r.is_minister %}<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">✓ Minister</span>{% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                        </div>
+                        <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
+                        <div class="topic-card-body">{{ r.body_clean }}</div>
+                        {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px;color:#005a8f;text-decoration:none;display:inline-block;margin-top:6px;">🔗 View on TheyWorkForYou</a>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+        </div>
+
+        <div style="margin-top:24px; text-align:center;">
+            <button onclick="downloadAllSections()" class="btn btn-primary" style="padding:14px 36px; font-size:15px; font-weight:700;">
+                ⬇ Download Full Briefing (Word)
+            </button>
         </div>
         {% endif %}
     </div>
@@ -369,13 +459,6 @@
     </div>
 </div>
 
-<!-- ===================== FLOATING EXPORT BAR ===================== -->
-<div id="export-bar" style="display:none; position:fixed; bottom:24px; right:24px; background:#1c3e6e; color:#fff; padding:12px 18px; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.35); z-index:9999; align-items:center; gap:12px;">
-    <span id="export-count-label" style="font-size:14px; font-weight:600;">0 items</span>
-    <button onclick="doExport()" style="background:#fff; color:#1c3e6e; border:none; padding:7px 14px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px;">📄 Export Word Doc</button>
-    <button onclick="clearExport()" title="Clear selection" style="background:rgba(255,255,255,0.15); color:#fff; border:none; width:26px; height:26px; border-radius:50%; cursor:pointer; font-size:14px; line-height:1;">✕</button>
-</div>
-
 <script>
     var USER_PREF_DEPT   = {{ (user_pref.department  if user_pref else '') | tojson }};
     var USER_PREF_TOPIC  = {{ (user_pref.subject     if user_pref else '') | tojson }};
@@ -387,107 +470,44 @@
     const ALL_CONTRIBUTIONS = {{ (topic_rows or []) | tojson | safe }};
     const TOPIC_BRIEFING_TEXT = {{ (topic_briefing_as_text or '') | tojson | safe }};
     const SEARCH_TOPIC = {{ (topic or '') | tojson | safe }};
+    const WQ_ROWS = {{ (wq_rows or []) | tojson | safe }};
+    const ORAL_ROWS = {{ (oral_rows or []) | tojson | safe }};
+    const STATEMENT_ROWS = {{ (statement_rows or []) | tojson | safe }};
+    const DEBATE_ROWS = {{ (debate_rows or []) | tojson | safe }};
 
-    // Export state
-    const exportSpeeches = {};   // speaker_name → [contribution objects]
-    const exportPQs = {};        // speaker_name → [pq objects]
-    const loadedPQData = {};     // speaker_name → pqs (populated when panel opens)
+    const loadedPQData = {};  // speaker_name → pqs (populated when panel opens)
 
-    function updateExportBar() {
-        let total = document.querySelectorAll('.card-export-cb:checked').length;
-        Object.values(exportSpeeches).forEach(arr => total += arr.length);
-        Object.values(exportPQs).forEach(arr => total += arr.length);
-        const hasBriefing = document.getElementById('include-briefing-cb')?.checked;
-        const bar = document.getElementById('export-bar');
-        const label = document.getElementById('export-count-label');
-        if (total > 0 || hasBriefing) {
-            bar.style.display = 'flex';
-            const parts = [];
-            if (hasBriefing) parts.push('AI briefing');
-            if (total > 0) parts.push(`${total} item${total !== 1 ? 's' : ''}`);
-            label.textContent = parts.join(' + ');
-        } else {
-            bar.style.display = 'none';
-        }
-    }
-
-    function clearExport() {
-        document.querySelectorAll('.card-export-cb').forEach(cb => cb.checked = false);
-        const briefCb = document.getElementById('include-briefing-cb');
-        if (briefCb) briefCb.checked = false;
-        Object.keys(exportSpeeches).forEach(k => delete exportSpeeches[k]);
-        Object.keys(exportPQs).forEach(k => delete exportPQs[k]);
-        // Reset all batch buttons
-        document.querySelectorAll('.batch-export-btn').forEach(btn => {
-            btn.dataset.active = '0';
-            btn.style.background = 'none';
-            btn.style.color = btn.dataset.color || '#166534';
-            btn.textContent = btn.dataset.addLabel || '☐ Add all to export';
-        });
-        updateExportBar();
-    }
-
-    function toggleBatchExport(btn, type, name, items) {
-        const isActive = btn.dataset.active === '1';
-        if (isActive) {
-            if (type === 'speech') delete exportSpeeches[name];
-            else delete exportPQs[name];
-            btn.dataset.active = '0';
-            btn.style.background = 'none';
-            btn.textContent = btn.dataset.addLabel;
-            btn.style.color = btn.dataset.color;
-        } else {
-            if (type === 'speech') exportSpeeches[name] = items;
-            else exportPQs[name] = items;
-            btn.dataset.active = '1';
-            btn.style.background = btn.dataset.color;
-            btn.style.color = '#fff';
-            btn.textContent = `✓ ${items.length} added to export`;
-        }
-        updateExportBar();
-    }
-
-    function doExport() {
-        const items = [];
-        // Checked contribution cards
-        document.querySelectorAll('.card-export-cb:checked').forEach(cb => {
-            const idx = parseInt(cb.dataset.index);
-            if (!isNaN(idx) && ALL_CONTRIBUTIONS[idx]) {
-                items.push({type: 'contribution', data: ALL_CONTRIBUTIONS[idx]});
-            }
-        });
-        // Batched speeches
-        Object.entries(exportSpeeches).forEach(([spk, contribs]) => {
-            contribs.forEach(c => items.push({type: 'speech', data: c}));
-        });
-        // Batched PQs
-        Object.entries(exportPQs).forEach(([spk, pqs]) => {
-            pqs.forEach(pq => items.push({type: 'pq', speaker: spk, data: pq}));
-        });
-
-        const include_briefing = document.getElementById('include-briefing-cb')?.checked ? 'true' : '';
-
-        if (items.length === 0 && !include_briefing) {
-            alert('Please select at least one item to export.');
-            return;
-        }
-
+    function submitResearchDownload(sections) {
         const form = document.createElement('form');
         form.method = 'POST';
-        form.action = '/export_custom_briefing';
-        [
-            ['topic', SEARCH_TOPIC],
-            ['include_briefing', include_briefing],
-            ['briefing_text', include_briefing ? TOPIC_BRIEFING_TEXT : ''],
-            ['items', JSON.stringify(items)]
-        ].forEach(([n, v]) => {
+        form.action = '/download_research_brief';
+        const addField = (name, value) => {
             const inp = document.createElement('input');
-            inp.type = 'hidden'; inp.name = n; inp.value = v;
+            inp.type = 'hidden'; inp.name = name; inp.value = value;
             form.appendChild(inp);
-        });
+        };
+        addField('topic', SEARCH_TOPIC);
+        addField('briefing_text', TOPIC_BRIEFING_TEXT);
+        addField('sections_json', JSON.stringify(sections));
         document.body.appendChild(form);
         form.submit();
         document.body.removeChild(form);
+    }
+
+    function downloadSection(type) {
+        const data = {wq: WQ_ROWS, oral: ORAL_ROWS, statement: STATEMENT_ROWS, debate: DEBATE_ROWS}[type] || [];
+        if (!data.length) { alert('No items in this section.'); return; }
+        submitResearchDownload([{type, items: data}]);
+    }
+
+    function downloadAllSections() {
+        const sections = [];
+        if (WQ_ROWS.length) sections.push({type: 'wq', items: WQ_ROWS});
+        if (STATEMENT_ROWS.length) sections.push({type: 'statement', items: STATEMENT_ROWS});
+        if (ORAL_ROWS.length) sections.push({type: 'oral', items: ORAL_ROWS});
+        if (DEBATE_ROWS.length) sections.push({type: 'debate', items: DEBATE_ROWS});
+        if (!sections.length && !TOPIC_BRIEFING_TEXT) { alert('Nothing to download yet — run a search first.'); return; }
+        submitResearchDownload(sections);
     }
 
     function showPanel(targetId) {
@@ -535,18 +555,7 @@
             panel.innerHTML = '<p style="color:#888;font-size:12px;">No spoken contributions from this minister found in the current search results.</p>';
         } else {
             const srcColours = {'commons':'#1a56a6','westminsterhall':'#b45309','lords':'#6f42c1'};
-            const batchId = 'speech-batch-' + name.replace(/\s+/g,'_');
-            let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                <span style="font-size:12px;color:#555;font-style:italic;">${speeches.length} spoken contribution(s)</span>
-                <button id="${batchId}" class="batch-export-btn"
-                    data-color="#166534" data-add-label="☐ Add all to export"
-                    data-active="0" data-type="speech"
-                    data-name="${name.replace(/"/g,'&quot;')}"
-                    data-key="${batchId.replace(/-/g,'_')}"
-                    onclick="onBatchBtnClick(this)"
-                    style="font-size:11px;color:#166534;background:none;border:1px solid #166534;border-radius:4px;padding:2px 9px;cursor:pointer;">
-                    ☐ Add all to export
-                </button></div>`;
+            let html = `<div style="margin-bottom:10px;"><span style="font-size:12px;color:#555;font-style:italic;">${speeches.length} spoken contribution(s)</span></div>`;
             speeches.forEach(s => {
                 const col = srcColours[s.source] || '#555';
                 const snippet = (s.body_clean || '').substring(0, 250);
@@ -560,9 +569,6 @@
                 </div>`;
             });
             panel.innerHTML = html;
-            // Store speeches on window so the batch button can reference them
-            const safeKey = batchId.replace(/-/g,'_');
-            window['_speechData_' + safeKey] = speeches;
         }
         panel.dataset.loaded = '1';
         panel.style.display = 'block';
@@ -598,17 +604,7 @@
                     const filterNote = data.topic_filtered
                         ? `<span style="color:#6f42c1;font-size:11px;"> · filtered to topic</span>`
                         : (data.total_pqs > data.pqs.length ? `<span style="color:#888;font-size:11px;"> · showing ${data.pqs.length} of ${data.total_pqs} (no topic match found)</span>` : '');
-                    const batchId = 'pq-batch-' + name.replace(/\s+/g,'_');
-                    let html = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-                        <span style="font-size:12px;color:#555;">${data.role} · ${data.party} · ${data.pqs.length} PQs${filterNote}</span>
-                        <button id="${batchId}" class="batch-export-btn"
-                            data-color="#005a8f" data-add-label="☐ Add all to export"
-                            data-active="0" data-type="pq"
-                            data-name="${name.replace(/"/g,'&quot;')}"
-                            onclick="onBatchBtnClick(this)"
-                            style="font-size:11px;color:#005a8f;background:none;border:1px solid #005a8f;border-radius:4px;padding:2px 9px;cursor:pointer;">
-                            ☐ Add all to export
-                        </button></div>`;
+                    let html = `<div style="margin-bottom:8px;"><span style="font-size:12px;color:#555;">${data.role} · ${data.party} · ${data.pqs.length} PQs${filterNote}</span></div>`;
                     data.pqs.forEach(q => {
                         const colour = q.status === 'ANSWERED' ? '#166534' : '#991b1b';
                         const bg = q.status === 'ANSWERED' ? '#dcfce7' : '#fee2e2';
@@ -632,29 +628,6 @@
                 btn.textContent = '▶ View PQs';
                 btn.disabled = false;
             });
-    }
-
-    function filterCards() {
-        const val = document.getElementById('typeFilter').value;
-        const cards = document.querySelectorAll('.topic-result-card');
-        let visible = 0;
-        cards.forEach(card => {
-            const show = val === 'all' || card.dataset.type === val;
-            card.style.display = show ? '' : 'none';
-            if (show) visible++;
-        });
-        const counter = document.getElementById('visibleCount');
-        if (counter) counter.textContent = visible;
-    }
-
-    function onBatchBtnClick(btn) {
-        const type = btn.dataset.type;
-        const name = btn.dataset.name;
-        const key = btn.dataset.key;
-        const items = type === 'speech'
-            ? (window['_spData_' + key] || [])
-            : (loadedPQData[name] || []);
-        toggleBatchExport(btn, type, name, items);
     }
 
     function togglePrefPrefill(load) {
