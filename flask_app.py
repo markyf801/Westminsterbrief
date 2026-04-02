@@ -28,6 +28,20 @@ from mp_search import mp_search_bp
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
 
+# Build version string: short git hash (Railway sets RAILWAY_GIT_COMMIT_SHA; fallback to subprocess locally)
+def _get_app_version():
+    sha = os.environ.get('RAILWAY_GIT_COMMIT_SHA', '')
+    if sha:
+        return sha[:7]
+    try:
+        import subprocess
+        return subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'],
+                                       cwd=basedir, stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return 'dev'
+
+APP_VERSION = _get_app_version()
+
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
@@ -396,6 +410,10 @@ app.register_blueprint(biography_bp)
 app.register_blueprint(tracker_bp)
 app.register_blueprint(debate_scanner_bp)
 app.register_blueprint(mp_search_bp)
+
+@app.context_processor
+def inject_version():
+    return {'app_version': APP_VERSION}
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -34,6 +34,7 @@
             <a href="/my_preferences" {% if request.path == '/my_preferences' %}class="nav-active"{% endif %}>⚙️ Preferences</a>
             <a href="/logout" class="nav-logout">Logout</a>
         {% endif %}
+        <span class="nav-version">{{ app_version }}</span>
     </nav>
 
     <div class="container">
