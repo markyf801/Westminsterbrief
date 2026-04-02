@@ -96,15 +96,26 @@ App runs at http://127.0.0.1:5000 — visit /home for the dashboard.
 Keyword search misses ministers whose speeches don't contain the search terms. Phase 1 (full session fetch) helps but only when the session was already found. If no speech in a session contains the keywords, the session is invisible.
 
 **The proper fix:**
-When a department is selected, pull the current ministerial team from GOV.UK, fetch each minister's recent debates from TWFY by person ID, filter for topic relevance, merge with keyword search. This guarantees ALL departmental ministers appear regardless of the language they used.
+When a department is selected, pull the ENTIRE ministerial team from GOV.UK, search each minister's debates via TWFY person search, merge with keyword search.
+
+**Critical insight — portfolio doesn't matter:**
+In Oral Questions, whoever is at the dispatch box answers — regardless of their specific portfolio.
+MacAlister is "Minister for Children and Families" but answers ANY DfE question when present.
+Baroness Smith covers ALL DfE business in the Lords, not just Skills.
+DO NOT filter minister search by portfolio area. Search ALL ministers in the selected department.
+
+This is universal across departments:
+- Treasury: Reeves + all junior ministers may answer any Treasury question
+- Home Office: Cooper + juniors may answer any HO question
+- DfE: Phillipson, MacAlister, McKinnell, Morgan, Daby, Baroness Smith — any may answer repayments
 
 **Implementation plan:**
-1. `get_dept_minister_twfy_ids(dept_name)` — for a selected department, get GOV.UK minister list and resolve each to a TWFY person ID via Members API name lookup
-2. `fetch_minister_debates_for_topic(twfy_person_id, topic, date_range)` — TWFY `getDebates?person=ID&search=TOPIC` (or just `getDebates?person=ID` with post-filter)
-3. Run in parallel alongside existing keyword search in `debates_topic()`
-4. Merge results via `deduplicate_by_listurl()`
+1. `get_dept_minister_twfy_ids(dept_name)` — GOV.UK minister list for dept → resolve each name to TWFY person ID via Members API name match
+2. `fetch_minister_speeches_on_topic(twfy_person_id, expanded_query, date_range)` — TWFY `getDebates?person=ID&search=EXPANDED_QUERY` — use AI-expanded query for better language matching
+3. Run ALL minister fetches in parallel alongside existing keyword search in `debates_topic()`
+4. Merge via `deduplicate_by_listurl()` → Phase 1 session expansion → minister flagging → group by debate
 
-This works universally across all departments — pull ministerial team → search their debates → merge.
+This works universally across all departments — pull full ministerial team → search their debates → merge.
 
 ## Parliamentary Research Tool — design principles
 
