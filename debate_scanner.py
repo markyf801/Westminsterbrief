@@ -128,7 +128,7 @@ def get_source_label(source):
             'lords': 'Lords', 'wrans': 'Written Answer',
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
-def fetch_twfy_topic(search, source_type, date_range, num=50):
+def fetch_twfy_topic(search, source_type, date_range, num=100):
     """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure."""
     try:
         if source_type == 'wrans':
@@ -239,6 +239,31 @@ def expand_search_query(topic, api_key):
     except Exception:
         pass
     return f'"{topic}"'
+
+
+def _group_by_debate(rows):
+    """Group speeches by debate (date + title). Within each group, ministers first.
+    Returns list of (debate_key_dict, [rows]) sorted: minister-debates first, then most recent."""
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for r in rows:
+        key = (r.get('hdate', ''), r.get('debate_title', ''))
+        groups[key].append(r)
+    for key in groups:
+        groups[key].sort(key=lambda x: (not x.get('is_minister', False), -x.get('relevance', 0)))
+    # Minister-containing debates first (1 > 0), then most recent date first (reverse string sort)
+    group_list = sorted(
+        groups.items(),
+        key=lambda kv: (1 if any(r.get('is_minister') for r in kv[1]) else 0, kv[0][0]),
+        reverse=True
+    )
+    return [
+        {'date': k[0], 'title': k[1], 'speeches': v,
+         'has_minister': any(r.get('is_minister') for r in v),
+         'source_label': v[0].get('source_label', '') if v else '',
+         'source': v[0].get('source', '') if v else ''}
+        for k, v in group_list
+    ]
 
 
 def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
@@ -760,6 +785,8 @@ def debates_topic():
     oral_rows = []
     statement_rows = []
     debate_rows = []
+    oral_grouped = []
+    debate_grouped = []
     wq_rows = []
     wq_total = 0
     topic_briefing = None
@@ -904,17 +931,20 @@ def debates_topic():
                 except Exception:
                     topic_briefing = None
 
-            # Split TWFY rows into display sections
+            # Split TWFY rows into display sections, then group debates by session
             oral_rows = [r for r in topic_rows if r.get('debate_type') == '🗣️ Oral Question']
             statement_rows = [r for r in topic_rows if r.get('source') == 'wms']
             debate_rows = [r for r in topic_rows
                            if r.get('debate_type') != '🗣️ Oral Question' and r.get('source') != 'wms']
+            oral_grouped = _group_by_debate(oral_rows)
+            debate_grouped = _group_by_debate(debate_rows)
 
     return render_template('debate_scanner.html',
                            mode='topic',
                            topic=topic, topic_rows=topic_rows,
                            oral_rows=oral_rows, statement_rows=statement_rows,
                            debate_rows=debate_rows,
+                           oral_grouped=oral_grouped, debate_grouped=debate_grouped,
                            wq_rows=wq_rows, wq_total=wq_total,
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
