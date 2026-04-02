@@ -645,6 +645,65 @@ def lookup_twfy_person(name):
     return None, None, False
 
 
+def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
+    """Fetch speeches for a specific TWFY person_id, filtered by topic + date.
+    Returns rows in the same normalised schema as fetch_twfy_topic() so they
+    can be merged and deduped with keyword-search results."""
+    rows = []
+    query = f"{topic} {date_range}".strip() if topic else date_range.strip()
+    for source in sources:
+        api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
+        params = {
+            'key': TWFY_API_KEY, 'person': str(person_id),
+            'order': 'd', 'num': num, 'output': 'json'
+        }
+        if query:
+            params['search'] = query
+        if source != 'wms':
+            params['type'] = source
+        try:
+            resp = requests.get(api_url, params=params, timeout=15)
+            if resp.status_code != 200:
+                continue
+            for r in resp.json().get('rows', []):
+                body_raw = r.get('body', '')
+                debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
+                if source == 'wms':
+                    debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
+                dtype = 'Ministerial Statement' if source == 'wms' else get_debate_type(debate_title)
+                rows.append({
+                    'listurl': r.get('listurl', ''),
+                    'body_clean': clean_body_text(body_raw)[:500],
+                    'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
+                    'speaker_party': (r.get('speaker') or {}).get('party', ''),
+                    'hdate': r.get('hdate', ''),
+                    'debate_title': debate_title,
+                    'source': source,
+                    'source_label': get_source_label(source),
+                    'relevance': r.get('relevance', 0),
+                    'debate_type': dtype,
+                })
+        except Exception:
+            pass
+    return rows
+
+
+def get_dept_minister_twfy_ids(dept_name, minister_data):
+    """Resolve all ministers for a department to TWFY person IDs.
+    Returns list of {person_id, name, role} dicts. Skips ministers whose
+    TWFY ID cannot be resolved."""
+    ministers = minister_data.get('by_dept', {}).get(dept_name, [])
+    results = []
+    for m in ministers:
+        display = m.get('display_name') or m.get('name', '')
+        if not display:
+            continue
+        person_id, matched_name, is_lord = lookup_twfy_person(display)
+        if person_id:
+            results.append({'person_id': person_id, 'name': display, 'role': m.get('role', '')})
+    return results
+
+
 def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
     """Fetch debates where a minister spoke, deduped by unique debate section."""
     sources = []
@@ -924,16 +983,29 @@ def debates_topic():
                     dept_kw = ' OR '.join(dept_kw_parts) if len(dept_kw_parts) > 1 else dept_kw_parts[0]
                     search_query = f"{search_query} AND ({dept_kw})"
 
-            # Run TWFY debate search AND Parliament WQ API in parallel
+            # Resolve department ministers to TWFY person IDs for minister-led search.
+            # When a dept is selected, we search each minister's debate history directly
+            # so their sessions appear even when their speeches don't contain the keywords.
+            minister_people = []
+            if selected_depts:
+                m_data_for_ids = get_minister_list()
+                for dept in selected_depts:
+                    minister_people.extend(get_dept_minister_twfy_ids(dept, m_data_for_ids))
+
+            # Run TWFY debate search, Parliament WQ API, and minister-led searches in parallel
             all_rows = []
 
             def _do_wq_fetch():
                 return _fetch_topic_wqs(topic, start_date, end_date, selected_depts)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                 twfy_futs = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(_do_wq_fetch)
-                all_futs = list(twfy_futs.keys()) + [wq_fut]
+                minister_futs = {
+                    executor.submit(fetch_twfy_minister_topic, mp['person_id'], topic, date_range, sources): mp
+                    for mp in minister_people
+                }
+                all_futs = list(twfy_futs.keys()) + [wq_fut] + list(minister_futs.keys())
                 for future in concurrent.futures.as_completed(all_futs):
                     if future is wq_fut:
                         try:
@@ -941,7 +1013,10 @@ def debates_topic():
                         except Exception:
                             pass
                     else:
-                        all_rows.extend(future.result())
+                        try:
+                            all_rows.extend(future.result())
+                        except Exception:
+                            pass
 
             topic_rows = deduplicate_by_listurl(all_rows)
 
