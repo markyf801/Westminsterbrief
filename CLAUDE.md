@@ -90,6 +90,25 @@ App runs at http://127.0.0.1:5000 — visit /home for the dashboard.
 - Backup files in root (bckup_flask.py etc.) and backup templates are clutter — safe to delete eventually
 - No database migration system — relies on `db.create_all()` which is fine for now
 
+## Parliamentary Research Tool — design principles
+
+**Core architectural principle (confirmed by user):**
+Search finds debates → fetch all speeches from each debate → ministers are always present.
+Do NOT rely on ministers' responses containing search keywords. They rarely do.
+
+**When working on the Research Tool (`debate_scanner.py` / `debate_scanner.html`), always ask:**
+1. What is the user's department context? (e.g. DfE) — ministerial debates for that dept come first
+2. Are we showing debates as a unit (all speakers) or individual speeches? Always prefer debates as a unit.
+3. Does the current approach guarantee the responding minister appears? If not, fix it.
+
+**User context:** Higher education civil servant writing briefings. Knows which debates happened.
+If the tool misses Baroness Smith of Malvern or other DfE ministers, something is architecturally wrong.
+
+**The "no central debate database" problem:**
+There is no single index of "all debates about topic X". The practical solution is:
+find ONE matching speech via TWFY keyword search → extract its debate GID → fetch the full debate session.
+This is implemented in `fetch_all_debate_sessions()` in `debate_scanner.py`.
+
 ## Things to avoid
 - Don't use port 5432 for Supabase if ever added — use the connection pooler on 6543
 - Don't hardcode API keys or .env paths

@@ -241,6 +241,95 @@ def expand_search_query(topic, api_key):
     return f'"{topic}"'
 
 
+_SOURCE_GID_PREFIX = {
+    'commons':        'uk.org.publicwhip/debate/',
+    'westminsterhall':'uk.org.publicwhip/westminhall/',
+    'lords':          'uk.org.publicwhip/lords/',
+    'wms':            'uk.org.publicwhip/wms/',
+}
+
+def _listurl_to_parent_gid(listurl, source):
+    """Convert a TWFY listurl to the parent debate-section GID (speech-index replaced with .0).
+    e.g. /debates/?id=2026-01-15.123.4 + commons → uk.org.publicwhip/debate/2026-01-15.123.0
+    Returns None if listurl cannot be parsed or source is not expandable."""
+    if not listurl or source not in _SOURCE_GID_PREFIX:
+        return None
+    try:
+        m = re.search(r'\?id=([^&]+)', listurl)
+        if not m:
+            return None
+        id_val = m.group(1)                   # e.g. "2026-01-15.123.4"
+        section = id_val.rsplit('.', 1)[0]     # e.g. "2026-01-15.123"
+        return f"{_SOURCE_GID_PREFIX[source]}{section}.0"
+    except Exception:
+        return None
+
+
+def fetch_full_debate_session(parent_gid, source):
+    """Fetch ALL speeches from a TWFY debate section via its parent GID.
+    Returns normalised speech list (same schema as fetch_twfy_topic). relevance=0."""
+    if not TWFY_API_KEY:
+        return []
+    try:
+        api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
+        resp = requests.get(api_url,
+                            params={'key': TWFY_API_KEY, 'gid': parent_gid, 'output': 'json'},
+                            timeout=10)
+        if resp.status_code != 200:
+            return []
+        rows = resp.json().get('rows', [])
+        results = []
+        for r in rows:
+            body_raw = r.get('body', '')
+            debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
+            results.append({
+                'listurl': r.get('listurl', ''),
+                'body_clean': clean_body_text(body_raw)[:500],
+                'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
+                'speaker_party': (r.get('speaker') or {}).get('party', ''),
+                'hdate': r.get('hdate', ''),
+                'debate_title': debate_title,
+                'source': source,
+                'source_label': get_source_label(source),
+                'relevance': 0,
+                'debate_type': get_debate_type(debate_title),
+                'from_session_fetch': True,
+            })
+        return results
+    except Exception:
+        return []
+
+
+def fetch_all_debate_sessions(matched_rows, max_debates=15):
+    """For each unique debate in matched_rows, fetch all speeches via TWFY GID lookup.
+    This guarantees ministers appear even when their responses don't contain search keywords.
+    Skips wrans (written answers have no multi-speaker session to expand)."""
+    seen_gids = set()
+    gid_source_pairs = []
+    for r in matched_rows:
+        source = r.get('source', '')
+        if source == 'wrans':
+            continue
+        gid = _listurl_to_parent_gid(r.get('listurl', ''), source)
+        if gid and gid not in seen_gids:
+            seen_gids.add(gid)
+            gid_source_pairs.append((gid, source))
+        if len(gid_source_pairs) >= max_debates:
+            break
+    if not gid_source_pairs:
+        return []
+    extra = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(fetch_full_debate_session, gid, src): (gid, src)
+                for gid, src in gid_source_pairs}
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                extra.extend(f.result())
+            except Exception:
+                pass
+    return extra
+
+
 def _group_by_debate(rows):
     """Group speeches by debate (date + title). Within each group, ministers first.
     Returns list of (debate_key_dict, [rows]) sorted: minister-debates first, then most recent."""
@@ -855,6 +944,14 @@ def debates_topic():
                         all_rows.extend(future.result())
 
             topic_rows = deduplicate_by_listurl(all_rows)
+
+            # Debates-first: expand each matched debate to include ALL speeches.
+            # This ensures ministerial responses appear even when they don't contain
+            # the search keywords (e.g. minister says "supporting graduates" not "loan repayments").
+            if topic_rows:
+                session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=15)
+                if session_speeches:
+                    topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()
