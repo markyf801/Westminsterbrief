@@ -34,6 +34,7 @@ TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TWFY_API_URL = "https://www.theyworkforyou.com/api/getDebates"
 TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
+TWFY_WMS_URL = "https://www.theyworkforyou.com/api/getWMS"
 MINISTER_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'minister_cache.json')
 MINISTER_CACHE_TTL = 7 * 24 * 3600  # 7 days
 
@@ -111,15 +112,21 @@ def clean_body_text(text):
 
 def get_source_label(source):
     return {'commons': 'Commons', 'westminsterhall': 'Westminster Hall',
-            'lords': 'Lords', 'wrans': 'Written Answer'}.get(source, source.title())
+            'lords': 'Lords', 'wrans': 'Written Answer',
+            'wms': 'Ministerial Statement'}.get(source, source.title())
 
 def fetch_twfy_topic(search, source_type, date_range, num=50):
     """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure."""
     try:
-        api_url = TWFY_WRANS_URL if source_type == 'wrans' else TWFY_API_URL
+        if source_type == 'wrans':
+            api_url = TWFY_WRANS_URL
+        elif source_type == 'wms':
+            api_url = TWFY_WMS_URL
+        else:
+            api_url = TWFY_API_URL
         query = f"{search} {date_range}".strip()
         params = {'key': TWFY_API_KEY, 'search': query, 'order': 'r', 'num': num, 'output': 'json'}
-        if source_type != 'wrans':
+        if source_type not in ('wrans', 'wms'):
             params['type'] = source_type
         resp = requests.get(api_url, params=params, timeout=15)
         if resp.status_code != 200:
@@ -129,9 +136,14 @@ def fetch_twfy_topic(search, source_type, date_range, num=50):
         for r in rows:
             body_raw = r.get('body', '')
             debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
-            if source_type == 'wrans':
+            if source_type in ('wrans', 'wms'):
                 debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
-            dtype = 'Written Answer' if source_type == 'wrans' else get_debate_type(debate_title)
+            if source_type == 'wrans':
+                dtype = 'Written Answer'
+            elif source_type == 'wms':
+                dtype = 'Ministerial Statement'
+            else:
+                dtype = get_debate_type(debate_title)
             results.append({
                 'listurl': r.get('listurl', ''),
                 'body_clean': clean_body_text(body_raw)[:500],
@@ -699,11 +711,11 @@ def debates_topic():
             date_range = get_twfy_date_range(start_date, end_date)
 
             if house_filter == 'lords_only':
-                sources = ['lords']
+                sources = ['lords', 'wms']
             elif house_filter == 'commons_only':
-                sources = ['commons', 'westminsterhall', 'wrans']
+                sources = ['commons', 'westminsterhall', 'wrans', 'wms']
             else:
-                sources = ['commons', 'westminsterhall', 'lords', 'wrans']
+                sources = ['commons', 'westminsterhall', 'lords', 'wrans', 'wms']
 
             # If a narrow keyword is set, skip AI expansion to keep results precise
             if narrow_keyword:

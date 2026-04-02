@@ -55,6 +55,15 @@
     {% endif %}
 </div>
 
+{% if total_available and total_available > results|length %}
+<div class="info-box" style="margin-top: 20px;">
+    Showing <strong>{{ results|length }}</strong> of <strong>{{ total_available }}</strong> matching questions.
+    {% if results|length >= results_cap %}
+    Add a <strong>date range</strong> or <strong>department filter</strong> to see a more focused set of results.
+    {% endif %}
+</div>
+{% endif %}
+
 {% if results %}
     <div style="margin-top: 20px;">
     {% for r in results %}

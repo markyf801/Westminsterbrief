@@ -26,7 +26,36 @@ PARTY_COLOURS = {
     'Alliance': '#F6CB2F',
 }
 
+WQ_API_URL = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+WQ_PAGE_SIZE = 400
+WQ_MAX_RESULTS = 1200
+
 MEMBER_CACHE = {}
+
+def fetch_wq_pages(params_base):
+    """Fetch up to WQ_MAX_RESULTS written questions via parallel pagination."""
+    all_items, total_available = [], 0
+    r = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': 0}, timeout=30)
+    if r.status_code != 200:
+        return [], 0
+    data = r.json()
+    total_available = data.get('totalResults', 0)
+    all_items.extend(data.get('results') or [])
+
+    skips = list(range(WQ_PAGE_SIZE, min(total_available, WQ_MAX_RESULTS), WQ_PAGE_SIZE))
+    if not skips:
+        return all_items, total_available
+
+    def _fetch(skip):
+        resp = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': skip}, timeout=30)
+        return resp.json().get('results') or [] if resp.status_code == 200 else []
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for f in as_completed([ex.submit(_fetch, s) for s in skips]):
+            try: all_items.extend(f.result())
+            except Exception: pass
+
+    return all_items, total_available
 
 def prefetch_members(member_ids):
     """Parallel-fetch member details for all IDs not already cached."""
@@ -97,24 +126,24 @@ def index():
         subjects = [s.strip() for s in subject.split(',') if s.strip()] or ['']
         all_raw_results = []
         seen_uins = set()
+        total_available = 0
 
         try:
             for subj in subjects:
-                # Step 1: The API Pull
-                params = {'take': 400}
-                if subj: params['searchTerm'] = subj
-                if start_date: params['tabledStartDate'] = start_date
-                if end_date: params['tabledEndDate'] = end_date
-                if selected_dept_id: params['answeringBodies'] = [int(selected_dept_id)]
+                # Step 1: The API Pull (paginated up to WQ_MAX_RESULTS)
+                params_base = {}
+                if subj: params_base['searchTerm'] = subj
+                if start_date: params_base['tabledStartDate'] = start_date
+                if end_date: params_base['tabledEndDate'] = end_date
+                if selected_dept_id: params_base['answeringBodies'] = [int(selected_dept_id)]
 
-                resp = requests.get("https://questions-statements-api.parliament.uk/api/writtenquestions/questions", params=params, timeout=30)
-                if resp.status_code == 200:
-                    batch = resp.json().get('results') or []
-                    for item in batch:
-                        uin = item.get('value', {}).get('uin')
-                        if uin and uin not in seen_uins:
-                            seen_uins.add(uin)
-                            all_raw_results.append(item)
+                batch, avail = fetch_wq_pages(params_base)
+                total_available = max(total_available, avail)
+                for item in batch:
+                    uin = (item.get('value') or {}).get('uin')
+                    if uin and uin not in seen_uins:
+                        seen_uins.add(uin)
+                        all_raw_results.append(item)
 
             # Step 2: Pre-warm member cache for both asking AND answering members in parallel
             all_member_ids = list({
@@ -245,4 +274,7 @@ def index():
 
         except Exception as e: error_message = f"Search error: {str(e)}"
 
-    return render_template('index.html', results=results, error_message=error_message, departments=DEPARTMENTS, selected_dept=selected_dept_id, selected_house=selected_house, subject=subject, start_date=start_date, end_date=end_date)
+    return render_template('index.html', results=results, error_message=error_message, departments=DEPARTMENTS,
+                           selected_dept=selected_dept_id, selected_house=selected_house,
+                           subject=subject, start_date=start_date, end_date=end_date,
+                           total_available=total_available, results_cap=WQ_MAX_RESULTS)
