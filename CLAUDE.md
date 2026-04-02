@@ -109,6 +109,47 @@ There is no single index of "all debates about topic X". The practical solution 
 find ONE matching speech via TWFY keyword search → extract its debate GID → fetch the full debate session.
 This is implemented in `fetch_all_debate_sessions()` in `debate_scanner.py`.
 
+## Working with the user
+
+### Who the user is
+- UK civil servant working in higher education policy, writing parliamentary briefings professionally
+- Knows Parliament well from the inside — knows which ministers spoke, which debates happened, which questions were tabled
+- If the tool misses something they know happened, the tool is wrong — trust their domain knowledge
+- Building this as a tool they and colleagues across government would use; thinks about it from a practitioner's perspective
+
+### How they communicate
+- Often types quickly with typos — interpret intent, don't get hung up on spelling
+- Thinks out loud and in fragments — piece together meaning from context
+- Will say things like "this is fundamental" or "this is the gem" — pay attention, these are priority signals
+- When they say something "should" work a certain way, they usually have a concrete real-world reason grounded in how Parliament actually operates
+
+### How to collaborate effectively
+- **Challenge the data retrieval approach** — the user explicitly values being asked "is this the best way to retrieve this information?" before building. Questions about data structure and search logic are described as "goldust". Ask before assuming.
+- **Use plan mode for anything non-trivial** — the user wants to think through design before implementation, especially for the Research Tool
+- **Validate architecture out loud** — when an approach is backwards (like speech-first vs debate-first), say so clearly and explain why. The user responds well to direct, logical explanation.
+- **Don't over-build** — the user wants accessible, clean, downloadable information. Not feature bloat. When in doubt, do less but do it well.
+- **Information must always be downloadable** — this is a hard requirement for every results view. Word export is the primary format.
+
+### Design principles the user has established
+- **Desktop-first** — this is a web tool for officials at their desks. Mobile is a future consideration, not current.
+- **Information density over whitespace** — compact cards, smaller fonts in results sections. Don't waste screen space.
+- **Download everything** — every section of results must be exportable to Word. Non-negotiable.
+- **Cautious language** — nothing on the site should sound definitive. "May help with briefing purposes" not "saves hours". AI outputs are aids, not answers.
+- **The Parliamentary Research Tool is the gem** — it is the most important and most complex tool. Give it the most care.
+- **Ministerial debates for the selected department come first** — always. This is the primary use case.
+
+### Questions to ask at the start of a Research Tool session
+1. Which department are you testing/using this for?
+2. What specific debates or questions are you expecting to see that aren't appearing?
+3. Is the issue "not finding the debate at all" or "found the debate but missing speeches from it"?
+
+### Parliamentary structure knowledge to keep in mind
+- Ministers rarely use the exact policy keywords in their responses — they use government framing language
+- Oral Questions sessions: minister gives prepared answer first, then supplementary questions follow — both must be shown
+- Written Questions: Q+A are separate items in the API — always show the answer alongside the question
+- Debates are the unit of meaning, not individual speeches
+- Lords ministers (e.g. Baroness Smith of Malvern) are easy to miss — name normalisation must handle "Baroness X of Y" patterns
+
 ## Things to avoid
 - Don't use port 5432 for Supabase if ever added — use the connection pooler on 6543
 - Don't hardcode API keys or .env paths
