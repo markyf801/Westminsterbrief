@@ -13,6 +13,19 @@ DEPARTMENTS = {
     "HM Treasury": "14", "Home Office": "1", "Ministry of Defence": "11", "Ministry of Justice": "54",
     "Department for Science, Innovation and Technology": "216", "Cabinet Office": "53"
 }
+
+PARTY_COLOURS = {
+    'Labour': '#E4003B',
+    'Conservative': '#0087DC',
+    'Liberal Democrat': '#FAA61A',
+    'SNP': '#005EB8',
+    'Green Party': '#00B140',
+    'Reform UK': '#12B6CF',
+    'Plaid Cymru': '#3F8428',
+    'DUP': '#D46A4C',
+    'Alliance': '#F6CB2F',
+}
+
 MEMBER_CACHE = {}
 
 def prefetch_members(member_ids):
@@ -72,15 +85,15 @@ def index():
     selected_dept_id = ""
     selected_house = "All"
     subject, start_date, end_date = "", "", ""
-    
+
     if request.method == 'POST':
         subject = request.form.get('subject', '').strip()
         start_date = request.form.get('start_date', '').strip()
         end_date = request.form.get('end_date', '').strip()
-        selected_dept_id = request.form.get('department', '').strip() 
+        selected_dept_id = request.form.get('department', '').strip()
         selected_house = request.form.get('house_filter', 'All')
         action = request.form.get('action', 'search')
-        
+
         subjects = [s.strip() for s in subject.split(',') if s.strip()] or ['']
         all_raw_results = []
         seen_uins = set()
@@ -88,12 +101,12 @@ def index():
         try:
             for subj in subjects:
                 # Step 1: The API Pull
-                params = {'take': 400} 
+                params = {'take': 400}
                 if subj: params['searchTerm'] = subj
                 if start_date: params['tabledStartDate'] = start_date
                 if end_date: params['tabledEndDate'] = end_date
                 if selected_dept_id: params['answeringBodies'] = [int(selected_dept_id)]
-                
+
                 resp = requests.get("https://questions-statements-api.parliament.uk/api/writtenquestions/questions", params=params, timeout=30)
                 if resp.status_code == 200:
                     batch = resp.json().get('results') or []
@@ -103,44 +116,72 @@ def index():
                             seen_uins.add(uin)
                             all_raw_results.append(item)
 
-            # Step 2: Pre-warm member cache in parallel before processing
-            unique_member_ids = list({
-                item.get('value', {}).get('askingMemberId')
+            # Step 2: Pre-warm member cache for both asking AND answering members in parallel
+            all_member_ids = list({
+                mid
                 for item in all_raw_results
-                if item.get('value', {}).get('askingMemberId')
+                for mid in [
+                    item.get('value', {}).get('askingMemberId'),
+                    item.get('value', {}).get('answeringMemberId')
+                ]
+                if mid
             })
-            prefetch_members(unique_member_ids)
+            prefetch_members(all_member_ids)
 
             # Step 3: THE STRICT PYTHON DATE & DEPT FILTER
             for item in all_raw_results:
                 val = item.get('value') or {}
-                
+
                 # REJECT wrong departments instantly
                 if selected_dept_id and str(val.get('answeringBodyId')) != selected_dept_id:
-                    continue 
-                
+                    continue
+
                 # REJECT wrong dates manually
                 raw_date_full = val.get('dateTabled') or ''
                 raw_date_str = raw_date_full.split('T')[0] # Get YYYY-MM-DD format
-                
+
                 # Python hard-comparison: if date is before start or after end, delete it
                 if start_date and raw_date_str < start_date: continue
                 if end_date and raw_date_str > end_date: continue
-                
+
                 # If it survives the "bouncer", process for UI
                 val_member_id = val.get('askingMemberId')
                 house_raw = val.get('house', 'Commons')
                 name, party, constituency, actual_house = get_member_details(val_member_id, house_raw)
-                
+
                 if selected_house != "All" and actual_house != selected_house: continue
-                
+
                 try:
                     date_obj = datetime.fromisoformat(raw_date_str)
                     f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
                 except: f_date = "N/A"
-                
+
                 question_url = f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date_str}/{val.get('uin')}"
                 question_text = val.get('questionText', '').replace('<p>','').replace('</p>','')
+
+                # Answer status
+                is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
+                is_holding = val.get('answerIsHolding', False)
+                is_withdrawn = val.get('isWithdrawn', False)
+
+                # Answering minister
+                answering_member_id = val.get('answeringMemberId')
+                if answering_member_id:
+                    ans_name, _, _, _ = get_member_details(answering_member_id, 'Commons')
+                else:
+                    ans_name = None
+
+                # Answer text (strip HTML tags)
+                raw_answer = val.get('answerText') or ''
+                answer_text = raw_answer.replace('<p>', '').replace('</p>', '').strip()
+
+                # Date answered
+                raw_answered = (val.get('dateAnswered') or '').split('T')[0]
+                try:
+                    da_obj = datetime.fromisoformat(raw_answered)
+                    date_answered = f"{da_obj.day} {da_obj.strftime('%B %Y')}"
+                except:
+                    date_answered = ''
 
                 # Cache questions older than 7 days — they won't change
                 uin = val.get('uin')
@@ -163,27 +204,45 @@ def index():
                     'url': question_url,
                     'dept': val.get('answeringBodyName'), 'name': name, 'party': party,
                     'role': "Life Peer" if actual_house == "Lords" else f"MP for {constituency}",
-                    'date': f_date, 'text': question_text
+                    'date': f_date, 'text': question_text,
+                    'heading': val.get('heading', ''),
+                    'party_colour': PARTY_COLOURS.get(party, '#888888'),
+                    'answered': is_answered,
+                    'is_holding': is_holding,
+                    'is_withdrawn': is_withdrawn,
+                    'answer_text': answer_text,
+                    'answering_minister': ans_name,
+                    'date_answered': date_answered,
                 })
-                        
+
             # Export Handlers...
             if action == 'word' and results:
                 doc = Document(); doc.add_heading('Parliamentary Written Questions', 0)
                 for r in results:
                     p = doc.add_paragraph()
-                    p.add_run(f"[{r['dept']}] {r['name']} ({r['party']}, {r['role']})\n").bold = True
-                    p.add_run(f"Date Asked: {r['date']}\nQuestion: {r['text']}\nLink: ")
+                    status_label = 'WITHDRAWN' if r['is_withdrawn'] else ('HOLDING ANSWER' if r['is_holding'] else ('ANSWERED' if r['answered'] else 'UNANSWERED'))
+                    p.add_run(f"[{status_label}] [{r['dept']}] {r['name']} ({r['party']}, {r['role']})\n").bold = True
+                    answer_line = f"Date Asked: {r['date']}"
+                    if r['answering_minister']: answer_line += f" | Answered by: {r['answering_minister']}"
+                    if r['date_answered']: answer_line += f" ({r['date_answered']})"
+                    p.add_run(answer_line + "\n")
+                    p.add_run(f"Question: {r['text']}\n")
+                    if r['answer_text']:
+                        p.add_run(f"Answer: {r['answer_text']}\n")
+                    p.add_run("Link: ")
                     add_hyperlink(p, r['url'], r['url'])
                 b = io.BytesIO(); doc.save(b); b.seek(0)
                 output = make_response(b.getvalue()); output.headers["Content-Disposition"] = "attachment; filename=Hansard_Export.docx"
                 return output
             elif action == 'csv' and results:
                 si = io.StringIO(); cw = csv.writer(si)
-                cw.writerow(['Department', 'Member', 'Party', 'Constituency', 'Date', 'Question', 'URL'])
-                for r in results: cw.writerow([r['dept'], r['name'], r['party'], r['role'], r['date'], r['text'], r['url']])
+                cw.writerow(['Status', 'Department', 'Member', 'Party', 'Role', 'Date Asked', 'Answering Minister', 'Date Answered', 'Question', 'Answer', 'URL'])
+                for r in results:
+                    status_label = 'WITHDRAWN' if r['is_withdrawn'] else ('HOLDING ANSWER' if r['is_holding'] else ('ANSWERED' if r['answered'] else 'UNANSWERED'))
+                    cw.writerow([status_label, r['dept'], r['name'], r['party'], r['role'], r['date'], r['answering_minister'] or '', r['date_answered'], r['text'], r['answer_text'], r['url']])
                 output = make_response(si.getvalue()); output.headers["Content-Disposition"] = "attachment; filename=Hansard_Export.csv"; output.headers["Content-type"] = "text/csv"
                 return output
-                
+
         except Exception as e: error_message = f"Search error: {str(e)}"
-            
+
     return render_template('index.html', results=results, error_message=error_message, departments=DEPARTMENTS, selected_dept=selected_dept_id, selected_house=selected_house, subject=subject, start_date=start_date, end_date=end_date)

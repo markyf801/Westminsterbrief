@@ -58,19 +58,31 @@
 {% if results %}
     <div style="margin-top: 20px;">
     {% for r in results %}
-        <div class="result-card">
+        <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
             <div class="result-card-header">
+                <span class="wq-status-badge wq-status-{% if r.is_withdrawn %}withdrawn{% elif r.is_holding %}holding{% elif r.answered %}answered{% else %}unanswered{% endif %}">
+                    {% if r.is_withdrawn %}WITHDRAWN{% elif r.is_holding %}HOLDING{% elif r.answered %}ANSWERED{% else %}UNANSWERED{% endif %}
+                </span>
                 <span class="result-card-dept">{{ r.dept }}</span>
                 <span class="result-card-date">{{ r.date }}</span>
             </div>
+            {% if r.heading %}<div class="wq-heading">{{ r.heading }}</div>{% endif %}
             <div class="result-card-body">
                 <p style="margin-bottom: 8px;">
-                    <strong>{{ r.name }}</strong> ({{ r.party }}, {{ r.role }}) asked:
+                    <span class="wq-party-dot" style="background: {{ r.party_colour }};"></span>
+                    <strong>{{ r.name }}</strong>
+                    <span class="wq-party-label">({{ r.party }}, {{ r.role }})</span> asked:
                 </p>
                 <p class="result-card-quote">"{{ r.text }}"</p>
-                <a href="{{ r.url }}" target="_blank" class="result-card-link">
-                    Read full answer on Parliament.uk &rarr;
-                </a>
+                {% if r.answer_text %}
+                <details class="wq-answer-details">
+                    <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
+                    <div class="wq-answer-text">{{ r.answer_text }}</div>
+                </details>
+                {% elif r.answered %}
+                <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
+                {% endif %}
+                <a href="{{ r.url }}" target="_blank" class="result-card-link">View on Parliament.uk &rarr;</a>
             </div>
         </div>
     {% endfor %}

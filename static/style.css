@@ -224,7 +224,9 @@ input:focus, select:focus, textarea:focus {
 .result-card-header {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
     border-bottom: 1px solid #eef0f4;
     padding: 14px 18px 10px;
 }
@@ -632,4 +634,78 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 768px) {
     .scanner-tabs { gap: 0; }
     .topic-briefing-grid { grid-template-columns: 1fr; }
+}
+
+/* --- WRITTEN QUESTIONS SCANNER ENHANCEMENTS --- */
+.wq-status-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: #fff;
+    flex-shrink: 0;
+}
+.wq-status-answered   { background: #28a745; }
+.wq-status-unanswered { background: #d9534f; }
+.wq-status-holding    { background: #fd7e14; }
+.wq-status-withdrawn  { background: #6c757d; }
+
+.wq-heading {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #888;
+    padding: 4px 18px 0;
+}
+
+.wq-party-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.wq-party-label { color: #555; font-size: 13px; }
+
+.wq-answer-details {
+    margin: 12px 0 8px;
+    border-top: 1px solid #eef0f4;
+    padding-top: 10px;
+}
+
+.wq-answer-summary {
+    font-size: 13px;
+    font-weight: 600;
+    color: #005a8f;
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.wq-answer-summary::-webkit-details-marker { display: none; }
+.wq-answer-summary::before { content: "▶"; font-size: 10px; color: #005a8f; }
+details[open] .wq-answer-summary::before { content: "▼"; }
+
+.wq-answer-text {
+    font-size: 13px;
+    color: #444;
+    line-height: 1.65;
+    background: #f4f8f0;
+    border-left: 3px solid #28a745;
+    padding: 12px 14px;
+    border-radius: 0 4px 4px 0;
+    margin-top: 10px;
+}
+
+.wq-answered-note {
+    font-size: 13px;
+    color: #555;
+    margin: 8px 0;
 }

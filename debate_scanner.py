@@ -701,9 +701,9 @@ def debates_topic():
             if house_filter == 'lords_only':
                 sources = ['lords']
             elif house_filter == 'commons_only':
-                sources = ['commons', 'westminsterhall']
+                sources = ['commons', 'westminsterhall', 'wrans']
             else:
-                sources = ['commons', 'westminsterhall', 'lords']
+                sources = ['commons', 'westminsterhall', 'lords', 'wrans']
 
             # If a narrow keyword is set, skip AI expansion to keep results precise
             if narrow_keyword:
@@ -728,14 +728,6 @@ def debates_topic():
                     all_rows.extend(future.result())
 
             topic_rows = deduplicate_by_listurl(all_rows)
-
-            # Post-filter: drop rows that don't mention both topic and narrow keyword
-            if narrow_keyword:
-                must_have = [topic.lower(), narrow_keyword.lower()]
-                topic_rows = [
-                    r for r in topic_rows
-                    if all(kw in (r.get('body_clean') or '').lower() for kw in must_have)
-                ]
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()

@@ -14,7 +14,7 @@ Westminster Brief (`westminsterbrief.co.uk`) is an AI-powered parliamentary rese
 ## Project structure
 ```
 flask_app.py          Main app: config, DB models, auth routes, alerts scanner, blueprint registration
-hansard.py            Blueprint: Written Questions search & export (route: /)
+hansard.py            Blueprint: Written Questions search & export (route: /questions)
 tracker.py            Blueprint: Today's PQs + AI categorisation (route: /tracker)
 mp_search.py          Blueprint: MP/Peer PQ research (route: /mp_search)
 biography.py          Blueprint: MP/Lords biography with AI summary (route: /biography)
@@ -22,6 +22,19 @@ debate_scanner.py     Blueprint: Debate search, transcript scraping, AI briefing
 templates/            Jinja2 HTML templates — base.html is the master layout
 static/style.css      All CSS — no inline styles in base.html or index.html
 ```
+
+## Tool name → URL → file mapping
+Clear mapping to avoid confusion when discussing issues:
+
+| Tool name (navbar/home)         | URL            | Backend file        | Template                      |
+|---------------------------------|----------------|---------------------|-------------------------------|
+| Written Questions Scanner       | `/questions`   | `hansard.py`        | `templates/index.html`        |
+| Today's PQs Tracker             | `/tracker`     | `tracker.py`        | `templates/tracker.html`      |
+| MP PQ Research                  | `/mp_search`   | `mp_search.py`      | `templates/mp_search.html`    |
+| Member Profiles                 | `/biography`   | `biography.py`      | `templates/biography.html`    |
+| Parliamentary Research Tool     | `/debates`     | `debate_scanner.py` | `templates/debate_scanner.html` |
+
+**Note:** "Hansard" as a concept appears in both the Written Questions Scanner (Parliament WQ API) and the Parliamentary Research Tool (TWFY Hansard debate transcripts). When discussing issues, use the tool name above, not "Hansard tool".
 
 ## External APIs used
 | API | Env var | Used for |
