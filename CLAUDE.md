@@ -138,6 +138,17 @@ This is implemented in `fetch_all_debate_sessions()` in `debate_scanner.py`.
 - **The Parliamentary Research Tool is the gem** — it is the most important and most complex tool. Give it the most care.
 - **Ministerial debates for the selected department come first** — always. This is the primary use case.
 
+### Canonical test case — always verify this works
+**Topic:** "student loan repayments" (or "repayment threshold")
+**Department filter:** Department for Education
+**Expected results (user confirms these debates exist in 2026):**
+- Debates/oral questions involving **Macalister** (DfE minister — user writes these briefs, they know)
+- Debates/oral questions involving **Baroness Smith of Malvern** (Minister of State for Skills, DfE)
+- Both should appear in their respective debate sessions with minister-first ordering
+
+If either is missing after a search, something is architecturally wrong — investigate before declaring it fixed.
+This is a live, high-stakes policy area (student loan repayments is currently a major issue).
+
 ### Questions to ask at the start of a Research Tool session
 1. Which department are you testing/using this for?
 2. What specific debates or questions are you expecting to see that aren't appearing?
