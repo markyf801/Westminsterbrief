@@ -90,6 +90,22 @@ App runs at http://127.0.0.1:5000 — visit /home for the dashboard.
 - Backup files in root (bckup_flask.py etc.) and backup templates are clutter — safe to delete eventually
 - No database migration system — relies on `db.create_all()` which is fine for now
 
+## Next priority: minister-led search for selected department
+
+**The problem (affects ALL departments, not just DfE):**
+Keyword search misses ministers whose speeches don't contain the search terms. Phase 1 (full session fetch) helps but only when the session was already found. If no speech in a session contains the keywords, the session is invisible.
+
+**The proper fix:**
+When a department is selected, pull the current ministerial team from GOV.UK, fetch each minister's recent debates from TWFY by person ID, filter for topic relevance, merge with keyword search. This guarantees ALL departmental ministers appear regardless of the language they used.
+
+**Implementation plan:**
+1. `get_dept_minister_twfy_ids(dept_name)` — for a selected department, get GOV.UK minister list and resolve each to a TWFY person ID via Members API name lookup
+2. `fetch_minister_debates_for_topic(twfy_person_id, topic, date_range)` — TWFY `getDebates?person=ID&search=TOPIC` (or just `getDebates?person=ID` with post-filter)
+3. Run in parallel alongside existing keyword search in `debates_topic()`
+4. Merge results via `deduplicate_by_listurl()`
+
+This works universally across all departments — pull ministerial team → search their debates → merge.
+
 ## Parliamentary Research Tool — design principles
 
 **Core architectural principle (confirmed by user):**
@@ -142,9 +158,11 @@ This is implemented in `fetch_all_debate_sessions()` in `debate_scanner.py`.
 **Topic:** "student loan repayments" (or "repayment threshold")
 **Department filter:** Department for Education
 **Expected results (user confirms these debates exist in 2026):**
-- Debates/oral questions involving **Macalister** (DfE minister — user writes these briefs, they know)
-- Debates/oral questions involving **Baroness Smith of Malvern** (Minister of State for Skills, DfE)
-- Both should appear in their respective debate sessions with minister-first ordering
+- **Josh MacAlister OBE MP** — Parliamentary Under-Secretary of State (Minister for Children and Families), DfE. Confirmed current DfE minister. Has spoken on repayments in 2026. Parliament ID: 5033.
+- **Baroness Smith of Malvern** — Minister of State for Skills, DfE (Lords). Has spoken on repayments in 2026 but has been unwell; a substitute Lords peer may have covered some sessions.
+- Both should appear in their respective debate sessions with minister-first ordering.
+
+**IMPORTANT:** Do not assume someone is a backbencher without checking GOV.UK/Parliament API first. MacAlister was incorrectly identified as a backbencher in one session — always verify role before drawing conclusions.
 
 If either is missing after a search, something is architecturally wrong — investigate before declaring it fixed.
 This is a live, high-stakes policy area (student loan repayments is currently a major issue).
