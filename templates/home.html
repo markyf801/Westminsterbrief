@@ -27,7 +27,17 @@
         </div>
     </div>
     {% if not current_user.is_authenticated %}
-    <a href="/register" style="background:white; color:#1c3e6e; font-weight:700; font-size:14px; padding:12px 22px; border-radius:8px; text-decoration:none; white-space:nowrap; flex-shrink:0;">Get started free →</a>
+    <div style="flex-shrink:0; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:10px; padding:18px 20px; min-width:210px; max-width:230px;">
+        <div style="font-size:13px; font-weight:700; color:white; margin-bottom:10px; letter-spacing:0.02em;">Free account includes:</div>
+        <ul style="margin:0 0 14px 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:7px;">
+            <li style="font-size:12.5px; color:rgba(255,255,255,0.85); display:flex; gap:7px; align-items:flex-start;"><span style="color:#d4af4a; flex-shrink:0;">✓</span> All 5 research tools</li>
+            <li style="font-size:12.5px; color:rgba(255,255,255,0.85); display:flex; gap:7px; align-items:flex-start;"><span style="color:#d4af4a; flex-shrink:0;">✓</span> AI briefing summaries</li>
+            <li style="font-size:12.5px; color:rgba(255,255,255,0.85); display:flex; gap:7px; align-items:flex-start;"><span style="color:#d4af4a; flex-shrink:0;">✓</span> Word document exports</li>
+            <li style="font-size:12.5px; color:rgba(255,255,255,0.85); display:flex; gap:7px; align-items:flex-start;"><span style="color:#d4af4a; flex-shrink:0;">✓</span> Free for gov.uk email holders</li>
+        </ul>
+        <a href="/register" style="display:block; background:white; color:#1c3e6e; font-weight:700; font-size:13.5px; padding:10px 16px; border-radius:7px; text-decoration:none; text-align:center; transition:all 0.18s;">Get started free →</a>
+        <div style="text-align:center; margin-top:8px; font-size:11.5px; color:rgba(255,255,255,0.5);">Already registered? <a href="/login" style="color:rgba(255,255,255,0.75); text-decoration:underline;">Sign in</a></div>
+    </div>
     {% endif %}
 </div>
 
