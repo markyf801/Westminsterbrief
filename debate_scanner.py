@@ -707,7 +707,17 @@ def lookup_twfy_person(name):
                 variants.append(candidate)
 
     for variant in variants:
-        for endpoint, is_lord in [('getMPs', False), ('getLords', True)]:
+        # For variants with a Lords title prefix or a peerage 'of' pattern (e.g.
+        # "Smith of Malvern", "Baroness Smith of Malvern"), check getLords FIRST
+        # and skip getMPs entirely — getMPs search on "Smith" would return the
+        # wrong person (any MP with that surname) before Lords is tried.
+        has_lords_prefix_v = any(variant.lower().startswith(p.lower()) for p in lords_prefixes)
+        has_peerage_of = ' of ' in variant.lower()
+        if has_lords_prefix_v or has_peerage_of:
+            endpoint_pairs = [('getLords', True)]
+        else:
+            endpoint_pairs = [('getMPs', False), ('getLords', True)]
+        for endpoint, is_lord in endpoint_pairs:
             try:
                 resp = requests.get(
                     'https://www.theyworkforyou.com/api/' + endpoint,
@@ -723,12 +733,23 @@ def lookup_twfy_person(name):
     return None, None, False
 
 
-def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
+def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_lord=False):
     """Fetch speeches for a specific TWFY person_id, filtered by topic + date.
     Returns rows in the same normalised schema as fetch_twfy_topic() so they
-    can be merged and deduped with keyword-search results."""
+    can be merged and deduped with keyword-search results.
+    Results cached for 6h to reduce TWFY API quota usage."""
+    # Lords ministers only speak in Lords (+ wms), not Commons/WestminsterHall.
+    # Filtering here saves ~2 API calls per Lords minister per search.
+    if is_lord:
+        sources = [s for s in sources if s in ('lords', 'wms')]
+
     rows = []
     for source in sources:
+        cache_key_query = f"minister:{person_id}:{topic} {date_range}".strip()
+        cached = CachedTWFYSearch.get(cache_key_query, source, ttl_hours=6)
+        if cached is not None:
+            rows.extend(cached)
+            continue
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
         query = f"{topic} {date_range}".strip() if topic else date_range.strip()
         params = {
@@ -743,6 +764,7 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
             resp = requests.get(api_url, params=params, timeout=15)
             if resp.status_code != 200:
                 continue
+            source_rows = []
             for r in resp.json().get('rows', []):
                 body_raw = r.get('body', '')
                 body_text = clean_body_text(body_raw)
@@ -750,7 +772,7 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
                 if source == 'wms':
                     debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
                 dtype = get_debate_type(debate_title, source=source)
-                rows.append({
+                source_rows.append({
                     'listurl': r.get('listurl', ''),
                     'body_clean': body_text[:500],
                     'body_export': body_text[:3000],
@@ -764,6 +786,8 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
                     'relevance': r.get('relevance', 0),
                     'debate_type': dtype,
                 })
+            CachedTWFYSearch.store(cache_key_query, source, source_rows)
+            rows.extend(source_rows)
         except Exception:
             pass
     return rows
@@ -781,7 +805,7 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
             continue
         person_id, matched_name, is_lord = lookup_twfy_person(display)
         if person_id:
-            results.append({'person_id': person_id, 'name': display, 'role': m.get('role', '')})
+            results.append({'person_id': person_id, 'name': display, 'role': m.get('role', ''), 'is_lord': is_lord})
     return results
 
 
@@ -1088,7 +1112,8 @@ def debates_topic():
                 twfy_futs = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(_do_wq_fetch)
                 minister_futs = {
-                    executor.submit(fetch_twfy_minister_topic, mp['person_id'], topic, date_range, sources): mp
+                    executor.submit(fetch_twfy_minister_topic, mp['person_id'], topic, date_range, sources,
+                                    is_lord=mp.get('is_lord', False)): mp
                     for mp in minister_people
                 }
                 all_futs = list(twfy_futs.keys()) + [wq_fut] + list(minister_futs.keys())
@@ -1137,19 +1162,29 @@ def debates_topic():
                 error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
             elif GEMINI_API_KEY:
                 try:
-                    # Always include ALL ministerial contributions, then balance remaining slots by source
-                    minister_rows = [r for r in topic_rows if r.get('is_minister')]
+                    # Build a balanced AI payload:
+                    # - Ministers: cap at 25 (highest relevance) so they don't crowd out opposition
+                    # - Opposition party speeches: explicitly selected so they're always present
+                    # - Other non-minister: backbenchers, crossbenchers, etc.
+                    # Without explicit opposition selection, minister-led search results dominate
+                    # and Gemini sees no opposition voices even when sessions were expanded.
+                    _OPPOSITION_PARTIES = {
+                        'Conservative', 'Liberal Democrat', 'Scottish National Party',
+                        'Reform UK', 'Plaid Cymru', 'Green Party', 'Democratic Unionist Party',
+                        'Alba Party',
+                    }
+                    minister_rows = sorted(
+                        [r for r in topic_rows if r.get('is_minister')],
+                        key=lambda x: -x.get('relevance', 0)
+                    )[:25]
                     non_minister_rows = [r for r in topic_rows if not r.get('is_minister')]
-                    seen_sources = {}
-                    balanced_rest = []
-                    for r in non_minister_rows:
-                        src = r['source']
-                        if seen_sources.get(src, 0) < 8:
-                            balanced_rest.append(r)
-                            seen_sources[src] = seen_sources.get(src, 0) + 1
-                        if len(balanced_rest) >= 30:
-                            break
-                    balanced = minister_rows + balanced_rest
+                    # Scan ALL non-minister rows for opposition speeches (may have relevance=0
+                    # from Phase 1 expansion but still contain valuable opposition positions)
+                    opp_rows = [r for r in non_minister_rows
+                                if r.get('speaker_party', '') in _OPPOSITION_PARTIES]
+                    other_rows = [r for r in non_minister_rows
+                                  if r.get('speaker_party', '') not in _OPPOSITION_PARTIES]
+                    balanced = minister_rows + opp_rows[:15] + other_rows[:15]
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
                          'party': r['speaker_party'], 'date': r['hdate'],
