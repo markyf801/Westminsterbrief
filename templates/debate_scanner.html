@@ -33,6 +33,7 @@
                 <div class="form-group" style="flex: 1;">
                     <label>Narrow by keyword <span style="font-weight:normal; color:#888; font-size:12px;">(optional)</span></label>
                     <input type="text" name="narrow_keyword" value="{{ narrow_keyword if narrow_keyword else (user_pref.policy_area if user_pref else '') }}" placeholder="e.g. higher education, universities">
+                    <div style="font-size:11.5px; color:#888; margin-top:-10px; line-height:1.5;">💡 If results seem sparse, try clearing this field for a broader search.</div>
                 </div>
                 <div class="form-group">
                     <label>House / Chamber</label>
