@@ -408,7 +408,10 @@ def run_manual_scan():
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', '').lower().strip()
 
 def _is_admin():
-    return current_user.is_authenticated and ADMIN_EMAIL and current_user.email.lower() == ADMIN_EMAIL
+    try:
+        return current_user.is_authenticated and ADMIN_EMAIL and current_user.email.lower() == ADMIN_EMAIL
+    except Exception:
+        return False
 
 @app.route('/admin', methods=['GET', 'POST'])
 @login_required
