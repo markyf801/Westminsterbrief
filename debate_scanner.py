@@ -143,8 +143,9 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             api_url = TWFY_WMS_URL
         else:
             api_url = TWFY_API_URL
-        query = f"{search} {date_range}".strip()
-        params = {'key': TWFY_API_KEY, 'search': query, 'order': 'r', 'num': num, 'output': 'json'}
+        params = {'key': TWFY_API_KEY, 'search': search, 'order': 'r', 'num': num, 'output': 'json'}
+        if date_range:
+            params['date'] = date_range
         if source_type not in ('wrans', 'wms'):
             params['type'] = source_type
         resp = requests.get(api_url, params=params, timeout=15)
@@ -704,15 +705,16 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
     Returns rows in the same normalised schema as fetch_twfy_topic() so they
     can be merged and deduped with keyword-search results."""
     rows = []
-    query = f"{topic} {date_range}".strip() if topic else date_range.strip()
     for source in sources:
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
         params = {
             'key': TWFY_API_KEY, 'person': str(person_id),
             'order': 'd', 'num': num, 'output': 'json'
         }
-        if query:
-            params['search'] = query
+        if topic:
+            params['search'] = topic
+        if date_range:
+            params['date'] = date_range
         if source != 'wms':
             params['type'] = source
         try:
