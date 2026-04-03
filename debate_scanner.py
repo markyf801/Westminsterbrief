@@ -304,9 +304,13 @@ def _listurl_to_parent_gid(listurl, source):
 
 def fetch_full_debate_session(parent_gid, source):
     """Fetch ALL speeches from a TWFY debate section via its parent GID.
-    Returns normalised speech list (same schema as fetch_twfy_topic). relevance=0."""
+    Returns normalised speech list (same schema as fetch_twfy_topic). relevance=0.
+    Cached with 30-day TTL — published debate transcripts never change."""
     if not TWFY_API_KEY:
         return []
+    cached = CachedTWFYSearch.get(parent_gid, f'session_{source}', ttl_hours=720)
+    if cached is not None:
+        return cached
     try:
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
         resp = requests.get(api_url,
@@ -335,6 +339,7 @@ def fetch_full_debate_session(parent_gid, source):
                 'debate_type': get_debate_type(debate_title, source=source),
                 'from_session_fetch': True,
             })
+        CachedTWFYSearch.store(parent_gid, f'session_{source}', results)
         return results
     except Exception:
         return []
@@ -795,17 +800,38 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_
 
 def get_dept_minister_twfy_ids(dept_name, minister_data):
     """Resolve all ministers for a department to TWFY person IDs.
-    Returns list of {person_id, name, role} dicts. Skips ministers whose
-    TWFY ID cannot be resolved."""
+    Returns list of {person_id, name, role, is_lord} dicts.
+    Person IDs are cached in the minister cache file (same 7-day TTL) to avoid
+    burning TWFY API quota on getMPs/getLords lookups every search."""
     ministers = minister_data.get('by_dept', {}).get(dept_name, [])
+    twfy_ids_cache = minister_data.setdefault('twfy_ids', {})
     results = []
+    cache_updated = False
     for m in ministers:
         display = m.get('display_name') or m.get('name', '')
         if not display:
             continue
+        if display in twfy_ids_cache:
+            cached_entry = twfy_ids_cache[display]
+            if cached_entry.get('person_id'):
+                results.append({
+                    'person_id': cached_entry['person_id'],
+                    'name': display,
+                    'role': m.get('role', ''),
+                    'is_lord': cached_entry.get('is_lord', False),
+                })
+            continue
         person_id, matched_name, is_lord = lookup_twfy_person(display)
+        twfy_ids_cache[display] = {'person_id': person_id, 'is_lord': is_lord}
+        cache_updated = True
         if person_id:
             results.append({'person_id': person_id, 'name': display, 'role': m.get('role', ''), 'is_lord': is_lord})
+    if cache_updated:
+        try:
+            with open(MINISTER_CACHE_FILE, 'w') as f:
+                json.dump(minister_data, f)
+        except Exception:
+            pass
     return results
 
 
