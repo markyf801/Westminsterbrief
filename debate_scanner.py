@@ -143,10 +143,10 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             api_url = TWFY_WMS_URL
         else:
             api_url = TWFY_API_URL
-        # When date range set, order by date desc so recent results come first,
-        # then Python-filter. Without dates, order by relevance.
-        order = 'd' if date_range else 'r'
-        params = {'key': TWFY_API_KEY, 'search': search, 'order': order, 'num': num, 'output': 'json'}
+        # TWFY date range syntax: append YYYYMMDD..YYYYMMDD after search terms
+        # See: https://www.theyworkforyou.com/help/#searching
+        query = f"{search} {date_range}".strip() if date_range else search
+        params = {'key': TWFY_API_KEY, 'search': query, 'order': 'r', 'num': num, 'output': 'json'}
         if source_type not in ('wrans', 'wms'):
             params['type'] = source_type
         resp = requests.get(api_url, params=params, timeout=15)
@@ -713,12 +713,13 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
     rows = []
     for source in sources:
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
+        query = f"{topic} {date_range}".strip() if topic else date_range.strip()
         params = {
             'key': TWFY_API_KEY, 'person': str(person_id),
             'order': 'd', 'num': num, 'output': 'json'
         }
-        if topic:
-            params['search'] = topic
+        if query:
+            params['search'] = query
         if source != 'wms':
             params['type'] = source
         try:
@@ -1043,7 +1044,7 @@ def debates_topic():
                 search_query = f'{expanded} AND "{narrow_keyword}"'
             else:
                 search_query = expanded
-            debug_query = search_query
+            debug_query = f"{search_query} {date_range}".strip() if date_range else search_query
 
             # Resolve department ministers to TWFY person IDs for minister-led search.
             # When a dept is selected, we search each minister's debate history directly
@@ -1081,13 +1082,6 @@ def debates_topic():
                             pass
 
             topic_rows = deduplicate_by_listurl(all_rows)
-
-            # Python date filter — TWFY date syntax in search string is unreliable.
-            # order=d above ensures recent results come first so they're in the fetch window.
-            if start_date or end_date:
-                topic_rows = [r for r in topic_rows if
-                    (not start_date or r.get('hdate','') >= start_date) and
-                    (not end_date or r.get('hdate','') <= end_date)]
 
             # Debates-first: expand each matched debate to include ALL speeches.
             # This ensures ministerial responses appear even when they don't contain
