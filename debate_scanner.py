@@ -158,8 +158,11 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             params['type'] = source_type
         resp = requests.get(api_url, params=params, timeout=15)
         if resp.status_code != 200:
-            return []
-        rows = resp.json().get('rows', [])
+            return [{'_error': f"TWFY {source_type} HTTP {resp.status_code}"}]
+        data = resp.json()
+        if isinstance(data, dict) and 'error' in data:
+            return [{'_error': f"TWFY {source_type}: {data['error']}"}]
+        rows = data.get('rows', [])
         results = []
         for r in rows:
             body_raw = r.get('body', '')
@@ -1093,6 +1096,12 @@ def debates_topic():
                             all_rows.extend(future.result())
                         except Exception:
                             pass
+
+            # Extract any TWFY error markers before dedup
+            twfy_errors = [r['_error'] for r in all_rows if r.get('_error')]
+            all_rows = [r for r in all_rows if not r.get('_error')]
+            if twfy_errors:
+                debug_query += ' | ERRORS: ' + '; '.join(set(twfy_errors))
 
             topic_rows = deduplicate_by_listurl(all_rows)
 
