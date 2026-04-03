@@ -135,7 +135,8 @@ def get_source_label(source):
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
 def fetch_twfy_topic(search, source_type, date_range, num=150):
-    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure."""
+    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure.
+    Date filtering is done in Python after fetch — TWFY's embedded date syntax is unreliable."""
     try:
         if source_type == 'wrans':
             api_url = TWFY_WRANS_URL
@@ -143,8 +144,7 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             api_url = TWFY_WMS_URL
         else:
             api_url = TWFY_API_URL
-        search_with_date = f"{search} {date_range}".strip() if date_range else search
-        params = {'key': TWFY_API_KEY, 'search': search_with_date, 'order': 'r', 'num': num, 'output': 'json'}
+        params = {'key': TWFY_API_KEY, 'search': search, 'order': 'r', 'num': num, 'output': 'json'}
         if source_type not in ('wrans', 'wms'):
             params['type'] = source_type
         resp = requests.get(api_url, params=params, timeout=15)
@@ -231,14 +231,19 @@ def expand_search_query(topic, api_key):
         ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
         prompt = (
             f"You are a UK Parliamentary researcher. A user wants to search Hansard for: \"{topic}\"\n"
-            "Give up to 6 short additional phrases that cover the same policy area "
-            "using different vocabulary MPs and Lords commonly use in Parliament. Include:\n"
-            "- Any common acronyms (e.g. 'LLE', 'SEND', 'HTQ')\n"
-            "- Previous or alternative names for the policy\n"
-            "- Related legislation names\n"
-            "- Synonymous terms used in debate\n"
-            "Return ONLY a JSON array of strings, no explanation, no markdown. "
-            f"Example for 'student loan repayments': [\"repayment threshold\", \"graduate debt\", \"loan write-off\", \"income contingent\", \"Plan 2 loans\"]"
+            "Give up to 5 additional search phrases that refer to THE SAME SPECIFIC POLICY OR TOPIC "
+            "using vocabulary MPs and Lords actually use in Parliament.\n"
+            "STRICT RULES:\n"
+            "- Only include terms that directly refer to this specific policy — not broader related topics\n"
+            "- Include the policy acronym if one exists (e.g. 'LLE', 'SEND', 'HTQ', 'ICR')\n"
+            "- Include any previous official name for the policy if it was renamed\n"
+            "- Include the specific legislation name if relevant (e.g. 'Skills and Post-16 Education Act')\n"
+            "- Do NOT include generic financial, legal, or policy terms that could match unrelated debates\n"
+            "- Do NOT include synonyms that are broader than the original topic\n"
+            "Return ONLY a JSON array of strings, no explanation, no markdown.\n"
+            "Examples:\n"
+            "'student loan repayments' → [\"repayment threshold\", \"Plan 2 loans\", \"income-contingent repayment\", \"ICR\", \"loan write-off\"]\n"
+            "'lifelong learning entitlement' → [\"LLE\", \"lifelong loan entitlement\", \"Skills and Post-16 Education Act\", \"modular learning\"]"
         )
         payload = {"contents": [{"parts": [{"text": prompt}]}],
                    "generationConfig": {"responseMimeType": "application/json"}}
@@ -702,7 +707,8 @@ def lookup_twfy_person(name):
 def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
     """Fetch speeches for a specific TWFY person_id, filtered by topic + date.
     Returns rows in the same normalised schema as fetch_twfy_topic() so they
-    can be merged and deduped with keyword-search results."""
+    can be merged and deduped with keyword-search results.
+    Date filtering is done in Python after fetch."""
     rows = []
     for source in sources:
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
@@ -711,7 +717,7 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
             'order': 'd', 'num': num, 'output': 'json'
         }
         if topic:
-            params['search'] = f"{topic} {date_range}".strip() if date_range else topic
+            params['search'] = topic
         if source != 'wms':
             params['type'] = source
         try:
@@ -1074,6 +1080,16 @@ def debates_topic():
                             pass
 
             topic_rows = deduplicate_by_listurl(all_rows)
+
+            # Python-side date filter — reliable regardless of TWFY search syntax
+            if start_date or end_date:
+                def _in_range(row):
+                    d = row.get('hdate', '')
+                    if not d: return True
+                    if start_date and d < start_date: return False
+                    if end_date and d > end_date: return False
+                    return True
+                topic_rows = [r for r in topic_rows if _in_range(r)]
 
             # Debates-first: expand each matched debate to include ALL speeches.
             # This ensures ministerial responses appear even when they don't contain
