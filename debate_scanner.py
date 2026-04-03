@@ -167,6 +167,7 @@ def fetch_twfy_topic(search, source_type, date_range, num=100):
             results.append({
                 'listurl': r.get('listurl', ''),
                 'body_clean': body_text[:500],
+                'body_export': body_text[:3000],
                 'body_word_count': len(body_text.split()),
                 'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
                 'speaker_party': (r.get('speaker') or {}).get('party', ''),
@@ -294,6 +295,7 @@ def fetch_full_debate_session(parent_gid, source):
             results.append({
                 'listurl': r.get('listurl', ''),
                 'body_clean': body_text[:500],
+                'body_export': body_text[:3000],
                 'body_word_count': len(body_text.split()),
                 'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
                 'speaker_party': (r.get('speaker') or {}).get('party', ''),
@@ -723,6 +725,7 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
                 rows.append({
                     'listurl': r.get('listurl', ''),
                     'body_clean': body_text[:500],
+                    'body_export': body_text[:3000],
                     'body_word_count': len(body_text.split()),
                     'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
                     'speaker_party': (r.get('speaker') or {}).get('party', ''),
@@ -1581,33 +1584,115 @@ def download_research_brief():
     if not Document:
         return "Word library missing.", 500
 
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _OxmlElement
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
     topic = request.form.get('topic', 'Parliamentary Research').strip()
     briefing_text = request.form.get('briefing_text', '')
     sections_json = request.form.get('sections_json', '[]')
+    depts_json = request.form.get('depts_json', '[]')
+    start_date = request.form.get('start_date', '')
+    end_date = request.form.get('end_date', '')
     try:
         sections = json.loads(sections_json)
     except Exception:
         sections = []
+    try:
+        depts = json.loads(depts_json)
+    except Exception:
+        depts = []
+
+    SECTION_TITLES = {
+        'wq': 'Written Questions & Answers',
+        'oral': 'Oral Questions',
+        'urgent': 'Urgent Questions',
+        'statement': 'Ministerial Statements',
+        'debate': 'Parliamentary Debates',
+    }
+    REL_LABELS = {'high': 'HIGH RELEVANCE', 'medium': 'MODERATE RELEVANCE', 'low': 'SESSION CONTEXT'}
+
+    def _set_cell_bg(cell, hex_colour):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd = _OxmlElement('w:shd')
+        shd.set(_qn('w:val'), 'clear')
+        shd.set(_qn('w:color'), 'auto')
+        shd.set(_qn('w:fill'), hex_colour)
+        tcPr.append(shd)
+
+    def _set_run_colour(run, hex_colour):
+        run.font.color.rgb = RGBColor(
+            int(hex_colour[0:2], 16),
+            int(hex_colour[2:4], 16),
+            int(hex_colour[4:6], 16)
+        )
 
     doc = Document()
 
-    # Title block
-    h = doc.add_heading('Parliamentary Research Brief', 0)
-    h.alignment = 1
-    sub = doc.add_paragraph(f'Topic: {topic}')
-    sub.alignment = 1
-    sub.runs[0].bold = True
-    date_p = doc.add_paragraph(f'Generated: {datetime.now().strftime("%d %B %Y")}')
-    date_p.alignment = 1
+    # ── Page margins ──────────────────────────────────────────────
+    for section_obj in doc.sections:
+        section_obj.top_margin = Inches(0.9)
+        section_obj.bottom_margin = Inches(0.9)
+        section_obj.left_margin = Inches(1.1)
+        section_obj.right_margin = Inches(1.1)
+
+    # ── Title block ───────────────────────────────────────────────
+    title_p = doc.add_heading('Parliamentary Research Brief', 0)
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    meta_lines = [f'Topic: {topic}']
+    if depts:
+        meta_lines.append(f'Department(s): {", ".join(depts)}')
+    date_parts = []
+    if start_date: date_parts.append(f'from {start_date}')
+    if end_date: date_parts.append(f'to {end_date}')
+    if date_parts:
+        meta_lines.append('Date range: ' + ' '.join(date_parts))
+    meta_lines.append(f'Generated: {datetime.now().strftime("%d %B %Y at %H:%M")}')
+    meta_lines.append('Source: Westminster Brief — westminsterbrief.co.uk')
+
+    for line in meta_lines:
+        mp = doc.add_paragraph(line)
+        mp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        mp.runs[0].font.size = Pt(10)
+        mp.runs[0].font.color.rgb = RGBColor(0x44, 0x44, 0x44)
+
     doc.add_paragraph()
 
-    # AI Briefing
+    # ── Summary table ─────────────────────────────────────────────
+    non_empty = [(s, SECTION_TITLES.get(s.get('type',''), s.get('type','').title()), s.get('items', []))
+                 for s in sections if s.get('items')]
+    if non_empty:
+        doc.add_heading('Contents Summary', 1)
+        tbl = doc.add_table(rows=1, cols=3)
+        tbl.style = 'Table Grid'
+        hdr = tbl.rows[0].cells
+        for i, label in enumerate(['Section', 'Contributions', 'Notes']):
+            hdr[i].text = label
+            hdr[i].paragraphs[0].runs[0].bold = True
+            _set_cell_bg(hdr[i], '1C3E6E')
+            hdr[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        for sec, title, items in non_empty:
+            row = tbl.add_row().cells
+            row[0].text = title
+            row[1].text = str(len(items))
+            ministers = sum(1 for r in items if r.get('is_minister'))
+            row[2].text = f'{ministers} minister(s)' if ministers else '—'
+        doc.add_paragraph()
+
+    # ── AI Summary ────────────────────────────────────────────────
     if briefing_text:
         doc.add_heading('AI Summary', 1)
+        notice = doc.add_paragraph(
+            '⚠ AI-generated — review for accuracy and remove any non-neutral language before use.')
+        notice.runs[0].font.size = Pt(9)
+        notice.runs[0].italic = True
+        _set_run_colour(notice.runs[0], '856404')
         for line in briefing_text.split('\n'):
             line = line.strip()
             if not line:
-                doc.add_paragraph()
                 continue
             if line.startswith('## '):
                 doc.add_heading(line[3:].strip(), level=2)
@@ -1617,16 +1702,14 @@ def download_research_brief():
                 doc.add_paragraph(line.replace('**', ''))
         doc.add_paragraph()
 
-    SECTION_TITLES = {
-        'wq': 'Written Questions & Answers',
-        'oral': 'Oral Questions',
-        'urgent': 'Urgent Questions',
-        'statement': 'Ministerial Statements',
-        'debate': 'Parliamentary Debates',
-    }
+    # ── Sections ──────────────────────────────────────────────────
+    SECTION_ORDER = ['debate', 'oral', 'urgent', 'statement', 'wq']
+    sections_by_type = {s.get('type'): s for s in sections}
 
-    for section in sections:
-        sec_type = section.get('type', '')
+    for sec_type in SECTION_ORDER:
+        section = sections_by_type.get(sec_type)
+        if not section:
+            continue
         items = section.get('items', [])
         if not items:
             continue
@@ -1634,51 +1717,109 @@ def download_research_brief():
         doc.add_heading(f'{title} ({len(items)})', 1)
 
         if sec_type == 'wq':
+            # Written Questions as a table
+            tbl = doc.add_table(rows=1, cols=5)
+            tbl.style = 'Table Grid'
+            hdr = tbl.rows[0].cells
+            for i, label in enumerate(['Status', 'Date', 'Department', 'Member (Party)', 'Question / Answer']):
+                hdr[i].text = label
+                hdr[i].paragraphs[0].runs[0].bold = True
+                _set_cell_bg(hdr[i], '1C3E6E')
+                hdr[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
             for q in items:
-                status = 'ANSWERED' if q.get('is_answered') else 'UNANSWERED'
-                if q.get('is_withdrawn'): status = 'WITHDRAWN'
-                if q.get('is_holding'): status = 'HOLDING'
-                p = doc.add_paragraph()
-                p.add_run(f"[{status}]  {q.get('date_tabled', '')}  ·  {q.get('dept', '')}").bold = True
-                p2 = doc.add_paragraph()
-                p2.add_run(f"Q ({q.get('asking_mp', '')} — {q.get('party', '')}, {q.get('role', '')}): ").bold = True
-                p2.add_run(f'"{q.get("question_text", "")}"').italic = True
+                row = tbl.add_row().cells
+                status = 'Answered' if q.get('is_answered') else 'Unanswered'
+                if q.get('is_withdrawn'): status = 'Withdrawn'
+                if q.get('is_holding'): status = 'Holding'
+                row[0].text = status
+                row[1].text = q.get('date_tabled', '')
+                row[2].text = q.get('dept', '')
+                mp_info = q.get('asking_mp', '')
+                party = q.get('party', '')
+                row[3].text = f'{mp_info} ({party})' if party else mp_info
+
+                qa_cell = row[4]
+                qa_para = qa_cell.paragraphs[0]
+                qa_para.add_run('Q: ').bold = True
+                qa_para.add_run(q.get('question_text', ''))
                 if q.get('answer_text'):
-                    p3 = doc.add_paragraph()
-                    minister = q.get('answering_minister', '')
-                    ans_date = q.get('date_answered', '')
-                    label = f"A ({minister}{', ' + ans_date if ans_date else ''}): "
-                    p3.add_run(label).bold = True
-                    p3.add_run(f'"{q.get("answer_text", "")}"').italic = True
+                    ans_para = qa_cell.add_paragraph()
+                    ans_para.add_run('A: ').bold = True
+                    ans_para.add_run(q.get('answer_text', ''))
                 if q.get('url'):
-                    lp = doc.add_paragraph()
-                    lp.add_run('Parliament.uk: ').bold = True
-                    _add_hyperlink(lp, q['url'], q['url'])
-                doc.add_paragraph('─' * 60)
+                    link_para = qa_cell.add_paragraph()
+                    _add_hyperlink(link_para, q['url'], '↗ Parliament.uk')
+            doc.add_paragraph()
+
         else:
+            # Group debate speeches under their debate heading
+            # Build ordered list of unique debates preserving minister-first order
+            seen_debates = {}
+            ordered_debates = []
             for r in items:
-                p = doc.add_paragraph()
-                p.add_run(f"{r.get('hdate', '')}  ·  {r.get('source_label', '')}  ·  {r.get('debate_type', '')}").bold = True
-                p2 = doc.add_paragraph()
-                p2.add_run(f"{r.get('speaker_name', '')}").bold = True
-                party = r.get('speaker_party', '')
-                if party: p2.add_run(f"  ({party})")
-                if r.get('is_minister'): p2.add_run("  ✓ Minister")
-                if r.get('debate_title'):
-                    tp = doc.add_paragraph(r['debate_title'])
-                    tp.runs[0].italic = True
-                body = r.get('body_clean', '')
-                if body:
-                    doc.add_paragraph(f'"{body[:600]}{"…" if len(body) > 600 else ""}"')
-                url = r.get('listurl', '')
-                if url:
-                    if not url.startswith('http'):
-                        url = 'https://www.theyworkforyou.com' + url
-                    lp = doc.add_paragraph()
-                    lp.add_run('Source: ').bold = True
-                    _add_hyperlink(lp, url, url)
-                doc.add_paragraph('─' * 60)
-        doc.add_paragraph()
+                key = r.get('listurl', '')[:50] or r.get('debate_title', '')
+                if key not in seen_debates:
+                    seen_debates[key] = []
+                    ordered_debates.append(key)
+                seen_debates[key].append(r)
+
+            for debate_key in ordered_debates:
+                speeches = seen_debates[debate_key]
+                first = speeches[0]
+
+                # Debate header
+                debate_hdr = doc.add_paragraph()
+                rel = first.get('relevance_level', '')
+                rel_label = REL_LABELS.get(rel, '')
+                if rel_label:
+                    rl_run = debate_hdr.add_run(f'[{rel_label}]  ')
+                    rl_run.bold = True
+                    rl_run.font.size = Pt(9)
+                    colour = {'HIGH RELEVANCE': '166534', 'MODERATE RELEVANCE': '92400E', 'SESSION CONTEXT': '6B7280'}.get(rel_label, '444444')
+                    _set_run_colour(rl_run, colour)
+                src_run = debate_hdr.add_run(
+                    f"{first.get('source_label', '')}  ·  {first.get('hdate', '')}  ·  {first.get('debate_type', '')}"
+                )
+                src_run.font.size = Pt(9)
+                _set_run_colour(src_run, '555555')
+
+                title_line = doc.add_paragraph(first.get('debate_title', ''))
+                title_line.runs[0].bold = True
+                title_line.runs[0].font.size = Pt(11)
+
+                for r in speeches:
+                    spk_p = doc.add_paragraph()
+                    spk_run = spk_p.add_run(r.get('speaker_name', ''))
+                    spk_run.bold = True
+                    if r.get('is_minister'):
+                        role_run = spk_p.add_run(f"  —  {r.get('minister_role', 'Minister')}")
+                        role_run.font.size = Pt(9)
+                        _set_run_colour(role_run, '1C3E6E')
+                    elif r.get('speaker_party'):
+                        party_run = spk_p.add_run(f"  ({r['speaker_party']})")
+                        party_run.font.size = Pt(9)
+                        _set_run_colour(party_run, '555555')
+
+                    # Full text for ministers (body_export up to 3000 chars); snippet for others
+                    body = r.get('body_export') or r.get('body_clean', '')
+                    if not r.get('is_minister'):
+                        body = body[:600]
+                    if body:
+                        body_p = doc.add_paragraph(body)
+                        body_p.runs[0].font.size = Pt(10)
+                        if len(r.get('body_export', r.get('body_clean', ''))) > len(body):
+                            body_p.add_run('  […]').italic = True
+
+                    url = r.get('listurl', '')
+                    if url:
+                        if not url.startswith('http'):
+                            url = 'https://www.theyworkforyou.com' + url
+                        lp = doc.add_paragraph()
+                        _add_hyperlink(lp, url, '↗ Hansard (TheyWorkForYou)')
+                        lp.runs[0].font.size = Pt(9) if lp.runs else None
+
+                doc.add_paragraph('─' * 72)
+            doc.add_paragraph()
 
     mem_doc = io.BytesIO()
     doc.save(mem_doc)

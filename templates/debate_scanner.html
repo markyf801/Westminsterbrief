@@ -229,7 +229,7 @@
                             <label class="speech-select-wrap">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="debate"
-                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
                             </label>
                             <div class="debate-speech-content">
                                 <span class="debate-speech-name">{{ r.speaker_name }}</span>
@@ -302,7 +302,7 @@
                             <label class="speech-select-wrap">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="urgent"
-                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
                             </label>
                             <div class="debate-speech-content">
                                 <span class="debate-speech-name">{{ r.speaker_name }}</span>
@@ -556,6 +556,9 @@
     const ALL_CONTRIBUTIONS = {{ (topic_rows or []) | tojson | safe }};
     const TOPIC_BRIEFING_TEXT = {{ (topic_briefing_as_text or '') | tojson | safe }};
     const SEARCH_TOPIC = {{ (topic or '') | tojson | safe }};
+    const SEARCH_DEPTS = {{ (selected_depts or []) | tojson | safe }};
+    const SEARCH_START = {{ (start_date or '') | tojson | safe }};
+    const SEARCH_END = {{ (end_date or '') | tojson | safe }};
     const WQ_ROWS = {{ (wq_rows or []) | tojson | safe }};
     const ORAL_ROWS = {{ (oral_rows or []) | tojson | safe }};
     const URGENT_ROWS = {{ (urgent_rows or []) | tojson | safe }};
@@ -579,6 +582,9 @@
         addField('topic', SEARCH_TOPIC);
         addField('briefing_text', TOPIC_BRIEFING_TEXT);
         addField('sections_json', JSON.stringify(sections));
+        addField('depts_json', JSON.stringify(SEARCH_DEPTS));
+        addField('start_date', SEARCH_START);
+        addField('end_date', SEARCH_END);
         document.body.appendChild(form);
         form.submit();
         document.body.removeChild(form);
