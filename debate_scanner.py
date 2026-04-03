@@ -1029,11 +1029,13 @@ def debates_topic():
             else:
                 sources = ['commons', 'westminsterhall', 'lords', 'wms']
 
-            # If a narrow keyword is set, skip AI expansion to keep results precise
+            # Always expand the topic with AI for broader matching (acronyms, synonyms, etc.)
+            # If a narrow keyword is also set, AND it into the expanded query
+            expanded = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
             if narrow_keyword:
-                search_query = f'"{topic}" AND "{narrow_keyword}"'
+                search_query = f'{expanded} AND "{narrow_keyword}"'
             else:
-                search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
+                search_query = expanded
 
             # Resolve department ministers to TWFY person IDs for minister-led search.
             # When a dept is selected, we search each minister's debate history directly
