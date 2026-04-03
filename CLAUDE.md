@@ -74,6 +74,7 @@ NEWS_API_KEY=
 BSKY_HANDLE=
 BSKY_PASSWORD=
 DATABASE_URL=<set automatically by Railway PostgreSQL plugin>
+ADMIN_EMAIL=<your login email — grants access to /admin cache management page>
 ```
 
 ## Local development

@@ -403,6 +403,99 @@ def run_manual_scan():
     return redirect(url_for('my_alerts'))
 
 # ==========================================
+# 6b. ADMIN PAGE
+# ==========================================
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', '').lower().strip()
+
+def _is_admin():
+    return current_user.is_authenticated and ADMIN_EMAIL and current_user.email.lower() == ADMIN_EMAIL
+
+@app.route('/admin', methods=['GET', 'POST'])
+@login_required
+def admin_panel():
+    if not _is_admin():
+        return redirect(url_for('home'))
+
+    from debate_scanner import MINISTER_CACHE_FILE
+    import json, time
+
+    message = None
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if action == 'clear_minister':
+            try:
+                if os.path.exists(MINISTER_CACHE_FILE):
+                    os.remove(MINISTER_CACHE_FILE)
+                message = 'Minister cache cleared — will refresh from GOV.UK on next search.'
+            except Exception as e:
+                message = f'Error clearing minister cache: {e}'
+        elif action == 'clear_twfy_search':
+            try:
+                deleted = CachedTWFYSearch.query.delete()
+                db.session.commit()
+                message = f'TWFY search cache cleared ({deleted} entries removed).'
+            except Exception as e:
+                db.session.rollback()
+                message = f'Error clearing TWFY search cache: {e}'
+        elif action == 'clear_sessions':
+            try:
+                deleted = CachedTWFYSearch.query.filter(
+                    CachedTWFYSearch.source_type.like('session_%')
+                ).delete(synchronize_session=False)
+                db.session.commit()
+                message = f'Session expansion cache cleared ({deleted} entries removed).'
+            except Exception as e:
+                db.session.rollback()
+                message = f'Error clearing session cache: {e}'
+        elif action == 'clear_all':
+            try:
+                if os.path.exists(MINISTER_CACHE_FILE):
+                    os.remove(MINISTER_CACHE_FILE)
+                deleted = CachedTWFYSearch.query.delete()
+                db.session.commit()
+                message = f'All caches cleared ({deleted} TWFY entries removed, minister cache deleted).'
+            except Exception as e:
+                db.session.rollback()
+                message = f'Error clearing caches: {e}'
+
+    # --- Build cache status ---
+    minister_status = {}
+    try:
+        if os.path.exists(MINISTER_CACHE_FILE):
+            with open(MINISTER_CACHE_FILE) as f:
+                mc = json.load(f)
+            age_hours = (time.time() - mc.get('_ts', 0)) / 3600
+            minister_count = sum(len(v) for v in mc.get('by_dept', {}).values())
+            twfy_id_count = len(mc.get('twfy_ids', {}))
+            minister_status = {
+                'exists': True,
+                'age_hours': round(age_hours, 1),
+                'age_days': round(age_hours / 24, 1),
+                'minister_count': minister_count,
+                'twfy_id_count': twfy_id_count,
+                'dept_count': len(mc.get('by_dept', {})),
+            }
+        else:
+            minister_status = {'exists': False}
+    except Exception:
+        minister_status = {'exists': False, 'error': True}
+
+    twfy_total = CachedTWFYSearch.query.count()
+    twfy_session = CachedTWFYSearch.query.filter(
+        CachedTWFYSearch.source_type.like('session_%')
+    ).count()
+    twfy_keyword = twfy_total - twfy_session
+
+    return render_template('admin.html',
+                           message=message,
+                           minister_status=minister_status,
+                           twfy_total=twfy_total,
+                           twfy_session=twfy_session,
+                           twfy_keyword=twfy_keyword)
+
+
+# ==========================================
 # 7. BLUEPRINTS
 # ==========================================
 app.register_blueprint(hansard_bp)
