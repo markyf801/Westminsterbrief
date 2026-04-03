@@ -143,9 +143,16 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             api_url = TWFY_WMS_URL
         else:
             api_url = TWFY_API_URL
-        # TWFY date range syntax: append YYYYMMDD..YYYYMMDD after search terms
-        # See: https://www.theyworkforyou.com/help/#searching
-        query = f"{search} {date_range}".strip() if date_range else search
+        # TWFY date range syntax: SEARCHTERM YYYYMMDD..YYYYMMDD in search string.
+        # When combined with a date range, strip outer parentheses from complex OR
+        # expressions — TWFY cannot parse (A OR B) with a date range appended.
+        if date_range:
+            clean = search.strip()
+            if clean.startswith('(') and clean.endswith(')'):
+                clean = clean[1:-1]
+            query = f"{clean} {date_range}"
+        else:
+            query = search
         params = {'key': TWFY_API_KEY, 'search': query, 'order': 'r', 'num': num, 'output': 'json'}
         if source_type not in ('wrans', 'wms'):
             params['type'] = source_type
@@ -1044,7 +1051,13 @@ def debates_topic():
                 search_query = f'{expanded} AND "{narrow_keyword}"'
             else:
                 search_query = expanded
-            debug_query = f"{search_query} {date_range}".strip() if date_range else search_query
+            if date_range:
+                clean_sq = search_query.strip()
+                if clean_sq.startswith('(') and clean_sq.endswith(')'):
+                    clean_sq = clean_sq[1:-1]
+                debug_query = f"{clean_sq} {date_range}"
+            else:
+                debug_query = search_query
 
             # Resolve department ministers to TWFY person IDs for minister-led search.
             # When a dept is selected, we search each minister's debate history directly
