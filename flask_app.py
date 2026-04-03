@@ -405,18 +405,12 @@ def run_manual_scan():
 # ==========================================
 # 6b. ADMIN PAGE
 # ==========================================
-ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', '').lower().strip()
-
-def _is_admin():
-    try:
-        return current_user.is_authenticated and ADMIN_EMAIL and current_user.email.lower() == ADMIN_EMAIL
-    except Exception:
-        return False
+ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '').strip()
 
 @app.route('/admin', methods=['GET', 'POST'])
-@login_required
 def admin_panel():
-    if not _is_admin():
+    token = request.args.get('token', '') or request.form.get('token', '')
+    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
         return redirect(url_for('home'))
 
     from debate_scanner import MINISTER_CACHE_FILE
