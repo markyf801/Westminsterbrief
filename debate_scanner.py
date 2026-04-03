@@ -134,9 +134,9 @@ def get_source_label(source):
             'lords': 'Lords', 'wrans': 'Written Answer',
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
-def fetch_twfy_topic(search, source_type, date_range, num=150):
+def fetch_twfy_topic(search, source_type, date_range, num=500):
     """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure.
-    Date filtering is done in Python after fetch — TWFY's embedded date syntax is unreliable."""
+    Date filtering is done in Python after fetch — fetch large num to ensure recent results included."""
     try:
         if source_type == 'wrans':
             api_url = TWFY_WRANS_URL
@@ -704,7 +704,7 @@ def lookup_twfy_person(name):
     return None, None, False
 
 
-def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
+def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=200):
     """Fetch speeches for a specific TWFY person_id, filtered by topic + date.
     Returns rows in the same normalised schema as fetch_twfy_topic() so they
     can be merged and deduped with keyword-search results.
