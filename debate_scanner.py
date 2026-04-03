@@ -1028,13 +1028,6 @@ def debates_topic():
             else:
                 search_query = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
 
-            # Append department keywords to narrow the search
-            if selected_depts:
-                dept_kw_parts = [DEPT_KEYWORDS[d] for d in selected_depts if d in DEPT_KEYWORDS]
-                if dept_kw_parts:
-                    dept_kw = ' OR '.join(dept_kw_parts) if len(dept_kw_parts) > 1 else dept_kw_parts[0]
-                    search_query = f"{search_query} AND ({dept_kw})"
-
             # Resolve department ministers to TWFY person IDs for minister-led search.
             # When a dept is selected, we search each minister's debate history directly
             # so their sessions appear even when their speeches don't contain the keywords.
