@@ -210,6 +210,7 @@
                             {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                             {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                             <p class="debate-speech-body">{{ r.body_clean }}</p>
+                            {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
                         </div>
                         {% endfor %}
                     </div>
@@ -241,6 +242,7 @@
                             {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                             {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                             <p class="debate-speech-body">{{ r.body_clean }}</p>
+                            {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
                         </div>
                         {% endfor %}
                     </div>

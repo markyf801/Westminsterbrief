@@ -818,6 +818,16 @@ details[open] > .research-section-header::before { transform: rotate(90deg); }
     line-height: 1.5;
 }
 
+.debate-speech-source {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 11px;
+    color: #005a8f;
+    text-decoration: none;
+    opacity: 0.7;
+}
+.debate-speech-source:hover { opacity: 1; text-decoration: underline; }
+
 /* --- WRITTEN QUESTIONS SCANNER ENHANCEMENTS --- */
 .wq-status-badge {
     font-size: 11px;
