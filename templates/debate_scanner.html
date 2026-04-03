@@ -187,9 +187,97 @@
         {% if wq_rows or oral_rows or statement_rows or debate_rows %}
         <div class="research-sections">
 
+            <!-- Parliamentary Debates -->
+            {% if debate_grouped %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">Parliamentary Debates</span>
+                    <span class="research-section-count">{{ debate_grouped|length }} debate{{ 's' if debate_grouped|length != 1 else '' }}</span>
+                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('debate')">⬇ Download</button>
+                </summary>
+                <div class="research-section-body">
+                    {% for grp in debate_grouped %}
+                    <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
+                        <div class="debate-group-header">
+                            <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
+                            <span class="debate-group-date">{{ grp.date }}</span>
+                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
+                        </div>
+                        {% for r in grp.speeches %}
+                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
+                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                            <p class="debate-speech-body">{{ r.body_clean }}</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            <!-- Oral Questions -->
+            {% if oral_grouped %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">Oral Questions</span>
+                    <span class="research-section-count">{{ oral_grouped|length }} session{{ 's' if oral_grouped|length != 1 else '' }}</span>
+                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('oral')">⬇ Download</button>
+                </summary>
+                <div class="research-section-body">
+                    {% for grp in oral_grouped %}
+                    <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
+                        <div class="debate-group-header">
+                            <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
+                            <span class="debate-group-date">{{ grp.date }}</span>
+                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
+                        </div>
+                        {% for r in grp.speeches %}
+                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
+                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                            <p class="debate-speech-body">{{ r.body_clean }}</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            <!-- Ministerial Statements -->
+            {% if statement_rows %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">Ministerial Statements</span>
+                    <span class="research-section-count">{{ statement_rows|length }}</span>
+                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('statement')">⬇ Download</button>
+                </summary>
+                <div class="research-section-body">
+                    {% for r in statement_rows %}
+                    <div class="topic-result-card" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
+                        <div class="topic-source-row">
+                            <span class="topic-source-badge topic-source-wms">Ministerial Statement</span>
+                            <span>{{ r.hdate }}</span>
+                            <strong>{{ r.speaker_name }}</strong>
+                            {% if r.is_minister %}<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">✓ Minister</span>{% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                        </div>
+                        <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
+                        <div class="topic-card-body">{{ r.body_clean }}</div>
+                        {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px;color:#005a8f;text-decoration:none;display:inline-block;margin-top:6px;">🔗 View on TheyWorkForYou</a>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
             <!-- Written Questions & Answers -->
             {% if wq_rows %}
-            <details class="research-section" open>
+            <details class="research-section">
                 <summary class="research-section-header">
                     <span class="research-section-title">Written Questions &amp; Answers</span>
                     <span class="research-section-count">{{ wq_rows|length }}{% if wq_total > wq_rows|length %}+{% endif %}</span>
@@ -231,94 +319,6 @@
                         <a href="/questions?subject={{ topic|urlencode }}" target="_blank">Search all {{ wq_total }} in the Written Questions Scanner →</a>
                     </div>
                     {% endif %}
-                </div>
-            </details>
-            {% endif %}
-
-            <!-- Ministerial Statements -->
-            {% if statement_rows %}
-            <details class="research-section">
-                <summary class="research-section-header">
-                    <span class="research-section-title">Ministerial Statements</span>
-                    <span class="research-section-count">{{ statement_rows|length }}</span>
-                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('statement')">⬇ Download</button>
-                </summary>
-                <div class="research-section-body">
-                    {% for r in statement_rows %}
-                    <div class="topic-result-card" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
-                        <div class="topic-source-row">
-                            <span class="topic-source-badge topic-source-wms">Ministerial Statement</span>
-                            <span>{{ r.hdate }}</span>
-                            <strong>{{ r.speaker_name }}</strong>
-                            {% if r.is_minister %}<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">✓ Minister</span>{% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
-                        </div>
-                        <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
-                        <div class="topic-card-body">{{ r.body_clean }}</div>
-                        {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px;color:#005a8f;text-decoration:none;display:inline-block;margin-top:6px;">🔗 View on TheyWorkForYou</a>{% endif %}
-                    </div>
-                    {% endfor %}
-                </div>
-            </details>
-            {% endif %}
-
-            <!-- Oral Questions -->
-            {% if oral_grouped %}
-            <details class="research-section">
-                <summary class="research-section-header">
-                    <span class="research-section-title">Oral Questions</span>
-                    <span class="research-section-count">{{ oral_grouped|length }} session{{ 's' if oral_grouped|length != 1 else '' }}</span>
-                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('oral')">⬇ Download</button>
-                </summary>
-                <div class="research-section-body">
-                    {% for grp in oral_grouped %}
-                    <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
-                        <div class="debate-group-header">
-                            <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
-                            <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
-                            {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
-                        </div>
-                        {% for r in grp.speeches %}
-                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
-                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
-                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
-                            <p class="debate-speech-body">{{ r.body_clean }}</p>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% endfor %}
-                </div>
-            </details>
-            {% endif %}
-
-            <!-- Parliamentary Debates -->
-            {% if debate_grouped %}
-            <details class="research-section">
-                <summary class="research-section-header">
-                    <span class="research-section-title">Parliamentary Debates</span>
-                    <span class="research-section-count">{{ debate_grouped|length }} debate{{ 's' if debate_grouped|length != 1 else '' }}</span>
-                    <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('debate')">⬇ Download</button>
-                </summary>
-                <div class="research-section-body">
-                    {% for grp in debate_grouped %}
-                    <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
-                        <div class="debate-group-header">
-                            <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
-                            <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
-                            {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
-                        </div>
-                        {% for r in grp.speeches %}
-                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
-                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
-                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
-                            <p class="debate-speech-body">{{ r.body_clean }}</p>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% endfor %}
                 </div>
             </details>
             {% endif %}
