@@ -141,7 +141,7 @@
                         {% for s in topic_briefing.non_government_speakers %}
                         <li>
                             <strong>{{ s.name }}</strong> <span class="topic-party-badge">{{ s.role_or_party }}</span>
-                            <button onclick="togglePQs(this, '{{ s.name | e }}', '{{ topic | e }}')" style="font-size:11px; color:#005a8f; background:none; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View PQs</button>
+                            <button onclick="togglePQs(this, '{{ s.name | e }}', '{{ topic | e }}', '{{ (effective_depts[0] if effective_depts else '') | e }}')" style="font-size:11px; color:#005a8f; background:none; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View PQs</button>
                             <br><span style="font-size:12px; color:#555;">{{ s.stance }}</span>
                             <div class="pq-expand" style="display:none; margin-top:8px;"></div>
                         </li>
@@ -586,7 +586,7 @@
         btn.textContent = '▼ Hide Speeches';
     }
 
-    function togglePQs(btn, name, topic) {
+    function togglePQs(btn, name, topic, dept) {
         const li = btn.closest('li');
         const panel = li.querySelector('.pq-expand');
         if (panel.style.display !== 'none') {
@@ -603,6 +603,7 @@
         btn.disabled = true;
         let url = '/api/mp_pqs?name=' + encodeURIComponent(name);
         if (topic) url += '&topic=' + encodeURIComponent(topic);
+        if (dept) url += '&dept=' + encodeURIComponent(dept);
         fetch(url)
             .then(r => r.json())
             .then(data => {

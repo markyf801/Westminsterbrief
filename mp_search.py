@@ -121,6 +121,7 @@ def search_mp_pqs():
 def api_mp_pqs():
     name = request.args.get('name', '').strip()
     topic = request.args.get('topic', '').strip()
+    dept = request.args.get('dept', '').strip()
     if not name:
         return jsonify({'error': 'Name required'}), 400
     try:
@@ -177,7 +178,13 @@ def api_mp_pqs():
                 if filtered:
                     pqs = filtered
                     topic_filtered = True
-                # If nothing matched, fall back to all PQs with a note
+                elif dept:
+                    # Topic matched nothing — fall back to dept-filtered PQs only.
+                    # Never show unrelated departments when a dept context is set.
+                    pqs = [q for q in all_pqs if dept.lower() in q['dept'].lower()]
+                else:
+                    # No dept context either — show nothing rather than unrelated PQs
+                    pqs = []
 
         return jsonify({
             'name': display_name,
