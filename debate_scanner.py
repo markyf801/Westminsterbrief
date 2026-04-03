@@ -356,13 +356,24 @@ def _group_by_debate(rows):
         key=lambda kv: (1 if any(r.get('is_minister') for r in kv[1]) else 0, kv[0][0]),
         reverse=True
     )
-    return [
-        {'date': k[0], 'title': k[1], 'speeches': v,
-         'has_minister': any(r.get('is_minister') for r in v),
-         'source_label': v[0].get('source_label', '') if v else '',
-         'source': v[0].get('source', '') if v else ''}
-        for k, v in group_list
-    ]
+    result = []
+    for k, v in group_list:
+        matched = sum(1 for r in v if r.get('relevance', 0) > 0)
+        if matched >= 3:
+            rel_level = 'high'
+        elif matched >= 1:
+            rel_level = 'medium'
+        else:
+            rel_level = 'low'
+        result.append({
+            'date': k[0], 'title': k[1], 'speeches': v,
+            'has_minister': any(r.get('is_minister') for r in v),
+            'source_label': v[0].get('source_label', '') if v else '',
+            'source': v[0].get('source', '') if v else '',
+            'matched_count': matched,
+            'relevance_level': rel_level,
+        })
+    return result
 
 
 def _classify_group(grp):

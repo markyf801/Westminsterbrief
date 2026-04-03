@@ -187,13 +187,20 @@
         {% if wq_rows or oral_rows or statement_rows or debate_rows %}
 
         <details class="classification-note">
-            <summary>ℹ️ How results are classified</summary>
+            <summary>ℹ️ How results are classified &amp; relevance guide</summary>
             <div class="classification-note-body">
-                <strong>Parliamentary Debates</strong> — substantive speeches; any speech exceeding ~300 words. Includes Westminster Hall debates, Bill readings, and Statutory Instrument / Affirmative procedure debates (identified by title keywords: "draft regulations", "statutory instrument", "affirmative", "delegated legislation").<br>
-                <strong>Oral Questions</strong> — sessions where no individual speech exceeds 300 words, consistent with a minister's prepared answer (~150 words) and follow-up exchanges. Includes all supplementary questions and responses from the same session.<br>
-                <strong>Urgent Questions</strong> — identified by title. Granted by the Speaker; minister must respond immediately. Follow-up exchanges included in the same session.<br>
-                <strong>Ministerial Statements</strong> — identified by source type (formal statements to the House).<br>
-                <em>Classification is automated and approximate. A small number of sessions may appear in the wrong section — if you spot one, the Hansard link will take you to the original source.</em>
+                <strong>Debate types</strong><br>
+                <strong>Parliamentary Debates</strong> — substantive speeches exceeding ~300 words. Includes Westminster Hall, Bill readings, and Statutory Instrument / Affirmative procedure debates.<br>
+                <strong>Oral Questions</strong> — sessions where no speech exceeds 300 words (minister's prepared answer ~150 words, plus follow-up exchanges).<br>
+                <strong>Urgent Questions</strong> — granted by the Speaker; minister responds immediately. Follow-ups included.<br>
+                <strong>Ministerial Statements</strong> — formal statements to the House.<br>
+                <em>Classification is automated and approximate. Use the ↗ Hansard link to verify.</em>
+                <div class="relevance-legend">
+                    <strong>Relevance indicators</strong>
+                    <span class="rel-legend-item"><span class="rel-dot rel-high"></span> Highly relevant — 3 or more direct keyword matches in this session</span>
+                    <span class="rel-legend-item"><span class="rel-dot rel-medium"></span> Moderate — 1–2 keyword matches; topic mentioned but not the main focus</span>
+                    <span class="rel-legend-item"><span class="rel-dot rel-low"></span> Low — no direct keyword matches; found via minister search or session expansion</span>
+                </div>
             </div>
         </details>
 
@@ -211,6 +218,7 @@
                     {% for grp in debate_grouped %}
                     <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
                         <div class="debate-group-header">
+                            <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
                             <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
@@ -250,6 +258,7 @@
                     {% for grp in oral_grouped %}
                     <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
                         <div class="debate-group-header">
+                            <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
                             <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
@@ -282,6 +291,7 @@
                     {% for grp in urgent_grouped %}
                     <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
                         <div class="debate-group-header">
+                            <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-urgent">Urgent Question</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
                             <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
