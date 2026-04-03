@@ -134,7 +134,7 @@ def get_source_label(source):
             'lords': 'Lords', 'wrans': 'Written Answer',
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
-def fetch_twfy_topic(search, source_type, date_range, num=100):
+def fetch_twfy_topic(search, source_type, date_range, num=150):
     """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure."""
     try:
         if source_type == 'wrans':
@@ -231,10 +231,14 @@ def expand_search_query(topic, api_key):
         ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
         prompt = (
             f"You are a UK Parliamentary researcher. A user wants to search Hansard for: \"{topic}\"\n"
-            "Give up to 3 short additional phrases that cover the same policy area "
-            "using different vocabulary MPs commonly use in Parliament. "
-            "Return ONLY a JSON array of strings, no explanation. "
-            f"Example for 'student loan repayments': [\"repayment threshold\", \"graduate debt\", \"loan write-off\"]"
+            "Give up to 6 short additional phrases that cover the same policy area "
+            "using different vocabulary MPs and Lords commonly use in Parliament. Include:\n"
+            "- Any common acronyms (e.g. 'LLE', 'SEND', 'HTQ')\n"
+            "- Previous or alternative names for the policy\n"
+            "- Related legislation names\n"
+            "- Synonymous terms used in debate\n"
+            "Return ONLY a JSON array of strings, no explanation, no markdown. "
+            f"Example for 'student loan repayments': [\"repayment threshold\", \"graduate debt\", \"loan write-off\", \"income contingent\", \"Plan 2 loans\"]"
         )
         payload = {"contents": [{"parts": [{"text": prompt}]}],
                    "generationConfig": {"responseMimeType": "application/json"}}
@@ -243,7 +247,7 @@ def expand_search_query(topic, api_key):
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
             terms = json.loads(raw.strip())
             if isinstance(terms, list) and terms:
-                all_terms = [topic] + [str(t) for t in terms[:3]]
+                all_terms = [topic] + [str(t) for t in terms[:6]]
                 return '(' + ' OR '.join(f'"{t}"' for t in all_terms) + ')'
     except Exception:
         pass
@@ -1072,7 +1076,7 @@ def debates_topic():
             # This ensures ministerial responses appear even when they don't contain
             # the search keywords (e.g. minister says "supporting graduates" not "loan repayments").
             if topic_rows:
-                session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=15)
+                session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=25)
                 if session_speeches:
                     topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
 
