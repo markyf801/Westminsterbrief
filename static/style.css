@@ -828,6 +828,35 @@ details[open] > .research-section-header::before { transform: rotate(90deg); }
 }
 .debate-speech-source:hover { opacity: 1; text-decoration: underline; }
 
+/* Speech select checkbox */
+.debate-speech { display: flex; gap: 8px; align-items: flex-start; }
+.speech-select-wrap { padding-top: 3px; flex-shrink: 0; }
+.speech-select { width: 14px; height: 14px; cursor: pointer; accent-color: #005a8f; }
+.debate-speech-content { flex: 1; min-width: 0; }
+
+/* Floating selection bar */
+#speech-selection-bar {
+    display: none;
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #1c3e6e;
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 8px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    z-index: 200;
+}
+.sel-bar-btn { border: none; border-radius: 5px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.sel-bar-dl { background: #fff; color: #1c3e6e; }
+.sel-bar-dl:hover { background: #e8f0fb; }
+.sel-bar-clear { background: rgba(255,255,255,0.15); color: #fff; }
+.sel-bar-clear:hover { background: rgba(255,255,255,0.25); }
+
 /* --- WRITTEN QUESTIONS SCANNER ENHANCEMENTS --- */
 .wq-status-badge {
     font-size: 11px;

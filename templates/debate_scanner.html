@@ -206,11 +206,18 @@
                         </div>
                         {% for r in grp.speeches %}
                         <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
-                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
-                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
-                            <p class="debate-speech-body">{{ r.body_clean }}</p>
-                            {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                            <label class="speech-select-wrap">
+                                <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
+                                    data-section-type="debate"
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                            </label>
+                            <div class="debate-speech-content">
+                                <span class="debate-speech-name">{{ r.speaker_name }}</span>
+                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                                <p class="debate-speech-body">{{ r.body_clean }}</p>
+                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                            </div>
                         </div>
                         {% endfor %}
                     </div>
@@ -333,6 +340,13 @@
             </button>
         </div>
         {% endif %}
+    </div>
+
+    <!-- Floating selection bar — appears when speeches are ticked -->
+    <div id="speech-selection-bar">
+        <span id="selection-count">0 speeches selected</span>
+        <button onclick="downloadSelected()" class="sel-bar-btn sel-bar-dl">⬇ Download Selected</button>
+        <button onclick="clearSelection()" class="sel-bar-btn sel-bar-clear">✕ Clear</button>
     </div>
 
     <!-- ===================== MODE 2: MINISTERIAL RECORD ===================== -->
@@ -521,6 +535,40 @@
         if (DEBATE_ROWS.length) sections.push({type: 'debate', items: DEBATE_ROWS});
         if (!sections.length && !TOPIC_BRIEFING_TEXT) { alert('Nothing to download yet — run a search first.'); return; }
         submitResearchDownload(sections);
+    }
+
+    function updateSelectionBar() {
+        const checked = document.querySelectorAll('.speech-select:checked');
+        const bar = document.getElementById('speech-selection-bar');
+        const countEl = document.getElementById('selection-count');
+        if (checked.length > 0) {
+            bar.style.display = 'flex';
+            countEl.textContent = checked.length + ' speech' + (checked.length > 1 ? 'es' : '') + ' selected';
+        } else {
+            bar.style.display = 'none';
+        }
+    }
+
+    function clearSelection() {
+        document.querySelectorAll('.speech-select:checked').forEach(cb => cb.checked = false);
+        updateSelectionBar();
+    }
+
+    function downloadSelected() {
+        const checked = document.querySelectorAll('.speech-select:checked');
+        if (!checked.length) return;
+        const debateItems = [], oralItems = [];
+        checked.forEach(cb => {
+            try {
+                const speech = JSON.parse(cb.dataset.speech);
+                if (cb.dataset.sectionType === 'oral') oralItems.push(speech);
+                else debateItems.push(speech);
+            } catch(e) {}
+        });
+        const sections = [];
+        if (debateItems.length) sections.push({type: 'debate', items: debateItems});
+        if (oralItems.length) sections.push({type: 'oral', items: oralItems});
+        if (sections.length) submitResearchDownload(sections);
     }
 
     function showPanel(targetId) {
