@@ -545,6 +545,7 @@ input:focus, select:focus, textarea:focus {
 .topic-source-lords { background: #6d28d9; }
 .topic-source-wrans { background: #047857; }
 .topic-source-wms { background: #7c3aed; }
+.topic-source-urgent { background: #b91c1c; }
 
 .topic-party-badge {
     display: inline-block;

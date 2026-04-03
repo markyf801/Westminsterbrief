@@ -109,13 +109,16 @@ def _get_user_pref():
         pass
     return None
 
-def get_debate_type(title):
+def get_debate_type(title, source=None):
     t = title.lower()
-    if 'question' in t: return '🗣️ Oral Question'
+    if source == 'wms': return '📜 Ministerial Statement'
+    if source == 'westminsterhall': return '🏛️ Westminster Hall'
+    if 'urgent question' in t: return '❗ Urgent Question'
+    if 'oral answers' in t or 'question time' in t: return '🗣️ Oral Question'
+    if 'prime minister' in t and 'question' in t: return '🗣️ Oral Question'
     if 'statement' in t: return '📜 Ministerial Statement'
     if 'bill' in t or 'reading' in t or 'amendment' in t: return '⚖️ Legislation'
     if 'motion' in t: return '📝 Motion'
-    if 'westminster hall' in t: return '🏛️ Westminster Hall'
     return '💬 General Debate'
 
 def clean_body_text(text):
@@ -148,6 +151,7 @@ def fetch_twfy_topic(search, source_type, date_range, num=100):
         results = []
         for r in rows:
             body_raw = r.get('body', '')
+            body_text = clean_body_text(body_raw)
             debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
             if source_type in ('wrans', 'wms'):
                 debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
@@ -156,10 +160,11 @@ def fetch_twfy_topic(search, source_type, date_range, num=100):
             elif source_type == 'wms':
                 dtype = 'Ministerial Statement'
             else:
-                dtype = get_debate_type(debate_title)
+                dtype = get_debate_type(debate_title, source=source_type)
             results.append({
                 'listurl': r.get('listurl', ''),
-                'body_clean': clean_body_text(body_raw)[:500],
+                'body_clean': body_text[:500],
+                'body_word_count': len(body_text.split()),
                 'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
                 'speaker_party': (r.get('speaker') or {}).get('party', ''),
                 'hdate': r.get('hdate', ''),
@@ -281,10 +286,12 @@ def fetch_full_debate_session(parent_gid, source):
         results = []
         for r in rows:
             body_raw = r.get('body', '')
+            body_text = clean_body_text(body_raw)
             debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
             results.append({
                 'listurl': r.get('listurl', ''),
-                'body_clean': clean_body_text(body_raw)[:500],
+                'body_clean': body_text[:500],
+                'body_word_count': len(body_text.split()),
                 'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
                 'speaker_party': (r.get('speaker') or {}).get('party', ''),
                 'hdate': r.get('hdate', ''),
@@ -292,7 +299,7 @@ def fetch_full_debate_session(parent_gid, source):
                 'source': source,
                 'source_label': get_source_label(source),
                 'relevance': 0,
-                'debate_type': get_debate_type(debate_title),
+                'debate_type': get_debate_type(debate_title, source=source),
                 'from_session_fetch': True,
             })
         return results
@@ -353,6 +360,33 @@ def _group_by_debate(rows):
          'source': v[0].get('source', '') if v else ''}
         for k, v in group_list
     ]
+
+
+def _classify_group(grp):
+    """Classify a debate group into a section.
+    Uses title patterns first (definitive), then word-count heuristic.
+    A group where no speech exceeds 300 words is likely Oral Questions —
+    the minister's prepared answer is ~150 words, follow-ups shorter still.
+    A 10-minute debate speech runs ~1300 words."""
+    source = grp.get('source', '')
+    title = grp.get('title', '').lower()
+    speeches = grp.get('speeches', [])
+
+    if source == 'wms':
+        return 'statement'
+    if 'urgent question' in title:
+        return 'urgent'
+    if 'oral answers' in title or 'question time' in title:
+        return 'oral'
+    if 'prime minister' in title and 'question' in title:
+        return 'oral'
+    # Word-count heuristic: if the longest speech in the group is under 300 words,
+    # all speeches are short — consistent with an Oral PQ session (including follow-ups)
+    if source in ('commons', 'lords') and speeches:
+        max_words = max((r.get('body_word_count', 0) for r in speeches), default=0)
+        if 0 < max_words < 300:
+            return 'oral'
+    return 'debate'
 
 
 def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
@@ -667,13 +701,15 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
                 continue
             for r in resp.json().get('rows', []):
                 body_raw = r.get('body', '')
+                body_text = clean_body_text(body_raw)
                 debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
                 if source == 'wms':
                     debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
-                dtype = 'Ministerial Statement' if source == 'wms' else get_debate_type(debate_title)
+                dtype = get_debate_type(debate_title, source=source)
                 rows.append({
                     'listurl': r.get('listurl', ''),
-                    'body_clean': clean_body_text(body_raw)[:500],
+                    'body_clean': body_text[:500],
+                    'body_word_count': len(body_text.split()),
                     'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
                     'speaker_party': (r.get('speaker') or {}).get('party', ''),
                     'hdate': r.get('hdate', ''),
@@ -933,7 +969,9 @@ def debates_topic():
     oral_rows = []
     statement_rows = []
     debate_rows = []
+    urgent_rows = []
     oral_grouped = []
+    urgent_grouped = []
     debate_grouped = []
     wq_rows = []
     wq_total = 0
@@ -1106,19 +1144,37 @@ def debates_topic():
                     topic_briefing = None
 
             # Split TWFY rows into display sections, then group debates by session
-            oral_rows = [r for r in topic_rows if r.get('debate_type') == '🗣️ Oral Question']
+            # Group ALL non-statement rows first, then classify each group.
+            # Group-level classification is more reliable than per-row:
+            # a group where no speech exceeds 300 words is an Oral PQ session
+            # (prepared answer ~150w, follow-ups shorter) not a debate.
             statement_rows = [r for r in topic_rows if r.get('source') == 'wms']
-            debate_rows = [r for r in topic_rows
-                           if r.get('debate_type') != '🗣️ Oral Question' and r.get('source') != 'wms']
-            oral_grouped = _group_by_debate(oral_rows)
-            debate_grouped = _group_by_debate(debate_rows)
+            non_statement_rows = [r for r in topic_rows if r.get('source') != 'wms']
+            all_grouped = _group_by_debate(non_statement_rows)
+
+            oral_grouped, urgent_grouped, debate_grouped = [], [], []
+            for grp in all_grouped:
+                section = _classify_group(grp)
+                if section == 'oral':
+                    oral_grouped.append(grp)
+                elif section == 'urgent':
+                    urgent_grouped.append(grp)
+                else:
+                    debate_grouped.append(grp)
+
+            # Flat row lists for JS download variables
+            oral_rows = [r for grp in oral_grouped for r in grp['speeches']]
+            urgent_rows = [r for grp in urgent_grouped for r in grp['speeches']]
+            debate_rows = [r for grp in debate_grouped for r in grp['speeches']]
 
     return render_template('debate_scanner.html',
                            mode='topic',
                            topic=topic, topic_rows=topic_rows,
                            oral_rows=oral_rows, statement_rows=statement_rows,
+                           urgent_rows=urgent_rows,
                            debate_rows=debate_rows,
                            oral_grouped=oral_grouped, debate_grouped=debate_grouped,
+                           urgent_grouped=urgent_grouped,
                            wq_rows=wq_rows, wq_total=wq_total,
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
@@ -1557,6 +1613,7 @@ def download_research_brief():
     SECTION_TITLES = {
         'wq': 'Written Questions & Answers',
         'oral': 'Oral Questions',
+        'urgent': 'Urgent Questions',
         'statement': 'Ministerial Statements',
         'debate': 'Parliamentary Debates',
     }
