@@ -1005,6 +1005,7 @@ def debates_topic():
     end_date = ""
     house_filter = "all"
     selected_depts = []
+    debug_query = ""
     user_pref = _get_user_pref()
 
     if request.method == 'POST':
@@ -1036,6 +1037,7 @@ def debates_topic():
                 search_query = f'{expanded} AND "{narrow_keyword}"'
             else:
                 search_query = expanded
+            debug_query = search_query
 
             # Resolve department ministers to TWFY person IDs for minister-led search.
             # When a dept is selected, we search each minister's debate history directly
@@ -1198,6 +1200,7 @@ def debates_topic():
                            house_filter=house_filter,
                            narrow_keyword=narrow_keyword,
                            selected_depts=selected_depts,
+                           debug_query=debug_query,
                            user_pref=user_pref,
                            error_message=error_message,
                            grouped_debates={}, departments=DEPARTMENTS_TWFY,
