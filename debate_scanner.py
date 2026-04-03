@@ -2,7 +2,7 @@ import requests, os, json, re, io, concurrent.futures, time
 from flask import Blueprint, render_template, request, send_file
 from flask_login import current_user
 from datetime import datetime
-from cache_models import CachedTranscript
+from cache_models import CachedTranscript, CachedTWFYSearch
 
 # Import Word Document libraries
 try:
@@ -135,7 +135,13 @@ def get_source_label(source):
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
 def fetch_twfy_topic(search, source_type, date_range, num=150):
-    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure."""
+    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure.
+    Results are cached for 6h (date-filtered) or 24h (open) to reduce API usage."""
+    cache_key_query = f"{search} {date_range}".strip()
+    ttl = 6 if date_range else 24
+    cached = CachedTWFYSearch.get(cache_key_query, source_type, ttl_hours=ttl)
+    if cached is not None:
+        return cached
     try:
         if source_type == 'wrans':
             api_url = TWFY_WRANS_URL
@@ -190,6 +196,7 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
                 'relevance': r.get('relevance', 0),
                 'debate_type': dtype,
             })
+        CachedTWFYSearch.store(cache_key_query, source_type, results)
         return results
     except Exception:
         return []

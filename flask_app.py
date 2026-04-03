@@ -110,7 +110,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # Import cache models so their tables are created
-from cache_models import CachedTranscript, CachedQuestion, CachedMember
+from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedTWFYSearch
 
 # ==========================================
 # 4. AUTO-BUILD DATABASE

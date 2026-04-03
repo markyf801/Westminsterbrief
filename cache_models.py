@@ -1,5 +1,56 @@
+import hashlib
 from datetime import datetime, timedelta
 from extensions import db
+
+
+class CachedTWFYSearch(db.Model):
+    """Caches TWFY API search results to reduce API call usage.
+    TTL: 6 hours for date-filtered searches, 24 hours for open searches."""
+    __tablename__ = 'cached_twfy_search'
+    id = db.Column(db.Integer, primary_key=True)
+    cache_key = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    query = db.Column(db.Text, nullable=False)
+    source_type = db.Column(db.String(20), nullable=False)
+    results_json = db.Column(db.Text, nullable=False)
+    cached_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @staticmethod
+    def make_key(query, source_type):
+        raw = f"{source_type}:{query}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+    @staticmethod
+    def get(query, source_type, ttl_hours=24):
+        key = CachedTWFYSearch.make_key(query, source_type)
+        entry = CachedTWFYSearch.query.filter_by(cache_key=key).first()
+        if not entry:
+            return None
+        age = datetime.utcnow() - entry.cached_at
+        if age > timedelta(hours=ttl_hours):
+            return None
+        try:
+            return json.loads(entry.results_json)
+        except Exception:
+            return None
+
+    @staticmethod
+    def store(query, source_type, results):
+        import json as _json
+        key = CachedTWFYSearch.make_key(query, source_type)
+        existing = CachedTWFYSearch.query.filter_by(cache_key=key).first()
+        data = _json.dumps(results)
+        if existing:
+            existing.results_json = data
+            existing.cached_at = datetime.utcnow()
+        else:
+            db.session.add(CachedTWFYSearch(
+                cache_key=key, query=query,
+                source_type=source_type, results_json=data
+            ))
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
 
 class CachedTranscript(db.Model):
