@@ -714,7 +714,7 @@ details[open] > .research-section-header::before { transform: rotate(90deg); }
 }
 .research-section-dl:hover { background: #004a77; }
 
-.research-section-body { padding: 16px 18px; }
+.research-section-body { padding: 10px 14px; }
 
 .research-load-more {
     font-size: 13px;
@@ -727,15 +727,19 @@ details[open] > .research-section-header::before { transform: rotate(90deg); }
 .research-load-more a:hover { text-decoration: underline; }
 
 /* Compact overrides for cards inside research sections */
-.research-section-body .result-card { padding: 10px 12px; margin-bottom: 8px; }
-.research-section-body .result-card-quote { font-size: 12px; }
-.research-section-body .result-card-header { gap: 5px; font-size: 12px; }
-.research-section-body .wq-heading { font-size: 12px; }
-.research-section-body .wq-party-label { font-size: 12px; }
-.research-section-body .wq-answer-text { font-size: 12px; padding: 8px 10px; line-height: 1.5; }
-.research-section-body .wq-answer-summary { font-size: 12px; }
-.research-section-body .result-card-body p { font-size: 12px; margin-bottom: 4px; }
-.research-section-body .result-card-link { font-size: 11px; }
+.research-section-body .result-card { margin-bottom: 6px; }
+.research-section-body .result-card-header { padding: 7px 12px 6px; gap: 5px; }
+.research-section-body .result-card-dept { font-size: 13px; }
+.research-section-body .result-card-date { font-size: 11px; }
+.research-section-body .result-card-body { padding: 6px 12px 8px; }
+.research-section-body .result-card-quote { font-size: 12px; padding: 6px 10px; margin: 5px 0; line-height: 1.5; }
+.research-section-body .wq-heading { font-size: 11px; padding: 2px 12px 0; }
+.research-section-body .wq-party-label { font-size: 11px; }
+.research-section-body .wq-answer-details { margin: 6px 0 4px; padding-top: 6px; }
+.research-section-body .wq-answer-text { font-size: 12px; padding: 6px 10px; line-height: 1.45; margin-top: 6px; }
+.research-section-body .wq-answer-summary { font-size: 11px; }
+.research-section-body .result-card-body p { font-size: 12px; margin-bottom: 3px; }
+.research-section-body .result-card-link { font-size: 11px; margin-top: 4px; }
 
 /* Debate group card */
 .debate-group {
