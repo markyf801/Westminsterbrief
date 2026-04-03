@@ -134,9 +134,8 @@ def get_source_label(source):
             'lords': 'Lords', 'wrans': 'Written Answer',
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
-def fetch_twfy_topic(search, source_type, date_range, num=500):
-    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure.
-    Date filtering is done in Python after fetch — fetch large num to ensure recent results included."""
+def fetch_twfy_topic(search, source_type, date_range, num=150):
+    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure."""
     try:
         if source_type == 'wrans':
             api_url = TWFY_WRANS_URL
@@ -144,7 +143,8 @@ def fetch_twfy_topic(search, source_type, date_range, num=500):
             api_url = TWFY_WMS_URL
         else:
             api_url = TWFY_API_URL
-        params = {'key': TWFY_API_KEY, 'search': search, 'order': 'r', 'num': num, 'output': 'json'}
+        query = f"{search} {date_range}".strip()
+        params = {'key': TWFY_API_KEY, 'search': query, 'order': 'r', 'num': num, 'output': 'json'}
         if source_type not in ('wrans', 'wms'):
             params['type'] = source_type
         resp = requests.get(api_url, params=params, timeout=15)
@@ -704,20 +704,20 @@ def lookup_twfy_person(name):
     return None, None, False
 
 
-def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=200):
+def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
     """Fetch speeches for a specific TWFY person_id, filtered by topic + date.
     Returns rows in the same normalised schema as fetch_twfy_topic() so they
-    can be merged and deduped with keyword-search results.
-    Date filtering is done in Python after fetch."""
+    can be merged and deduped with keyword-search results."""
     rows = []
+    query = f"{topic} {date_range}".strip() if topic else date_range.strip()
     for source in sources:
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
         params = {
             'key': TWFY_API_KEY, 'person': str(person_id),
             'order': 'd', 'num': num, 'output': 'json'
         }
-        if topic:
-            params['search'] = topic
+        if query:
+            params['search'] = query
         if source != 'wms':
             params['type'] = source
         try:
@@ -1080,16 +1080,6 @@ def debates_topic():
                             pass
 
             topic_rows = deduplicate_by_listurl(all_rows)
-
-            # Python-side date filter — reliable regardless of TWFY search syntax
-            if start_date or end_date:
-                def _in_range(row):
-                    d = row.get('hdate', '')
-                    if not d: return True
-                    if start_date and d < start_date: return False
-                    if end_date and d > end_date: return False
-                    return True
-                topic_rows = [r for r in topic_rows if _in_range(r)]
 
             # Debates-first: expand each matched debate to include ALL speeches.
             # This ensures ministerial responses appear even when they don't contain
