@@ -117,6 +117,9 @@ def get_debate_type(title, source=None):
     if 'oral answers' in t or 'question time' in t: return '🗣️ Oral Question'
     if 'prime minister' in t and 'question' in t: return '🗣️ Oral Question'
     if 'statement' in t: return '📜 Ministerial Statement'
+    if ('statutory instrument' in t or 'affirmative' in t or 'delegated legislation' in t
+            or ('draft' in t and ('regulation' in t or 'order' in t))):
+        return '⚖️ Statutory Instrument'
     if 'bill' in t or 'reading' in t or 'amendment' in t: return '⚖️ Legislation'
     if 'motion' in t: return '📝 Motion'
     return '💬 General Debate'

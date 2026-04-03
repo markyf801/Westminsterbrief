@@ -185,6 +185,18 @@
         {% endif %}
 
         {% if wq_rows or oral_rows or statement_rows or debate_rows %}
+
+        <details class="classification-note">
+            <summary>ℹ️ How results are classified</summary>
+            <div class="classification-note-body">
+                <strong>Parliamentary Debates</strong> — substantive speeches; any speech exceeding ~300 words. Includes Westminster Hall debates, Bill readings, and Statutory Instrument / Affirmative procedure debates (identified by title keywords: "draft regulations", "statutory instrument", "affirmative", "delegated legislation").<br>
+                <strong>Oral Questions</strong> — sessions where no individual speech exceeds 300 words, consistent with a minister's prepared answer (~150 words) and follow-up exchanges. Includes all supplementary questions and responses from the same session.<br>
+                <strong>Urgent Questions</strong> — identified by title. Granted by the Speaker; minister must respond immediately. Follow-up exchanges included in the same session.<br>
+                <strong>Ministerial Statements</strong> — identified by source type (formal statements to the House).<br>
+                <em>Classification is automated and approximate. A small number of sessions may appear in the wrong section — if you spot one, the Hansard link will take you to the original source.</em>
+            </div>
+        </details>
+
         <div class="research-sections">
 
             <!-- Parliamentary Debates -->

@@ -650,8 +650,31 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* --- RESEARCH TOOL COLLAPSIBLE SECTIONS --- */
+.classification-note {
+    margin-top: 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    background: #f8fafd;
+}
+.classification-note > summary {
+    padding: 7px 12px;
+    font-size: 11px;
+    color: #64748b;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+.classification-note > summary::-webkit-details-marker { display: none; }
+.classification-note[open] > summary { border-bottom: 1px solid #e2e8f0; }
+.classification-note-body {
+    padding: 10px 14px;
+    font-size: 11px;
+    color: #555;
+    line-height: 1.7;
+}
+
 .research-sections {
-    margin-top: 24px;
+    margin-top: 12px;
     display: flex;
     flex-direction: column;
     gap: 10px;
