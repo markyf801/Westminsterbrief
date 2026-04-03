@@ -143,9 +143,8 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             api_url = TWFY_WMS_URL
         else:
             api_url = TWFY_API_URL
-        params = {'key': TWFY_API_KEY, 'search': search, 'order': 'r', 'num': num, 'output': 'json'}
-        if date_range:
-            params['date'] = date_range
+        search_with_date = f"{search} {date_range}".strip() if date_range else search
+        params = {'key': TWFY_API_KEY, 'search': search_with_date, 'order': 'r', 'num': num, 'output': 'json'}
         if source_type not in ('wrans', 'wms'):
             params['type'] = source_type
         resp = requests.get(api_url, params=params, timeout=15)
@@ -712,9 +711,7 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50):
             'order': 'd', 'num': num, 'output': 'json'
         }
         if topic:
-            params['search'] = topic
-        if date_range:
-            params['date'] = date_range
+            params['search'] = f"{topic} {date_range}".strip() if date_range else topic
         if source != 'wms':
             params['type'] = source
         try:
