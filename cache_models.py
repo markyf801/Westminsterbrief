@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime, timedelta
 from extensions import db
 
@@ -35,10 +36,9 @@ class CachedTWFYSearch(db.Model):
 
     @staticmethod
     def store(query, source_type, results):
-        import json as _json
         key = CachedTWFYSearch.make_key(query, source_type)
         existing = CachedTWFYSearch.query.filter_by(cache_key=key).first()
-        data = _json.dumps(results)
+        data = json.dumps(results)
         if existing:
             existing.results_json = data
             existing.cached_at = datetime.utcnow()

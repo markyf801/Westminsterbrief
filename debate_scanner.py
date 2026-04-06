@@ -139,9 +139,12 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
     Results are cached for 6h (date-filtered) or 24h (open) to reduce API usage."""
     cache_key_query = f"{search} {date_range}".strip()
     ttl = 6 if date_range else 24
-    cached = CachedTWFYSearch.get(cache_key_query, source_type, ttl_hours=ttl)
-    if cached is not None:
-        return cached
+    try:
+        cached = CachedTWFYSearch.get(cache_key_query, source_type, ttl_hours=ttl)
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
     try:
         if source_type == 'wrans':
             api_url = TWFY_WRANS_URL
