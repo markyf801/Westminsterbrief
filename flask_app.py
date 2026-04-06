@@ -124,6 +124,13 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass  # Column already exists — nothing to do
+    # Rename cached_twfy_search.query → search_query (query shadows SQLAlchemy's .query interface)
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text('ALTER TABLE cached_twfy_search RENAME COLUMN "query" TO search_query'))
+            conn.commit()
+    except Exception:
+        pass  # Already renamed or table doesn't exist yet
     if not User.query.filter_by(email='joe@university.ac.uk').first():
         joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
         joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
@@ -144,6 +151,52 @@ DEPARTMENTS_FOR_PREFS = [
 @app.route('/home')
 def home():
     return render_template('home.html')
+
+@app.route('/health')
+def health():
+    import requests as _req
+    from cache_models import CachedTWFYSearch
+    checks = {}
+
+    # DB
+    try:
+        db.session.execute(text('SELECT 1'))
+        checks['database'] = 'ok'
+    except Exception as e:
+        checks['database'] = f'FAIL: {e}'
+
+    # Cache table
+    try:
+        CachedTWFYSearch.query.count()
+        checks['cache_table'] = 'ok'
+    except Exception as e:
+        checks['cache_table'] = f'FAIL: {e}'
+
+    # TWFY API
+    twfy_key = os.environ.get('TWFY_API_KEY')
+    if not twfy_key:
+        checks['twfy_api'] = 'FAIL: key not configured'
+    else:
+        try:
+            r = _req.get('https://www.theyworkforyou.com/api/getDebates',
+                         params={'key': twfy_key, 'search': 'test', 'num': 1, 'output': 'json'},
+                         timeout=8)
+            checks['twfy_api'] = 'ok' if r.status_code == 200 else f'FAIL: HTTP {r.status_code}'
+        except Exception as e:
+            checks['twfy_api'] = f'FAIL: {e}'
+
+    # Gemini API
+    gemini_key = os.environ.get('GEMINI_API_KEY')
+    checks['gemini_api'] = 'ok' if gemini_key else 'FAIL: key not configured'
+
+    # Git version
+    checks['version'] = os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:7]
+
+    overall = 'ok' if all(v == 'ok' or k == 'version' for k, v in checks.items()) else 'degraded'
+    checks['status'] = overall
+
+    from flask import jsonify
+    return jsonify(checks), 200 if overall == 'ok' else 503
 
 @app.route('/robots.txt')
 def robots():

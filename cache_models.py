@@ -10,7 +10,7 @@ class CachedTWFYSearch(db.Model):
     __tablename__ = 'cached_twfy_search'
     id = db.Column(db.Integer, primary_key=True)
     cache_key = db.Column(db.String(64), unique=True, nullable=False, index=True)
-    query = db.Column(db.Text, nullable=False)
+    search_query = db.Column(db.Text, nullable=False)
     source_type = db.Column(db.String(20), nullable=False)
     results_json = db.Column(db.Text, nullable=False)
     cached_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -44,7 +44,7 @@ class CachedTWFYSearch(db.Model):
             existing.cached_at = datetime.utcnow()
         else:
             db.session.add(CachedTWFYSearch(
-                cache_key=key, query=query,
+                cache_key=key, search_query=query,
                 source_type=source_type, results_json=data
             ))
         try:
