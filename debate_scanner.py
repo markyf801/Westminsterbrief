@@ -113,6 +113,7 @@ def get_debate_type(title, source=None):
     t = title.lower()
     if source == 'wms': return '📜 Ministerial Statement'
     if source == 'westminsterhall': return '🏛️ Westminster Hall'
+    if 'written answers' in t or 'written answer' in t: return '✍️ Written Answer'
     if 'urgent question' in t: return '❗ Urgent Question'
     if 'oral answers' in t or 'question time' in t: return '🗣️ Oral Question'
     if 'prime minister' in t and 'question' in t: return '🗣️ Oral Question'
@@ -426,15 +427,17 @@ def _classify_group(grp):
 
     if source == 'wms':
         return 'statement'
+    if 'written answers' in title or 'written answer' in title:
+        return 'debate'  # Render in debates section, not oral — these are written parliamentary answers
     if 'urgent question' in title:
         return 'urgent'
     if 'oral answers' in title or 'question time' in title:
         return 'oral'
     if 'prime minister' in title and 'question' in title:
         return 'oral'
-    # Word-count heuristic: if the longest speech in the group is under 300 words,
-    # all speeches are short — consistent with an Oral PQ session (including follow-ups)
-    if source in ('commons', 'lords') and speeches:
+    # Word-count heuristic: short speeches are likely Oral PQ follow-ups.
+    # Only apply to commons — Lords written answers are short by nature, not oral.
+    if source == 'commons' and speeches:
         max_words = max((r.get('body_word_count', 0) for r in speeches), default=0)
         if 0 < max_words < 300:
             return 'oral'
