@@ -243,7 +243,12 @@ def index():
                     'answer_text': answer_text,
                     'answering_minister': ans_name,
                     'date_answered': date_answered,
+                    '_sort_date': raw_date_str,
                 })
+
+            results.sort(key=lambda r: r.get('_sort_date', ''), reverse=True)
+            for r in results:
+                r.pop('_sort_date', None)
 
             # Export Handlers...
             if action == 'word' and results:
