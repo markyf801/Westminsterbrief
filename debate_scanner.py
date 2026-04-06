@@ -798,6 +798,19 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_
                     'relevance': r.get('relevance', 0),
                     'debate_type': dtype,
                 })
+            # TWFY doesn't reliably filter by date when combined with person= param.
+            # Apply Python-level filter before caching to prevent stale speeches leaking in.
+            if date_range and '..' in date_range:
+                parts = date_range.split('..')
+                d_from = parts[0].strip()  # YYYYMMDD
+                d_to   = parts[1].strip()
+                # Convert YYYYMMDD → YYYY-MM-DD for comparison with hdate
+                def _fmt(d): return f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
+                d_from_iso = _fmt(d_from) if d_from else ''
+                d_to_iso   = _fmt(d_to)   if d_to   else ''
+                source_rows = [r for r in source_rows
+                               if (not d_from_iso or r.get('hdate', '') >= d_from_iso)
+                               and (not d_to_iso or r.get('hdate', '') <= d_to_iso)]
             CachedTWFYSearch.store(cache_key_query, source, source_rows)
             rows.extend(source_rows)
         except Exception:
