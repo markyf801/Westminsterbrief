@@ -261,7 +261,70 @@ Never repeat the same sequence of tool calls with identical arguments without a 
 ### Silent exception rule
 `except Exception: pass` or `except Exception: return []` hides bugs. Always log or return an `_error` marker so failures surface in the UI or debug panel. Only use bare `pass` for genuinely expected no-ops (e.g. "column already exists" during migration).
 
+## Threading rules — Flask + SQLAlchemy in threads
+
+**Every** `ThreadPoolExecutor.submit()` call that touches the database or Flask context MUST wrap the function with `copy_current_request_context`. This applies to all thread pools in the codebase — the main search pool, the session expansion pool, and any future pools.
+
+```python
+# CORRECT
+executor.submit(copy_current_request_context(my_function), arg1, arg2)
+
+# WRONG — crashes with "Working outside of application context"
+executor.submit(my_function, arg1, arg2)
+```
+
+When adding a new thread pool, search the file for other `ThreadPoolExecutor` blocks and confirm all of them already have this wrapper. Missing one is a common cause of silent failures.
+
+## SQLAlchemy column naming — reserved words to avoid
+
+Never name a SQLAlchemy model column any of these — they shadow built-in SQLAlchemy interfaces and cause `AttributeError` at runtime:
+
+`query`, `metadata`, `session`, `get`, `filter`, `update`, `delete`, `insert`, `select`, `id` (safe as PK only)
+
+Use descriptive names: `search_query`, `result_data`, `cached_at`, etc.
+
+## Variables used in render_template must always be initialised
+
+Any variable passed to `render_template()` must be initialised with a default value **before** any `if` block that might set it. If the variable is only set inside `if request.method == 'POST':`, a GET request will crash with `UnboundLocalError`.
+
+```python
+# CORRECT
+total_available = 0
+results = []
+if request.method == 'POST':
+    total_available = ...
+
+# WRONG — crashes on GET
+if request.method == 'POST':
+    total_available = ...
+return render_template('page.html', total_available=total_available)
+```
+
+## TWFY API — known quirks
+
+- **Date range + `person=` param**: TWFY ignores the date range when `person=` is also set. Always apply a Python-level date filter after fetching minister speeches. Never rely on TWFY to enforce the date.
+- **Date format**: TWFY expects `YYYYMMDD..YYYYMMDD` in the search string. Python `hdate` fields return `YYYY-MM-DD`. These are different — convert before comparing.
+- **Empty result ≠ no data**: TWFY returns `{"rows": []}` (not an error) when it finds nothing. Always check `len(rows) == 0` separately from checking for error keys.
+- **`type=` param**: Only valid for the `getDebates` endpoint. Do not pass it to `getWrans` or `getWMS` — it will be silently ignored or cause errors.
+
+## After fixing a caching bug — clear the cache
+
+If a bug caused incorrect data to be written to the cache (e.g. wrong date filtering, wrong column), that bad data persists until the TTL expires (6h for searches, 30 days for sessions). After deploying a cache fix, go to `/admin` and clear the relevant cache immediately rather than waiting for TTL.
+
+## Pre-push checklist
+
+Before every `git push`, run:
+```bash
+python -c "from flask_app import app; print('OK')"
+```
+If this fails, do not push. Fix the import error first.
+
+After Railway deploys, verify at `/health` — all services should show `"ok"`.
+
 ## Things to avoid
 - Don't use port 5432 for Supabase if ever added — use the connection pooler on 6543
 - Don't hardcode API keys or .env paths
 - Don't use Flask dev server in production (`debug=True` is only active when running locally via `__main__`)
+- Don't add a new `ThreadPoolExecutor` without `copy_current_request_context` on every `submit()` call
+- Don't name SQLAlchemy columns `query`, `metadata`, or `session`
+- Don't leave variables uninitialised before `render_template()` calls
