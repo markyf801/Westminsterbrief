@@ -231,6 +231,36 @@ The site currently has `noindex, nofollow` in base.html meta tags and robots.txt
 - [ ] **Google Search Console** — verify site and submit sitemap
 - [ ] **sitemap.xml** — create and register with Google
 
+## API error handling rules — prevent looping
+
+These apply whenever working with TWFY, Gemini, Parliament API, or any external service.
+
+### Three-strike rule
+If the same API call returns the same error or empty result more than twice in a row, **stop**. Do not retry with identical parameters. Report the exact error to the user and suggest manual intervention (e.g. check the API key, widen the date range, try a different endpoint).
+
+### Pre-flight reflection before retrying
+Before retrying a failed API call, explicitly identify:
+1. What the error was
+2. What is different about this retry that will make it succeed
+
+If the answer to (2) is "nothing", abort and report instead.
+
+### Specific error responses
+| Error | Action |
+|-------|--------|
+| 401 / 403 | Assume key invalid/missing. Stop and tell the user to check the env var. Do not retry. |
+| 429 | Rate limited. Stop. Tell the user to wait before retrying. Do not loop. |
+| Empty result (0 rows) | Report it clearly. Suggest: broader search term, wider date range, remove department filter. Do not silently retry. |
+| `Working outside of application context` | Flask threading issue. Wrap the thread call with `copy_current_request_context`. Do not retry the same code. |
+| `AttributeError` on a SQLAlchemy model | Check for column name conflicts with SQLAlchemy internals (e.g. `query`, `metadata`). Rename the column. |
+| `UnboundLocalError` | Variable only set inside a conditional block. Add a default value before the block. |
+
+### Loop detection
+Never repeat the same sequence of tool calls with identical arguments without a confirmed state change in between. If the same error appears after a fix attempt, re-read the relevant code section before trying again — don't apply the same fix twice.
+
+### Silent exception rule
+`except Exception: pass` or `except Exception: return []` hides bugs. Always log or return an `_error` marker so failures surface in the UI or debug panel. Only use bare `pass` for genuinely expected no-ops (e.g. "column already exists" during migration).
+
 ## Things to avoid
 - Don't use port 5432 for Supabase if ever added — use the connection pooler on 6543
 - Don't hardcode API keys or .env paths
