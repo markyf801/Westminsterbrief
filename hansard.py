@@ -114,6 +114,7 @@ def index():
     selected_dept_id = ""
     selected_house = "All"
     subject, start_date, end_date = "", "", ""
+    total_available = 0
 
     if request.method == 'POST':
         subject = request.form.get('subject', '').strip()
