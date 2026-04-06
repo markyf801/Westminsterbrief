@@ -368,7 +368,7 @@ def fetch_all_debate_sessions(matched_rows, max_debates=15):
         return []
     extra = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {ex.submit(fetch_full_debate_session, gid, src): (gid, src)
+        futs = {ex.submit(copy_current_request_context(fetch_full_debate_session), gid, src): (gid, src)
                 for gid, src in gid_source_pairs}
         for f in concurrent.futures.as_completed(futs):
             try:
@@ -1191,6 +1191,11 @@ def debates_topic():
                 session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=25)
                 if session_speeches:
                     topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
+            # Enforce date range — session expansion can pull in speeches from outside the requested window
+            if start_date or end_date:
+                topic_rows = [r for r in topic_rows
+                              if (not start_date or r.get('hdate', '') >= start_date)
+                              and (not end_date or r.get('hdate', '') <= end_date)]
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()
