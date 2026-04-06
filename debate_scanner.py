@@ -1,5 +1,5 @@
 import requests, os, json, re, io, concurrent.futures, time
-from flask import Blueprint, render_template, request, send_file
+from flask import Blueprint, render_template, request, send_file, copy_current_request_context
 from flask_login import current_user
 from datetime import datetime
 from cache_models import CachedTranscript, CachedTWFYSearch
@@ -1143,10 +1143,10 @@ def debates_topic():
 
             source_counts = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-                twfy_futs = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
-                wq_fut = executor.submit(_do_wq_fetch)
+                twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
+                wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
                 minister_futs = {
-                    executor.submit(fetch_twfy_minister_topic, mp['person_id'], topic, date_range, sources,
+                    executor.submit(copy_current_request_context(fetch_twfy_minister_topic), mp['person_id'], topic, date_range, sources,
                                     is_lord=mp.get('is_lord', False)): mp
                     for mp in minister_people
                 }
