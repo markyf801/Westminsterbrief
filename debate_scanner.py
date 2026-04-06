@@ -201,8 +201,8 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             })
         CachedTWFYSearch.store(cache_key_query, source_type, results)
         return results
-    except Exception:
-        return []
+    except Exception as e:
+        return [{'_error': f"TWFY {source_type} exception: {type(e).__name__}: {e}"}]
 
 def deduplicate_by_listurl(rows):
     seen = set()
@@ -1141,6 +1141,7 @@ def debates_topic():
             def _do_wq_fetch():
                 return _fetch_topic_wqs(topic, start_date, end_date, selected_depts)
 
+            source_counts = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                 twfy_futs = {executor.submit(fetch_twfy_topic, search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(_do_wq_fetch)
@@ -1156,6 +1157,16 @@ def debates_topic():
                             wq_rows, wq_total = future.result()
                         except Exception:
                             pass
+                    elif future in twfy_futs:
+                        src = twfy_futs[future]
+                        try:
+                            rows = future.result()
+                            errors = [r for r in rows if r.get('_error')]
+                            good = [r for r in rows if not r.get('_error')]
+                            source_counts[src] = f"{len(good)} results" + (f" | ERR: {errors[0]['_error']}" if errors else "")
+                            all_rows.extend(rows)
+                        except Exception as e:
+                            source_counts[src] = f"exception: {e}"
                     else:
                         try:
                             all_rows.extend(future.result())
@@ -1165,6 +1176,9 @@ def debates_topic():
             # Extract any TWFY error markers before dedup
             twfy_errors = [r['_error'] for r in all_rows if r.get('_error')]
             all_rows = [r for r in all_rows if not r.get('_error')]
+            source_debug = ' | '.join(f"{s}: {c}" for s, c in sorted(source_counts.items()))
+            if source_debug:
+                debug_query += f" | [{source_debug}]"
             if twfy_errors:
                 debug_query += ' | ERRORS: ' + '; '.join(set(twfy_errors))
 
