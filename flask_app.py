@@ -463,8 +463,10 @@ ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '').strip()
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_panel():
     token = request.args.get('token', '') or request.form.get('token', '')
-    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
-        return redirect(url_for('home'))
+    if not ADMIN_TOKEN:
+        return render_template('admin_login.html', error="ADMIN_TOKEN is not set in environment variables.")
+    if token != ADMIN_TOKEN:
+        return render_template('admin_login.html', error="Invalid token." if token else None)
 
     from debate_scanner import MINISTER_CACHE_FILE
     import json, time
