@@ -775,6 +775,45 @@ def lookup_twfy_person(name):
                         return data[0].get('person_id'), data[0].get('name'), is_lord
             except Exception:
                 pass
+
+    # Fallback for Lords: getLords name search fails for newer peers (created ~2023+)
+    # whose records aren't indexed for name search.
+    # Strategy: fetch that peer's recent Lords speeches via a broad search, then
+    # scan speaker fields for a name normalisation match.
+    # We try multiple search terms to maximise the chance of finding a recent speech.
+    is_lords_name = any(name.lower().startswith(p.lower()) for p in ['baroness ', 'lord ', 'baron ']) \
+                    or ' of ' in name.lower()
+    if is_lords_name and TWFY_API_KEY:
+        # Build candidate search terms: stripped display name, family name, territorial name
+        display = _display_name(name)   # e.g. "Baroness Smith of Malvern"
+        parts = display.split()
+        # ["Baroness", "Smith", "of", "Malvern"] → try "Smith", "Malvern", "Smith of Malvern"
+        search_terms = []
+        if ' of ' in display.lower():
+            before_of = display.split(' of ')[0].split()
+            after_of  = display.split(' of ')[1].split()
+            if before_of: search_terms.append(before_of[-1])       # family name: "Smith"
+            if after_of:  search_terms.append(after_of[0])         # territorial: "Malvern"
+        else:
+            if len(parts) > 1: search_terms.append(parts[-1])
+        for search_term in search_terms:
+            try:
+                resp = requests.get(
+                    TWFY_API_URL,
+                    params={'key': TWFY_API_KEY, 'search': search_term, 'type': 'lords',
+                            'num': 100, 'order': 'd', 'output': 'json'},
+                    timeout=10
+                )
+                if resp.status_code == 200:
+                    for row in resp.json().get('rows', []):
+                        spk = row.get('speaker') or {}
+                        spk_name = spk.get('name', '')
+                        spk_pid = spk.get('person_id')
+                        if spk_pid and _normalise_name(spk_name) == _normalise_name(display):
+                            return str(spk_pid), spk_name, True
+            except Exception:
+                pass
+
     return None, None, False
 
 
