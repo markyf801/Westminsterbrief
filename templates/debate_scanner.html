@@ -90,6 +90,12 @@
         </div>
         {% endif %}
 
+        {% if topic_rows and not topic_briefing %}
+        <div style="margin-top:20px; background:#fff8e1; border-left:4px solid #f59e0b; padding:12px 16px; border-radius:0 6px 6px 0; font-size:13.5px; color:#78350f;">
+            <strong>AI briefing unavailable</strong> — the AI service returned an error (check the debug bar above for details). The parliamentary results below are unaffected. Try searching again in a few moments to generate the briefing.
+        </div>
+        {% endif %}
+
         {% if topic_briefing %}
         <div style="margin-top:28px;">
             <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:14px;">

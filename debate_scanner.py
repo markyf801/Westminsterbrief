@@ -1275,7 +1275,7 @@ def debates_topic():
                     minister_rows = sorted(
                         [r for r in topic_rows if r.get('is_minister')],
                         key=lambda x: -x.get('relevance', 0)
-                    )[:25]
+                    )[:15]
                     non_minister_rows = [r for r in topic_rows if not r.get('is_minister')]
                     # Scan ALL non-minister rows for opposition speeches (may have relevance=0
                     # from Phase 1 expansion but still contain valuable opposition positions)
@@ -1283,11 +1283,11 @@ def debates_topic():
                                 if r.get('speaker_party', '') in _OPPOSITION_PARTIES]
                     other_rows = [r for r in non_minister_rows
                                   if r.get('speaker_party', '') not in _OPPOSITION_PARTIES]
-                    balanced = minister_rows + opp_rows[:15] + other_rows[:15]
+                    balanced = minister_rows + opp_rows[:10] + other_rows[:10]
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
                          'party': r['speaker_party'], 'date': r['hdate'],
-                         'source': r['source_label'], 'text': r['body_clean'],
+                         'source': r['source_label'], 'text': r['body_clean'][:250],
                          'is_minister': r.get('is_minister', False)}
                         for r in balanced
                     ]
@@ -1333,6 +1333,9 @@ def debates_topic():
                         "generationConfig": {"responseMimeType": "application/json"}
                     }
                     ai_resp = requests.post(ai_url, json=payload, timeout=90)
+                    if ai_resp.status_code == 503:
+                        time.sleep(3)
+                        ai_resp = requests.post(ai_url, json=payload, timeout=90)
                     if ai_resp.status_code == 200:
                         raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
                         clean_text = raw_text.replace('```json', '').replace('```', '').strip()
