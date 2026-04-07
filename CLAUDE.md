@@ -350,6 +350,51 @@ If the answer to (2) is "nothing", abort and report instead.
 ### Loop detection
 Never repeat the same sequence of tool calls with identical arguments without a confirmed state change in between. If the same error appears after a fix attempt, re-read the relevant code section before trying again — don't apply the same fix twice.
 
+### Session reset — breaking a doom loop
+If the same bug has been attempted more than twice with no progress, stop and perform a session reset:
+1. Run `git diff` to see the full history of changes made during this session
+2. Analyse the diff as a static object: "Why did each of these attempts fail?"
+3. Identify the root cause from the pattern — not from the last error message alone
+4. Only then write a new fix
+
+This forces analysis of the failure history rather than continuing to guess. Do not make a fourth attempt without first completing this analysis.
+
+### Transient vs permanent errors — different responses required
+| Error type | Examples | Correct response |
+|---|---|---|
+| **Permanent** | 401, 403, invalid key, column name clash | Stop immediately. Do not retry. Report to user. |
+| **Transient** | 500, 503, network timeout, connection reset | Retry once after a short pause. If it fails again, report. |
+| **Rate limit** | 429 | Stop. Tell user to wait. Do not retry in a loop. |
+| **Logic error** | Empty result, wrong data | Investigate the query/parameters. Do not retry identical call. |
+
+For transient errors in production code, use exponential backoff — not a fixed sleep or instant retry:
+```python
+import time
+for attempt in range(3):
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        if resp.status_code != 503:
+            break
+    except requests.exceptions.ConnectionError:
+        pass
+    time.sleep(2 ** attempt)  # 1s, 2s, 4s
+```
+Only apply backoff to transient errors. Never apply it to 401/403/400 — these will never self-resolve.
+
+### Environment verification — when an API key stops working
+Before concluding a key is invalid, verify it is actually set:
+```bash
+# Check if the env var is set (local)
+echo $TWFY_API_KEY
+echo $GEMINI_API_KEY
+
+# Check what the app sees at runtime
+python -c "import os; print('TWFY:', bool(os.environ.get('TWFY_API_KEY'))); print('GEMINI:', bool(os.environ.get('GEMINI_API_KEY')))"
+```
+On Railway: check the Variables tab in the dashboard. The var must be set on the **service**, not just the project.
+
+Also check `/health` on the live site — it explicitly tests each API and reports pass/fail per service.
+
 ### Silent exception rule
 `except Exception: pass` or `except Exception: return []` hides bugs. Always log or return an `_error` marker so failures surface in the UI or debug panel. Only use bare `pass` for genuinely expected no-ops (e.g. "column already exists" during migration).
 
