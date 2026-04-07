@@ -359,6 +359,10 @@ def fetch_all_debate_sessions(matched_rows, max_debates=15):
         source = r.get('source', '')
         if source == 'wrans':
             continue
+        # Don't expand Lords "Written Answers" sessions — they're Q&A pairs not debates
+        title = r.get('debate_title', '').lower()
+        if 'written answers' in title or 'written answer' in title:
+            continue
         gid = _listurl_to_parent_gid(r.get('listurl', ''), source)
         if gid and gid not in seen_gids:
             seen_gids.add(gid)
@@ -1321,12 +1325,23 @@ def debates_topic():
             # Group-level classification is more reliable than per-row:
             # a group where no speech exceeds 300 words is an Oral PQ session
             # (prepared answer ~150w, follow-ups shorter) not a debate.
-            statement_rows = [r for r in topic_rows if r.get('source') == 'wms']
-            # wrans are Written Answers fetched via TWFY — merge into the WQ section
-            wq_rows = wq_rows + [r for r in topic_rows if r.get('source') == 'wrans']
+            # Genuine WMS: source=wms AND title doesn't look like a written answer
+            statement_rows = [r for r in topic_rows
+                              if r.get('source') == 'wms'
+                              and 'written answer' not in r.get('debate_title', '').lower()]
+            # wrans + Lords written answer rows all go to WQ section
+            wq_rows = wq_rows + [
+                r for r in topic_rows
+                if r.get('source') == 'wrans'
+                or (r.get('source') in ('wms', 'lords')
+                    and 'written answer' in r.get('debate_title', '').lower())
+            ]
             wq_total = len(wq_rows)
             non_statement_rows = [r for r in topic_rows
-                                  if r.get('source') not in ('wms', 'wrans')]
+                                  if r not in statement_rows
+                                  and r.get('source') != 'wrans'
+                                  and not (r.get('source') in ('wms', 'lords')
+                                           and 'written answer' in r.get('debate_title', '').lower())]
             all_grouped = _group_by_debate(non_statement_rows)
 
             oral_grouped, urgent_grouped, debate_grouped, legislation_grouped = [], [], [], []
