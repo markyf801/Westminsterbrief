@@ -737,7 +737,7 @@ def lookup_twfy_person(name):
                 resp = requests.get(
                     'https://www.theyworkforyou.com/api/' + endpoint,
                     params={'key': TWFY_API_KEY, 'search': variant, 'output': 'json'},
-                    timeout=5
+                    timeout=10
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -845,10 +845,14 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
                 })
             continue
         person_id, matched_name, is_lord = lookup_twfy_person(display)
-        twfy_ids_cache[display] = {'person_id': person_id, 'is_lord': is_lord}
+        twfy_ids_cache[display] = {'person_id': person_id, 'is_lord': is_lord,
+                                   'lookup_failed': person_id is None}
         cache_updated = True
         if person_id:
             results.append({'person_id': person_id, 'name': display, 'role': m.get('role', ''), 'is_lord': is_lord})
+        else:
+            import logging
+            logging.warning(f"TWFY person ID lookup failed for minister: {display!r}")
     if cache_updated:
         try:
             with open(MINISTER_CACHE_FILE, 'w') as f:
@@ -1306,7 +1310,11 @@ def debates_topic():
             # a group where no speech exceeds 300 words is an Oral PQ session
             # (prepared answer ~150w, follow-ups shorter) not a debate.
             statement_rows = [r for r in topic_rows if r.get('source') == 'wms']
-            non_statement_rows = [r for r in topic_rows if r.get('source') != 'wms']
+            # wrans are Written Answers fetched via TWFY — merge into the WQ section
+            wq_rows = wq_rows + [r for r in topic_rows if r.get('source') == 'wrans']
+            wq_total = len(wq_rows)
+            non_statement_rows = [r for r in topic_rows
+                                  if r.get('source') not in ('wms', 'wrans')]
             all_grouped = _group_by_debate(non_statement_rows)
 
             oral_grouped, urgent_grouped, debate_grouped = [], [], []
