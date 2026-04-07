@@ -110,7 +110,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # Import cache models so their tables are created
-from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedTWFYSearch, MemberLink
+from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedTWFYSearch, MemberLink, StakeholderOrg
 
 # ==========================================
 # 4. AUTO-BUILD DATABASE
@@ -147,6 +147,83 @@ with app.app_context():
         joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
         db.session.add(joe)
         db.session.commit()
+
+    # Seed education stakeholder orgs (run once — skipped if any orgs already exist)
+    if StakeholderOrg.query.count() == 0:
+        _STAKEHOLDER_SEEDS = [
+            # Central Government & Regulators
+            ('Department for Education (DfE)', 'DfE', 'Regulator / Government', 'gov.uk/dfe',
+             'The central government department responsible for education and children\'s services in England.', None, None),
+            ('Ofsted', None, 'Regulator / Government', 'gov.uk/ofsted',
+             'Inspects and regulates schools, colleges, and childcare services to ensure quality standards.', None, None),
+            ('Office for Students (OfS)', 'OfS', 'Regulator / Government', 'officeforstudents.org.uk',
+             'The independent regulator for higher education in England.', None, 'https://www.officeforstudents.org.uk/news-blog-and-events/press-and-media/rss/'),
+            # Trade Unions — Teaching
+            ('National Education Union (NEU)', 'NEU', 'Trade Union', 'neu.org.uk',
+             'The largest UK education union, representing teachers, lecturers, and support staff.', None, None),
+            ('NASUWT', None, 'Trade Union', 'nasuwt.org.uk',
+             'A major union representing teachers and headteachers across all phases of education.', None, None),
+            ('UCU', None, 'Trade Union', 'ucu.org.uk',
+             'The University and College Union; represents academics, lecturers, and professional staff in HE and FE.', None, 'https://www.ucu.org.uk/rss'),
+            ('UNISON Education', 'UNISON', 'Trade Union', 'unison.org.uk',
+             'The largest union for school support staff, including TAs, cleaners, and admin staff.', None, None),
+            ('GMB Schools', 'GMB', 'Trade Union', 'gmb.org.uk',
+             'Represents a wide range of school support staff, focusing on fair pay and safe staffing levels.', None, None),
+            ('Unite Education', 'Unite', 'Trade Union', 'unitetheunion.org',
+             'Represents technical, scientific, and estates staff within schools and universities.', None, None),
+            ('Voice (Community)', None, 'Trade Union', 'voicetheunion.org.uk',
+             'The education section of the Community union, representing teachers and early years workers.', None, None),
+            # Student Representation
+            ('National Union of Students (NUS)', 'NUS', 'Student Representation', 'nus.org.uk',
+             'The collective voice of students in higher and further education.', None, None),
+            # School Leadership & Governance
+            ('Association of School and College Leaders (ASCL)', 'ASCL', 'School Leadership', 'ascl.org.uk',
+             'A union and professional body for secondary leaders.', None, 'https://www.ascl.org.uk/rss.xml'),
+            ('National Association of Head Teachers (NAHT)', 'NAHT', 'School Leadership', 'naht.org.uk',
+             'Represents leaders in primary and special schools.', None, None),
+            ('Confederation of School Trusts (CST)', 'CST', 'School Governance', 'cstuk.org.uk',
+             'The national sector body and representative organization for school trusts (academies).', None, None),
+            ('National Governance Association (NGA)', 'NGA', 'School Governance', 'nga.org.uk',
+             'The national membership body for governors and trustees in state schools.', None, None),
+            # HE Mission Groups
+            ('Universities UK (UUK)', 'UUK', 'HE Sector Body', 'universitiesuk.ac.uk',
+             'The collective voice of 140+ UK universities; leads sector advocacy on policy and funding.', None, 'https://www.universitiesuk.ac.uk/rss'),
+            ('Russell Group', None, 'HE Sector Body', 'russellgroup.ac.uk',
+             'Represents 24 research-intensive UK universities committed to world-class research and teaching.', None, None),
+            ('University Alliance', None, 'HE Sector Body', 'unialliance.ac.uk',
+             'Represents professional and technical universities focused on industry partnerships and skills.', None, None),
+            ('MillionPlus', None, 'HE Sector Body', 'millionplus.ac.uk',
+             'Advocates for the role of modern universities in social mobility and regional economies.', None, None),
+            ('GuildHE', None, 'HE Sector Body', 'guildhe.ac.uk',
+             'Represents small and specialist universities, including arts and vocational providers.', None, None),
+            # FE & Skills
+            ('Association of Colleges (AoC)', 'AoC', 'FE & Skills', 'aoc.co.uk',
+             'The national representative body for further education, sixth form, and specialist colleges.', None, 'https://www.aoc.co.uk/news.rss'),
+            # Regional & Independent
+            ('London Higher', None, 'Regional Body', 'londonhigher.ac.uk',
+             'The membership body for over 40 London-based higher education institutions.', None, None),
+            ('Independent HE', None, 'Independent Sector', 'ihe.ac.uk',
+             'The representative body for independent and specialist higher education providers.', None, None),
+            # Mental Health & Wellbeing
+            ('Student Minds', None, 'Wellbeing & Equality', 'studentminds.org.uk',
+             'A charity focusing on student mental health; developers of the University Mental Health Charter.', None, None),
+            ('Anna Freud Centre', None, 'Wellbeing & Equality', 'annafreud.org',
+             'Provides research and training to schools to support children\'s mental health and wellbeing.', None, None),
+            # Access & Equality
+            ('TASO', None, 'Wellbeing & Equality', 'taso.org.uk',
+             'An evidence hub researching effective methods to eliminate equality gaps in higher education.', None, None),
+        ]
+        for (name, short_name, category, website, description, bsky_handle, rss_url) in _STAKEHOLDER_SEEDS:
+            db.session.add(StakeholderOrg(
+                name=name, short_name=short_name, category=category,
+                website=website, description=description,
+                bsky_handle=bsky_handle, rss_url=rss_url,
+                hansard_search_name=short_name or name,
+            ))
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",

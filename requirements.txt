@@ -13,3 +13,4 @@ newsapi-python==0.2.7
 atproto==0.0.55
 numpy==1.26.4
 werkzeug==3.0.1
+feedparser==6.0.11

@@ -619,34 +619,277 @@
 
     <!-- ===================== MODE 4: STAKEHOLDER RESEARCH ===================== -->
     <div id="panel-stakeholder" class="scanner-panel">
-        <div class="info-box" style="margin-bottom: 20px;">
-            <p style="margin:0; font-size:14.5px; line-height:1.6;">
-                Search for what <strong>external stakeholders</strong> — campaign groups, trade bodies, charities,
-                think tanks and sector voices — are saying about a topic across news and social media.
-                Use this alongside Hansard Research to build a complete picture for your brief.
+        <div class="info-box" style="margin-bottom:16px;">
+            <p style="margin:0 0 6px; font-size:14.5px; line-height:1.6;">
+                Search for what <strong>external stakeholders</strong> — sector bodies, trade unions, think tanks, campaign groups and regulators — are saying about a specific topic.
+            </p>
+            <p style="margin:0; font-size:13.5px; color:#4a5568; line-height:1.5;">
+                Results are drawn from news media coverage, organisations' own published reports and statements (RSS), social media (Bluesky), and Hansard mentions. Select an organisation to focus the search, or leave blank to search across all tracked organisations.
             </p>
         </div>
 
-        <form method="GET" action="/debates" style="margin-bottom: 24px;">
-            <input type="hidden" name="mode" value="stakeholder">
-            <label style="display:block; margin-bottom:8px; font-weight:600; color:#444;">Topic or keyword:</label>
-            <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px;">
-                <input type="text" name="stakeholder_topic" placeholder="e.g. student loan repayments, SEND funding, net zero..."
-                       value="{{ stakeholder_topic or '' }}"
-                       style="flex-grow:1; padding:10px 14px; border:1px solid #ccc; border-radius:4px; font-size:15px;">
-                <button type="submit" class="btn-search">Search &rarr;</button>
+        <!-- Search form -->
+        <form method="POST" action="/stakeholder_search" onsubmit="showStakeholderLoading()" style="margin-bottom:20px;">
+            <div class="form-row">
+                <div class="form-group" style="flex:2;">
+                    <label>Topic or keyword</label>
+                    <input type="text" name="stakeholder_topic" id="stakeholder-topic-input"
+                           value="{{ stakeholder_topic or '' }}"
+                           placeholder="e.g. post-16 skills white paper, student loan repayments, SEND funding"
+                           required>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>Organisation <span style="font-weight:normal; color:#888; font-size:12px;">(optional — leave blank for all)</span></label>
+                    <select name="stakeholder_org_id" id="stakeholder-org-select">
+                        <option value="">All tracked organisations</option>
+                        {% if orgs_by_category %}
+                        {% for cat, orgs in orgs_by_category.items() %}
+                        <optgroup label="{{ cat }}">
+                            {% for org in orgs %}
+                            <option value="{{ org.id }}" {% if stakeholder_org and stakeholder_org.id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endfor %}
+                        {% endif %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>From date <span style="font-weight:normal; color:#888; font-size:12px;">(optional)</span></label>
+                    <input type="date" name="stakeholder_start" value="{{ start_date or '' }}">
+                </div>
+                <div class="form-group">
+                    <label>To date <span style="font-weight:normal; color:#888; font-size:12px;">(optional)</span></label>
+                    <input type="date" name="stakeholder_end" value="{{ end_date or '' }}">
+                </div>
+                <div class="form-group" style="align-self:flex-end;">
+                    <button type="submit" class="btn btn-primary btn-full" id="btnStakeholder">
+                        <span id="btnStakeholderText">🔍 Search stakeholders</span>
+                    </button>
+                </div>
             </div>
         </form>
 
-        <div style="text-align:center; padding:40px 20px; background:#f8f9fa; border-radius:8px; border:2px dashed #dee2e6;">
-            <div style="font-size:40px; margin-bottom:12px;">🔔</div>
-            <h3 style="color:#444; margin-bottom:8px;">Stakeholder Research — Coming Soon</h3>
-            <p style="color:#666; font-size:14px; max-width:500px; margin:0 auto 16px;">
-                This section will search news media and stakeholder social accounts for contributions
-                on your topic — surfacing what campaign groups, trade bodies, and sector voices are saying
-                alongside the parliamentary record.
-            </p>
+        <!-- ─── AI Briefing ─── -->
+        {% if stakeholder_briefing %}
+        <div style="margin-bottom:24px;">
+            <h3 style="color:#4a154b; margin:0 0 12px; font-size:1.05rem;">📋 AI Stakeholder Summary: {{ stakeholder_topic }}</h3>
+            {% if stakeholder_briefing.summary %}
+            <div class="topic-briefing-summary">{{ stakeholder_briefing.summary }}</div>
+            {% endif %}
+
+            {% if stakeholder_briefing.stated_positions %}
+            <div class="topic-briefing-section" style="margin-top:14px;">
+                <h4>🏢 Stated Positions</h4>
+                <ul style="margin:0; padding-left:18px;">
+                {% for p in stakeholder_briefing.stated_positions %}
+                <li style="margin-bottom:8px; font-size:13.5px;">
+                    <strong>{{ p.org }}</strong>
+                    {% if p.source_type %}<span class="topic-party-badge">{{ p.source_type }}</span>{% endif %}
+                    {% if p.source_date %}<span style="font-size:11.5px; color:#888; margin-left:4px;">{{ p.source_date }}</span>{% endif %}
+                    <br><span style="color:#333;">{{ p.position }}</span>
+                </li>
+                {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if stakeholder_briefing.key_asks %}
+            <div class="topic-briefing-section" style="margin-top:14px;">
+                <h4>📌 Key Asks from Stakeholders</h4>
+                <ul style="margin:0; padding-left:18px;">
+                {% for ask in stakeholder_briefing.key_asks %}
+                <li style="margin-bottom:6px; font-size:13.5px;">{{ ask }}</li>
+                {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if stakeholder_briefing.coverage_note %}
+            <p style="font-size:12px; color:#888; margin-top:10px; font-style:italic;">{{ stakeholder_briefing.coverage_note }}</p>
+            {% endif %}
+            <div style="background:#fff8e1; border-left:3px solid #f59e0b; padding:8px 12px; border-radius:0 4px 4px 0; font-size:12px; color:#78350f; margin-top:12px;">
+                ⚠️ AI summaries are for research assistance only — verify positions against source links below before use.
+            </div>
         </div>
+        {% endif %}
+
+        <!-- ─── Results sections ─── -->
+        {% set has_results = stakeholder_news or stakeholder_publications or stakeholder_social or stakeholder_hansard %}
+        {% if has_results %}
+        <div class="research-sections">
+
+            {% if stakeholder_news %}
+            <details class="research-section" open>
+                <summary class="research-section-header">
+                    <span class="research-section-title">📰 News Media Coverage</span>
+                    <span class="research-section-count">{{ stakeholder_news|length }} article{{ 's' if stakeholder_news|length != 1 else '' }}</span>
+                </summary>
+                <div class="research-section-body">
+                {% for item in stakeholder_news %}
+                <div class="result-card" style="margin-bottom:10px;">
+                    <div class="result-card-meta">
+                        {% if item.outlet %}<span class="topic-source-badge topic-source-commons">{{ item.outlet }}</span>{% endif %}
+                        {% if item.published %}<span style="font-size:11.5px; color:#888;">{{ item.published }}</span>{% endif %}
+                        {% if item.org_name %}<span style="font-size:11.5px; color:#555; margin-left:6px;">re: {{ item.org_name }}</span>{% endif %}
+                    </div>
+                    <p class="result-card-title" style="margin:4px 0;">
+                        <a href="{{ item.link }}" target="_blank" style="color:#1c3e6e; font-weight:600;">{{ item.title }}</a>
+                    </p>
+                    {% if item.summary %}<p class="result-card-quote" style="margin:4px 0 0;">{{ item.summary }}</p>{% endif %}
+                </div>
+                {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            {% if stakeholder_publications %}
+            <details class="research-section" open>
+                <summary class="research-section-header">
+                    <span class="research-section-title">📄 Reports &amp; Publications</span>
+                    <span class="research-section-count">{{ stakeholder_publications|length }} item{{ 's' if stakeholder_publications|length != 1 else '' }}</span>
+                </summary>
+                <div class="research-section-body">
+                {% for item in stakeholder_publications %}
+                <div class="result-card" style="margin-bottom:10px;">
+                    <div class="result-card-meta">
+                        {% if item.org_name %}<span class="topic-source-badge topic-source-lords">{{ item.org_name }}</span>{% endif %}
+                        {% if item.published %}<span style="font-size:11.5px; color:#888;">{{ item.published }}</span>{% endif %}
+                    </div>
+                    <p class="result-card-title" style="margin:4px 0;">
+                        <a href="{{ item.link }}" target="_blank" style="color:#1c3e6e; font-weight:600;">{{ item.title }}</a>
+                    </p>
+                    {% if item.summary %}<p class="result-card-quote" style="margin:4px 0 0;">{{ item.summary }}</p>{% endif %}
+                </div>
+                {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            {% if stakeholder_social %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">🦋 Social Media (Bluesky)</span>
+                    <span class="research-section-count">{{ stakeholder_social|length }} post{{ 's' if stakeholder_social|length != 1 else '' }}</span>
+                </summary>
+                <div class="research-section-body">
+                {% for item in stakeholder_social %}
+                <div class="result-card" style="margin-bottom:10px;">
+                    <div class="result-card-meta">
+                        {% if item.org_name %}<span class="topic-source-badge" style="background:#e0f2fe; color:#075985;">{{ item.org_name }}</span>{% endif %}
+                        {% if item.published %}<span style="font-size:11.5px; color:#888;">{{ item.published }}</span>{% endif %}
+                    </div>
+                    <p style="margin:4px 0; font-size:13.5px;">{{ item.summary }}</p>
+                    {% if item.link %}<a href="{{ item.link }}" target="_blank" style="font-size:11.5px; color:#005a8f;">↗ View on Bluesky</a>{% endif %}
+                </div>
+                {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+            {% if stakeholder_hansard %}
+            <details class="research-section">
+                <summary class="research-section-header">
+                    <span class="research-section-title">🏛️ Parliamentary Mentions</span>
+                    <span class="research-section-count">{{ stakeholder_hansard|length }} mention{{ 's' if stakeholder_hansard|length != 1 else '' }}</span>
+                </summary>
+                <div class="research-section-body">
+                {% for r in stakeholder_hansard %}
+                <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}" style="margin-bottom:10px;">
+                    <div class="debate-speech-content">
+                        <span class="debate-speech-name">{{ r.speaker_name }}</span>
+                        {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role }}</span>
+                        {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                        <span style="font-size:11.5px; color:#888; margin-left:6px;">{{ r.hdate }}</span>
+                        {% if r.listurl %}&nbsp;<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Hansard</a>{% endif %}
+                        <p class="debate-speech-body">{{ r.body_clean }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+
+        </div>
+
+        <div style="margin-top:20px; text-align:center;">
+            <button onclick="downloadStakeholderBrief()" class="btn btn-primary" style="padding:12px 32px; font-size:14px; font-weight:700;">
+                ⬇ Download Stakeholder Brief (Word)
+            </button>
+        </div>
+        {% elif is_post %}
+        <div style="text-align:center; padding:32px 20px; background:#f8f9fa; border-radius:8px; margin-top:16px;">
+            <p style="color:#666; font-size:14px;">No results found for <strong>{{ stakeholder_topic }}</strong>. Try broadening the search or removing the date range.</p>
+        </div>
+        {% endif %}
+
+        <!-- ─── Org directory ─── -->
+        <div style="margin-top:28px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                <h3 style="margin:0; font-size:1rem; color:#1c3e6e;">📋 Tracked Organisations</h3>
+                {% if current_user.is_authenticated %}
+                <button onclick="toggleAddOrg()" class="btn btn-secondary" style="font-size:12.5px; padding:6px 14px;">+ Add organisation</button>
+                {% endif %}
+            </div>
+
+            <!-- Add org form (hidden by default) -->
+            {% if current_user.is_authenticated %}
+            <div id="add-org-form" style="display:none; background:#f0f4ff; border:1px solid #c7d2fe; border-radius:8px; padding:16px 18px; margin-bottom:16px;">
+                <p style="font-size:13px; font-weight:600; color:#1c3e6e; margin:0 0 10px;">Add a stakeholder organisation</p>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                    <div style="flex:1; min-width:160px;">
+                        <label style="font-size:12px; color:#555; display:block; margin-bottom:4px;">Department</label>
+                        <select id="add-org-dept" style="width:100%; padding:7px 10px; border:1px solid #ccc; border-radius:4px; font-size:13px;">
+                            <option value="">Select department…</option>
+                            <option>Department for Education</option>
+                            <option>Department of Health and Social Care</option>
+                            <option>HM Treasury</option>
+                            <option>Home Office</option>
+                            <option>Ministry of Defence</option>
+                            <option>Ministry of Justice</option>
+                            <option>Department for Science, Innovation and Technology</option>
+                            <option>Cabinet Office</option>
+                        </select>
+                    </div>
+                    <div style="flex:1; min-width:160px;">
+                        <label style="font-size:12px; color:#555; display:block; margin-bottom:4px;">Organisation name</label>
+                        <input type="text" id="add-org-name" placeholder="e.g. Teach First" style="width:100%; padding:7px 10px; border:1px solid #ccc; border-radius:4px; font-size:13px; box-sizing:border-box;">
+                    </div>
+                    <div style="flex:1; min-width:160px;">
+                        <label style="font-size:12px; color:#555; display:block; margin-bottom:4px;">Website (their domain)</label>
+                        <input type="text" id="add-org-website" placeholder="e.g. teachfirst.org.uk" style="width:100%; padding:7px 10px; border:1px solid #ccc; border-radius:4px; font-size:13px; box-sizing:border-box;">
+                    </div>
+                    <button onclick="submitAddOrg()" class="btn btn-primary" style="padding:7px 18px; font-size:13px; white-space:nowrap;">Add →</button>
+                </div>
+                <p id="add-org-status" style="font-size:12px; margin:8px 0 0; color:#555;"></p>
+            </div>
+            {% endif %}
+
+            {% if orgs_by_category %}
+            {% for cat, orgs in orgs_by_category.items() %}
+            <details class="research-section" style="margin-bottom:8px;">
+                <summary class="research-section-header">
+                    <span class="research-section-title">{{ cat }}</span>
+                    <span class="research-section-count">{{ orgs|length }}</span>
+                </summary>
+                <div class="research-section-body" style="display:flex; flex-wrap:wrap; gap:8px; padding:12px 0;">
+                {% for org in orgs %}
+                <div class="stakeholder-pill" onclick="prefillStakeholder({{ org.id }}, {{ org.name | tojson }})" title="{{ org.description or '' }}">
+                    <span class="stakeholder-pill-name">{{ org.name }}</span>
+                    <span class="stakeholder-pill-links">
+                        {% if org.website %}<a href="https://{{ org.website }}" target="_blank" onclick="event.stopPropagation()" title="Website">🌐</a>{% endif %}
+                        {% if org.rss_url %}<span title="RSS feed available">📡</span>{% endif %}
+                        {% if org.bsky_handle %}<a href="https://bsky.app/profile/{{ org.bsky_handle.lstrip('@') }}" target="_blank" onclick="event.stopPropagation()" title="Bluesky">🦋</a>{% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+                </div>
+            </details>
+            {% endfor %}
+            {% endif %}
+        </div>
+
     </div>
 </div>
 
@@ -674,6 +917,13 @@
     const ORAL_GROUPED = {{ (oral_grouped or []) | tojson | safe }};
     const URGENT_GROUPED = {{ (urgent_grouped or []) | tojson | safe }};
     const DEBATE_GROUPED = {{ (debate_grouped or []) | tojson | safe }};
+    // Stakeholder data
+    const STAKEHOLDER_TOPIC = {{ (stakeholder_topic or '') | tojson | safe }};
+    const STAKEHOLDER_BRIEFING = {{ (stakeholder_briefing or {}) | tojson | safe }};
+    const STAKEHOLDER_NEWS = {{ (stakeholder_news or []) | tojson | safe }};
+    const STAKEHOLDER_PUBLICATIONS = {{ (stakeholder_publications or []) | tojson | safe }};
+    const STAKEHOLDER_SOCIAL = {{ (stakeholder_social or []) | tojson | safe }};
+    const STAKEHOLDER_HANSARD = {{ (stakeholder_hansard or []) | tojson | safe }};
     const LEGISLATION_GROUPED = {{ (legislation_grouped or []) | tojson | safe }};
 
     const loadedPQData = {};  // speaker_name → pqs (populated when panel opens)
@@ -1043,6 +1293,71 @@
         const text = document.getElementById('btnAnalyzeText');
         if (btn) btn.style.opacity = '0.8';
         if (text) text.innerText = '🤖 Web Scraping Transcripts & Writing Briefing... (up to 60 seconds)';
+    }
+
+    // ── Stakeholder Research ──────────────────────────────────────────
+
+    function showStakeholderLoading() {
+        const btn = document.getElementById('btnStakeholder');
+        const text = document.getElementById('btnStakeholderText');
+        if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
+        if (text) text.innerText = '🔍 Searching stakeholders… (may take 20–30 seconds)';
+    }
+
+    function prefillStakeholder(orgId, orgName) {
+        const sel = document.getElementById('stakeholder-org-select');
+        if (sel) sel.value = orgId;
+        // Focus topic field if empty
+        const topicInput = document.getElementById('stakeholder-topic-input');
+        if (topicInput && !topicInput.value.trim()) topicInput.focus();
+    }
+
+    function toggleAddOrg() {
+        const el = document.getElementById('add-org-form');
+        if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+
+    async function submitAddOrg() {
+        const name = document.getElementById('add-org-name').value.trim();
+        const website = document.getElementById('add-org-website').value.trim();
+        const dept = document.getElementById('add-org-dept').value;
+        const status = document.getElementById('add-org-status');
+        if (!name || !website) { if (status) status.textContent = 'Please enter both a name and website.'; return; }
+        if (status) status.textContent = 'Adding…';
+        try {
+            const fd = new FormData();
+            fd.append('org_name', name);
+            fd.append('org_website', website);
+            fd.append('org_department', dept);
+            const resp = await fetch('/stakeholder_add', {method: 'POST', body: fd});
+            const data = await resp.json();
+            if (!resp.ok) {
+                if (status) status.textContent = data.error || 'Could not add organisation.';
+            } else {
+                if (status) status.textContent = `✓ "${data.name}" added${data.rss_found ? ' (RSS feed found)' : ''}. Reload the page to see it in the directory.`;
+                document.getElementById('add-org-name').value = '';
+                document.getElementById('add-org-website').value = '';
+            }
+        } catch(e) {
+            if (status) status.textContent = 'Network error — please try again.';
+        }
+    }
+
+    function downloadStakeholderBrief() {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/download_research_brief';
+        const add = (n, v) => { const i = document.createElement('input'); i.type='hidden'; i.name=n; i.value=v; form.appendChild(i); };
+        add('topic', STAKEHOLDER_TOPIC);
+        add('mode', 'stakeholder');
+        add('briefing_json', JSON.stringify(STAKEHOLDER_BRIEFING));
+        add('stakeholder_news', JSON.stringify(STAKEHOLDER_NEWS));
+        add('stakeholder_publications', JSON.stringify(STAKEHOLDER_PUBLICATIONS));
+        add('stakeholder_social', JSON.stringify(STAKEHOLDER_SOCIAL));
+        add('stakeholder_hansard', JSON.stringify(STAKEHOLDER_HANSARD));
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
     }
 </script>
 {% endblock %}

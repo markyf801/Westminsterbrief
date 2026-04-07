@@ -198,6 +198,38 @@ class CachedQuestion(db.Model):
             db.session.rollback()
 
 
+class StakeholderOrg(db.Model):
+    """Shared global list of external stakeholder organisations.
+    Used by the Stakeholder Research tab to find what orgs are saying about topics."""
+    __tablename__ = 'stakeholder_org'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    name          = db.Column(db.String(200), unique=True, nullable=False)
+    short_name    = db.Column(db.String(50), nullable=True)
+    category      = db.Column(db.String(100), nullable=False)   # e.g. "HE Mission Group"
+    website       = db.Column(db.String(300), nullable=True)     # domain, e.g. "universitiesuk.ac.uk"
+    description   = db.Column(db.Text, nullable=True)
+    bsky_handle   = db.Column(db.String(100), nullable=True)
+    rss_url       = db.Column(db.String(500), nullable=True)
+    hansard_search_name = db.Column(db.String(200), nullable=True)  # override for TWFY search
+    active        = db.Column(db.Boolean, default=True, nullable=False)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @staticmethod
+    def all_active():
+        return StakeholderOrg.query.filter_by(active=True).order_by(
+            StakeholderOrg.category, StakeholderOrg.name).all()
+
+    @staticmethod
+    def by_category():
+        """Return active orgs grouped as {category: [orgs]} dict, sorted."""
+        orgs = StakeholderOrg.all_active()
+        grouped = {}
+        for org in orgs:
+            grouped.setdefault(org.category, []).append(org)
+        return dict(sorted(grouped.items()))
+
+
 class CachedMember(db.Model):
     """Stores MP/Peer details. Refreshed after 7 days (party/constituency can change)."""
     __tablename__ = 'cached_member'

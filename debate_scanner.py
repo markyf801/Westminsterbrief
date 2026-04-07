@@ -1,8 +1,12 @@
 import requests, os, json, re, io, concurrent.futures, time
-from flask import Blueprint, render_template, request, send_file, copy_current_request_context
-from flask_login import current_user
+from flask import Blueprint, render_template, request, send_file, copy_current_request_context, jsonify
+from flask_login import current_user, login_required
 from datetime import datetime
-from cache_models import CachedTranscript, CachedTWFYSearch
+from cache_models import CachedTranscript, CachedTWFYSearch, StakeholderOrg
+try:
+    import feedparser
+except ImportError:
+    feedparser = None
 
 # Import Word Document libraries
 try:
@@ -255,8 +259,17 @@ def format_briefing_as_text(briefing_dict, topic):
             lines.append(f"- {q.get('speaker', '')} ({q.get('role_or_party', '')}, {q.get('date', '')}): {q.get('question', '')}")
         lines.append("")
 
-    lines.append(f"## 7. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
-    lines.append(f"## 8. COVERAGE NOTE\n{briefing_dict.get('coverage_note', '')}\n")
+    anticipated = briefing_dict.get('anticipated_questions', [])
+    if anticipated:
+        lines.append("## 7. ANTICIPATED QUESTIONS (AI-GENERATED)")
+        for q in anticipated:
+            lines.append(f"- {q.get('question', '')}")
+            if q.get('rationale'):
+                lines.append(f"  [Why: {q.get('rationale', '')}]")
+        lines.append("")
+
+    lines.append(f"## 8. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
+    lines.append(f"## 9. COVERAGE NOTE\n{briefing_dict.get('coverage_note', '')}\n")
     return "\n".join(lines)
 
 def expand_search_query(topic, api_key):
@@ -1103,13 +1116,26 @@ def scan_debates():
     selected_house = "all"
     content_type = "exclude_bills"
 
-    # Handle stakeholder tab GET (search form submits here via GET)
+    # Handle stakeholder tab GET — show search form + org directory
     if request.method == 'GET' and request.args.get('mode') == 'stakeholder':
         return render_template('debate_scanner.html',
                                mode='stakeholder',
                                stakeholder_topic=request.args.get('stakeholder_topic', ''),
+                               stakeholder_org=None,
+                               stakeholder_hansard=[], stakeholder_news=[],
+                               stakeholder_publications=[], stakeholder_social=[],
+                               stakeholder_briefing=None,
+                               all_orgs=StakeholderOrg.all_active(),
+                               orgs_by_category=StakeholderOrg.by_category(),
                                grouped_debates={}, error_message=None,
                                start_date='', end_date='',
+                               topic='', topic_rows=[], topic_briefing=None,
+                               topic_briefing_as_text='', house_filter='all',
+                               selected_depts=[], wq_rows=[], oral_grouped=[],
+                               urgent_grouped=[], statement_grouped=[],
+                               debate_grouped=[], legislation_grouped=[],
+                               debug_query='', user_pref=_get_user_pref(),
+                               is_post=False,
                                departments=DEPARTMENTS_TWFY, selected_dept='All Departments',
                                selected_house='all', content_type='exclude_bills')
 
@@ -1478,6 +1504,13 @@ def debates_topic():
                         "or Lords not in government. Do NOT include questions asked by government ministers or PPSs. "
                         "\"question\" should be a concise paraphrase of the actual question asked (1-2 sentences). "
                         "Use the exact listurl from the matching DATA entry. Up to 6 questions.\n\n"
+                        "\"anticipated_questions\": Array of {\"question\", \"rationale\"} — "
+                        "Up to 5 HARDER questions that have NOT yet been asked in Parliament but could plausibly come up "
+                        "based on the debates, gaps in government answers, and opposition lines of attack identified above. "
+                        "These should be the uncomfortable questions — ones that probe weaknesses in the government position, "
+                        "unresolved policy tensions, or areas where the evidence base is thin. "
+                        "\"rationale\" should be a brief (1 sentence) explanation of why this question is likely to arise. "
+                        "These are for ministerial preparation — make them specific and genuinely challenging.\n\n"
                         "\"next_steps\": Any upcoming parliamentary business or announced policy milestones.\n\n"
                         "\"coverage_note\": Brief note on the date range and sources covered.\n\n"
                         f"DATA: {json.dumps(ai_payload)}"
@@ -1970,6 +2003,424 @@ def export_custom_briefing():
 
 
 # ==========================================
+# STAKEHOLDER RESEARCH — HELPERS
+# ==========================================
+
+def fetch_org_rss(rss_url, topic, limit=15):
+    """Fetch RSS feed and return items loosely matching topic. Returns [] on failure."""
+    if not feedparser or not rss_url:
+        return []
+    try:
+        feed = feedparser.parse(rss_url)
+        topic_words = set(re.findall(r'\b\w{4,}\b', topic.lower()))
+        results = []
+        for entry in feed.entries[:40]:
+            title = entry.get('title', '')
+            summary = entry.get('summary', '') or entry.get('description', '')
+            text = (title + ' ' + summary).lower()
+            # Include if any topic word appears in the entry
+            if not topic_words or any(w in text for w in topic_words):
+                published = ''
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    try:
+                        published = datetime(*entry.published_parsed[:3]).strftime('%Y-%m-%d')
+                    except Exception:
+                        pass
+                results.append({
+                    'title': title,
+                    'link': entry.get('link', ''),
+                    'published': published,
+                    'summary': re.sub(r'<[^>]+>', ' ', summary)[:300].strip(),
+                    'source_type': 'publication',
+                })
+            if len(results) >= limit:
+                break
+        return results
+    except Exception:
+        return []
+
+
+def fetch_org_bluesky(handle, topic, limit=10):
+    """Fetch recent Bluesky posts from a handle and filter loosely by topic."""
+    try:
+        from atproto import Client as BskyClient
+        BSKY_HANDLE = os.environ.get('BSKY_HANDLE')
+        BSKY_PASSWORD = os.environ.get('BSKY_PASSWORD')
+        if not BSKY_HANDLE or not BSKY_PASSWORD:
+            return []
+        bsky = BskyClient()
+        bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
+        clean_handle = handle.lstrip('@')
+        feed = bsky.get_author_feed(actor=clean_handle, limit=25)
+        topic_words = set(re.findall(r'\b\w{4,}\b', topic.lower()))
+        results = []
+        for item in feed.feed:
+            post = item.post
+            text = post.record.text if hasattr(post.record, 'text') else ''
+            if not topic_words or any(w in text.lower() for w in topic_words):
+                post_id = post.uri.split('/')[-1]
+                results.append({
+                    'title': text[:120],
+                    'link': f'https://bsky.app/profile/{clean_handle}/post/{post_id}',
+                    'published': str(post.indexed_at)[:10] if hasattr(post, 'indexed_at') else '',
+                    'summary': text[:300],
+                    'source_type': 'social',
+                })
+            if len(results) >= limit:
+                break
+        return results
+    except Exception:
+        return []
+
+
+def fetch_stakeholder_news(org_names, topic, start_date='', end_date='', limit=30):
+    """Search News API for media coverage mentioning stakeholder orgs on a topic."""
+    NEWS_API_KEY = os.environ.get('NEWS_API_KEY')
+    if not NEWS_API_KEY:
+        return []
+    try:
+        from newsapi import NewsApiClient
+        newsapi = NewsApiClient(api_key=NEWS_API_KEY)
+        # Build query: topic AND (org1 OR org2 OR ...)
+        org_clause = ' OR '.join(f'"{n}"' for n in org_names[:5])  # API has query length limits
+        query = f'({topic}) AND ({org_clause})'
+        kwargs = {'q': query, 'language': 'en', 'sort_by': 'relevancy', 'page_size': limit}
+        if start_date:
+            kwargs['from_param'] = start_date
+        if end_date:
+            kwargs['to'] = end_date
+        resp = newsapi.get_everything(**kwargs)
+        results = []
+        for art in resp.get('articles', []):
+            results.append({
+                'title': art.get('title', ''),
+                'link': art.get('url', ''),
+                'published': (art.get('publishedAt') or '')[:10],
+                'summary': art.get('description') or art.get('title', ''),
+                'outlet': art.get('source', {}).get('name', ''),
+                'source_type': 'news',
+            })
+        return results
+    except Exception:
+        return []
+
+
+def generate_stakeholder_briefing(topic, org=None, hansard_rows=None, news=None,
+                                  publications=None, social=None):
+    """Generate an AI summary of stakeholder positions on a topic."""
+    if not GEMINI_API_KEY:
+        return None
+    hansard_rows = hansard_rows or []
+    news = news or []
+    publications = publications or []
+    social = social or []
+
+    org_context = f'Organisation: {org.name}\n' if org else 'Multiple stakeholder organisations\n'
+
+    # Build evidence summary (capped to avoid 503)
+    evidence_lines = []
+    for r in hansard_rows[:8]:
+        evidence_lines.append(f'[Hansard] {r.get("speaker_name","")} ({r.get("hdate","")}): '
+                               f'{clean_body_text(r.get("body",""))[:200]}')
+    for r in news[:6]:
+        evidence_lines.append(f'[News/{r.get("outlet","")}] {r.get("title","")} ({r.get("published","")}): '
+                               f'{r.get("summary","")[:200]}')
+    for r in publications[:6]:
+        evidence_lines.append(f'[Publication] {r.get("title","")} ({r.get("published","")}): '
+                               f'{r.get("summary","")[:200]}')
+    for r in social[:4]:
+        evidence_lines.append(f'[Social] {r.get("summary","")[:150]}')
+
+    if not evidence_lines:
+        return None
+
+    evidence_text = '\n'.join(evidence_lines)
+    prompt = (
+        f'You are a UK civil service parliamentary researcher. Analyse the following evidence '
+        f'about what stakeholders are saying on the topic: "{topic}".\n\n'
+        f'{org_context}\n'
+        f'EVIDENCE:\n{evidence_text}\n\n'
+        f'Return a JSON object with these fields:\n'
+        f'"summary": 2-3 sentence overview of the stakeholder landscape on this topic.\n'
+        f'"stated_positions": Array of {{\"org\", \"position\", \"source_type\", \"source_date\"}} — '
+        f'one entry per organisation visible in the evidence, summarising their stated position in 1-2 sentences. '
+        f'Include the type of source (Hansard/News/Publication/Social) and date.\n'
+        f'"key_asks": Array of strings — the main policy asks or demands from stakeholders (up to 5).\n'
+        f'"coverage_note": One sentence on the breadth and recency of evidence found.\n'
+        f'Return ONLY valid JSON, no markdown fences.'
+    )
+
+    try:
+        model_path = get_working_model(GEMINI_API_KEY)
+        ai_url = (f'https://generativelanguage.googleapis.com/v1beta/{model_path}'
+                  f':generateContent?key={GEMINI_API_KEY}')
+        payload = {'contents': [{'parts': [{'text': prompt}]}],
+                   'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 800}}
+        resp = requests.post(ai_url, json=payload, timeout=25)
+        if resp.status_code == 503:
+            time.sleep(3)
+            resp = requests.post(ai_url, json=payload, timeout=25)
+        if resp.status_code == 200:
+            raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+            raw = raw.strip().lstrip('```json').lstrip('```').rstrip('```').strip()
+            return json.loads(raw)
+    except Exception:
+        pass
+    return None
+
+
+def _discover_rss(website):
+    """Try to auto-discover an RSS feed URL from a website domain."""
+    if not website:
+        return None
+    base = website.rstrip('/')
+    if not base.startswith('http'):
+        base = 'https://' + base
+    candidates = [
+        base + '/feed', base + '/rss', base + '/rss.xml',
+        base + '/feed.xml', base + '/news/rss', base + '/news/feed',
+        base + '/blog/feed', base + '/publications/rss',
+    ]
+    for url in candidates:
+        try:
+            r = requests.get(url, timeout=6, allow_redirects=True,
+                             headers={'User-Agent': 'Mozilla/5.0'})
+            ct = r.headers.get('Content-Type', '')
+            if r.status_code == 200 and ('xml' in ct or 'rss' in ct or 'atom' in ct
+                                          or r.text.strip().startswith('<')):
+                return url
+        except Exception:
+            pass
+    return None
+
+
+# ==========================================
+# ROUTE 9: STAKEHOLDER SEARCH
+# ==========================================
+@debate_scanner_bp.route('/stakeholder_search', methods=['POST'])
+def stakeholder_search():
+    topic = request.form.get('stakeholder_topic', '').strip()
+    org_id = request.form.get('stakeholder_org_id', '').strip()
+    start_date = request.form.get('stakeholder_start', '')
+    end_date = request.form.get('stakeholder_end', '')
+
+    all_orgs = StakeholderOrg.all_active()
+    orgs_by_category = StakeholderOrg.by_category()
+
+    if not topic:
+        return render_template('debate_scanner.html', mode='stakeholder',
+                               stakeholder_topic='', stakeholder_org=None,
+                               all_orgs=all_orgs, orgs_by_category=orgs_by_category,
+                               stakeholder_hansard=[], stakeholder_news=[],
+                               stakeholder_publications=[], stakeholder_social=[],
+                               stakeholder_briefing=None,
+                               # other tab defaults
+                               topic='', topic_rows=[], topic_briefing=None,
+                               topic_briefing_as_text='', house_filter='all',
+                               selected_depts=[], start_date='', end_date='',
+                               wq_rows=[], oral_grouped=[], urgent_grouped=[],
+                               statement_grouped=[], debate_grouped=[],
+                               legislation_grouped=[], debug_query='',
+                               user_pref=None, is_post=False)
+
+    # Resolve selected org (if any)
+    org = None
+    if org_id:
+        try:
+            org = StakeholderOrg.query.get(int(org_id))
+        except Exception:
+            pass
+
+    # Determine which orgs to search
+    search_orgs = [org] if org else all_orgs
+    org_names = [o.hansard_search_name or o.short_name or o.name for o in search_orgs]
+
+    date_range = ''
+    if start_date and end_date:
+        date_range = f'{start_date.replace("-","")}..{end_date.replace("-","")}'
+    elif start_date:
+        date_range = f'{start_date.replace("-","")}..{datetime.now().strftime("%Y%m%d")}'
+
+    # Build Hansard search: topic + org name(s)
+    if org:
+        hansard_query = f'"{topic}" AND "{org.hansard_search_name or org.name}"'
+    else:
+        hansard_query = f'"{topic}"'
+        if date_range:
+            hansard_query += f' {date_range}'
+
+    # Parallel fetch
+    hansard_rows = []
+    news_items = []
+    publications = []
+    social_posts = []
+
+    def _do_hansard():
+        rows = []
+        for src in ['commons', 'lords', 'westminsterhall']:
+            rows.extend(fetch_twfy_topic(hansard_query, src, date_range))
+        return deduplicate_by_listurl(rows)
+
+    def _do_news():
+        return fetch_stakeholder_news(org_names, topic, start_date, end_date)
+
+    def _do_rss():
+        results = []
+        rss_orgs = [o for o in search_orgs if o.rss_url]
+        for o in rss_orgs[:10]:  # cap parallel RSS fetches
+            items = fetch_org_rss(o.rss_url, topic)
+            for item in items:
+                item['org_name'] = o.name
+            results.extend(items)
+        return sorted(results, key=lambda x: x.get('published', ''), reverse=True)
+
+    def _do_bluesky():
+        results = []
+        bsky_orgs = [o for o in search_orgs if o.bsky_handle]
+        for o in bsky_orgs[:5]:
+            items = fetch_org_bluesky(o.bsky_handle, topic)
+            for item in items:
+                item['org_name'] = o.name
+            results.extend(items)
+        return sorted(results, key=lambda x: x.get('published', ''), reverse=True)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        fut_hansard = executor.submit(copy_current_request_context(_do_hansard))
+        fut_news = executor.submit(copy_current_request_context(_do_news))
+        fut_rss = executor.submit(copy_current_request_context(_do_rss))
+        fut_bsky = executor.submit(copy_current_request_context(_do_bluesky))
+        try:
+            hansard_rows = fut_hansard.result(timeout=30)
+        except Exception:
+            hansard_rows = []
+        try:
+            news_items = fut_news.result(timeout=20)
+        except Exception:
+            news_items = []
+        try:
+            publications = fut_rss.result(timeout=20)
+        except Exception:
+            publications = []
+        try:
+            social_posts = fut_bsky.result(timeout=20)
+        except Exception:
+            social_posts = []
+
+    # Apply date filter to Hansard rows
+    if start_date or end_date:
+        hansard_rows = [r for r in hansard_rows
+                        if (not start_date or r.get('hdate', '') >= start_date)
+                        and (not end_date or r.get('hdate', '') <= end_date)]
+
+    # Flag ministers in Hansard results
+    minister_data = get_minister_list()
+    by_norm = minister_data.get('by_norm', {})
+    for row in hansard_rows:
+        spk = row.get('speaker_name', '')
+        norm_spk = _normalise_name(spk)
+        role = by_norm.get(norm_spk) if norm_spk else None
+        row['is_minister'] = bool(role)
+        row['minister_role'] = role or ''
+        row['body_clean'] = clean_body_text(row.get('body', ''))
+
+    # AI briefing
+    briefing = None
+    if hansard_rows or news_items or publications or social_posts:
+        try:
+            briefing = generate_stakeholder_briefing(
+                topic, org=org,
+                hansard_rows=hansard_rows,
+                news=news_items,
+                publications=publications,
+                social=social_posts,
+            )
+        except Exception:
+            pass
+
+    user_pref = _get_user_pref()
+
+    return render_template('debate_scanner.html',
+        mode='stakeholder',
+        stakeholder_topic=topic,
+        stakeholder_org=org,
+        stakeholder_hansard=hansard_rows,
+        stakeholder_news=news_items,
+        stakeholder_publications=publications,
+        stakeholder_social=social_posts,
+        stakeholder_briefing=briefing,
+        all_orgs=all_orgs,
+        orgs_by_category=orgs_by_category,
+        # other tab defaults (required by template)
+        topic=topic, topic_rows=[], topic_briefing=None,
+        topic_briefing_as_text='', house_filter='all',
+        selected_depts=[], start_date=start_date, end_date=end_date,
+        wq_rows=[], oral_grouped=[], urgent_grouped=[],
+        statement_grouped=[], debate_grouped=[],
+        legislation_grouped=[], debug_query='',
+        user_pref=user_pref, is_post=True)
+
+
+# ==========================================
+# ROUTE 10: ADD STAKEHOLDER ORG
+# ==========================================
+@debate_scanner_bp.route('/stakeholder_add', methods=['POST'])
+@login_required
+def stakeholder_add():
+    name = request.form.get('org_name', '').strip()
+    website = request.form.get('org_website', '').strip().lstrip('https://').lstrip('http://').rstrip('/')
+    department = request.form.get('org_department', '').strip()
+
+    if not name or not website:
+        return jsonify({'error': 'Name and website required'}), 400
+
+    # Map department to category
+    dept_to_category = {
+        'Department for Education': 'Education',
+        'Department of Health and Social Care': 'Health & Social Care',
+        'HM Treasury': 'Economics & Finance',
+        'Home Office': 'Home Affairs',
+        'Ministry of Defence': 'Defence',
+        'Ministry of Justice': 'Justice',
+        'Department for Science, Innovation and Technology': 'Science & Technology',
+        'Cabinet Office': 'Government & Public Administration',
+    }
+    category = dept_to_category.get(department, department or 'Other')
+
+    from extensions import db as _db
+
+    # Check for duplicate
+    existing = StakeholderOrg.query.filter(
+        StakeholderOrg.name.ilike(name)
+    ).first()
+    if existing:
+        return jsonify({'error': f'"{name}" is already in the directory'}), 409
+
+    # Attempt RSS auto-discovery (best-effort)
+    rss_url = None
+    try:
+        rss_url = _discover_rss(website)
+    except Exception:
+        pass
+
+    org = StakeholderOrg(
+        name=name, category=category,
+        website=website, rss_url=rss_url,
+        hansard_search_name=name, active=True,
+    )
+    try:
+        _db.session.add(org)
+        _db.session.commit()
+    except Exception:
+        _db.session.rollback()
+        return jsonify({'error': 'Could not save organisation'}), 500
+
+    return jsonify({
+        'id': org.id, 'name': org.name, 'category': org.category,
+        'website': org.website, 'rss_found': bool(rss_url),
+    })
+
+
+# ==========================================
 # ROUTE 8: SECTIONED RESEARCH BRIEF DOWNLOAD
 # ==========================================
 @debate_scanner_bp.route('/download_research_brief', methods=['POST'])
@@ -1983,9 +2434,11 @@ def download_research_brief():
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     topic = request.form.get('topic', 'Parliamentary Research').strip()
+    mode = request.form.get('mode', '')
     briefing_text = request.form.get('briefing_text', '')
     sections_json = request.form.get('sections_json', '[]')
     depts_json = request.form.get('depts_json', '[]')
+    briefing_json = request.form.get('briefing_json', '')
     start_date = request.form.get('start_date', '')
     end_date = request.form.get('end_date', '')
     try:
@@ -1996,6 +2449,117 @@ def download_research_brief():
         depts = json.loads(depts_json)
     except Exception:
         depts = []
+    try:
+        briefing_struct = json.loads(briefing_json) if briefing_json else None
+        if isinstance(briefing_struct, dict) and not briefing_struct:
+            briefing_struct = None  # treat empty {} as no briefing
+    except Exception:
+        briefing_struct = None
+
+    # ── Stakeholder brief mode ──────────────────────────────────────
+    if mode == 'stakeholder':
+        def _parse(field):
+            try:
+                return json.loads(request.form.get(field, '[]'))
+            except Exception:
+                return []
+
+        sk_news    = _parse('stakeholder_news')
+        sk_pubs    = _parse('stakeholder_publications')
+        sk_social  = _parse('stakeholder_social')
+        sk_hansard = _parse('stakeholder_hansard')
+
+        doc = Document()
+        from docx.shared import Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        def _clr(run, hex_str):
+            r, g, b = int(hex_str[0:2],16), int(hex_str[2:4],16), int(hex_str[4:6],16)
+            run.font.color.rgb = RGBColor(r, g, b)
+
+        # Cover heading
+        title_p = doc.add_heading(f'Stakeholder Research Brief', 0)
+        title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        sub = doc.add_paragraph(f'Topic: {topic}   ·   Generated {datetime.now().strftime("%d %b %Y")}')
+        sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        sub.runs[0].italic = True
+        doc.add_paragraph()
+
+        notice = doc.add_paragraph(
+            '⚠ AI-generated — verify positions against source links before use in official documents.')
+        notice.runs[0].font.size = Pt(9)
+        notice.runs[0].italic = True
+        _clr(notice.runs[0], '856404')
+        doc.add_paragraph()
+
+        # AI summary section
+        if briefing_struct:
+            b = briefing_struct
+            doc.add_heading('AI Stakeholder Summary', 1)
+            if b.get('summary'):
+                doc.add_paragraph(b['summary'])
+            if b.get('stated_positions'):
+                doc.add_heading('Stated Positions', 2)
+                for p in b['stated_positions']:
+                    para = doc.add_paragraph(style='List Bullet')
+                    run = para.add_run(p.get('org', '') + ': ')
+                    run.bold = True
+                    src = p.get('source_type', '')
+                    dt = p.get('source_date', '')
+                    meta = f' [{", ".join(filter(None, [src, dt]))}]' if src or dt else ''
+                    para.add_run(p.get('position', '') + meta)
+            if b.get('key_asks'):
+                doc.add_heading('Key Asks from Stakeholders', 2)
+                for ask in b['key_asks']:
+                    doc.add_paragraph(ask, style='List Bullet')
+            if b.get('coverage_note'):
+                p = doc.add_paragraph(b['coverage_note'])
+                p.runs[0].italic = True
+                p.runs[0].font.size = Pt(9)
+            doc.add_paragraph()
+
+        def _add_item_table(heading, items, cols):
+            """Add a simple table section for stakeholder results."""
+            if not items:
+                return
+            doc.add_heading(heading, 1)
+            tbl = doc.add_table(rows=1, cols=len(cols))
+            tbl.style = 'Table Grid'
+            for i, label in enumerate(cols):
+                cell = tbl.rows[0].cells[i]
+                cell.text = label
+                cell.paragraphs[0].runs[0].bold = True
+            for item in items:
+                row = tbl.add_row().cells
+                if cols[0] == 'Date':
+                    row[0].text = item.get('published', '')
+                    row[1].text = item.get('org_name', '') or item.get('outlet', '')
+                    row[2].text = item.get('title', '')
+                    if len(cols) > 3:
+                        row[3].text = (item.get('summary', '') or '')[:200]
+                else:
+                    row[0].text = item.get('speaker_name', '')
+                    row[1].text = item.get('hdate', '')
+                    row[2].text = clean_body_text(item.get('body', ''))[:300]
+            doc.add_paragraph()
+
+        _add_item_table('News Media Coverage', sk_news,
+                        ['Date', 'Outlet', 'Headline', 'Summary'])
+        _add_item_table('Reports & Publications', sk_pubs,
+                        ['Date', 'Organisation', 'Title', 'Summary'])
+        _add_item_table('Social Media (Bluesky)', sk_social,
+                        ['Date', 'Organisation', 'Post', 'Link'])
+        _add_item_table('Parliamentary Mentions', sk_hansard,
+                        ['Speaker', 'Date', 'Extract'])
+
+        mem_doc = io.BytesIO()
+        doc.save(mem_doc)
+        mem_doc.seek(0)
+        safe_topic = re.sub(r'[^\w\s-]', '', topic)[:40].strip()
+        filename = f'Stakeholder Brief - {safe_topic} - {datetime.now().strftime("%Y%m%d")}.docx'
+        return send_file(mem_doc, as_attachment=True, download_name=filename,
+                         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    # ── end stakeholder mode ────────────────────────────────────────
 
     SECTION_TITLES = {
         'wq': 'Written Questions & Answers',
@@ -2077,23 +2641,107 @@ def download_research_brief():
         doc.add_paragraph()
 
     # ── AI Summary ────────────────────────────────────────────────
-    if briefing_text:
-        doc.add_heading('AI Summary', 1)
+    if briefing_struct or briefing_text:
+        doc.add_heading('AI Parliamentary Briefing', 1)
         notice = doc.add_paragraph(
             '⚠ AI-generated — review for accuracy and remove any non-neutral language before use.')
         notice.runs[0].font.size = Pt(9)
         notice.runs[0].italic = True
         _set_run_colour(notice.runs[0], '856404')
-        for line in briefing_text.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith('## '):
-                doc.add_heading(line[3:].strip(), level=2)
-            elif line.startswith('* ') or line.startswith('- '):
-                doc.add_paragraph(line[2:].strip(), style='List Bullet')
-            else:
-                doc.add_paragraph(line.replace('**', ''))
+
+        if briefing_struct:
+            b = briefing_struct
+            # Topic summary
+            if b.get('topic_summary'):
+                doc.add_heading('Summary', 2)
+                doc.add_paragraph(b['topic_summary'])
+
+            # Government / Opposition positions side by side as plain sections
+            if b.get('government_position'):
+                doc.add_heading('Government Position', 2)
+                doc.add_paragraph(b['government_position'])
+            if b.get('opposition_position'):
+                doc.add_heading('Opposition Position', 2)
+                doc.add_paragraph(b['opposition_position'])
+
+            # Government speakers
+            govt_spks = b.get('government_speakers', [])
+            if govt_spks:
+                doc.add_heading('Government Speakers', 2)
+                for s in govt_spks:
+                    role = s.get('confirmed_role') or s.get('role', '')
+                    p = doc.add_paragraph(style='List Bullet')
+                    p.add_run(s.get('name', '')).bold = True
+                    if role:
+                        p.add_run(f' ({role})')
+                    if s.get('stance'):
+                        p.add_run(f': {s["stance"]}')
+
+            # Opposition speakers
+            opp_spks = b.get('non_government_speakers', [])
+            if opp_spks:
+                doc.add_heading('Opposition / Non-Government Speakers', 2)
+                for s in opp_spks:
+                    p = doc.add_paragraph(style='List Bullet')
+                    p.add_run(s.get('name', '')).bold = True
+                    if s.get('role_or_party'):
+                        p.add_run(f' ({s["role_or_party"]})')
+                    if s.get('stance'):
+                        p.add_run(f': {s["stance"]}')
+
+            # Key opposition questions
+            kqs = b.get('key_questions', [])
+            if kqs:
+                doc.add_heading('Key Opposition Questions', 2)
+                doc.add_paragraph('Questions raised in Parliament — likely lines of challenge in future debates.').italic = True
+                for q in kqs:
+                    p = doc.add_paragraph(style='List Bullet')
+                    p.add_run(f'{q.get("speaker", "")}').bold = True
+                    role_party = q.get('role_or_party', '')
+                    date = q.get('date', '')
+                    if role_party or date:
+                        p.add_run(f' ({", ".join(filter(None, [role_party, date]))})')
+                    p.add_run(f': {q.get("question", "")}')
+
+            # Anticipated / harder questions
+            aqs = b.get('anticipated_questions', [])
+            if aqs:
+                doc.add_heading('Anticipated Questions (AI-Generated)', 2)
+                doc.add_paragraph(
+                    'Questions not yet raised in Parliament but likely based on gaps in government answers '
+                    'and opposition lines of attack. For ministerial preparation only.').italic = True
+                for q in aqs:
+                    p = doc.add_paragraph(style='List Bullet')
+                    p.add_run(q.get('question', '')).bold = False
+                    if q.get('rationale'):
+                        rat = doc.add_paragraph(f'Why likely: {q["rationale"]}')
+                        rat.runs[0].font.size = Pt(9)
+                        rat.runs[0].italic = True
+                        _set_run_colour(rat.runs[0], '666666')
+
+            # Next steps
+            if b.get('next_steps'):
+                doc.add_heading('Next Steps', 2)
+                doc.add_paragraph(b['next_steps'])
+
+            if b.get('coverage_note'):
+                p = doc.add_paragraph(f'Coverage note: {b["coverage_note"]}')
+                p.runs[0].font.size = Pt(9)
+                _set_run_colour(p.runs[0], '666666')
+
+        elif briefing_text:
+            # Fallback: render flat text if structured briefing not available
+            for line in briefing_text.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith('## '):
+                    doc.add_heading(line[3:].strip(), level=2)
+                elif line.startswith('* ') or line.startswith('- '):
+                    doc.add_paragraph(line[2:].strip(), style='List Bullet')
+                else:
+                    doc.add_paragraph(line.replace('**', ''))
+
         doc.add_paragraph()
 
     # ── Sections ──────────────────────────────────────────────────
