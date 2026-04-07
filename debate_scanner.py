@@ -37,6 +37,7 @@ TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
 TWFY_WMS_URL = "https://www.theyworkforyou.com/api/getWMS"
 MINISTER_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'minister_cache.json')
 MINISTER_CACHE_TTL = 30 * 24 * 3600  # 30 days — reshuffles are infrequent
+MINISTER_CACHE_VERSION = 2  # increment when display_name logic changes to bust stale files
 
 DEPARTMENTS_TWFY = [
     "All Departments", "Department for Education", "Department of Health and Social Care",
@@ -568,6 +569,7 @@ def get_minister_list():
                 cache = json.load(f)
         if (cache.get('_ts') and time.time() - cache['_ts'] < MINISTER_CACHE_TTL
                 and cache.get('_source') == 'govuk'
+                and cache.get('_version') == MINISTER_CACHE_VERSION
                 and cache.get('by_norm') and cache.get('by_dept')):
             return cache
     except Exception:
@@ -635,8 +637,8 @@ def get_minister_list():
     # Preserve twfy_ids from the old cache — TWFY person IDs are permanent identifiers
     # assigned to a person for life. No need to re-resolve them after a minister list refresh.
     old_twfy_ids = cache.get('twfy_ids', {})
-    data = {'_ts': time.time(), '_source': 'govuk', 'by_norm': by_norm, 'by_id': by_id,
-            'by_dept': by_dept, 'twfy_ids': old_twfy_ids}
+    data = {'_ts': time.time(), '_source': 'govuk', '_version': MINISTER_CACHE_VERSION,
+            'by_norm': by_norm, 'by_id': by_id, 'by_dept': by_dept, 'twfy_ids': old_twfy_ids}
     try:
         with open(MINISTER_CACHE_FILE, 'w') as f:
             json.dump(data, f)
