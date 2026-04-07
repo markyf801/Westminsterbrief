@@ -248,11 +248,11 @@ def format_briefing_as_text(briefing_dict, topic):
             lines.append(f"- {s.get('name', '')} ({s.get('role_or_party', '')}): {s.get('stance', '')}")
         lines.append("")
 
-    quotes = briefing_dict.get('key_quotes', [])
-    if quotes:
-        lines.append("## 6. KEY QUOTES")
-        for q in quotes:
-            lines.append(f"- \"{q.get('quote', '')}\" — {q.get('speaker', '')} ({q.get('date', '')}, {q.get('source', '')})")
+    questions = briefing_dict.get('key_questions', [])
+    if questions:
+        lines.append("## 6. KEY OPPOSITION QUESTIONS")
+        for q in questions:
+            lines.append(f"- {q.get('speaker', '')} ({q.get('role_or_party', '')}, {q.get('date', '')}): {q.get('question', '')}")
         lines.append("")
 
     lines.append(f"## 7. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
@@ -1468,13 +1468,16 @@ def debates_topic():
                         "\"non_government_speakers\": Array of {\"name\", \"role_or_party\", \"stance\"} — "
                         "shadow ministers and opposition frontbenchers FIRST (most senior first), "
                         "then opposition backbenchers, then crossbenchers. Up to 10 entries.\n\n"
-                        "\"key_quotes\": Array of {\"quote\", \"speaker\", \"date\", \"source\", \"listurl\"} — "
-                        "STRICT RULE: at least 4 of the 6 quotes MUST be from opposition or non-government speakers "
-                        "(shadow ministers, opposition frontbenchers, backbenchers, crossbenchers, Lords not in government). "
-                        "Government minister quotes may only be included if they contain a specific policy commitment, "
-                        "announcement, or figure — not general government lines. "
-                        "Do NOT quote a minister saying the government 'supports' or 'is committed to' something without specifics. "
-                        "Use the exact listurl from the matching DATA entry. Up to 6 quotes total.\n\n"
+                        "\"key_questions\": Array of {\"speaker\", \"role_or_party\", \"date\", \"source\", \"listurl\", \"question\"} — "
+                        "The most significant questions raised by OPPOSITION and non-government speakers about this topic. "
+                        "These should be actual interrogative challenges, probing questions, or lines of attack that a minister "
+                        "would need to answer — not statements or positions. "
+                        "Focus on: questions about policy gaps, accountability questions, questions challenging government figures or commitments, "
+                        "questions that reveal opposition priorities or likely future lines of attack. "
+                        "ONLY include questions from opposition frontbenchers, shadow ministers, opposition backbenchers, crossbenchers, "
+                        "or Lords not in government. Do NOT include questions asked by government ministers or PPSs. "
+                        "\"question\" should be a concise paraphrase of the actual question asked (1-2 sentences). "
+                        "Use the exact listurl from the matching DATA entry. Up to 6 questions.\n\n"
                         "\"next_steps\": Any upcoming parliamentary business or announced policy milestones.\n\n"
                         "\"coverage_note\": Brief note on the date range and sources covered.\n\n"
                         f"DATA: {json.dumps(ai_payload)}"

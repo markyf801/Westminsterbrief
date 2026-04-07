@@ -186,18 +186,21 @@
             </div>
             {% endif %}
 
-            {% if topic_briefing.key_quotes %}
+            {% if topic_briefing.key_questions %}
             <div class="topic-briefing-section" style="margin-bottom:16px;">
-                <h4>💬 Key Quotes</h4>
-                {% for q in topic_briefing.key_quotes %}
-                <p style="font-style:italic; margin-bottom:4px;">"{{ q.quote }}"</p>
-                <p class="topic-quote-attr">
-                    — {{ q.speaker }}{% if q.date %}, {{ q.date }}{% endif %}{% if q.source %} ({{ q.source }}){% endif %}
-                    {% if q.listurl %}
-                    &nbsp;<a href="https://www.theyworkforyou.com{{ q.listurl }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Source</a>
-                    {% endif %}
-                </p>
+                <h4>❓ Key Opposition Questions</h4>
+                <p style="font-size:12px; color:#666; margin:0 0 10px;">Questions raised by opposition and non-government speakers — likely lines of challenge in future debates.</p>
+                <ul style="margin:0; padding-left:18px;">
+                {% for q in topic_briefing.key_questions %}
+                <li style="margin-bottom:10px; font-size:13.5px;">
+                    <span style="font-weight:600;">{{ q.speaker }}</span>
+                    {% if q.role_or_party %}<span class="topic-party-badge">{{ q.role_or_party }}</span>{% endif %}
+                    {% if q.date %}<span style="font-size:11.5px; color:#888; margin-left:4px;">{{ q.date }}</span>{% endif %}
+                    {% if q.listurl %}&nbsp;<a href="https://www.theyworkforyou.com{{ q.listurl }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Source</a>{% endif %}
+                    <br><span style="color:#333;">{{ q.question }}</span>
+                </li>
                 {% endfor %}
+                </ul>
             </div>
             {% endif %}
 
