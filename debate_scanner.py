@@ -802,6 +802,9 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_
                 body_text = clean_body_text(body_raw)
                 debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
                 if source == 'wms':
+                    parent_body = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
+                    debate_title = parent_body if parent_body else re.sub(r'<[^>]+>', '', body_raw)[:80]
+                elif source == 'wrans':
                     debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
                 dtype = get_debate_type(debate_title, source=source)
                 source_rows.append({
