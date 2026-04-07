@@ -73,13 +73,18 @@
                     </label>
                 </div>
                 {% endif %}
-                <div class="form-group" style="align-self: flex-end; display:flex; gap:8px;">
-                    <button type="button" class="btn btn-secondary" id="btnPreview" onclick="previewTerms()" style="white-space:nowrap;">
-                        ✏️ Preview terms
-                    </button>
-                    <button type="submit" class="btn btn-primary btn-full" id="btnTopic">
-                        <span id="btnTopicText">🔍 Search &amp; Analyse</span>
-                    </button>
+                <div class="form-group" style="align-self: flex-end;">
+                    <div style="font-size:11.5px; color:#888; margin-bottom:6px;">
+                        Optionally preview &amp; edit the AI-generated search terms before running the full search.
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button type="button" class="btn btn-secondary" id="btnPreview" onclick="previewTerms()" style="white-space:nowrap;">
+                            ✏️ Preview terms
+                        </button>
+                        <button type="submit" class="btn btn-primary btn-full" id="btnTopic">
+                            <span id="btnTopicText">🔍 Search &amp; Analyse</span>
+                        </button>
+                    </div>
                 </div>
             </div>
             <!-- Hidden field carries the edited/confirmed expanded query to the backend -->
