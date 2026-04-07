@@ -39,6 +39,12 @@ MINISTER_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'minister_cache.js
 MINISTER_CACHE_TTL = 30 * 24 * 3600  # 30 days — reshuffles are infrequent
 MINISTER_CACHE_VERSION = 2  # increment when display_name logic changes to bust stale files
 
+# Ministers whose names the TWFY getLords/getMPs search endpoint fails to match.
+# Verified person_ids from direct debate records — these are seeded at cache-write time.
+KNOWN_TWFY_IDS = {
+    'Baroness Smith of Malvern': {'person_id': '10549', 'is_lord': True, 'lookup_failed': False},
+}
+
 DEPARTMENTS_TWFY = [
     "All Departments", "Department for Education", "Department of Health and Social Care",
     "HM Treasury", "Home Office", "Ministry of Defence", "Ministry of Justice",
@@ -637,6 +643,9 @@ def get_minister_list():
     # Preserve twfy_ids from the old cache — TWFY person IDs are permanent identifiers
     # assigned to a person for life. No need to re-resolve them after a minister list refresh.
     old_twfy_ids = cache.get('twfy_ids', {})
+    # Seed known IDs for ministers whose TWFY name search fails (newer Lords peers etc.)
+    for name, entry in KNOWN_TWFY_IDS.items():
+        old_twfy_ids.setdefault(name, entry)
     data = {'_ts': time.time(), '_source': 'govuk', '_version': MINISTER_CACHE_VERSION,
             'by_norm': by_norm, 'by_id': by_id, 'by_dept': by_dept, 'twfy_ids': old_twfy_ids}
     try:
