@@ -209,6 +209,21 @@
             </div>
             {% endif %}
 
+            {% if topic_briefing.anticipated_questions %}
+            <div class="topic-briefing-section" style="margin-bottom:16px;">
+                <h4>🔮 Anticipated Questions</h4>
+                <p style="font-size:12px; color:#666; margin:0 0 10px;">AI-generated questions likely to arise in future debates — issues in the broad discussion that have not yet been formally raised.</p>
+                <ul style="margin:0; padding-left:18px;">
+                {% for q in topic_briefing.anticipated_questions %}
+                <li style="margin-bottom:10px; font-size:13.5px;">
+                    <span style="color:#333;">{{ q.question }}</span>
+                    {% if q.rationale %}<br><span style="font-size:11.5px; color:#888; font-style:italic;">{{ q.rationale }}</span>{% endif %}
+                </li>
+                {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
             <div style="background:#fff8e1; border-left:3px solid #f59e0b; padding:10px 14px; border-radius:0 6px 6px 0; font-size:12px; color:#78350f; margin-bottom:16px;">
                 ⚠️ AI summaries are for research assistance only. Always verify quotes and positions against the source links above or the full records below.
             </div>
@@ -250,7 +265,7 @@
 
             <!-- Parliamentary Debates -->
             {% if debate_grouped %}
-            <details class="research-section">
+            <details class="research-section" data-type="debate">
                 <summary class="research-section-header">
                     <span class="research-section-title">Parliamentary Debates</span>
                     <span class="research-section-count">{{ debate_grouped|length }} debate{{ 's' if debate_grouped|length != 1 else '' }}</span>
@@ -290,7 +305,7 @@
 
             <!-- Legislation -->
             {% if legislation_grouped %}
-            <details class="research-section">
+            <details class="research-section" data-type="legislation">
                 <summary class="research-section-header">
                     <span class="research-section-title">Legislation</span>
                     <span class="research-section-count">{{ legislation_grouped|length }} bill{{ 's' if legislation_grouped|length != 1 else '' }}</span>
@@ -330,7 +345,7 @@
 
             <!-- Oral Questions -->
             {% if oral_grouped %}
-            <details class="research-section">
+            <details class="research-section" data-type="oral">
                 <summary class="research-section-header">
                     <span class="research-section-title">Oral Questions</span>
                     <span class="research-section-count">{{ oral_grouped|length }} session{{ 's' if oral_grouped|length != 1 else '' }}</span>
@@ -363,7 +378,7 @@
 
             <!-- Urgent Questions -->
             {% if urgent_grouped %}
-            <details class="research-section">
+            <details class="research-section" data-type="urgent">
                 <summary class="research-section-header">
                     <span class="research-section-title">Urgent Questions</span>
                     <span class="research-section-count">{{ urgent_grouped|length }} session{{ 's' if urgent_grouped|length != 1 else '' }}</span>
@@ -403,7 +418,7 @@
 
             <!-- Written Ministerial Statements -->
             {% if statement_grouped %}
-            <details class="research-section">
+            <details class="research-section" data-type="statement">
                 <summary class="research-section-header">
                     <span class="research-section-title">Written Ministerial Statements</span>
                     <span class="research-section-count">{{ statement_grouped|length }} statement{{ 's' if statement_grouped|length != 1 else '' }}</span>
@@ -436,7 +451,7 @@
 
             <!-- Written Questions & Answers -->
             {% if wq_rows %}
-            <details class="research-section">
+            <details class="research-section" data-type="wq">
                 <summary class="research-section-header">
                     <span class="research-section-title">Written Questions &amp; Answers</span>
                     <span class="research-section-count">{{ wq_rows|length }}{% if wq_total > wq_rows|length %}+{% endif %}</span>
@@ -644,6 +659,7 @@
     const ACTIVE_MODE = "{{ mode or 'topic' }}";
     const ALL_CONTRIBUTIONS = {{ (topic_rows or []) | tojson | safe }};
     const TOPIC_BRIEFING_TEXT = {{ (topic_briefing_as_text or '') | tojson | safe }};
+    const TOPIC_BRIEFING = {{ (topic_briefing or {}) | tojson | safe }};
     const SEARCH_TOPIC = {{ (topic or '') | tojson | safe }};
     const SEARCH_DEPTS = {{ (selected_depts or []) | tojson | safe }};
     const SEARCH_START = {{ (start_date or '') | tojson | safe }};
@@ -666,12 +682,14 @@
         form.method = 'POST';
         form.action = '/download_research_brief';
         const addField = (name, value) => {
+            if (value === undefined || value === null) return;
             const inp = document.createElement('input');
             inp.type = 'hidden'; inp.name = name; inp.value = value;
             form.appendChild(inp);
         };
         addField('topic', SEARCH_TOPIC);
         addField('briefing_text', TOPIC_BRIEFING_TEXT);
+        addField('briefing_json', JSON.stringify(TOPIC_BRIEFING));
         addField('sections_json', JSON.stringify(sections));
         addField('depts_json', JSON.stringify(SEARCH_DEPTS));
         addField('start_date', SEARCH_START);
@@ -688,13 +706,25 @@
     }
 
     function downloadAllSections() {
+        const dataByType = {
+            wq: WQ_ROWS, oral: ORAL_ROWS, urgent: URGENT_ROWS,
+            statement: STATEMENT_ROWS, debate: DEBATE_ROWS, legislation: LEGISLATION_ROWS
+        };
+        // Only include sections the user has expanded (open <details> elements)
+        const openDetails = document.querySelectorAll('details.research-section[open]');
         const sections = [];
-        if (WQ_ROWS.length) sections.push({type: 'wq', items: WQ_ROWS});
-        if (ORAL_ROWS.length) sections.push({type: 'oral', items: ORAL_ROWS});
-        if (URGENT_ROWS.length) sections.push({type: 'urgent', items: URGENT_ROWS});
-        if (STATEMENT_ROWS.length) sections.push({type: 'statement', items: STATEMENT_ROWS});
-        if (DEBATE_ROWS.length) sections.push({type: 'debate', items: DEBATE_ROWS});
-        if (LEGISLATION_ROWS.length) sections.push({type: 'legislation', items: LEGISLATION_ROWS});
+        openDetails.forEach(el => {
+            const type = el.dataset.type;
+            if (type && dataByType[type] && dataByType[type].length) {
+                sections.push({type, items: dataByType[type]});
+            }
+        });
+        // Fall back to all sections if none are open (e.g. on first load)
+        if (!sections.length) {
+            ['wq','oral','urgent','statement','debate','legislation'].forEach(type => {
+                if (dataByType[type].length) sections.push({type, items: dataByType[type]});
+            });
+        }
         if (!sections.length && !TOPIC_BRIEFING_TEXT) { alert('Nothing to download yet — run a search first.'); return; }
         submitResearchDownload(sections);
     }
