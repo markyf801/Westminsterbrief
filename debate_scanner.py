@@ -505,16 +505,20 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
 
 def _display_name(title):
     """Strip honorifics/post-nominals from a GOV.UK title for clean display.
-    Two passes to handle 'The Rt Hon Baroness Smith of Malvern' → 'Smith of Malvern'."""
+    Preserves Lords titles (Baroness/Lord) so TWFY lookups can find peers.
+    'The Rt Hon Baroness Smith of Malvern' → 'Baroness Smith of Malvern'
+    'The Rt Hon Josh MacAlister MP' → 'Josh MacAlister'"""
     name = title.strip()
-    prefixes = ['The Rt Hon ', 'The Right Hon ', 'Rt Hon ', 'Right Hon ',
-                'The Baroness ', 'Baroness ', 'The Lord ', 'Lord ',
-                'Dame ', 'Sir ', 'Dr ', 'Mr ', 'Mrs ', 'Ms ', 'Miss ']
-    for _ in range(2):
-        for prefix in prefixes:
-            if name.startswith(prefix):
-                name = name[len(prefix):]
-                break
+    # Strip Rt Hon / Right Hon only (not Lords titles)
+    for prefix in ['The Rt Hon ', 'The Right Hon ', 'Rt Hon ', 'Right Hon ', 'The ']:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    # Strip commons-only honorifics (Dame, Sir, Dr, Mr etc) but NOT Baroness/Lord
+    for prefix in ['Dame ', 'Sir ', 'Dr ', 'Mr ', 'Mrs ', 'Ms ', 'Miss ']:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
     name = re.sub(r'\s+(MP|OBE|CBE|MBE|PC|QC|KC|DBE|KBE)(\b.*)?$', '', name)
     return name.strip()
 
