@@ -1303,7 +1303,7 @@ def debates_topic():
                         govt_speakers = topic_briefing.get('government_speakers', [])
                         if govt_speakers:
                             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as vex:
-                                vfutures = {vex.submit(verify_government_speaker, s.get('name', '')): s for s in govt_speakers}
+                                vfutures = {vex.submit(copy_current_request_context(verify_government_speaker), s.get('name', '')): s for s in govt_speakers}
                                 for vf in concurrent.futures.as_completed(vfutures):
                                     spk = vfutures[vf]
                                     v = vf.result()
@@ -1311,7 +1311,9 @@ def debates_topic():
                                     spk['confirmed_role'] = v['role']
 
                         topic_briefing_as_text = format_briefing_as_text(topic_briefing, topic)
-                except Exception:
+                except Exception as e:
+                    import logging
+                    logging.error(f"AI briefing failed: {type(e).__name__}: {e}")
                     topic_briefing = None
 
             # Split TWFY rows into display sections, then group debates by session
