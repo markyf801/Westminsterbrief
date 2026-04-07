@@ -300,7 +300,15 @@ def expand_search_query(topic, api_key):
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
             terms = json.loads(raw.strip())
             if isinstance(terms, list) and terms:
-                all_terms = [topic] + [str(t) for t in terms[:6]]
+                # Only include the original topic phrase if it's short enough to
+                # appear verbatim in debates. Long policy descriptions (> 4 words)
+                # are never said word-for-word and return 0 results from TWFY Xapian.
+                if len(topic.split()) <= 4:
+                    all_terms = [topic] + [str(t) for t in terms[:6]]
+                else:
+                    all_terms = [str(t) for t in terms[:6]]
+                if not all_terms:
+                    return f'"{topic}"'
                 return '(' + ' OR '.join(f'"{t}"' for t in all_terms) + ')'
     except Exception:
         pass
@@ -954,6 +962,62 @@ def lookup_twfy_person_by_parliament_id(parliament_id, display_name, house):
         lookup_failed=(person_id is None),
     )
     return person_id, is_lord
+
+
+def seed_all_minister_links(app):
+    """Pre-populate MemberLink with all current government ministers.
+    Runs once in a background thread at startup. Skips if already well-seeded
+    (> 40 resolved entries means a previous run completed successfully).
+    This converts MemberLink from lazy per-search cache to a pre-built reference
+    table — minister-led searches become instant with zero quota cost after first seed.
+    """
+    import threading
+
+    def _run():
+        from cache_models import MemberLink
+        with app.app_context():
+            try:
+                resolved_count = MemberLink.query.filter(
+                    MemberLink.twfy_person_id.isnot(None)
+                ).count()
+                if resolved_count > 40:
+                    return  # already well-seeded — skip
+                minister_data = get_minister_list()
+                # by_dept: {dept_name: [{"name": display_name}, ...]}
+                by_dept = minister_data.get('by_dept', {})
+                # Flatten to unique display names across all departments
+                seen = set()
+                all_names = []
+                for dept_ministers in by_dept.values():
+                    for m in dept_ministers:
+                        name = m.get('name', '').strip()
+                        if name and name not in seen:
+                            seen.add(name)
+                            all_names.append(name)
+                if not all_names:
+                    return
+                seeded = 0
+                for display_name in all_names:
+                    if not display_name:
+                        continue
+                    # Skip if already resolved or marked failed
+                    existing = MemberLink.query.filter(
+                        MemberLink.display_name == display_name
+                    ).first()
+                    if existing and (existing.twfy_person_id or existing.lookup_failed):
+                        continue
+                    # Resolve Parliament ID then TWFY person ID
+                    parliament_id, house = _resolve_parliament_id(display_name)
+                    if not parliament_id:
+                        continue
+                    lookup_twfy_person_by_parliament_id(parliament_id, display_name, house)
+                    seeded += 1
+                    time.sleep(0.3)  # gentle rate limiting — ~3 calls/sec
+            except Exception as e:
+                print(f'[seed_minister_links] error: {e}')
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
 
 
 def get_dept_minister_twfy_ids(dept_name, minister_data):

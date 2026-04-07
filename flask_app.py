@@ -138,6 +138,9 @@ with app.app_context():
         {'parliament_id': 269, 'display_name': 'Baroness Smith of Malvern',
          'house': 'Lords', 'twfy_person_id': '10549',
          'twfy_name': 'Baroness Smith of Malvern', 'resolution_method': 'seeded'},
+        {'parliament_id': 5033, 'display_name': 'Josh MacAlister',
+         'house': 'Commons', 'twfy_person_id': '26321',
+         'twfy_name': 'Josh MacAlister', 'resolution_method': 'seeded'},
     ]
     for s in _SEEDS:
         if not MemberLink.get_by_parliament_id(s['parliament_id']):
@@ -224,6 +227,10 @@ with app.app_context():
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+# Kick off background minister link seeding after app context is established
+from debate_scanner import seed_all_minister_links
+seed_all_minister_links(app)
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
