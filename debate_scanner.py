@@ -428,7 +428,11 @@ def _classify_group(grp):
     if source == 'wms':
         return 'statement'
     if 'written answers' in title or 'written answer' in title:
-        return 'debate'  # Render in debates section, not oral — these are written parliamentary answers
+        return 'debate'
+    if ('bill' in title or 'second reading' in title or 'third reading' in title
+            or 'committee stage' in title or 'report stage' in title
+            or 'lords amendments' in title or 'royal assent' in title):
+        return 'legislation'
     if 'urgent question' in title:
         return 'urgent'
     if 'oral answers' in title or 'question time' in title:
@@ -1099,6 +1103,8 @@ def debates_topic():
     oral_grouped = []
     urgent_grouped = []
     debate_grouped = []
+    legislation_grouped = []
+    legislation_rows = []
     wq_rows = []
     wq_total = 0
     topic_briefing = None
@@ -1321,13 +1327,15 @@ def debates_topic():
                                   if r.get('source') not in ('wms', 'wrans')]
             all_grouped = _group_by_debate(non_statement_rows)
 
-            oral_grouped, urgent_grouped, debate_grouped = [], [], []
+            oral_grouped, urgent_grouped, debate_grouped, legislation_grouped = [], [], [], []
             for grp in all_grouped:
                 section = _classify_group(grp)
                 if section == 'oral':
                     oral_grouped.append(grp)
                 elif section == 'urgent':
                     urgent_grouped.append(grp)
+                elif section == 'legislation':
+                    legislation_grouped.append(grp)
                 else:
                     debate_grouped.append(grp)
 
@@ -1335,6 +1343,7 @@ def debates_topic():
             oral_rows = [r for grp in oral_grouped for r in grp['speeches']]
             urgent_rows = [r for grp in urgent_grouped for r in grp['speeches']]
             debate_rows = [r for grp in debate_grouped for r in grp['speeches']]
+            legislation_rows = [r for grp in legislation_grouped for r in grp['speeches']]
 
     return render_template('debate_scanner.html',
                            mode='topic',
@@ -1344,6 +1353,8 @@ def debates_topic():
                            debate_rows=debate_rows,
                            oral_grouped=oral_grouped, debate_grouped=debate_grouped,
                            urgent_grouped=urgent_grouped,
+                           legislation_grouped=legislation_grouped,
+                           legislation_rows=legislation_rows,
                            wq_rows=wq_rows, wq_total=wq_total,
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
@@ -1770,6 +1781,7 @@ def download_research_brief():
         'urgent': 'Urgent Questions',
         'statement': 'Ministerial Statements',
         'debate': 'Parliamentary Debates',
+        'legislation': 'Legislation',
     }
     REL_LABELS = {'high': 'HIGH RELEVANCE', 'medium': 'MODERATE RELEVANCE', 'low': 'SESSION CONTEXT'}
 
