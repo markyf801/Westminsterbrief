@@ -1059,6 +1059,23 @@ def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
 
 
 # ==========================================
+# ROUTE 0a: EXPAND TOPIC TERMS API (used by preview-and-edit UI)
+# ==========================================
+@debate_scanner_bp.route('/api/expand_topic', methods=['POST'])
+def api_expand_topic():
+    from flask import jsonify
+    topic = (request.json or {}).get('topic', '').strip()
+    if not topic:
+        return jsonify({'error': 'No topic provided'}), 400
+    if not GEMINI_API_KEY:
+        return jsonify({'error': 'AI not configured'}), 503
+    expanded = expand_search_query(topic, GEMINI_API_KEY)
+    # Parse the OR terms back out for display: ("a" OR "b" OR "c") → ["a", "b", "c"]
+    terms = re.findall(r'"([^"]+)"', expanded)
+    return jsonify({'expanded': expanded, 'terms': terms})
+
+
+# ==========================================
 # ROUTE 0: MINISTERS BY DEPARTMENT API
 # ==========================================
 @debate_scanner_bp.route('/api/ministers_by_dept')
@@ -1272,6 +1289,8 @@ def debates_topic():
         end_date = request.form.get('end_date', '').strip()
         house_filter = request.form.get('house_filter', 'all')
         selected_depts = request.form.getlist('dept_filter')
+        # Pre-expanded query from the preview-and-edit UI — skip Gemini expansion if provided
+        preset_expanded = request.form.get('expanded_query', '').strip()
 
         if not topic:
             error_message = "Please enter a topic to search."
@@ -1287,9 +1306,11 @@ def debates_topic():
             else:
                 sources = ['commons', 'westminsterhall', 'lords', 'wms']
 
-            # Always expand the topic with AI for broader matching (acronyms, synonyms, etc.)
-            # If a narrow keyword is also set, AND it into the expanded query
-            expanded = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
+            # Use pre-expanded terms from preview UI if provided, otherwise expand with AI
+            if preset_expanded:
+                expanded = preset_expanded
+            else:
+                expanded = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
             if narrow_keyword:
                 search_query = f'{expanded} AND "{narrow_keyword}"'
             else:

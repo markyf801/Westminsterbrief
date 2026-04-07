@@ -73,12 +73,36 @@
                     </label>
                 </div>
                 {% endif %}
-                <div class="form-group" style="align-self: flex-end;">
+                <div class="form-group" style="align-self: flex-end; display:flex; gap:8px;">
+                    <button type="button" class="btn btn-secondary" id="btnPreview" onclick="previewTerms()" style="white-space:nowrap;">
+                        ✏️ Preview terms
+                    </button>
                     <button type="submit" class="btn btn-primary btn-full" id="btnTopic">
                         <span id="btnTopicText">🔍 Search &amp; Analyse</span>
                     </button>
                 </div>
             </div>
+
+            <!-- Search terms preview/edit panel — hidden until Preview is clicked -->
+            <div id="terms-preview-panel" style="display:none; margin-top:12px; background:#f0f4ff; border:1px solid #c7d2fe; border-radius:6px; padding:14px 16px;">
+                <label style="font-size:13px; font-weight:600; color:#1c3e6e; display:block; margin-bottom:6px;">
+                    ✏️ Edit search terms before running — one term per line, or as a full OR expression
+                </label>
+                <textarea id="terms-edit-area" rows="4"
+                    style="width:100%; font-size:12.5px; font-family:monospace; border:1px solid #a5b4fc; border-radius:4px; padding:8px; box-sizing:border-box; resize:vertical;"
+                    placeholder='Loading terms...'></textarea>
+                <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+                    <button type="button" onclick="applyTerms()" class="btn btn-primary" style="font-size:13px; padding:6px 16px;">
+                        ✅ Use these terms
+                    </button>
+                    <button type="button" onclick="cancelPreview()" style="font-size:12px; color:#666; background:none; border:none; cursor:pointer; text-decoration:underline;">
+                        Cancel
+                    </button>
+                    <span id="terms-status" style="font-size:12px; color:#666;"></span>
+                </div>
+            </div>
+            <!-- Hidden field carries the edited/confirmed expanded query to the backend -->
+            <input type="hidden" name="expanded_query" id="expanded-query-field" value="{{ debug_query.split(' | ')[0] if debug_query else '' }}">
         </form>
 
         {% if error_message and mode == 'topic' %}
@@ -845,6 +869,63 @@
         const text = document.getElementById('btnTopicText');
         if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
         if (text) text.innerText = '⏳ Searching... (30–60 seconds)';
+    }
+
+    async function previewTerms() {
+        const topic = document.querySelector('input[name="topic"]').value.trim();
+        if (!topic) { alert('Enter a topic first.'); return; }
+        const panel = document.getElementById('terms-preview-panel');
+        const area  = document.getElementById('terms-edit-area');
+        const status = document.getElementById('terms-status');
+        const btn   = document.getElementById('btnPreview');
+        panel.style.display = 'block';
+        area.value = '';
+        area.placeholder = 'Expanding with AI...';
+        status.textContent = '';
+        btn.disabled = true;
+        btn.textContent = '⏳ Expanding...';
+        try {
+            const resp = await fetch('/api/expand_topic', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({topic})
+            });
+            const data = await resp.json();
+            if (data.error) {
+                area.placeholder = '';
+                area.value = `"${topic}"`;
+                status.textContent = 'AI unavailable — showing original term only.';
+            } else {
+                // Show one term per line for easy editing
+                area.placeholder = '';
+                area.value = data.terms.join('\n');
+                status.textContent = `${data.terms.length} terms found. Edit as needed, then click Use.`;
+            }
+        } catch(e) {
+            area.value = `"${topic}"`;
+            status.textContent = 'Error fetching terms — showing original only.';
+        }
+        btn.disabled = false;
+        btn.textContent = '✏️ Preview terms';
+    }
+
+    function applyTerms() {
+        const area  = document.getElementById('terms-edit-area');
+        const field = document.getElementById('expanded-query-field');
+        // Rebuild OR expression from edited lines
+        const lines = area.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const expr  = lines.length === 1 ? (lines[0].startsWith('"') ? lines[0] : `"${lines[0]}"`)
+                      : '(' + lines.map(l => l.startsWith('"') ? l : `"${l}"`).join(' OR ') + ')';
+        field.value = expr;
+        document.getElementById('terms-preview-panel').style.display = 'none';
+        // Show confirmation in debug area or just submit
+        const status = document.getElementById('terms-status');
+        status.textContent = '';
+    }
+
+    function cancelPreview() {
+        document.getElementById('terms-preview-panel').style.display = 'none';
+        document.getElementById('expanded-query-field').value = '';
     }
 
     // Load department list when Speech Research panel is first shown
