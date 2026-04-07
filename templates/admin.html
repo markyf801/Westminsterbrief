@@ -60,6 +60,26 @@
     </div>
   </div>
 
+  <!-- Member Link Cross-Reference DB -->
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+    <h3 style="font-size:1rem; margin:0 0 12px;">Member ID Cross-Reference (Parliament ↔ TWFY)</h3>
+    <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
+      <tr><td style="padding:4px 0; color:#555;">Total members</td><td style="font-weight:600;">{{ member_link_stats.total }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Resolved (TWFY ID found)</td><td style="font-weight:600; color:#2e7d32;">{{ member_link_stats.resolved }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Pending (not yet looked up)</td><td style="font-weight:600; color:#888;">{{ member_link_stats.pending }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Failed (TWFY ID not found)</td><td style="font-weight:600; color:#c62828;">{{ member_link_stats.failed }}</td></tr>
+    </table>
+    <p style="font-size:0.8rem; color:#888; margin:10px 0 0;">Resolved entries are permanent — TWFY person IDs are assigned for life. New ministers are resolved lazily on first search. Failed entries can be retried below (e.g. after TWFY updates their index).</p>
+    {% if member_link_stats.failed > 0 %}
+    <form method="post" action="?token={{ request.args.get('token', '') }}" style="margin-top:14px;">
+      <button name="action" value="retry_failed_links"
+              style="background:#e65100; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
+        Retry {{ member_link_stats.failed }} failed lookup{{ 's' if member_link_stats.failed != 1 else '' }}
+      </button>
+    </form>
+    {% endif %}
+  </div>
+
   <!-- Clear Everything -->
   <div style="border:1px solid #ffcdd2; border-radius:8px; padding:20px; background:#fff9f9;">
     <h3 style="font-size:1rem; margin:0 0 8px; color:#c62828;">Clear Everything</h3>

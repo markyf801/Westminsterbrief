@@ -893,39 +893,120 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_
     return rows
 
 
+def _resolve_parliament_id(display_name):
+    """Look up the Parliament member ID for a minister by name.
+    Returns (parliament_id, house) or (None, None)."""
+    try:
+        resp = requests.get(
+            'https://members-api.parliament.uk/api/Members/Search',
+            params={'Name': display_name, 'IsCurrentMember': 'true', 'take': 3},
+            timeout=5
+        )
+        if resp.status_code == 200:
+            items = resp.json().get('items', [])
+            if items:
+                v = items[0]['value']
+                house_num = (v.get('latestHouseMembership') or {}).get('house', 1)
+                house = 'Lords' if house_num == 2 else 'Commons'
+                return v['id'], house
+    except Exception:
+        pass
+    return None, None
+
+
+def lookup_twfy_person_by_parliament_id(parliament_id, display_name, house):
+    """DB-first TWFY person ID lookup.
+    1. Check MemberLink DB — instant, zero API calls if already resolved.
+    2. If not resolved and not marked failed, run lookup_twfy_person() and store result.
+    Returns (twfy_person_id, is_lord) or (None, False).
+    """
+    from cache_models import MemberLink
+    row = MemberLink.get_by_parliament_id(parliament_id)
+    if row:
+        if row.twfy_person_id:
+            return row.twfy_person_id, row.house == 'Lords'
+        if row.lookup_failed:
+            return None, house == 'Lords'
+        # Row exists but unresolved — fall through to lookup
+
+    person_id, matched_name, is_lord = lookup_twfy_person(display_name)
+    method = 'twfy_name_search' if person_id else 'failed'
+    MemberLink.upsert(
+        parliament_id=parliament_id,
+        display_name=display_name,
+        house=house,
+        twfy_person_id=person_id,
+        twfy_name=matched_name,
+        resolution_method=method,
+        lookup_failed=(person_id is None),
+    )
+    return person_id, is_lord
+
+
 def get_dept_minister_twfy_ids(dept_name, minister_data):
     """Resolve all ministers for a department to TWFY person IDs.
     Returns list of {person_id, name, role, is_lord} dicts.
-    Person IDs are cached in the minister cache file (same 7-day TTL) to avoid
-    burning TWFY API quota on getMPs/getLords lookups every search."""
+
+    Lookup chain (cheapest first):
+    1. MemberLink DB — zero TWFY API calls if already resolved
+    2. JSON twfy_ids_cache — legacy fast path during transition
+    3. Parliament Members/Search → lookup_twfy_person_by_parliament_id
+    """
+    from cache_models import MemberLink
     ministers = minister_data.get('by_dept', {}).get(dept_name, [])
     twfy_ids_cache = minister_data.setdefault('twfy_ids', {})
     results = []
-    cache_updated = False
+    json_updated = False
+
     for m in ministers:
         display = m.get('display_name') or m.get('name', '')
         if not display:
             continue
-        if display in twfy_ids_cache:
-            cached_entry = twfy_ids_cache[display]
-            if cached_entry.get('person_id'):
-                results.append({
-                    'person_id': cached_entry['person_id'],
-                    'name': display,
-                    'role': m.get('role', ''),
-                    'is_lord': cached_entry.get('is_lord', False),
-                })
+
+        # 1. DB lookup by display name (via MemberLink index on display_name would be ideal,
+        #    but we use parliament_id as key so we need it first — check JSON cache for it)
+        cached_entry = twfy_ids_cache.get(display, {})
+
+        # Fast path: JSON cache already has the TWFY ID
+        if cached_entry.get('person_id'):
+            results.append({
+                'person_id': cached_entry['person_id'],
+                'name': display,
+                'role': m.get('role', ''),
+                'is_lord': cached_entry.get('is_lord', False),
+            })
             continue
-        person_id, matched_name, is_lord = lookup_twfy_person(display)
-        twfy_ids_cache[display] = {'person_id': person_id, 'is_lord': is_lord,
-                                   'lookup_failed': person_id is None}
-        cache_updated = True
+
+        # Skip if previously marked as failed in JSON cache
+        if cached_entry.get('lookup_failed'):
+            continue
+
+        # Resolve Parliament ID → DB lookup → TWFY lookup
+        parliament_id, house = _resolve_parliament_id(display)
+        if parliament_id:
+            person_id, is_lord = lookup_twfy_person_by_parliament_id(
+                parliament_id, display, house)
+        else:
+            # Parliament ID lookup failed — fall back to name-only TWFY lookup
+            person_id, matched_name, is_lord = lookup_twfy_person(display)
+
+        # Write result back to JSON cache so next search is instant
+        twfy_ids_cache[display] = {
+            'person_id': person_id, 'is_lord': is_lord,
+            'lookup_failed': person_id is None
+        }
+        json_updated = True
+
         if person_id:
-            results.append({'person_id': person_id, 'name': display, 'role': m.get('role', ''), 'is_lord': is_lord})
+            results.append({
+                'person_id': person_id, 'name': display,
+                'role': m.get('role', ''), 'is_lord': is_lord
+            })
         else:
             import logging
             logging.warning(f"TWFY person ID lookup failed for minister: {display!r}")
-    if cache_updated:
+
+    if json_updated:
         try:
             with open(MINISTER_CACHE_FILE, 'w') as f:
                 json.dump(minister_data, f)

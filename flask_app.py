@@ -110,7 +110,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # Import cache models so their tables are created
-from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedTWFYSearch
+from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedTWFYSearch, MemberLink
 
 # ==========================================
 # 4. AUTO-BUILD DATABASE
@@ -131,6 +131,17 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass  # Already renamed or table doesn't exist yet
+    # Seed known hard-to-resolve ministers into MemberLink
+    # These are peers whose TWFY getLords name search fails (newer Life Peers)
+    # parliament_id and twfy_person_id verified from direct Hansard debate records
+    _SEEDS = [
+        {'parliament_id': 269, 'display_name': 'Baroness Smith of Malvern',
+         'house': 'Lords', 'twfy_person_id': '10549',
+         'twfy_name': 'Baroness Smith of Malvern', 'resolution_method': 'seeded'},
+    ]
+    for s in _SEEDS:
+        if not MemberLink.get_by_parliament_id(s['parliament_id']):
+            MemberLink.upsert(**s)
     if not User.query.filter_by(email='joe@university.ac.uk').first():
         joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
         joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
@@ -510,6 +521,17 @@ def admin_panel():
             except Exception as e:
                 db.session.rollback()
                 message = f'Error clearing caches: {e}'
+        elif action == 'retry_failed_links':
+            try:
+                reset = MemberLink.query.filter_by(lookup_failed=True).all()
+                for row in reset:
+                    row.lookup_failed = False
+                    row.resolution_method = None
+                db.session.commit()
+                message = f'{len(reset)} failed member link(s) reset — will retry on next search.'
+            except Exception as e:
+                db.session.rollback()
+                message = f'Error resetting failed links: {e}'
 
     # --- Build cache status ---
     minister_status = {}
@@ -539,12 +561,15 @@ def admin_panel():
     ).count()
     twfy_keyword = twfy_total - twfy_session
 
+    member_link_stats = MemberLink.stats()
+
     return render_template('admin.html',
                            message=message,
                            minister_status=minister_status,
                            twfy_total=twfy_total,
                            twfy_session=twfy_session,
-                           twfy_keyword=twfy_keyword)
+                           twfy_keyword=twfy_keyword,
+                           member_link_stats=member_link_stats)
 
 
 # ==========================================

@@ -4,6 +4,82 @@ from datetime import datetime, timedelta
 from extensions import db
 
 
+class MemberLink(db.Model):
+    """Persistent cross-reference: Parliament member ID <-> TWFY person ID.
+
+    Parliament IDs are the authoritative source (members-api.parliament.uk).
+    TWFY person IDs are needed for debate search (theyworkforyou.com/api).
+    Both IDs are assigned for life — a resolved row never needs updating.
+    Rows are added lazily as ministers are encountered in searches.
+    """
+    __tablename__ = 'member_link'
+
+    id               = db.Column(db.Integer, primary_key=True)
+    parliament_id    = db.Column(db.Integer, unique=True, nullable=False, index=True)
+    display_name     = db.Column(db.String(300), nullable=False)
+    house            = db.Column(db.String(20), nullable=False)   # 'Commons' | 'Lords'
+    twfy_person_id   = db.Column(db.String(20), nullable=True, index=True)
+    twfy_name        = db.Column(db.String(300), nullable=True)   # name as TWFY returns it
+    resolution_method = db.Column(db.String(50), nullable=True)
+    # Values: 'twfy_name_search' | 'debate_speaker' | 'seeded' | 'failed'
+    lookup_failed    = db.Column(db.Boolean, nullable=False, default=False)
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
+    resolved_at      = db.Column(db.DateTime, nullable=True)
+
+    @staticmethod
+    def get_by_parliament_id(parliament_id):
+        return MemberLink.query.filter_by(parliament_id=int(parliament_id)).first()
+
+    @staticmethod
+    def get_by_twfy_id(twfy_person_id):
+        return MemberLink.query.filter_by(twfy_person_id=str(twfy_person_id)).first()
+
+    @staticmethod
+    def upsert(parliament_id, display_name, house,
+               twfy_person_id=None, twfy_name=None,
+               resolution_method=None, lookup_failed=False):
+        """Insert or update a MemberLink row. Safe to call multiple times."""
+        existing = MemberLink.query.filter_by(parliament_id=int(parliament_id)).first()
+        if existing:
+            # Only update TWFY fields if we have new information
+            if twfy_person_id and not existing.twfy_person_id:
+                existing.twfy_person_id = str(twfy_person_id)
+                existing.twfy_name = twfy_name
+                existing.resolution_method = resolution_method
+                existing.lookup_failed = False
+                existing.resolved_at = datetime.utcnow()
+            elif lookup_failed and not existing.twfy_person_id:
+                existing.lookup_failed = True
+                existing.resolution_method = 'failed'
+        else:
+            row = MemberLink(
+                parliament_id=int(parliament_id),
+                display_name=display_name,
+                house=house,
+                twfy_person_id=str(twfy_person_id) if twfy_person_id else None,
+                twfy_name=twfy_name,
+                resolution_method=resolution_method,
+                lookup_failed=lookup_failed,
+                resolved_at=datetime.utcnow() if twfy_person_id else None,
+            )
+            db.session.add(row)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    @staticmethod
+    def stats():
+        """Return dict of resolution stats for admin page."""
+        total    = MemberLink.query.count()
+        resolved = MemberLink.query.filter(
+            MemberLink.twfy_person_id.isnot(None)).count()
+        failed   = MemberLink.query.filter_by(lookup_failed=True).count()
+        pending  = total - resolved - failed
+        return {'total': total, 'resolved': resolved,
+                'failed': failed, 'pending': pending}
+
+
 class CachedTWFYSearch(db.Model):
     """Caches TWFY API search results to reduce API call usage.
     TTL: 6 hours for date-filtered searches, 24 hours for open searches."""
