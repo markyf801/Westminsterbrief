@@ -436,8 +436,10 @@ def _classify_group(grp):
 
     if source == 'wms':
         return 'statement'
+    # Written answers must never reach _group_by_debate — filtered out upstream.
+    # If any slip through, return 'wq' as a sentinel so they don't appear in Debates.
     if 'written answers' in title or 'written answer' in title:
-        return 'debate'
+        return 'wq'
     if ('bill' in title or 'second reading' in title or 'third reading' in title
             or 'committee stage' in title or 'report stage' in title
             or 'lords amendments' in title or 'royal assent' in title):
@@ -1389,6 +1391,8 @@ def debates_topic():
                     urgent_grouped.append(grp)
                 elif section == 'legislation':
                     legislation_grouped.append(grp)
+                elif section == 'wq':
+                    pass  # written answer slipped through upstream filter — discard
                 else:
                     debate_grouped.append(grp)
 
