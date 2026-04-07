@@ -185,7 +185,7 @@
         </div>
         {% endif %}
 
-        {% if wq_rows or oral_rows or statement_rows or debate_rows %}
+        {% if wq_rows or oral_rows or statement_grouped or debate_rows %}
 
         <details class="classification-note">
             <summary>ℹ️ How results are classified &amp; relevance guide</summary>
@@ -194,7 +194,7 @@
                 <strong>Parliamentary Debates</strong> — substantive speeches exceeding ~300 words. Includes Westminster Hall, Bill readings, and Statutory Instrument / Affirmative procedure debates.<br>
                 <strong>Oral Questions</strong> — sessions where no speech exceeds 300 words (minister's prepared answer ~150 words, plus follow-up exchanges).<br>
                 <strong>Urgent Questions</strong> — granted by the Speaker; minister responds immediately. Follow-ups included.<br>
-                <strong>Ministerial Statements</strong> — formal statements to the House.<br>
+                <strong>Written Ministerial Statements (WMS)</strong> — written statements published in Hansard by ministers, distinct from oral statements made at the despatch box.<br>
                 <em>Classification is automated and approximate. Use the ↗ Hansard link to verify.</em>
                 <div class="relevance-legend">
                     <strong>Relevance indicators</strong>
@@ -360,26 +360,33 @@
             </details>
             {% endif %}
 
-            <!-- Ministerial Statements -->
-            {% if statement_rows %}
+            <!-- Written Ministerial Statements -->
+            {% if statement_grouped %}
             <details class="research-section">
                 <summary class="research-section-header">
-                    <span class="research-section-title">Ministerial Statements</span>
-                    <span class="research-section-count">{{ statement_rows|length }}</span>
+                    <span class="research-section-title">Written Ministerial Statements</span>
+                    <span class="research-section-count">{{ statement_grouped|length }} statement{{ 's' if statement_grouped|length != 1 else '' }}</span>
                     <button class="research-section-dl" onclick="event.preventDefault(); downloadSection('statement')">⬇ Download</button>
                 </summary>
                 <div class="research-section-body">
-                    {% for r in statement_rows %}
-                    <div class="topic-result-card" {% if r.is_minister %}style="border-left:3px solid #166534;"{% endif %}>
-                        <div class="topic-source-row">
-                            <span class="topic-source-badge topic-source-wms">Ministerial Statement</span>
-                            <span>{{ r.hdate }}</span>
-                            <strong>{{ r.speaker_name }}</strong>
-                            {% if r.is_minister %}<span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">✓ Minister</span>{% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                    {% for grp in statement_grouped %}
+                    <div class="debate-group {% if grp.has_minister %}debate-group-minister{% endif %}">
+                        <div class="debate-group-header">
+                            <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
+                            <span class="topic-source-badge topic-source-wms">WMS</span>
+                            <span class="debate-group-date">{{ grp.date }}</span>
+                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister</span>{% endif %}
                         </div>
-                        <div class="topic-card-title">{% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="color:inherit;text-decoration:none;">{{ r.debate_title }}</a>{% else %}{{ r.debate_title }}{% endif %}</div>
-                        <div class="topic-card-body">{{ r.body_clean }}</div>
-                        {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:12px;color:#005a8f;text-decoration:none;display:inline-block;margin-top:6px;">🔗 View on TheyWorkForYou</a>{% endif %}
+                        {% for r in grp.speeches %}
+                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
+                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                            <p class="debate-speech-body">{{ r.body_clean }}</p>
+                            {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                        </div>
+                        {% endfor %}
                     </div>
                     {% endfor %}
                 </div>

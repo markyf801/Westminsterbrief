@@ -1117,6 +1117,7 @@ def debates_topic():
     debate_grouped = []
     legislation_grouped = []
     legislation_rows = []
+    statement_grouped = []
     wq_rows = []
     wq_total = 0
     topic_briefing = None
@@ -1349,9 +1350,13 @@ def debates_topic():
                                         spk['confirmed_role'] = ''
 
                         topic_briefing_as_text = format_briefing_as_text(topic_briefing, topic)
+                    else:
+                        debug_query += f" | AI HTTP {ai_resp.status_code}"
+                        topic_briefing = None
                 except Exception as e:
                     import logging
                     logging.error(f"AI briefing failed: {type(e).__name__}: {e}")
+                    debug_query += f" | AI error: {type(e).__name__}: {str(e)[:120]}"
                     topic_briefing = None
 
             # Split TWFY rows into display sections, then group debates by session
@@ -1390,6 +1395,9 @@ def debates_topic():
                 else:
                     debate_grouped.append(grp)
 
+            # Group WMS by session so they render like debates, not flat speech snippets
+            statement_grouped = _group_by_debate(statement_rows)
+
             # Flat row lists for JS download variables
             oral_rows = [r for grp in oral_grouped for r in grp['speeches']]
             urgent_rows = [r for grp in urgent_grouped for r in grp['speeches']]
@@ -1403,6 +1411,7 @@ def debates_topic():
                            urgent_rows=urgent_rows,
                            debate_rows=debate_rows,
                            oral_grouped=oral_grouped, debate_grouped=debate_grouped,
+                           statement_grouped=statement_grouped,
                            urgent_grouped=urgent_grouped,
                            legislation_grouped=legislation_grouped,
                            legislation_rows=legislation_rows,
