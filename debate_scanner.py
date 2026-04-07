@@ -1286,17 +1286,39 @@ def debates_topic():
                          'is_minister': r.get('is_minister', False)}
                         for r in balanced
                     ]
+                    dept_context = (
+                        f" The user is specifically interested in contributions related to the "
+                        f"{', '.join(selected_depts)} {'portfolio' if len(selected_depts) == 1 else 'portfolios'}."
+                        if selected_depts else ""
+                    )
                     prompt = (
-                        f"You are a senior UK Parliamentary Researcher. Below are the most relevant parliamentary "
-                        f"contributions on the topic: \"{topic}\".\n\n"
-                        "Return ONLY a valid JSON object (no markdown fences) with these exact keys:\n"
-                        "\"topic_summary\", \"government_position\",\n"
-                        "\"opposition_position\" (summarise the positions of ALL opposition parties — Conservative, Liberal Democrat, SNP, Reform UK, Plaid Cymru, and any others — not just one party. "
-                        "Do NOT describe Labour backbenchers here; Labour is the governing party. Focus on the official opposition and other opposition parties.),\n"
-                        "\"government_speakers\" (array of {\"name\", \"role\", \"stance\"} — Ministers, Secretaries of State, PPSs only),\n"
-                        "\"non_government_speakers\" (array of {\"name\", \"role_or_party\", \"stance\"} — Shadow Ministers and opposition backbenchers from ALL parties, plus Lords not in government),\n"
-                        "\"key_quotes\" (array of {\"quote\", \"speaker\", \"date\", \"source\", \"listurl\" — the listurl value from the matching DATA entry}),\n"
-                        "\"next_steps\", \"coverage_note\"\n\n"
+                        f"You are a senior UK civil servant writing a parliamentary briefing on: \"{topic}\"."
+                        f"{dept_context}\n\n"
+                        "Return ONLY a valid JSON object (no markdown fences) with these exact keys:\n\n"
+                        "\"topic_summary\": 2–3 sentence overview of the parliamentary debate on this topic, "
+                        "covering both government and opposition positions at a high level.\n\n"
+                        "\"government_position\": Summarise the government's stated position on this topic "
+                        "as expressed in Parliament — what ministers have said, any commitments made, "
+                        "and the policy direction."
+                        + (f" Focus specifically on {', '.join(selected_depts)} ministers." if selected_depts else "")
+                        + "\n\n"
+                        "\"opposition_position\": Summarise the positions of ALL opposition parties "
+                        "(Conservative, Liberal Democrat, SNP, Reform UK, Plaid Cymru, and any others). "
+                        "Give each party's distinct stance where they differ. "
+                        "Do NOT include Labour backbenchers here — Labour is the governing party.\n\n"
+                        "\"government_speakers\": Array of {\"name\", \"role\", \"stance\"} — "
+                        "only ministers, Secretaries of State, and PPSs who spoke on this topic"
+                        + (f" in the context of {', '.join(selected_depts)}" if selected_depts else "")
+                        + ". Include Lords ministers (e.g. Baroness X). Up to 8 entries.\n\n"
+                        "\"non_government_speakers\": Array of {\"name\", \"role_or_party\", \"stance\"} — "
+                        "shadow ministers and opposition frontbenchers FIRST (most senior first), "
+                        "then opposition backbenchers, then crossbenchers. Up to 10 entries.\n\n"
+                        "\"key_quotes\": Array of {\"quote\", \"speaker\", \"date\", \"source\", \"listurl\"} — "
+                        "PRIORITISE quotes from opposition frontbenchers and shadow ministers (these are "
+                        "most useful for briefing purposes), followed by notable government commitments. "
+                        "Use the exact listurl from the matching DATA entry. Up to 6 quotes.\n\n"
+                        "\"next_steps\": Any upcoming parliamentary business or announced policy milestones.\n\n"
+                        "\"coverage_note\": Brief note on the date range and sources covered.\n\n"
                         f"DATA: {json.dumps(ai_payload)}"
                     )
                     model_path = get_working_model(GEMINI_API_KEY)
