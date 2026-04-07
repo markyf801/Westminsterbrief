@@ -178,8 +178,13 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
             body_raw = r.get('body', '')
             body_text = clean_body_text(body_raw)
             debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
-            if source_type in ('wrans', 'wms'):
+            if source_type == 'wrans':
                 debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
+            elif source_type == 'wms':
+                # WMS parent body contains the actual section title (e.g. "Students: Loans")
+                # Fall back to body text only if parent is missing
+                parent_body = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
+                debate_title = parent_body if parent_body else re.sub(r'<[^>]+>', '', body_raw)[:80]
             if source_type == 'wrans':
                 dtype = 'Written Answer'
             elif source_type == 'wms':
@@ -1310,9 +1315,13 @@ def debates_topic():
                                 vfutures = {vex.submit(copy_current_request_context(verify_government_speaker), s.get('name', '')): s for s in govt_speakers}
                                 for vf in concurrent.futures.as_completed(vfutures):
                                     spk = vfutures[vf]
-                                    v = vf.result()
-                                    spk['verified'] = v['confirmed']
-                                    spk['confirmed_role'] = v['role']
+                                    try:
+                                        v = vf.result()
+                                        spk['verified'] = v['confirmed']
+                                        spk['confirmed_role'] = v['role']
+                                    except Exception:
+                                        spk['verified'] = False
+                                        spk['confirmed_role'] = ''
 
                         topic_briefing_as_text = format_briefing_as_text(topic_briefing, topic)
                 except Exception as e:
