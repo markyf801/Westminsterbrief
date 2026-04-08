@@ -364,11 +364,18 @@
                         </div>
                         {% for r in grp.speeches %}
                         <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
-                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
-                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
-                            <p class="debate-speech-body">{{ r.body_clean }}</p>
-                            {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                            <label class="speech-select-wrap">
+                                <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
+                                    data-section-type="oral"
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                            </label>
+                            <div class="debate-speech-content">
+                                <span class="debate-speech-name">{{ r.speaker_name }}</span>
+                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                                <p class="debate-speech-body">{{ r.body_clean }}</p>
+                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                            </div>
                         </div>
                         {% endfor %}
                     </div>
@@ -437,11 +444,18 @@
                         </div>
                         {% for r in grp.speeches %}
                         <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
-                            <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                            {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
-                            {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
-                            <p class="debate-speech-body">{{ r.body_clean }}</p>
-                            {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                            <label class="speech-select-wrap">
+                                <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
+                                    data-section-type="statement"
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                            </label>
+                            <div class="debate-speech-content">
+                                <span class="debate-speech-name">{{ r.speaker_name }}</span>
+                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
+                                <p class="debate-speech-body">{{ r.body_clean }}</p>
+                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                            </div>
                         </div>
                         {% endfor %}
                     </div>
@@ -462,6 +476,11 @@
                     {% for q in wq_rows %}
                     <div class="result-card" style="border-left:4px solid {% if q.is_withdrawn %}#6c757d{% elif q.is_holding %}#fd7e14{% elif q.is_answered %}#28a745{% else %}#d9534f{% endif %}; margin-bottom:12px;">
                         <div class="result-card-header">
+                            <label class="speech-select-wrap" style="margin-right:6px;">
+                                <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
+                                    data-section-type="wq"
+                                    data-speech="{{ {'asking_mp': q.asking_mp, 'question_text': q.question_text, 'answer_text': q.answer_text or '', 'party': q.party, 'role': q.role or '', 'dept': q.dept, 'date_tabled': q.date_tabled, 'url': q.url, 'is_answered': q.is_answered, 'is_withdrawn': q.is_withdrawn, 'is_holding': q.is_holding, 'answering_minister': q.answering_minister or '', 'date_answered': q.date_answered or ''} | tojson | e }}">
+                            </label>
                             <span class="wq-status-badge wq-status-{% if q.is_withdrawn %}withdrawn{% elif q.is_holding %}holding{% elif q.is_answered %}answered{% else %}unanswered{% endif %}">
                                 {% if q.is_withdrawn %}WITHDRAWN{% elif q.is_holding %}HOLDING{% elif q.is_answered %}ANSWERED{% else %}UNANSWERED{% endif %}
                             </span>
@@ -1018,19 +1037,16 @@
     function downloadSelected() {
         const checked = document.querySelectorAll('.speech-select:checked');
         if (!checked.length) return;
-        const debateItems = [], oralItems = [], urgentItems = [];
+        const sectionMap = {};
         checked.forEach(cb => {
             try {
-                const speech = JSON.parse(cb.dataset.speech);
-                if (cb.dataset.sectionType === 'oral') oralItems.push(speech);
-                else if (cb.dataset.sectionType === 'urgent') urgentItems.push(speech);
-                else debateItems.push(speech);
+                const item = JSON.parse(cb.dataset.speech);
+                const t = cb.dataset.sectionType || 'debate';
+                if (!sectionMap[t]) sectionMap[t] = [];
+                sectionMap[t].push(item);
             } catch(e) {}
         });
-        const sections = [];
-        if (debateItems.length) sections.push({type: 'debate', items: debateItems});
-        if (oralItems.length) sections.push({type: 'oral', items: oralItems});
-        if (urgentItems.length) sections.push({type: 'urgent', items: urgentItems});
+        const sections = Object.entries(sectionMap).map(([type, items]) => ({type, items}));
         if (sections.length) submitResearchDownload(sections);
     }
 

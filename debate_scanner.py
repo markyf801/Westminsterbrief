@@ -1675,6 +1675,32 @@ def debates_topic():
             # Group WMS by session so they render like debates, not flat speech snippets
             statement_grouped = _group_by_debate(statement_rows)
 
+            # Filter WMS and Oral Questions to selected departments only.
+            # WMS titles: "Written Ministerial Statements — [Dept]: [Topic]"
+            # Oral titles: "Oral Answers to Questions — [Dept]" or "[Dept] Questions"
+            if selected_depts:
+                def _dept_in_title(title, depts):
+                    title_lower = title.lower()
+                    for d in depts:
+                        # Full name match (e.g. "Department for Education")
+                        if d.lower() in title_lower:
+                            return True
+                        # Key words only — strip generic words to get e.g. "Education", "Treasury"
+                        keywords = [w for w in d.split()
+                                    if w.lower() not in ('department', 'for', 'of', 'the',
+                                                         'hm', 'ministry', 'and', 'office')
+                                    and len(w) > 3]
+                        if any(kw.lower() in title_lower for kw in keywords):
+                            return True
+                    return False
+                statement_grouped = [g for g in statement_grouped
+                                     if _dept_in_title(g['title'], selected_depts)]
+                oral_grouped = [g for g in oral_grouped
+                                if _dept_in_title(g['title'], selected_depts)]
+
+            # Sort WQs newest-first
+            wq_rows.sort(key=lambda q: q.get('date_tabled', ''), reverse=True)
+
             # Flat row lists for JS download variables
             oral_rows = [r for grp in oral_grouped for r in grp['speeches']]
             urgent_rows = [r for grp in urgent_grouped for r in grp['speeches']]
