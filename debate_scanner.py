@@ -515,17 +515,24 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
         data = resp.json()
         total = data.get('totalResults', 0)
         results = []
+        seen_uins = set()
         for item in data.get('results', []):
             val = item.get('value', {})
+            uin = str(val.get('uin', ''))
+            if uin and uin in seen_uins:
+                continue  # deduplicate — API can return same WQ if search matches both Q and A
+            if uin:
+                seen_uins.add(uin)
             raw_date = (val.get('dateTabled') or '').split('T')[0]
             date_ans = (val.get('dateAnswered') or '').split('T')[0]
-            is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
-            is_withdrawn = bool(val.get('isWithdrawn'))
-            is_holding = (is_answered and not is_withdrawn and
-                          'i will write' in (val.get('answerText') or '').lower()[:200])
-            uin = str(val.get('uin', ''))
             answer_raw = val.get('answerText') or ''
             answer_clean = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', answer_raw)).strip()
+            # Use cleaned answer text (not raw HTML) to determine answered status;
+            # raw HTML can contain only tags/whitespace, giving a false positive.
+            is_answered = bool(answer_clean or date_ans)
+            is_withdrawn = bool(val.get('isWithdrawn'))
+            is_holding = (is_answered and not is_withdrawn and
+                          'i will write' in answer_clean.lower()[:200])
             q_text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', val.get('questionText') or '')).strip()
             asking = val.get('askingMember') or {}
             party = asking.get('party', '')
@@ -1644,25 +1651,12 @@ def debates_topic():
                 return (r.get('source') == 'wrans'
                         or 'written answer' in r.get('debate_title', '').lower())
 
-            def _wrans_to_wq(r):
-                """Normalize a TWFY wrans speech record to the WQ card format expected by the template."""
-                url = r.get('listurl', '')
-                if url and not url.startswith('http'):
-                    url = 'https://www.theyworkforyou.com' + url
-                party = r.get('speaker_party', '')
-                return {
-                    'uin': '', 'dept': '',
-                    'question_text': r.get('body_clean', ''),
-                    'answer_text': '',
-                    'answering_minister': '',
-                    'asking_mp': r.get('speaker_name', ''),
-                    'role': '', 'party': party,
-                    'party_colour': PARTY_COLOURS_RESEARCH.get(party, '#888'),
-                    'is_answered': False, 'is_withdrawn': False, 'is_holding': False,
-                    'date_tabled': r.get('hdate', ''), 'date_answered': '',
-                    'url': url, 'source': 'wrans',
-                }
-            wq_rows = wq_rows + [_wrans_to_wq(r) for r in topic_rows if _is_written_answer(r)]
+            # TWFY wrans records hold the minister's ANSWER text, not the question.
+            # speaker_name is the answering minister, body_clean is the answer body.
+            # Displaying them as WQ cards would show the minister as the "asker" and
+            # the answer as the "question" — misleading. The Parliament API WQ results
+            # (from _fetch_topic_wqs) are richer and accurate, so TWFY wrans are skipped.
+            # wq_rows stays as-is (Parliament API only).
             wq_total = len(wq_rows)
             non_statement_rows = [r for r in topic_rows
                                   if r not in statement_rows
