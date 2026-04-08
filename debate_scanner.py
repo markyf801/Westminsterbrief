@@ -34,11 +34,23 @@ def _add_hyperlink(paragraph, url, text):
 
 debate_scanner_bp = Blueprint('debates', __name__)
 
+
+@debate_scanner_bp.app_template_filter('debate_url')
+def debate_url_filter(url):
+    """Return a full debate URL. Hansard API rows already carry full URLs;
+    TWFY rows carry relative paths that need the domain prepended."""
+    if not url:
+        return ''
+    if url.startswith('http'):
+        return url
+    return f"https://www.theyworkforyou.com{url}"
+
 TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TWFY_API_URL = "https://www.theyworkforyou.com/api/getDebates"
 TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
 TWFY_WMS_URL = "https://www.theyworkforyou.com/api/getWMS"
+HANSARD_API_BASE = "https://hansard-api.parliament.uk"
 MINISTER_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'minister_cache.json')
 MINISTER_CACHE_TTL = 30 * 24 * 3600  # 30 days — reshuffles are infrequent
 MINISTER_CACHE_VERSION = 2  # increment when display_name logic changes to bust stale files
@@ -932,6 +944,119 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_
     return rows
 
 
+# --- Hansard API helpers (Phase 1: minister search) ---
+
+_HANSARD_PARTY_ABBREV = {
+    'lab': 'Labour', 'con': 'Conservative', 'ld': 'Liberal Democrat',
+    'lib dem': 'Liberal Democrat', 'snp': 'Scottish National Party',
+    'green': 'Green Party', 'reform': 'Reform UK', 'pc': 'Plaid Cymru',
+    'dup': 'Democratic Unionist Party', 'ind': 'Independent',
+    'crossbench': 'Crossbench',
+}
+
+
+def _parse_hansard_party(attributed_to):
+    """Extract full party name from 'Name (Abbrev)' format returned by Hansard API."""
+    m = re.search(r'\(([^)]+)\)\s*$', attributed_to or '')
+    if m:
+        abbrev = m.group(1).strip().lower()
+        return _HANSARD_PARTY_ABBREV.get(abbrev, m.group(1).strip())
+    return ''
+
+
+def _hansard_section_to_source(house, section):
+    """Map Hansard API House + Section fields to TWFY-compatible source codes."""
+    section_lower = (section or '').lower()
+    if 'written statement' in section_lower:
+        return 'wms'
+    if 'westminster hall' in section_lower:
+        return 'westminsterhall'
+    if (house or '').lower() == 'lords':
+        return 'lords'
+    return 'commons'
+
+
+def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=50, is_lord=False):
+    """Fetch minister speeches via Hansard API using Parliament member ID directly.
+    Replaces fetch_twfy_minister_topic() when SEARCH_BACKEND=hansard.
+    Returns same normalised row schema — zero changes to grouping or display code."""
+    if not parliament_id:
+        return []
+
+    # Parse YYYYMMDD..YYYYMMDD → ISO dates for the Hansard API
+    start_date_api = ''
+    end_date_api = ''
+    if date_range and '..' in date_range:
+        parts = date_range.split('..')
+        def _fmt(d): return f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
+        start_date_api = _fmt(parts[0].strip()) if parts[0].strip() else ''
+        end_date_api = _fmt(parts[1].strip()) if parts[1].strip() else ''
+
+    cache_key_query = f"hansard:minister:{parliament_id}:{topic} {date_range}".strip()
+    cached = CachedTWFYSearch.get(cache_key_query, 'hansard_minister', ttl_hours=6)
+    if cached is not None:
+        return cached
+
+    params = {'queryParameters.memberId': parliament_id, 'take': num, 'skip': 0}
+    if is_lord:
+        params['queryParameters.house'] = 'Lords'
+    if topic:
+        params['queryParameters.searchTerm'] = topic
+    if start_date_api:
+        params['queryParameters.startDate'] = start_date_api
+    if end_date_api:
+        params['queryParameters.endDate'] = end_date_api
+
+    try:
+        resp = requests.get(f"{HANSARD_API_BASE}/search.json", params=params, timeout=25)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        results = data.get('Results', data.get('results', []))
+
+        rows = []
+        for r in results:
+            house = r.get('House', 'Commons')
+            section = r.get('Section', '')
+            source = _hansard_section_to_source(house, section)
+            if source not in sources:
+                continue
+
+            body_raw = r.get('ContributionTextFull', '') or ''
+            body_text = clean_body_text(body_raw)
+            debate_title = r.get('DebateSection', '') or ''
+
+            sitting_date = r.get('SittingDate', '')
+            hdate = sitting_date[:10] if sitting_date else ''
+
+            ext_id = r.get('DebateSectionExtId', '') or ''
+            house_path = 'lords' if house.lower() == 'lords' else 'commons'
+            listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
+                       if ext_id and hdate else '')
+
+            dtype = get_debate_type(debate_title, source=source)
+            rows.append({
+                'listurl': listurl,
+                'body_clean': body_text[:500],
+                'body_export': body_text[:3000],
+                'body_word_count': len(body_text.split()),
+                'speaker_name': r.get('MemberName', '') or '',
+                'speaker_party': _parse_hansard_party(r.get('AttributedTo', '')),
+                'hdate': hdate,
+                'debate_title': debate_title,
+                'source': source,
+                'source_label': get_source_label(source),
+                'relevance': r.get('Rank', 0),
+                'debate_type': dtype,
+                'debate_section_ext_id': ext_id,
+            })
+
+        CachedTWFYSearch.store(cache_key_query, 'hansard_minister', rows)
+        return rows
+    except Exception:
+        return []
+
+
 def _resolve_parliament_id(display_name):
     """Look up the Parliament member ID for a minister by name.
     Returns (parliament_id, house) or (None, None)."""
@@ -1447,14 +1572,23 @@ def debates_topic():
                 return _fetch_topic_wqs(topic, start_date, end_date, selected_depts)
 
             source_counts = {}
+            use_hansard_minister = os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard'
             with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                 twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
-                minister_futs = {
-                    executor.submit(copy_current_request_context(fetch_twfy_minister_topic), mp['person_id'], expanded, date_range, sources,
-                                    is_lord=mp.get('is_lord', False)): mp
-                    for mp in minister_people
-                }
+                minister_futs = {}
+                for mp in minister_people:
+                    if use_hansard_minister and mp.get('parliament_id'):
+                        fut = executor.submit(
+                            copy_current_request_context(fetch_hansard_minister_topic),
+                            mp['parliament_id'], expanded, date_range, sources,
+                            is_lord=mp.get('is_lord', False))
+                    else:
+                        fut = executor.submit(
+                            copy_current_request_context(fetch_twfy_minister_topic),
+                            mp['person_id'], expanded, date_range, sources,
+                            is_lord=mp.get('is_lord', False))
+                    minister_futs[fut] = mp
                 all_futs = list(twfy_futs.keys()) + [wq_fut] + list(minister_futs.keys())
                 for future in concurrent.futures.as_completed(all_futs):
                     if future is wq_fut:

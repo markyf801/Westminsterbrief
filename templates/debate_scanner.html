@@ -202,7 +202,7 @@
                     <span style="font-weight:600;">{{ q.speaker }}</span>
                     {% if q.role_or_party %}<span class="topic-party-badge">{{ q.role_or_party }}</span>{% endif %}
                     {% if q.date %}<span style="font-size:11.5px; color:#888; margin-left:4px;">{{ q.date }}</span>{% endif %}
-                    {% if q.listurl %}&nbsp;<a href="https://www.theyworkforyou.com{{ q.listurl }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Source</a>{% endif %}
+                    {% if q.listurl %}&nbsp;<a href="{{ q.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Source</a>{% endif %}
                     <br><span style="color:#333;">{{ q.question }}</span>
                 </li>
                 {% endfor %}
@@ -279,7 +279,7 @@
                             <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
@@ -294,7 +294,7 @@
                                 {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
-                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                                {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
                             </div>
                         </div>
                         {% endfor %}
@@ -319,7 +319,7 @@
                             <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
@@ -334,7 +334,7 @@
                                 {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
-                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                                {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
                             </div>
                         </div>
                         {% endfor %}
@@ -359,7 +359,7 @@
                             <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
@@ -374,7 +374,7 @@
                                 {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
-                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                                {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
                             </div>
                         </div>
                         {% endfor %}
@@ -399,7 +399,7 @@
                             <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-urgent">Urgent Question</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
@@ -414,7 +414,7 @@
                                 {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
-                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                                {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
                             </div>
                         </div>
                         {% endfor %}
@@ -439,7 +439,7 @@
                             <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-wms">WMS</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="https://www.theyworkforyou.com{{ grp.speeches[0].listurl }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
@@ -454,7 +454,7 @@
                                 {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
-                                {% if r.listurl %}<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
+                                {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
                             </div>
                         </div>
                         {% endfor %}
@@ -821,7 +821,7 @@
                         {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role }}</span>
                         {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                         <span style="font-size:11.5px; color:#888; margin-left:6px;">{{ r.hdate }}</span>
-                        {% if r.listurl %}&nbsp;<a href="https://www.theyworkforyou.com{{ r.listurl }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Hansard</a>{% endif %}
+                        {% if r.listurl %}&nbsp;<a href="{{ r.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Hansard</a>{% endif %}
                         <p class="debate-speech-body">{{ r.body_clean }}</p>
                     </div>
                 </div>
@@ -1103,9 +1103,9 @@
                 html += `<div style="border-left:3px solid ${col};padding:7px 10px;margin-bottom:8px;background:#f9fafb;border-radius:0 4px 4px 0;">
                     <span style="background:${col};color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;">${s.source_label}</span>
                     <span style="font-size:11px;color:#888;margin-left:6px;">${s.hdate}</span>
-                    <span style="font-size:11px;color:#555;margin-left:4px;">· <a href="https://www.theyworkforyou.com${s.listurl}" target="_blank" style="color:#555;text-decoration:none;">${s.debate_title || ''}</a></span>
+                    <span style="font-size:11px;color:#555;margin-left:4px;">· <a href="${s.listurl && s.listurl.startsWith('http') ? s.listurl : 'https://www.theyworkforyou.com' + (s.listurl || '')}" target="_blank" style="color:#555;text-decoration:none;">${s.debate_title || ''}</a></span>
                     <p style="margin:5px 0 4px 0;font-size:12px;font-style:italic;">"${snippet}${ellipsis}"</p>
-                    <a href="https://www.theyworkforyou.com${s.listurl}" target="_blank" style="font-size:11px;color:${col};">↗ View on TheyWorkForYou</a>
+                    <a href="${s.listurl && s.listurl.startsWith('http') ? s.listurl : 'https://www.theyworkforyou.com' + (s.listurl || '')}" target="_blank" style="font-size:11px;color:${col};">↗ View on Hansard</a>
                 </div>`;
             });
             panel.innerHTML = html;

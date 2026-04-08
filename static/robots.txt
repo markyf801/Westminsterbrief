@@ -1,2 +1,9 @@
 User-agent: *
-Disallow: /
+Disallow: /admin
+Disallow: /debates
+Disallow: /questions
+Disallow: /tracker
+Disallow: /mp_search
+Disallow: /biography
+
+Sitemap: https://westminsterbrief.co.uk/sitemap.xml

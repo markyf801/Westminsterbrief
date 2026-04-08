@@ -448,6 +448,62 @@ return render_template('page.html', total_available=total_available)
 
 If a bug caused incorrect data to be written to the cache (e.g. wrong date filtering, wrong column), that bad data persists until the TTL expires (6h for searches, 30 days for sessions). After deploying a cache fix, go to `/admin` and clear the relevant cache immediately rather than waiting for TTL.
 
+## Session testing protocol — research tool status tracking
+
+Each coding session that touches the Research Tool must begin by establishing current status and end by confirming it. This prevents the loop where something appears fixed but regresses silently.
+
+### At the start of each session — establish baseline
+
+Before writing any code, ask the user:
+1. Which sections are currently working and which are broken?
+2. What is the canonical test case you want to verify? (topic, department, expected results)
+3. Is the Railway cache clear? (If stale data is possible, clear it at `/admin` before testing)
+
+Record the baseline in the session. Do not assume prior session state carries over.
+
+### Minimum verified checklist — confirm before declaring anything fixed
+
+Run the canonical test case (student loan repayments + DfE, 2026) and verify each section:
+
+| Section | What to verify |
+|---|---|
+| **Oral Questions** | MacAlister or a DfE minister appears; DfE sessions not filtered out |
+| **Written Questions** | No duplicate cards; `is_answered` correct; date ordered newest-first |
+| **Debates / Westminster Hall** | Sessions grouped correctly; speeches visible |
+| **Ministerial Statements** | DfE statements only when dept filter active |
+| **Minister-led search** | At least one of MacAlister / Baroness Smith appears |
+| **Word download** | Briefing downloads without crash; checkboxes work for all section types |
+| **Checkboxes** | Present on Oral, WMS, WQ, Debates sections |
+
+### After deploying a fix — mandatory verification steps
+
+1. Clear Railway cache at `/admin` (stale cache masks bugs)
+2. Run the canonical test case live on the deployed app
+3. Confirm the specific thing that was broken is now working
+4. Note any regressions — do not close a bug without checking adjacent sections
+
+### Feature flags and backends
+
+Currently active flags:
+- `SEARCH_BACKEND=hansard` → uses Hansard API for minister search (Phase 1)
+- Unset → uses TWFY for all searches (original behaviour)
+
+When testing after a backend change, always state which backend is active so results are interpretable.
+
+### Known good baseline (as of 2026-04)
+The fixes applied in the April 2026 sessions resolved:
+- WQ cards showing minister answer as the question (TWFY wrans removed)
+- Duplicate WQ cards (UIN deduplication added)
+- `is_answered` incorrectly false (answer HTML stripping fixed)
+- Lords oral questions not classified correctly (title pattern + word count threshold)
+- Minister search using wrong query (now passes `expanded` not raw `topic`)
+- WMS dept filter too aggressive (now title-match based)
+- Checkboxes missing from Oral/WMS/WQ sections (added)
+
+If any of these regress, check the git log for the relevant commit.
+
+---
+
 ## Pre-push checklist
 
 Before every `git push`, run:

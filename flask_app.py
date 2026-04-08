@@ -297,6 +297,10 @@ def health():
 def robots():
     return app.send_static_file('robots.txt')
 
+@app.route('/sitemap.xml')
+def sitemap():
+    return app.send_static_file('sitemap.xml')
+
 @app.route('/terms')
 def terms():
     return render_template('terms.html')
