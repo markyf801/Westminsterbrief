@@ -478,11 +478,22 @@ def _classify_group(grp):
         return 'oral'
     if 'prime minister' in title and 'question' in title:
         return 'oral'
+    # Lords oral questions have titles like "Student Loans: Review — Question"
+    # or "Plan 2 Student Loans: Repayment Terms — Question"
+    if source == 'lords' and (title.rstrip().endswith('— question') or
+                              '— oral question' in title or
+                              '— question' in title):
+        return 'oral'
+    # Commons Education/department topical questions
+    if 'topical question' in title:
+        return 'oral'
     # Word-count heuristic: short speeches are likely Oral PQ follow-ups.
     # Only apply to commons — Lords written answers are short by nature, not oral.
+    # Threshold is 400 (not 300) because after full-session fetch the minister's
+    # topical answer can run to ~350 words.
     if source == 'commons' and speeches:
         max_words = max((r.get('body_word_count', 0) for r in speeches), default=0)
-        if 0 < max_words < 300:
+        if 0 < max_words < 400:
             return 'oral'
     return 'debate'
 
@@ -1433,7 +1444,7 @@ def debates_topic():
                 twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
                 minister_futs = {
-                    executor.submit(copy_current_request_context(fetch_twfy_minister_topic), mp['person_id'], topic, date_range, sources,
+                    executor.submit(copy_current_request_context(fetch_twfy_minister_topic), mp['person_id'], expanded, date_range, sources,
                                     is_lord=mp.get('is_lord', False)): mp
                     for mp in minister_people
                 }
@@ -1695,8 +1706,17 @@ def debates_topic():
                     return False
                 statement_grouped = [g for g in statement_grouped
                                      if _dept_in_title(g['title'], selected_depts)]
+                # Oral questions: only filter sessions that explicitly name a
+                # DIFFERENT department (e.g. "Oral Answers to Questions — Treasury").
+                # Topic-specific oral questions ("Plan 2 Student Loans: Repayment
+                # Terms — Question") have no dept in the title and must not be removed.
+                def _oral_from_other_dept(grp_title, depts):
+                    t = grp_title.lower()
+                    if 'oral answers to questions' not in t:
+                        return False  # not a dept oral questions session → keep
+                    return not _dept_in_title(grp_title, depts)
                 oral_grouped = [g for g in oral_grouped
-                                if _dept_in_title(g['title'], selected_depts)]
+                                if not _oral_from_other_dept(g['title'], selected_depts)]
 
             # Sort WQs newest-first
             wq_rows.sort(key=lambda q: q.get('date_tabled', ''), reverse=True)
