@@ -2922,7 +2922,8 @@ def download_research_brief():
                             url = 'https://www.theyworkforyou.com' + url
                         lp = doc.add_paragraph()
                         _add_hyperlink(lp, url, '↗ Hansard (TheyWorkForYou)')
-                        lp.runs[0].font.size = Pt(9) if lp.runs else None
+                        if lp.runs:
+                            lp.runs[0].font.size = Pt(9)
 
                 doc.add_paragraph('─' * 72)
             doc.add_paragraph()

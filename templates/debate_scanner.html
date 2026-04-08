@@ -961,7 +961,25 @@
             wq: WQ_ROWS, oral: ORAL_ROWS, urgent: URGENT_ROWS,
             statement: STATEMENT_ROWS, debate: DEBATE_ROWS, legislation: LEGISLATION_ROWS
         };
-        // Only include sections the user has expanded (open <details> elements)
+
+        // If any speeches are ticked, use those (plus the AI briefing) for the full brief
+        const checked = document.querySelectorAll('.speech-select:checked');
+        if (checked.length) {
+            const sectionMap = {};
+            checked.forEach(cb => {
+                try {
+                    const speech = JSON.parse(cb.dataset.speech);
+                    const t = cb.dataset.sectionType || 'debate';
+                    if (!sectionMap[t]) sectionMap[t] = [];
+                    sectionMap[t].push(speech);
+                } catch(e) {}
+            });
+            const sections = Object.entries(sectionMap).map(([type, items]) => ({type, items}));
+            submitResearchDownload(sections);
+            return;
+        }
+
+        // Otherwise include sections the user has expanded (open <details> elements)
         const openDetails = document.querySelectorAll('details.research-section[open]');
         const sections = [];
         openDetails.forEach(el => {
