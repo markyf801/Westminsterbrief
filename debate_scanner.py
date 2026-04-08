@@ -1633,7 +1633,25 @@ def debates_topic():
                 return (r.get('source') == 'wrans'
                         or 'written answer' in r.get('debate_title', '').lower())
 
-            wq_rows = wq_rows + [r for r in topic_rows if _is_written_answer(r)]
+            def _wrans_to_wq(r):
+                """Normalize a TWFY wrans speech record to the WQ card format expected by the template."""
+                url = r.get('listurl', '')
+                if url and not url.startswith('http'):
+                    url = 'https://www.theyworkforyou.com' + url
+                party = r.get('speaker_party', '')
+                return {
+                    'uin': '', 'dept': '',
+                    'question_text': r.get('body_clean', ''),
+                    'answer_text': '',
+                    'answering_minister': '',
+                    'asking_mp': r.get('speaker_name', ''),
+                    'role': '', 'party': party,
+                    'party_colour': PARTY_COLOURS_RESEARCH.get(party, '#888'),
+                    'is_answered': False, 'is_withdrawn': False, 'is_holding': False,
+                    'date_tabled': r.get('hdate', ''), 'date_answered': '',
+                    'url': url, 'source': 'wrans',
+                }
+            wq_rows = wq_rows + [_wrans_to_wq(r) for r in topic_rows if _is_written_answer(r)]
             wq_total = len(wq_rows)
             non_statement_rows = [r for r in topic_rows
                                   if r not in statement_rows
