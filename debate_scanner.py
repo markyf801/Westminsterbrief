@@ -59,6 +59,8 @@ MINISTER_CACHE_VERSION = 2  # increment when display_name logic changes to bust 
 # Verified person_ids from direct debate records — these are seeded at cache-write time.
 KNOWN_TWFY_IDS = {
     'Baroness Smith of Malvern': {'person_id': '10549', 'is_lord': True, 'lookup_failed': False},
+    # Parliamentary Under-Secretary of State for Education (DfE) — TWFY person_id verified 2026-04
+    'Josh MacAlister': {'person_id': '26321', 'is_lord': False, 'lookup_failed': False},
 }
 
 DEPARTMENTS_TWFY = [
@@ -140,6 +142,11 @@ def get_debate_type(title, source=None):
     if 'urgent question' in t: return '❗ Urgent Question'
     if 'oral answers' in t or 'question time' in t: return '🗣️ Oral Question'
     if 'prime minister' in t and 'question' in t: return '🗣️ Oral Question'
+    if source == 'commons' and any(t.startswith(p + ':') for p in (
+        'education', 'health', 'treasury', 'home office', 'defence', 'justice',
+        'transport', 'environment', 'science', 'work and pensions', 'cabinet office',
+        'foreign', 'culture', 'housing', 'digital', 'northern ireland', 'business',
+    )): return '🗣️ Oral Question'
     if 'statement' in t: return '📜 Ministerial Statement'
     if ('statutory instrument' in t or 'affirmative' in t or 'delegated legislation' in t
             or ('draft' in t and ('regulation' in t or 'order' in t))):
@@ -496,6 +503,16 @@ def _classify_group(grp):
                               '— oral question' in title or
                               '— question' in title):
         return 'oral'
+    # Commons oral questions: "Department: Topic" format
+    # e.g. "Education: SEND: Funding", "Home Office: Immigration: Policy"
+    # This is the standard Hansard title format for commons oral question sessions.
+    _OQ_DEPT_PREFIXES = (
+        'education', 'health', 'treasury', 'home office', 'defence', 'justice',
+        'transport', 'environment', 'science', 'work and pensions', 'cabinet office',
+        'foreign', 'culture', 'housing', 'digital', 'northern ireland', 'business',
+    )
+    if source == 'commons' and any(title.startswith(p + ':') for p in _OQ_DEPT_PREFIXES):
+        return 'oral'
     # Commons Education/department topical questions
     if 'topical question' in title:
         return 'oral'
@@ -695,8 +712,9 @@ def get_minister_list():
     # assigned to a person for life. No need to re-resolve them after a minister list refresh.
     old_twfy_ids = cache.get('twfy_ids', {})
     # Seed known IDs for ministers whose TWFY name search fails (newer Lords peers etc.)
+    # Use unconditional assignment so verified IDs always override stale/failed cache entries.
     for name, entry in KNOWN_TWFY_IDS.items():
-        old_twfy_ids.setdefault(name, entry)
+        old_twfy_ids[name] = entry
     data = {'_ts': time.time(), '_source': 'govuk', '_version': MINISTER_CACHE_VERSION,
             'by_norm': by_norm, 'by_id': by_id, 'by_dept': by_dept, 'twfy_ids': old_twfy_ids}
     try:
