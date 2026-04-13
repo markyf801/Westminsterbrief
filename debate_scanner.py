@@ -3192,12 +3192,41 @@ def download_research_brief():
                         if not url.startswith('http'):
                             url = 'https://www.theyworkforyou.com' + url
                         lp = doc.add_paragraph()
-                        _add_hyperlink(lp, url, '↗ Hansard (TheyWorkForYou)')
+                        _add_hyperlink(lp, url, '↗ View on Hansard')
                         if lp.runs:
                             lp.runs[0].font.size = Pt(9)
 
                 doc.add_paragraph('─' * 72)
             doc.add_paragraph()
+
+    # ── Debates — Sources appendix ────────────────────────────────────
+    # Collect unique debate titles + links from all non-WQ sections
+    all_debate_links = {}
+    for sec_type in ['debate', 'oral', 'urgent', 'statement']:
+        section = sections_by_type.get(sec_type)
+        if not section:
+            continue
+        for r in section.get('items', []):
+            title = r.get('debate_title', '') or ''
+            url = r.get('listurl', '') or ''
+            if url and not url.startswith('http'):
+                url = 'https://www.theyworkforyou.com' + url
+            date = r.get('hdate', '') or ''
+            source = r.get('source_label', '') or ''
+            key = url or title
+            if key and key not in all_debate_links:
+                all_debate_links[key] = {'title': title, 'url': url, 'date': date, 'source': source}
+
+    if all_debate_links:
+        doc.add_heading('Debates — Sources', 1)
+        for entry in all_debate_links.values():
+            p = doc.add_paragraph(style='List Bullet')
+            label = '  ·  '.join(filter(None, [entry['source'], entry['date'], entry['title']]))
+            if entry['url']:
+                _add_hyperlink(p, entry['url'], label)
+            else:
+                p.add_run(label)
+        doc.add_paragraph()
 
     mem_doc = io.BytesIO()
     doc.save(mem_doc)

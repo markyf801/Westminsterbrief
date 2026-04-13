@@ -530,6 +530,7 @@
     <!-- Floating selection bar — appears when speeches are ticked -->
     <div id="speech-selection-bar">
         <span id="selection-count">0 speeches selected</span>
+        <button onclick="selectAll()" class="sel-bar-btn" style="background:#4a7c59;color:#fff;">☑ Select All</button>
         <button onclick="downloadSelected()" class="sel-bar-btn sel-bar-dl">⬇ Download Selected</button>
         <button onclick="clearSelection()" class="sel-bar-btn sel-bar-clear">✕ Clear</button>
     </div>
@@ -1034,17 +1035,26 @@
         updateSelectionBar();
     }
 
+    function selectAll() {
+        document.querySelectorAll('.speech-select').forEach(cb => { cb.checked = true; });
+        updateSelectionBar();
+    }
+
     function downloadSelected() {
         const checked = document.querySelectorAll('.speech-select:checked');
         if (!checked.length) return;
         const sectionMap = {};
         checked.forEach(cb => {
             try {
-                const item = JSON.parse(cb.dataset.speech);
+                const raw = cb.dataset.speech;
+                if (!raw) return;
+                const item = JSON.parse(raw);
                 const t = cb.dataset.sectionType || 'debate';
                 if (!sectionMap[t]) sectionMap[t] = [];
                 sectionMap[t].push(item);
-            } catch(e) {}
+            } catch(e) {
+                console.warn('Could not parse speech data:', cb.dataset.speech, e);
+            }
         });
         const sections = Object.entries(sectionMap).map(([type, items]) => ({type, items}));
         if (sections.length) submitResearchDownload(sections);
