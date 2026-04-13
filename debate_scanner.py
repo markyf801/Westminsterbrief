@@ -46,6 +46,25 @@ def debate_url_filter(url):
     return f"https://www.theyworkforyou.com{url}"
 
 TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
+CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
+
+
+def _claude_fallback(prompt, max_tokens=2000):
+    """Call Claude API with the same prompt Gemini received.
+    Silent fallback — returns response text or None, never raises."""
+    if not CLAUDE_API_KEY:
+        return None
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text
+    except Exception:
+        return None
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TWFY_API_URL = "https://www.theyworkforyou.com/api/getDebates"
 TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
@@ -315,8 +334,12 @@ def expand_search_query(topic, api_key):
         payload = {"contents": [{"parts": [{"text": prompt}]}],
                    "generationConfig": {"responseMimeType": "application/json"}}
         resp = requests.post(ai_url, json=payload, timeout=15)
+        raw = None
         if resp.status_code == 200:
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            raw = _claude_fallback(prompt, max_tokens=300)
+        if raw:
             terms = json.loads(raw.strip())
             if isinstance(terms, list) and terms:
                 # Only include the original topic phrase if it's short enough to
@@ -1761,6 +1784,9 @@ def debates_topic():
                         ai_resp = requests.post(ai_url, json=payload, timeout=90)
                     if ai_resp.status_code == 200:
                         raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
+                    else:
+                        raw_text = _claude_fallback(prompt, max_tokens=3000)
+                    if raw_text:
                         clean_text = raw_text.replace('```json', '').replace('```', '').strip()
                         topic_briefing = json.loads(clean_text)
 
@@ -1781,7 +1807,7 @@ def debates_topic():
 
                         topic_briefing_as_text = format_briefing_as_text(topic_briefing, topic)
                     else:
-                        debug_query += f" | AI HTTP {ai_resp.status_code}"
+                        debug_query += f" | AI HTTP {ai_resp.status_code} (Gemini+Claude both failed)"
                         topic_briefing = None
                 except Exception as e:
                     import logging
@@ -2436,6 +2462,9 @@ def generate_stakeholder_briefing(topic, org=None, hansard_rows=None, news=None,
             resp = requests.post(ai_url, json=payload, timeout=25)
         if resp.status_code == 200:
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            raw = _claude_fallback(prompt, max_tokens=800)
+        if raw:
             raw = raw.strip().lstrip('```json').lstrip('```').rstrip('```').strip()
             return json.loads(raw)
     except Exception:
