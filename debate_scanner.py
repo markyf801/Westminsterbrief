@@ -584,26 +584,28 @@ def _classify_group(grp):
     return 'debate'
 
 
-def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=50):
-    """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count)."""
+def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
+    """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count).
+    Does NOT pass answeringBodies to the API — that filter causes severe timeouts (>30s).
+    Instead fetches without dept filter and filters client-side by answeringBodyName."""
     import logging
     try:
-        params = {'searchTerm': topic, 'take': limit, 'skip': 0}
+        # No answeringBodies param — server-side dept filter causes 30s+ timeouts.
+        # Client-side filter is applied below instead.
+        params = {'searchTerm': topic, 'take': limit, 'skip': 0,
+                  'expandMember': 'false'}
         if start_date:
             params['tabledWhenFrom'] = start_date
         if end_date:
             params['tabledWhenTo'] = end_date
-        dept_ids = [PARLIAMENT_DEPT_IDS[d] for d in selected_depts if d in PARLIAMENT_DEPT_IDS]
-        if dept_ids:
-            params['answeringBodies'] = dept_ids
-        logging.warning(f"WQ fetch: params={params}")
         resp = requests.get(PARLIAMENT_WQ_API, params=params, timeout=30)
-        logging.warning(f"WQ fetch: status={resp.status_code} url={resp.url}")
         if resp.status_code != 200:
-            logging.warning(f"WQ fetch failed: {resp.status_code} {resp.text[:200]}")
+            logging.warning(f"WQ fetch failed: {resp.status_code}")
             return [], 0
         data = resp.json()
         total = data.get('totalResults', 0)
+        # Client-side dept filter — match answeringBodyName against selected dept names
+        dept_names = set(selected_depts)
         results = []
         seen_uins = set()
         for item in data.get('results', []):
@@ -613,6 +615,10 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=50):
                 continue  # deduplicate — API can return same WQ if search matches both Q and A
             if uin:
                 seen_uins.add(uin)
+            # Client-side dept filter
+            answering_body = val.get('answeringBodyName', '')
+            if dept_names and answering_body not in dept_names:
+                continue
             raw_date = (val.get('dateTabled') or '').split('T')[0]
             date_ans = (val.get('dateAnswered') or '').split('T')[0]
             answer_raw = val.get('answerText') or ''
@@ -633,7 +639,7 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=50):
             minister = val.get('answeringMember') or {}
             results.append({
                 'uin': uin,
-                'dept': val.get('answeringBodyName', ''),
+                'dept': answering_body,
                 'question_text': q_text,
                 'answer_text': answer_clean[:1500],
                 'answering_minister': minister.get('name', ''),
