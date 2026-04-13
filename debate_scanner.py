@@ -586,6 +586,7 @@ def _classify_group(grp):
 
 def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
     """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count)."""
+    import logging
     try:
         params = {'searchTerm': topic, 'take': limit, 'skip': 0}
         if start_date:
@@ -595,8 +596,11 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
         dept_ids = [PARLIAMENT_DEPT_IDS[d] for d in selected_depts if d in PARLIAMENT_DEPT_IDS]
         if dept_ids:
             params['answeringBodies'] = dept_ids
+        logging.warning(f"WQ fetch: params={params}")
         resp = requests.get(PARLIAMENT_WQ_API, params=params, timeout=20)
+        logging.warning(f"WQ fetch: status={resp.status_code} url={resp.url}")
         if resp.status_code != 200:
+            logging.warning(f"WQ fetch failed: {resp.status_code} {resp.text[:200]}")
             return [], 0
         data = resp.json()
         total = data.get('totalResults', 0)
@@ -646,7 +650,9 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
                 'url': f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date}/{uin}",
             })
         return results, total
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.error(f"WQ fetch exception: {type(e).__name__}: {e}")
         return [], 0
 
 
