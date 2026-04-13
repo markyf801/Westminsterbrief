@@ -587,7 +587,7 @@ def _classify_group(grp):
 def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
     """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count)."""
     try:
-        params = {'searchTerm': f'"{topic}"', 'take': limit, 'skip': 0}
+        params = {'searchTerm': topic, 'take': limit, 'skip': 0}
         if start_date:
             params['tabledWhenFrom'] = start_date
         if end_date:
