@@ -584,7 +584,7 @@ def _classify_group(grp):
     return 'debate'
 
 
-def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
+def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=50):
     """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count)."""
     import logging
     try:
@@ -597,7 +597,7 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=400):
         if dept_ids:
             params['answeringBodies'] = dept_ids
         logging.warning(f"WQ fetch: params={params}")
-        resp = requests.get(PARLIAMENT_WQ_API, params=params, timeout=20)
+        resp = requests.get(PARLIAMENT_WQ_API, params=params, timeout=30)
         logging.warning(f"WQ fetch: status={resp.status_code} url={resp.url}")
         if resp.status_code != 200:
             logging.warning(f"WQ fetch failed: {resp.status_code} {resp.text[:200]}")
