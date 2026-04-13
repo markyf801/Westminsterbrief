@@ -179,6 +179,40 @@ def clean_body_text(text):
     text = re.sub(r'<[^>]+>', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
+
+def _parse_ai_json(text):
+    """Robustly parse JSON from an AI response.
+    Handles markdown fences, trailing commas, and other common AI formatting issues."""
+    if not text:
+        return None
+    # Strip markdown fences
+    text = re.sub(r'```json\s*', '', text)
+    text = re.sub(r'```\s*', '', text)
+    text = text.strip()
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Remove trailing commas before } or ] (valid JS, invalid JSON)
+    cleaned = re.sub(r',\s*([}\]])', r'\1', text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    # Try to extract just the outermost JSON object or array
+    m = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except json.JSONDecodeError:
+            cleaned2 = re.sub(r',\s*([}\]])', r'\1', m.group())
+            try:
+                return json.loads(cleaned2)
+            except json.JSONDecodeError:
+                pass
+    return None
+
 def get_source_label(source):
     return {'commons': 'Commons', 'westminsterhall': 'Westminster Hall',
             'lords': 'Lords', 'wrans': 'Written Answer',
@@ -340,7 +374,7 @@ def expand_search_query(topic, api_key):
         else:
             raw = _claude_fallback(prompt, max_tokens=300)
         if raw:
-            terms = json.loads(raw.strip())
+            terms = _parse_ai_json(raw)
             if isinstance(terms, list) and terms:
                 # Only include the original topic phrase if it's short enough to
                 # appear verbatim in debates. Long policy descriptions (> 4 words)
@@ -1787,8 +1821,7 @@ def debates_topic():
                     else:
                         raw_text = _claude_fallback(prompt, max_tokens=3000)
                     if raw_text:
-                        clean_text = raw_text.replace('```json', '').replace('```', '').strip()
-                        topic_briefing = json.loads(clean_text)
+                        topic_briefing = _parse_ai_json(raw_text)
 
                         # Verify government speakers against Parliament Members API (parallel)
                         govt_speakers = topic_briefing.get('government_speakers', [])
@@ -2465,8 +2498,7 @@ def generate_stakeholder_briefing(topic, org=None, hansard_rows=None, news=None,
         else:
             raw = _claude_fallback(prompt, max_tokens=800)
         if raw:
-            raw = raw.strip().lstrip('```json').lstrip('```').rstrip('```').strip()
-            return json.loads(raw)
+            return _parse_ai_json(raw)
     except Exception:
         pass
     return None
