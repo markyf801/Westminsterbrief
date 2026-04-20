@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block title %}Debate Prep — Westminster Brief{% endblock %}
+{% block meta_description %}Prepare a structured briefing pack for a Lords oral question: sector context, media coverage, parliamentary record, and peer profile.{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Debate Prep <span class="badge-ai">AI</span></h1>
+<p class="page-sub" style="color:#555;margin-bottom:1.2rem;">
+  Enter an oral question details to generate a structured briefing pack — sector context, media coverage, parliamentary record, and peer profile.
+</p>
+
+<!-- ── Input form ─────────────────────────────────────────── -->
+<form method="POST" action="/debate_prep" id="prep-form" onsubmit="showPrepLoading()">
+  <div class="form-row">
+    <div class="form-group" style="flex:2;">
+      <label>Peer name</label>
+      <input type="text" name="peer_name" value="{{ peer_name or '' }}"
+             placeholder="e.g. Lord John of Southwark" required>
+    </div>
+    <div class="form-group" style="flex:1;">
+      <label>Question date</label>
+      <input type="date" name="question_date" value="{{ question_date or '' }}" required>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Question text</label>
+    <textarea name="question_text" rows="3" required
+              placeholder="To ask His Majesty's Government...">{{ question_text or '' }}</textarea>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Media search from <span style="color:#888;font-weight:400">(default: 60 days before question)</span></label>
+      <input type="date" name="media_start" value="{{ media_start or '' }}">
+    </div>
+    <div class="form-group">
+      <label>Media search to</label>
+      <input type="date" name="media_end" value="{{ media_end or '' }}">
+    </div>
+  </div>
+  <button type="submit" class="btn btn-primary btn-full">Generate Briefing</button>
+</form>
+
+<!-- Loading overlay -->
+<div id="prep-loading" style="display:none;text-align:center;padding:2rem;">
+  <div style="font-size:1.1rem;color:#1C3E6E;font-weight:600;">Generating briefing…</div>
+  <div style="color:#666;margin-top:.5rem;font-size:.9rem;">
+    Looking up peer profile, searching parliamentary record, fetching media coverage, running AI analysis…
+  </div>
+  <div style="margin-top:1rem;font-size:1.5rem;">⏳</div>
+</div>
+
+{% if error %}
+<div class="error" style="margin-top:1rem;">{{ error }}</div>
+{% endif %}
+
+{% if is_post %}
+<!-- ── Results ────────────────────────────────────────────── -->
+<div id="prep-results" style="margin-top:2rem;">
+
+  {% if not peer_info and not one_pager and not media_items and not parl_sections %}
+  <div class="info-box">No results found. Try checking the peer name spelling or broadening the date range.</div>
+  {% else %}
+
+  <!-- ── Section 1: One Pager ─────────────────────────────── -->
+  <details class="research-section" open>
+    <summary class="research-section-header">
+      <span class="research-section-title">📋 One Pager — Background Briefing</span>
+      <span class="research-section-count">AI Generated</span>
+    </summary>
+    <div class="research-section-body">
+      {% if one_pager %}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
+        <div class="topic-briefing-section" style="background:#EEF4FB;border-radius:6px;padding:1rem;">
+          <div style="font-weight:600;color:#1C3E6E;margin-bottom:.5rem;">Why Now</div>
+          <div style="font-size:.9rem;line-height:1.5;">{{ one_pager.why_now or '—' }}</div>
+        </div>
+        <div class="topic-briefing-section" style="background:#F0FFF4;border-radius:6px;padding:1rem;">
+          <div style="font-weight:600;color:#166534;margin-bottom:.5rem;">Sector Context</div>
+          <div style="font-size:.9rem;line-height:1.5;">{{ one_pager.sector_context or '—' }}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+        <div class="topic-briefing-section" style="background:#FFF8E1;border-radius:6px;padding:1rem;">
+          <div style="font-weight:600;color:#92400E;margin-bottom:.5rem;">Major Criticisms</div>
+          {% if one_pager.major_criticisms %}
+          <ul style="margin:0;padding-left:1.2rem;font-size:.9rem;line-height:1.6;">
+            {% for crit in one_pager.major_criticisms %}
+            <li>{{ crit }}</li>
+            {% endfor %}
+          </ul>
+          {% else %}<div style="font-size:.9rem;">—</div>{% endif %}
+        </div>
+        <div class="topic-briefing-section" style="background:#FEF2F2;border-radius:6px;padding:1rem;">
+          <div style="font-weight:600;color:#991B1B;margin-bottom:.5rem;">Opposition Position</div>
+          <div style="font-size:.9rem;line-height:1.5;">{{ one_pager.opposition_position or '—' }}</div>
+        </div>
+      </div>
+      {% else %}
+      <div class="info-box">AI briefing unavailable — API key may not be configured.</div>
+      {% endif %}
+    </div>
+  </details>
+
+  <!-- ── Section 2: Media Coverage ────────────────────────── -->
+  <details class="research-section">
+    <summary class="research-section-header">
+      <span class="research-section-title">📰 Media Coverage</span>
+      <span class="research-section-count">{{ media_items | length }} articles</span>
+    </summary>
+    <div class="research-section-body">
+      {% if media_items %}
+      {% set pos = media_items | selectattr('sentiment', 'equalto', 'positive') | list %}
+      {% set neg = media_items | selectattr('sentiment', 'equalto', 'negative') | list %}
+      {% set neu = media_items | selectattr('sentiment', 'equalto', 'neutral') | list %}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;">
+        <div>
+          <div style="font-weight:600;color:#166534;margin-bottom:.5rem;font-size:.9rem;">
+            ▲ Positive coverage ({{ pos | length }})
+          </div>
+          {% for art in pos %}
+          <div class="result-card" style="border-left:3px solid #28a745;margin-bottom:.5rem;">
+            <div class="result-card-header" style="font-size:.8rem;color:#555;">
+              {{ art.published or '' }}{% if art.outlet %} · {{ art.outlet }}{% endif %}
+            </div>
+            <div style="font-size:.9rem;font-weight:500;">
+              {% if art.link %}<a href="{{ art.link }}" target="_blank" rel="noopener">{{ art.title }}</a>
+              {% else %}{{ art.title }}{% endif %}
+            </div>
+            {% if art.summary and art.summary != art.title %}
+            <div style="font-size:.85rem;color:#444;margin-top:.25rem;">{{ art.summary }}</div>
+            {% endif %}
+          </div>
+          {% else %}
+          <div style="color:#888;font-size:.9rem;">None found</div>
+          {% endfor %}
+        </div>
+        <div>
+          <div style="font-weight:600;color:#991B1B;margin-bottom:.5rem;font-size:.9rem;">
+            ▼ Negative / critical coverage ({{ neg | length }})
+          </div>
+          {% for art in neg %}
+          <div class="result-card" style="border-left:3px solid #dc3545;margin-bottom:.5rem;">
+            <div class="result-card-header" style="font-size:.8rem;color:#555;">
+              {{ art.published or '' }}{% if art.outlet %} · {{ art.outlet }}{% endif %}
+            </div>
+            <div style="font-size:.9rem;font-weight:500;">
+              {% if art.link %}<a href="{{ art.link }}" target="_blank" rel="noopener">{{ art.title }}</a>
+              {% else %}{{ art.title }}{% endif %}
+            </div>
+            {% if art.summary and art.summary != art.title %}
+            <div style="font-size:.85rem;color:#444;margin-top:.25rem;">{{ art.summary }}</div>
+            {% endif %}
+          </div>
+          {% else %}
+          <div style="color:#888;font-size:.9rem;">None found</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% if neu %}
+      <div style="margin-top:1rem;">
+        <div style="font-weight:600;color:#555;margin-bottom:.5rem;font-size:.9rem;">
+          — Neutral coverage ({{ neu | length }})
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;">
+          {% for art in neu %}
+          <div class="result-card" style="border-left:3px solid #aaa;margin-bottom:.25rem;">
+            <div style="font-size:.8rem;color:#555;">{{ art.published or '' }}{% if art.outlet %} · {{ art.outlet }}{% endif %}</div>
+            <div style="font-size:.88rem;">
+              {% if art.link %}<a href="{{ art.link }}" target="_blank" rel="noopener">{{ art.title }}</a>
+              {% else %}{{ art.title }}{% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="info-box">No media coverage found for this period{% if not media_start %} — try setting a date range{% endif %}.</div>
+      {% endif %}
+    </div>
+  </details>
+
+  <!-- ── Section 3: Parliamentary Record ─────────────────── -->
+  <details class="research-section">
+    <summary class="research-section-header">
+      <span class="research-section-title">🏛️ Parliamentary Record</span>
+      {% set total_parl = (parl_sections.lords_debates | default([]) | length) +
+                          (parl_sections.commons_debates | default([]) | length) +
+                          (parl_sections.wqs | default([]) | length) +
+                          (parl_sections.statements | default([]) | length) %}
+      <span class="research-section-count">{{ total_parl }} items</span>
+    </summary>
+    <div class="research-section-body">
+
+      {% set parl_subsections = [
+        ('lords_debates',   'Lords Debates', '🏛️'),
+        ('commons_debates', 'Commons Debates', '🗣️'),
+        ('wqs',             'Written Questions', '✍️'),
+        ('statements',      'Oral Statements', '📜'),
+      ] %}
+
+      {% for key, label, icon in parl_subsections %}
+      {% set rows = parl_sections.get(key, []) %}
+      <details class="research-section" style="margin-left:.5rem;margin-bottom:.5rem;">
+        <summary class="research-section-header" style="background:#f8f9fa;">
+          <span class="research-section-title" style="font-size:.9rem;">{{ icon }} {{ label }}</span>
+          <span class="research-section-count">{{ rows | length }}</span>
+        </summary>
+        <div class="research-section-body">
+          {% if rows %}
+            {% if key == 'wqs' %}
+              {% for q in rows[:20] %}
+              <div class="result-card" style="margin-bottom:.5rem;">
+                <div class="result-card-header" style="font-size:.8rem;color:#555;">
+                  {{ q.date_tabled or '' }} · {{ q.dept or '' }}
+                  {% if q.is_answered %}<span class="wq-status-badge wq-status-answered">Answered</span>{% endif %}
+                </div>
+                <div style="font-size:.88rem;margin:.25rem 0;">{{ q.asking_mp or '' }}{% if q.party %} ({{ q.party }}){% endif %}</div>
+                <div style="font-size:.9rem;">{{ q.question_text or '' }}</div>
+                {% if q.url %}<div style="margin-top:.25rem;font-size:.8rem;"><a href="{{ q.url }}" target="_blank" rel="noopener">↗ Parliament.uk</a></div>{% endif %}
+              </div>
+              {% endfor %}
+            {% else %}
+              {% set seen_titles = namespace(v=[]) %}
+              {% for r in rows[:20] %}
+                {% set url = r.listurl | debate_url %}
+                {% if r.debate_title not in seen_titles.v %}
+                  {% set _ = seen_titles.v.append(r.debate_title) %}
+                  <div class="result-card" style="margin-bottom:.5rem;">
+                    <div class="result-card-header" style="font-size:.8rem;color:#555;">
+                      {{ r.hdate or '' }} · {{ r.source_label or '' }}
+                    </div>
+                    <div style="font-weight:600;font-size:.9rem;margin:.2rem 0;">{{ r.debate_title or '' }}</div>
+                    <div style="font-size:.88rem;color:#333;">
+                      <strong>{{ r.speaker_name or '' }}</strong>: {{ r.body_clean or '' | truncate(200) }}
+                    </div>
+                    {% if url %}<div style="margin-top:.25rem;font-size:.8rem;"><a href="{{ url }}" target="_blank" rel="noopener">↗ View on Hansard</a></div>{% endif %}
+                  </div>
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% else %}
+          <div style="color:#888;font-size:.9rem;padding:.5rem;">None found in search period.</div>
+          {% endif %}
+        </div>
+      </details>
+      {% endfor %}
+
+    </div>
+  </details>
+
+  <!-- ── Section 4: Peer Profile ───────────────────────────── -->
+  <details class="research-section">
+    <summary class="research-section-header">
+      <span class="research-section-title">👤 Peer Profile — {{ peer_name }}</span>
+      <span class="research-section-count">
+        {% if peer_info %}{{ peer_info.party or '' }} · {{ peer_info.house or '' }}{% else %}Not found{% endif %}
+      </span>
+    </summary>
+    <div class="research-section-body">
+      {% if peer_info %}
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:1.2rem;align-items:start;">
+        {% if peer_info.thumbnail %}
+        <img src="{{ peer_info.thumbnail }}" alt="{{ peer_info.display_name }}"
+             style="width:80px;border-radius:4px;border:1px solid #ddd;">
+        {% endif %}
+        <div>
+          <div style="font-size:1.05rem;font-weight:600;">{{ peer_info.display_name or peer_name }}</div>
+          <div style="color:#555;font-size:.9rem;">
+            {{ peer_info.party or '' }}{% if peer_info.house %} · {{ peer_info.house }}{% endif %}
+          </div>
+        </div>
+      </div>
+
+      {% if peer_info.biography_posts %}
+      <div style="margin-top:1rem;">
+        <div style="font-weight:600;font-size:.9rem;margin-bottom:.4rem;">Career &amp; Posts</div>
+        {% set current_posts = peer_info.biography_posts | selectattr('is_current') | list %}
+        {% set past_posts = peer_info.biography_posts | rejectattr('is_current') | list %}
+        {% if current_posts %}
+        <div style="margin-bottom:.4rem;">
+          {% for post in current_posts[:3] %}
+          <div style="font-size:.88rem;background:#EEF4FB;padding:.3rem .6rem;border-radius:4px;margin-bottom:.3rem;color:#1C3E6E;font-weight:500;">
+            ● [Current] {{ post.category }}: {{ post.title }}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% for post in past_posts[:8] %}
+        <div style="font-size:.85rem;color:#333;padding:.15rem 0;border-bottom:1px solid #f0f0f0;">
+          {% if post.start %}{{ post.start[:4] }}{% if post.end %}–{{ post.end[:4] }}{% endif %}: {% endif %}
+          {{ post.category }} — {{ post.title }}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if peer_info.interests %}
+      <div style="margin-top:1rem;">
+        <div style="font-weight:600;font-size:.9rem;margin-bottom:.4rem;">Register of Interests</div>
+        {% for cat in peer_info.interests[:5] %}
+        <div style="margin-bottom:.5rem;">
+          <div style="font-size:.85rem;font-weight:600;color:#444;">{{ cat.category }}</div>
+          {% for item in cat.items[:4] %}
+          <div style="font-size:.82rem;color:#555;padding:.1rem 0 .1rem .8rem;border-left:2px solid #ddd;">{{ item }}</div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% else %}
+      <div class="info-box">Peer not found in Parliament Members API. Check spelling — try "Lord Smith of X" or just "Smith".</div>
+      {% endif %}
+
+      {% if peer_contributions %}
+      {% set speeches = peer_contributions.get('speeches', []) %}
+      {% set tabled_wqs = peer_contributions.get('tabled_wqs', []) %}
+
+      {% if speeches %}
+      <div style="margin-top:1rem;">
+        <div style="font-weight:600;font-size:.9rem;margin-bottom:.4rem;">Recent Spoken Contributions</div>
+        {% set seen_contrib = namespace(v=[]) %}
+        {% for r in speeches[:12] %}
+          {% if r.debate_title not in seen_contrib.v %}
+            {% set _ = seen_contrib.v.append(r.debate_title) %}
+            {% set url = r.listurl | debate_url %}
+            <div style="font-size:.85rem;padding:.2rem 0;border-bottom:1px solid #f0f0f0;">
+              {{ r.hdate or '' }} — {{ r.debate_title or '' }}
+              {% if url %}<a href="{{ url }}" target="_blank" rel="noopener" style="font-size:.8rem;margin-left:.4rem;">↗</a>{% endif %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if tabled_wqs %}
+      <div style="margin-top:1rem;">
+        <div style="font-weight:600;font-size:.9rem;margin-bottom:.4rem;">Recent Written Questions Tabled</div>
+        {% for q in tabled_wqs[:10] %}
+        <div style="font-size:.85rem;padding:.2rem 0;border-bottom:1px solid #f0f0f0;">
+          {{ q.date_tabled or '' }} · {{ q.dept or '' }} —
+          {{ q.question_text or '' | truncate(120) }}
+          {% if q.url %}<a href="{{ q.url }}" target="_blank" rel="noopener" style="margin-left:.3rem;">↗</a>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endif %}
+
+    </div>
+  </details>
+
+  <!-- ── Download ──────────────────────────────────────────── -->
+  <div style="margin-top:1.5rem;text-align:center;">
+    <form method="POST" action="/download_debate_prep_brief" id="prep-download-form">
+      <input type="hidden" name="peer_name" value="{{ peer_name }}">
+      <input type="hidden" name="question_date" value="{{ question_date or '' }}">
+      <input type="hidden" name="question_text" value="{{ question_text or '' }}">
+      <input type="hidden" name="peer_info_json" value="{{ peer_info | tojson | e if peer_info else '{}' }}">
+      <input type="hidden" name="one_pager_json" value="{{ one_pager | tojson | e if one_pager else '{}' }}">
+      <input type="hidden" name="media_json" value="{{ media_items | tojson | e }}">
+      <input type="hidden" name="parl_json" value="{{ parl_sections | tojson | e }}">
+      <input type="hidden" name="peer_contrib_json" value="{{ peer_contributions | tojson | e }}">
+      <button type="submit" class="btn btn-primary" style="padding:.7rem 2rem;font-size:1rem;">
+        ⬇ Download Word Brief
+      </button>
+    </form>
+  </div>
+
+  {% endif %}
+</div>
+{% endif %}
+
+<script>
+function showPrepLoading() {
+    document.getElementById('prep-form').style.display = 'none';
+    document.getElementById('prep-loading').style.display = 'block';
+}
+</script>
+{% endblock %}

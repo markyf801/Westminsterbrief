@@ -3247,3 +3247,681 @@ def download_research_brief():
     filename = f"Research - {safe_topic} - {datetime.now().strftime('%Y%m%d')}.docx"
     return send_file(mem_doc, as_attachment=True, download_name=filename,
                      mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+
+
+# ==========================================
+# DEBATE PREP — Helper functions
+# ==========================================
+
+def _prep_resolve_peer(peer_name):
+    """Look up a peer's Parliament profile.
+    Returns dict with parliament_id, display_name, party, house,
+    biography_posts, interests — or None if not found."""
+    try:
+        resp = requests.get(
+            'https://members-api.parliament.uk/api/Members/Search',
+            params={'Name': peer_name, 'IsCurrentMember': 'true', 'take': 5},
+            timeout=8
+        )
+        items = []
+        if resp.status_code == 200:
+            items = resp.json().get('items', [])
+        if not items:
+            # Try without IsCurrentMember — some Lords are former ministers
+            resp2 = requests.get(
+                'https://members-api.parliament.uk/api/Members/Search',
+                params={'Name': peer_name, 'take': 5},
+                timeout=8
+            )
+            if resp2.status_code == 200:
+                items = resp2.json().get('items', [])
+        if not items:
+            return None
+
+        v = items[0]['value']
+        parliament_id = v['id']
+        house_num = (v.get('latestHouseMembership') or {}).get('house', 1)
+        house = 'Lords' if house_num == 2 else 'Commons'
+        party = (v.get('latestParty') or {}).get('name', '')
+        name = v.get('nameDisplayAs', peer_name)
+        thumbnail = v.get('thumbnailUrl', '')
+
+        bio_posts = []
+        try:
+            bio_resp = requests.get(
+                f'https://members-api.parliament.uk/api/Members/{parliament_id}/Biography',
+                timeout=8
+            )
+            if bio_resp.status_code == 200:
+                bio = bio_resp.json().get('value', {})
+                for category_key, cat_label in [
+                    ('governmentPosts', 'Government Post'),
+                    ('oppositionPosts', 'Opposition Post'),
+                    ('committeeMemberships', 'Committee'),
+                    ('representations', 'Career'),
+                ]:
+                    for post in (bio.get(category_key) or []):
+                        bio_posts.append({
+                            'category': cat_label,
+                            'title': post.get('name', ''),
+                            'start': (post.get('startDate') or '')[:10],
+                            'end': (post.get('endDate') or '')[:10],
+                            'is_current': not post.get('endDate'),
+                        })
+        except Exception:
+            pass
+
+        interests = []
+        try:
+            int_resp = requests.get(
+                f'https://members-api.parliament.uk/api/Members/{parliament_id}/RegisteredInterests',
+                timeout=8
+            )
+            if int_resp.status_code == 200:
+                for category in (int_resp.json().get('value') or []):
+                    cat_name = category.get('name', '')
+                    cat_items = []
+                    for item in (category.get('interests') or []):
+                        desc = item.get('interest', '') or item.get('description', '')
+                        if desc:
+                            cat_items.append(desc[:200])
+                    if cat_items:
+                        interests.append({'category': cat_name, 'items': cat_items})
+        except Exception:
+            pass
+
+        return {
+            'parliament_id': parliament_id,
+            'display_name': name,
+            'party': party,
+            'house': house,
+            'thumbnail': thumbnail,
+            'biography_posts': bio_posts,
+            'interests': interests,
+        }
+    except Exception:
+        return None
+
+
+def _prep_one_pager(question_text, topic, question_date=''):
+    """Generate an AI one-pager briefing for an oral question.
+    Returns dict with why_now, sector_context, major_criticisms, opposition_position
+    or None on failure."""
+    if not GEMINI_API_KEY and not CLAUDE_API_KEY:
+        return None
+
+    prompt = (
+        "You are briefing a UK civil servant preparing for a Lords oral question.\n\n"
+        f"Question: {question_text}\n"
+        f"Topic: {topic}\n"
+        f"Date: {question_date or 'upcoming'}\n\n"
+        "Generate a structured background briefing with these four sections:\n"
+        "1. why_now: 2-3 sentences explaining why this question is being asked at this "
+        "time — recent events, policy changes, sector pressures, or public debate driving it\n"
+        "2. sector_context: 3-4 sentences of factual background on the sector or policy area\n"
+        "3. major_criticisms: Array of 3-5 specific criticisms or concerns currently being "
+        "raised about this area by campaigners, academics, media or opposition\n"
+        "4. opposition_position: 2-3 sentences summarising the likely opposition angle — "
+        "what they want the government to commit to, and what they may push back on\n\n"
+        'Return as JSON only, no prose, no markdown fences:\n'
+        '{"why_now": "...", "sector_context": "...", "major_criticisms": ["...", "..."], '
+        '"opposition_position": "..."}'
+    )
+
+    if GEMINI_API_KEY:
+        try:
+            url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+                   f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}")
+            body = {"contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1000}}
+            resp = requests.post(url, json=body, timeout=30)
+            if resp.status_code == 200:
+                raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+                result = _parse_ai_json(raw)
+                if result:
+                    return result
+        except Exception:
+            pass
+
+    raw = _claude_fallback(prompt, max_tokens=1000)
+    if raw:
+        return _parse_ai_json(raw)
+    return None
+
+
+_NEGATIVE_SENTIMENT_WORDS = {
+    'crisis', 'failure', 'fail', 'cut', 'cuts', 'closure', 'closures', 'lost',
+    'concern', 'problem', 'criticism', 'shortage', 'scandal', 'row', 'backlash',
+    'warning', 'threat', 'decline', 'collapse', 'protest', 'underfund', 'underfunded',
+    'anger', 'outrage', 'catastrophe', 'catastrophic', 'devastating',
+}
+_POSITIVE_SENTIMENT_WORDS = {
+    'invest', 'investment', 'growth', 'support', 'success', 'improve', 'improvement',
+    'boost', 'achieve', 'achievement', 'celebrate', 'award', 'record', 'launch',
+    'fund', 'expand', 'expansion', 'progress', 'reform',
+}
+
+
+def _classify_sentiment(title, summary):
+    text = (title + ' ' + (summary or '')).lower()
+    words = set(re.findall(r'\b\w+\b', text))
+    neg_score = len(words & _NEGATIVE_SENTIMENT_WORDS)
+    pos_score = len(words & _POSITIVE_SENTIMENT_WORDS)
+    if neg_score > pos_score:
+        return 'negative'
+    if pos_score > neg_score:
+        return 'positive'
+    return 'neutral'
+
+
+def _prep_media(topic, start_date='', end_date=''):
+    """Search News API for media coverage of the topic.
+    Returns list of {title, outlet, published, summary, link, sentiment}."""
+    NEWS_API_KEY = os.environ.get('NEWS_API_KEY')
+    if not NEWS_API_KEY:
+        return []
+    try:
+        from newsapi import NewsApiClient
+        newsapi = NewsApiClient(api_key=NEWS_API_KEY)
+        kwargs = {'q': topic, 'language': 'en', 'sort_by': 'relevancy', 'page_size': 20}
+        if start_date:
+            kwargs['from_param'] = start_date
+        if end_date:
+            kwargs['to'] = end_date
+        resp = newsapi.get_everything(**kwargs)
+        results = []
+        for art in resp.get('articles', []):
+            title = art.get('title', '')
+            summary = art.get('description') or art.get('title', '')
+            results.append({
+                'title': title,
+                'link': art.get('url', ''),
+                'published': (art.get('publishedAt') or '')[:10],
+                'summary': summary[:200],
+                'outlet': art.get('source', {}).get('name', ''),
+                'sentiment': _classify_sentiment(title, summary),
+            })
+        return results
+    except Exception:
+        return []
+
+
+def _prep_parliamentary(topic, date_range, start_date='', end_date=''):
+    """Fetch parliamentary activity on the topic across Lords, Commons, WQs, statements.
+    Returns dict: {lords_debates, commons_debates, wqs, statements}."""
+    results = {'lords_debates': [], 'commons_debates': [], 'wqs': [], 'statements': []}
+
+    def _lords():
+        rows = fetch_twfy_topic(topic, 'lords', date_range, num=50)
+        return [r for r in rows if not r.get('_error')]
+
+    def _commons():
+        rows = []
+        rows.extend(fetch_twfy_topic(topic, 'commons', date_range, num=40))
+        rows.extend(fetch_twfy_topic(topic, 'westminsterhall', date_range, num=30))
+        return [r for r in rows if not r.get('_error')]
+
+    def _wqs():
+        wqs, _ = _fetch_topic_wqs(topic, start_date, end_date, [], limit=20)
+        return wqs
+
+    def _statements():
+        rows = fetch_twfy_topic(topic, 'wms', date_range, num=20)
+        return [r for r in rows if not r.get('_error')]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        f_lords = ex.submit(copy_current_request_context(_lords))
+        f_commons = ex.submit(copy_current_request_context(_commons))
+        f_wqs = ex.submit(copy_current_request_context(_wqs))
+        f_stmts = ex.submit(copy_current_request_context(_statements))
+        for key, fut in [('lords_debates', f_lords), ('commons_debates', f_commons),
+                          ('wqs', f_wqs), ('statements', f_stmts)]:
+            try:
+                results[key] = fut.result(timeout=25)
+            except Exception:
+                results[key] = []
+
+    return results
+
+
+def _prep_peer_contributions(parliament_id, start_date='', end_date=''):
+    """Fetch the peer's own recent speeches and tabled WPQs.
+    Returns dict: {speeches, tabled_wqs}."""
+    date_range = ''
+    if start_date and end_date:
+        date_range = f'{start_date.replace("-","")}..{end_date.replace("-","")}'
+    elif start_date:
+        date_range = f'{start_date.replace("-","")}..{datetime.now().strftime("%Y%m%d")}'
+
+    def _speeches():
+        return fetch_hansard_minister_topic(
+            parliament_id, '', date_range,
+            ['lords', 'commons', 'wms', 'westminsterhall'],
+            num=20, is_lord=True
+        )
+
+    def _wqs():
+        try:
+            params = {
+                'tabledBy': parliament_id, 'take': 20, 'skip': 0,
+                'expandMember': 'false', 'orderBy': 'DateTabledDesc',
+            }
+            resp = requests.get(PARLIAMENT_WQ_API, params=params, timeout=15)
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            results = []
+            for item in data.get('results', []):
+                val = item.get('value', {})
+                raw_date = (val.get('dateTabled') or '').split('T')[0]
+                uin = str(val.get('uin', ''))
+                q_text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ',
+                                val.get('questionText') or '')).strip()
+                dept = val.get('answeringBodyName', '')
+                results.append({
+                    'uin': uin,
+                    'question_text': q_text[:300],
+                    'dept': dept,
+                    'date_tabled': raw_date,
+                    'url': (f"https://questions-statements.parliament.uk/written-questions"
+                            f"/detail/{raw_date}/{uin}"),
+                })
+            return results
+        except Exception:
+            return []
+
+    speeches = []
+    tabled_wqs = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f_sp = ex.submit(copy_current_request_context(_speeches))
+        f_wq = ex.submit(copy_current_request_context(_wqs))
+        try:
+            speeches = f_sp.result(timeout=20)
+        except Exception:
+            speeches = []
+        try:
+            tabled_wqs = f_wq.result(timeout=15)
+        except Exception:
+            tabled_wqs = []
+
+    return {'speeches': speeches, 'tabled_wqs': tabled_wqs}
+
+
+# ==========================================
+# ROUTE 11: DEBATE PREP
+# ==========================================
+@debate_scanner_bp.route('/debate_prep', methods=['GET', 'POST'])
+def debate_prep():
+    if request.method == 'GET':
+        return render_template('debate_prep.html',
+            is_post=False, peer_name='', question_date='', question_text='',
+            media_start='', media_end='', peer_info=None, one_pager=None,
+            media_items=[], parl_sections={}, peer_contributions={}, error=None)
+
+    peer_name = request.form.get('peer_name', '').strip()
+    question_date = request.form.get('question_date', '').strip()
+    question_text = request.form.get('question_text', '').strip()
+    media_start = request.form.get('media_start', '').strip()
+    media_end = request.form.get('media_end', '').strip()
+
+    if not peer_name or not question_text:
+        return render_template('debate_prep.html',
+            is_post=True, peer_name=peer_name, question_date=question_date,
+            question_text=question_text, media_start=media_start, media_end=media_end,
+            peer_info=None, one_pager=None, media_items=[], parl_sections={},
+            peer_contributions={}, error='Please provide a peer name and question text.')
+
+    # Derive topic from question text — use first sentence as search topic
+    topic = re.split(r'[.?]', question_text)[0].strip()[:150]
+
+    # Default media range: 60 days before question date
+    if not media_start and question_date:
+        try:
+            from datetime import timedelta
+            qd = datetime.strptime(question_date, '%Y-%m-%d')
+            media_start = (qd - timedelta(days=60)).strftime('%Y-%m-%d')
+            media_end = media_end or question_date
+        except Exception:
+            pass
+
+    # Parliamentary range: 1 year look-back
+    parl_start = ''
+    parl_end = question_date or datetime.now().strftime('%Y-%m-%d')
+    if question_date:
+        try:
+            from datetime import timedelta
+            qd = datetime.strptime(question_date, '%Y-%m-%d')
+            parl_start = (qd - timedelta(days=365)).strftime('%Y-%m-%d')
+        except Exception:
+            pass
+
+    parl_date_range = get_twfy_date_range(parl_start, parl_end)
+
+    peer_info = None
+    one_pager = None
+    media_items = []
+    parl_sections = {}
+    peer_contributions = {}
+
+    def _task_peer():
+        return _prep_resolve_peer(peer_name)
+
+    def _task_one_pager():
+        return _prep_one_pager(question_text, topic, question_date)
+
+    def _task_media():
+        return _prep_media(topic, media_start, media_end)
+
+    def _task_parl():
+        return _prep_parliamentary(topic, parl_date_range, parl_start, parl_end)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        f_peer = executor.submit(copy_current_request_context(_task_peer))
+        f_one_pager = executor.submit(copy_current_request_context(_task_one_pager))
+        f_media = executor.submit(copy_current_request_context(_task_media))
+        f_parl = executor.submit(copy_current_request_context(_task_parl))
+
+        try:
+            peer_info = f_peer.result(timeout=15)
+        except Exception:
+            peer_info = None
+        try:
+            one_pager = f_one_pager.result(timeout=35)
+        except Exception:
+            one_pager = None
+        try:
+            media_items = f_media.result(timeout=20)
+        except Exception:
+            media_items = []
+        try:
+            parl_sections = f_parl.result(timeout=40)
+        except Exception:
+            parl_sections = {}
+
+    # Peer contributions requires parliament_id — run after peer resolution
+    if peer_info and peer_info.get('parliament_id'):
+        try:
+            peer_contributions = _prep_peer_contributions(
+                peer_info['parliament_id'], parl_start, parl_end
+            )
+        except Exception:
+            peer_contributions = {}
+
+    return render_template('debate_prep.html',
+        is_post=True,
+        peer_name=peer_name,
+        question_date=question_date,
+        question_text=question_text,
+        media_start=media_start,
+        media_end=media_end,
+        peer_info=peer_info,
+        one_pager=one_pager,
+        media_items=media_items or [],
+        parl_sections=parl_sections or {},
+        peer_contributions=peer_contributions or {},
+        error=None)
+
+
+# ==========================================
+# ROUTE 12: DOWNLOAD DEBATE PREP BRIEF
+# ==========================================
+@debate_scanner_bp.route('/download_debate_prep_brief', methods=['POST'])
+def download_debate_prep_brief():
+    if not Document:
+        return "Word library missing.", 500
+
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _OxmlElement
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    def _parse_field(field, default=None):
+        val = request.form.get(field, '')
+        if not val:
+            return default if default is not None else {}
+        try:
+            return json.loads(val)
+        except Exception:
+            return default if default is not None else {}
+
+    peer_name = request.form.get('peer_name', 'Unknown Peer')
+    question_date = request.form.get('question_date', '')
+    question_text = request.form.get('question_text', '')
+    peer_info = _parse_field('peer_info_json', {})
+    one_pager = _parse_field('one_pager_json', {})
+    media_items = _parse_field('media_json', [])
+    parl_sections = _parse_field('parl_json', {})
+    peer_contributions = _parse_field('peer_contrib_json', {})
+
+    doc = Document()
+
+    # Page margins
+    sec = doc.sections[0]
+    sec.top_margin = Inches(0.9)
+    sec.bottom_margin = Inches(0.9)
+    sec.left_margin = Inches(1.1)
+    sec.right_margin = Inches(1.1)
+
+    def _set_cell_bg(cell, hex_colour):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd = _OxmlElement('w:shd')
+        shd.set(_qn('w:val'), 'clear')
+        shd.set(_qn('w:color'), 'auto')
+        shd.set(_qn('w:fill'), hex_colour)
+        tcPr.append(shd)
+
+    def _clr(run, hex_str):
+        r, g, b = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
+        run.font.color.rgb = RGBColor(r, g, b)
+
+    # Cover block
+    title_p = doc.add_heading('Debate Preparation Briefing', 0)
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    for line in filter(None, [
+        f'Peer: {peer_name}',
+        f'Question date: {question_date}' if question_date else None,
+        f'Generated: {datetime.now().strftime("%d %b %Y %H:%M")}',
+    ]):
+        p = doc.add_paragraph(line)
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.runs[0].italic = True
+        p.runs[0].font.size = Pt(11)
+
+    if question_text:
+        q_p = doc.add_paragraph()
+        q_p.add_run('Question: ').bold = True
+        q_p.add_run(question_text)
+        q_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    notice = doc.add_paragraph(
+        '⚠ AI-generated — verify against source links before use in official documents.')
+    notice.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    notice.runs[0].font.size = Pt(9)
+    notice.runs[0].italic = True
+    _clr(notice.runs[0], '856404')
+    doc.add_paragraph()
+
+    # ── Section 1: One Pager ──────────────────────────────────────
+    if one_pager:
+        doc.add_heading('One Pager — Background Briefing', 1)
+        for sub_key, sub_title in [
+            ('why_now', 'Why Now'),
+            ('sector_context', 'Sector Context'),
+            ('opposition_position', 'Opposition Position'),
+        ]:
+            if one_pager.get(sub_key):
+                doc.add_heading(sub_title, 2)
+                doc.add_paragraph(one_pager[sub_key])
+        if one_pager.get('major_criticisms'):
+            doc.add_heading('Major Criticisms', 2)
+            for crit in one_pager['major_criticisms']:
+                doc.add_paragraph(crit, style='List Bullet')
+        doc.add_paragraph()
+
+    # ── Section 2: Media ──────────────────────────────────────────
+    if media_items:
+        doc.add_heading(f'Media Coverage ({len(media_items)} articles)', 1)
+        tbl = doc.add_table(rows=1, cols=4)
+        tbl.style = 'Table Grid'
+        hdr = tbl.rows[0].cells
+        for i, lbl in enumerate(['Date', 'Outlet', 'Sentiment', 'Headline & Summary']):
+            hdr[i].text = lbl
+            hdr[i].paragraphs[0].runs[0].bold = True
+            _set_cell_bg(hdr[i], '1C3E6E')
+            hdr[i].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        sent_colours = {'positive': 'D4EDDA', 'negative': 'F8D7DA', 'neutral': 'F8F9FA'}
+        for art in media_items:
+            row = tbl.add_row().cells
+            row[0].text = art.get('published', '')
+            row[1].text = art.get('outlet', '')
+            sentiment = art.get('sentiment', 'neutral')
+            row[2].text = sentiment.capitalize()
+            _set_cell_bg(row[2], sent_colours.get(sentiment, 'F8F9FA'))
+            cell = row[3]
+            p = cell.paragraphs[0]
+            link = art.get('link', '')
+            if link:
+                _add_hyperlink(p, link, art.get('title', ''))
+            else:
+                p.add_run(art.get('title', ''))
+            summary = art.get('summary', '')
+            if summary and summary != art.get('title', ''):
+                sp = cell.add_paragraph(summary)
+                sp.runs[0].font.size = Pt(9)
+        doc.add_paragraph()
+
+    # ── Section 3: Parliamentary Record ───────────────────────────
+    parl_label_map = [
+        ('lords_debates', 'Lords Debates'),
+        ('commons_debates', 'Commons Debates'),
+        ('wqs', 'Written Questions'),
+        ('statements', 'Oral Statements'),
+    ]
+    if any(parl_sections.get(k) for k, _ in parl_label_map):
+        doc.add_heading('Parliamentary Record', 1)
+        for key, label in parl_label_map:
+            rows = parl_sections.get(key, [])
+            if not rows:
+                continue
+            doc.add_heading(f'{label} ({len(rows)})', 2)
+            if key == 'wqs':
+                for q in rows[:15]:
+                    p = doc.add_paragraph()
+                    meta_run = p.add_run(
+                        f"{q.get('date_tabled', '')}  ·  {q.get('dept', '')}  — ")
+                    meta_run.font.size = Pt(9)
+                    _clr(meta_run, '555555')
+                    p.add_run(q.get('question_text', '')[:200])
+                    if q.get('url'):
+                        lp = doc.add_paragraph()
+                        _add_hyperlink(lp, q['url'], '↗ Parliament.uk')
+                        if lp.runs:
+                            lp.runs[0].font.size = Pt(9)
+            else:
+                seen_d = set()
+                for r in rows[:20]:
+                    url = r.get('listurl', '')
+                    if url and not url.startswith('http'):
+                        url = 'https://www.theyworkforyou.com' + url
+                    key_d = url or r.get('debate_title', '')
+                    if key_d in seen_d:
+                        continue
+                    seen_d.add(key_d)
+                    hp = doc.add_paragraph()
+                    meta_run = hp.add_run(
+                        f"{r.get('hdate', '')}  ·  {r.get('source_label', '')}  — ")
+                    meta_run.font.size = Pt(9)
+                    _clr(meta_run, '555555')
+                    hp.add_run(r.get('debate_title', '')).bold = True
+                    sp = doc.add_paragraph()
+                    sp.add_run(f"{r.get('speaker_name', '')}:  ").bold = True
+                    body_run = sp.add_run(r.get('body_clean', '')[:250])
+                    body_run.font.size = Pt(10)
+                    if url:
+                        lp = doc.add_paragraph()
+                        _add_hyperlink(lp, url, '↗ View on Hansard')
+                        if lp.runs:
+                            lp.runs[0].font.size = Pt(9)
+                    doc.add_paragraph('─' * 60)
+        doc.add_paragraph()
+
+    # ── Section 4: Peer Profile ────────────────────────────────────
+    doc.add_heading(f'Peer Profile — {peer_name}', 1)
+    if peer_info:
+        meta = '  ·  '.join(filter(None, [peer_info.get('party', ''),
+                                           peer_info.get('house', '')]))
+        if meta:
+            doc.add_paragraph(meta).runs[0].font.size = Pt(10)
+
+        bio_posts = peer_info.get('biography_posts', [])
+        if bio_posts:
+            doc.add_heading('Career & Posts', 2)
+            current = [p for p in bio_posts if p.get('is_current')]
+            past = [p for p in bio_posts if not p.get('is_current')]
+            for post in current[:5]:
+                p = doc.add_paragraph(style='List Bullet')
+                run = p.add_run(f"[Current] {post['category']}: {post['title']}")
+                run.bold = True
+                _clr(run, '1C3E6E')
+            for post in past[:12]:
+                p = doc.add_paragraph(style='List Bullet')
+                yr = ''
+                if post.get('start'):
+                    yr = f" ({post['start'][:4]}"
+                    yr += f"–{post['end'][:4]})" if post.get('end') else '–present)'
+                p.add_run(f"{post['category']}: {post['title']}{yr}")
+
+        interests = peer_info.get('interests', [])
+        if interests:
+            doc.add_heading('Register of Interests', 2)
+            for cat in interests[:6]:
+                doc.add_paragraph(cat['category']).runs[0].bold = True
+                for item in cat['items'][:5]:
+                    p = doc.add_paragraph(item, style='List Bullet')
+                    p.runs[0].font.size = Pt(10)
+    else:
+        doc.add_paragraph('Peer not found in Parliament Members API.')
+
+    speeches = (peer_contributions or {}).get('speeches', [])
+    if speeches:
+        doc.add_heading('Recent Spoken Contributions', 2)
+        seen_s = set()
+        for r in speeches[:12]:
+            url = r.get('listurl', '')
+            if url and not url.startswith('http'):
+                url = 'https://www.theyworkforyou.com' + url
+            key_s = url or r.get('debate_title', '')
+            if key_s in seen_s:
+                continue
+            seen_s.add(key_s)
+            p = doc.add_paragraph(style='List Bullet')
+            p.add_run(f"{r.get('hdate', '')}  —  {r.get('debate_title', '')}")
+            if url:
+                lp = doc.add_paragraph()
+                _add_hyperlink(lp, url, '↗ Hansard')
+                if lp.runs:
+                    lp.runs[0].font.size = Pt(9)
+
+    tabled_wqs = (peer_contributions or {}).get('tabled_wqs', [])
+    if tabled_wqs:
+        doc.add_heading('Recent Written Questions Tabled', 2)
+        for q in tabled_wqs[:12]:
+            p = doc.add_paragraph(style='List Bullet')
+            p.add_run(
+                f"{q.get('date_tabled', '')}  ·  {q.get('dept', '')}  —  "
+                f"{q.get('question_text', '')[:150]}")
+            if q.get('url'):
+                lp = doc.add_paragraph()
+                _add_hyperlink(lp, q['url'], '↗ Parliament.uk')
+                if lp.runs:
+                    lp.runs[0].font.size = Pt(9)
+
+    mem_doc = io.BytesIO()
+    doc.save(mem_doc)
+    mem_doc.seek(0)
+    safe_name = re.sub(r'[^\w\s-]', '', peer_name)[:30].strip()
+    filename = f"Debate Prep - {safe_name} - {datetime.now().strftime('%Y%m%d')}.docx"
+    return send_file(mem_doc, as_attachment=True, download_name=filename,
+                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')

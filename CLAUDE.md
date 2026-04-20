@@ -85,6 +85,21 @@ python flask_app.py
 ```
 App runs at http://127.0.0.1:5000 — visit /home for the dashboard.
 
+## Accuracy tester
+A standalone testing tool lives at `C:\Users\marky\wb_tester` — **entirely separate from this project** (no shared code, no shared DB).
+
+It verifies what the live site returns against direct TWFY/Parliament API ground truth and manually curated fixtures.
+
+```bash
+cd C:\Users\marky\wb_tester
+pip install -r requirements.txt
+# Copy .env.example to .env and fill in TWFY_API_KEY, WB_TEST_EMAIL, WB_TEST_PASS
+python app.py
+# Open http://localhost:5001
+```
+
+Full instructions and known fragilities are in `C:\Users\marky\wb_tester\CLAUDE.md`.
+
 ## Known issues / tech debt
 - Written Questions search can be slow — Parliament API latency, no caching yet
 - The `SECRET_KEY` in flask_app.py is a placeholder — must be overridden by env var on Railway
@@ -157,6 +172,18 @@ This is implemented in `fetch_all_debate_sessions()` in `debate_scanner.py`.
 - **Validate architecture out loud** — when an approach is backwards (like speech-first vs debate-first), say so clearly and explain why. The user responds well to direct, logical explanation.
 - **Don't over-build** — the user wants accessible, clean, downloadable information. Not feature bloat. When in doubt, do less but do it well.
 - **Information must always be downloadable** — this is a hard requirement for every results view. Word export is the primary format.
+
+### When to stop and go to plan mode — trigger rules
+
+Go to plan mode (do not write code) if ANY of the following are true:
+1. The change touches more than one function that share data (e.g. search → classify → group → render is one pipeline — changing one stage affects all others)
+2. The change touches both a backend function and a template
+3. The fix involves changing how rows are structured or what fields they carry
+4. The user mentions a new feature idea mid-session (capture it, don't build it)
+5. The same bug has been attempted twice without a confirmed fix — stop, plan, diagnose
+6. The change affects the minister search, session expansion, or grouping logic — these are the most interconnected parts of the codebase
+
+**Why this matters:** Several bugs in this project were introduced by fixes that looked small but shared data paths with other functions. The dept filter, oral classification, and minister search all interact. Fixing one without planning broke assumptions in another. Plan mode forces the interaction map to be drawn before code is written.
 
 ### Design principles the user has established
 - **Desktop-first** — this is a web tool for officials at their desks. Mobile is a future consideration, not current.
