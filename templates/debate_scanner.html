@@ -479,7 +479,8 @@
                             <label class="speech-select-wrap" style="margin-right:6px;">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="wq"
-                                    data-speech="{{ {'asking_mp': q.asking_mp, 'question_text': q.question_text, 'answer_text': q.answer_text or '', 'party': q.party, 'role': q.role or '', 'dept': q.dept, 'date_tabled': q.date_tabled, 'url': q.url, 'is_answered': q.is_answered, 'is_withdrawn': q.is_withdrawn, 'is_holding': q.is_holding, 'answering_minister': q.answering_minister or '', 'date_answered': q.date_answered or ''} | tojson | e }}">
+                                    data-uin="{{ q.uin }}"
+                                    data-speech="">
                             </label>
                             <span class="wq-status-badge wq-status-{% if q.is_withdrawn %}withdrawn{% elif q.is_holding %}holding{% elif q.is_answered %}answered{% else %}unanswered{% endif %}">
                                 {% if q.is_withdrawn %}WITHDRAWN{% elif q.is_holding %}HOLDING{% elif q.is_answered %}ANSWERED{% else %}UNANSWERED{% endif %}
@@ -985,18 +986,8 @@
         // If any speeches are ticked, use those (plus the AI briefing) for the full brief
         const checked = document.querySelectorAll('.speech-select:checked');
         if (checked.length) {
-            const sectionMap = {};
-            checked.forEach(cb => {
-                try {
-                    const speech = JSON.parse(cb.dataset.speech);
-                    const t = cb.dataset.sectionType || 'debate';
-                    if (!sectionMap[t]) sectionMap[t] = [];
-                    sectionMap[t].push(speech);
-                } catch(e) {}
-            });
-            const sections = Object.entries(sectionMap).map(([type, items]) => ({type, items}));
-            submitResearchDownload(sections);
-            return;
+            const sections = _checkedToSections(checked);
+            if (sections.length) { submitResearchDownload(sections); return; }
         }
 
         // Otherwise include sections the user has expanded (open <details> elements)
@@ -1040,23 +1031,36 @@
         updateSelectionBar();
     }
 
+    function _checkedToSections(checked) {
+        const wqByUin = {};
+        WQ_ROWS.forEach(q => { wqByUin[String(q.uin)] = q; });
+        const sectionMap = {};
+        checked.forEach(cb => {
+            const t = cb.dataset.sectionType || 'debate';
+            if (!sectionMap[t]) sectionMap[t] = [];
+            if (t === 'wq') {
+                const uin = cb.dataset.uin;
+                const q = wqByUin[uin];
+                if (q) sectionMap[t].push(q);
+            } else {
+                try {
+                    const raw = cb.dataset.speech;
+                    if (!raw) return;
+                    sectionMap[t].push(JSON.parse(raw));
+                } catch(e) {
+                    console.warn('Could not parse speech data:', e);
+                }
+            }
+        });
+        return Object.entries(sectionMap)
+            .filter(([, items]) => items.length)
+            .map(([type, items]) => ({type, items}));
+    }
+
     function downloadSelected() {
         const checked = document.querySelectorAll('.speech-select:checked');
         if (!checked.length) return;
-        const sectionMap = {};
-        checked.forEach(cb => {
-            try {
-                const raw = cb.dataset.speech;
-                if (!raw) return;
-                const item = JSON.parse(raw);
-                const t = cb.dataset.sectionType || 'debate';
-                if (!sectionMap[t]) sectionMap[t] = [];
-                sectionMap[t].push(item);
-            } catch(e) {
-                console.warn('Could not parse speech data:', cb.dataset.speech, e);
-            }
-        });
-        const sections = Object.entries(sectionMap).map(([type, items]) => ({type, items}));
+        const sections = _checkedToSections(checked);
         if (sections.length) submitResearchDownload(sections);
     }
 
