@@ -17,7 +17,7 @@
              placeholder="e.g. Lord John of Southwark" required>
     </div>
     <div class="form-group" style="flex:1;">
-      <label>Question date</label>
+      <label>Question date <span style="color:#888;font-weight:400">(sets 1-year parliamentary lookback)</span></label>
       <input type="date" name="question_date" value="{{ question_date or '' }}" required>
     </div>
   </div>
@@ -26,13 +26,17 @@
     <textarea name="question_text" rows="3" required
               placeholder="To ask His Majesty's Government...">{{ question_text or '' }}</textarea>
   </div>
+  <div style="margin-top:.75rem;margin-bottom:.25rem;font-size:.88rem;color:#444;font-weight:500;">
+    📰 News coverage date range
+    <span style="color:#888;font-weight:400"> — how far back to search for press coverage of this topic (defaults to 60 days before question date)</span>
+  </div>
   <div class="form-row">
     <div class="form-group">
-      <label>Media search from <span style="color:#888;font-weight:400">(default: 60 days before question)</span></label>
+      <label>From</label>
       <input type="date" name="media_start" value="{{ media_start or '' }}">
     </div>
     <div class="form-group">
-      <label>Media search to</label>
+      <label>To</label>
       <input type="date" name="media_end" value="{{ media_end or '' }}">
     </div>
   </div>
