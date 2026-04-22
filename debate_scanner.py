@@ -3446,42 +3446,42 @@ def _prep_media(topic, start_date='', end_date=''):
         return []
 
 
-def _prep_parliamentary(topic, date_range, start_date='', end_date=''):
-    """Fetch parliamentary activity on the topic across Lords, Commons, WQs, statements.
-    Returns dict: {lords_debates, commons_debates, wqs, statements}."""
-    results = {'lords_debates': [], 'commons_debates': [], 'wqs': [], 'statements': []}
-
-    def _lords():
+def _prep_parl_lords(topic, date_range):
+    """Lords debates for topic — called directly in the top-level executor."""
+    try:
         rows = fetch_twfy_topic(topic, 'lords', date_range, num=50)
         return [r for r in rows if not r.get('_error')]
+    except Exception:
+        return []
 
-    def _commons():
+
+def _prep_parl_commons(topic, date_range):
+    """Commons + Westminster Hall debates for topic — called directly in the top-level executor."""
+    try:
         rows = []
         rows.extend(fetch_twfy_topic(topic, 'commons', date_range, num=40))
         rows.extend(fetch_twfy_topic(topic, 'westminsterhall', date_range, num=30))
         return [r for r in rows if not r.get('_error')]
+    except Exception:
+        return []
 
-    def _wqs():
+
+def _prep_parl_wqs(topic, start_date, end_date):
+    """Written questions for topic — called directly in the top-level executor."""
+    try:
         wqs, _ = _fetch_topic_wqs(topic, start_date, end_date, [], limit=20)
         return wqs
+    except Exception:
+        return []
 
-    def _statements():
+
+def _prep_parl_statements(topic, date_range):
+    """Oral/written ministerial statements for topic — called directly in the top-level executor."""
+    try:
         rows = fetch_twfy_topic(topic, 'wms', date_range, num=20)
         return [r for r in rows if not r.get('_error')]
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        f_lords = ex.submit(copy_current_request_context(_lords))
-        f_commons = ex.submit(copy_current_request_context(_commons))
-        f_wqs = ex.submit(copy_current_request_context(_wqs))
-        f_stmts = ex.submit(copy_current_request_context(_statements))
-        for key, fut in [('lords_debates', f_lords), ('commons_debates', f_commons),
-                          ('wqs', f_wqs), ('statements', f_stmts)]:
-            try:
-                results[key] = fut.result(timeout=25)
-            except Exception:
-                results[key] = []
-
-    return results
+    except Exception:
+        return []
 
 
 def _prep_peer_contributions(parliament_id, start_date='', end_date=''):
@@ -3530,19 +3530,14 @@ def _prep_peer_contributions(parliament_id, start_date='', end_date=''):
         except Exception:
             return []
 
-    speeches = []
-    tabled_wqs = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        f_sp = ex.submit(copy_current_request_context(_speeches))
-        f_wq = ex.submit(copy_current_request_context(_wqs))
-        try:
-            speeches = f_sp.result(timeout=20)
-        except Exception:
-            speeches = []
-        try:
-            tabled_wqs = f_wq.result(timeout=15)
-        except Exception:
-            tabled_wqs = []
+    try:
+        speeches = _speeches()
+    except Exception:
+        speeches = []
+    try:
+        tabled_wqs = _wqs()
+    except Exception:
+        tabled_wqs = []
 
     return {'speeches': speeches, 'tabled_wqs': tabled_wqs}
 
@@ -3600,33 +3595,24 @@ def debate_prep():
     peer_info = None
     one_pager = None
     media_items = []
-    parl_sections = {}
     peer_contributions = {}
 
-    def _task_peer():
-        return _prep_resolve_peer(peer_name)
-
-    def _task_one_pager():
-        return _prep_one_pager(question_text, topic, question_date)
-
-    def _task_media():
-        return _prep_media(topic, media_start, media_end)
-
-    def _task_parl():
-        return _prep_parliamentary(topic, parl_date_range, parl_start, parl_end)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        f_peer = executor.submit(copy_current_request_context(_task_peer))
-        f_one_pager = executor.submit(copy_current_request_context(_task_one_pager))
-        f_media = executor.submit(copy_current_request_context(_task_media))
-        f_parl = executor.submit(copy_current_request_context(_task_parl))
+    # All tasks submitted to a single flat executor — no nested thread pools
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        f_peer    = executor.submit(copy_current_request_context(_prep_resolve_peer), peer_name)
+        f_op      = executor.submit(copy_current_request_context(_prep_one_pager), question_text, topic, question_date)
+        f_media   = executor.submit(copy_current_request_context(_prep_media), topic, media_start, media_end)
+        f_lords   = executor.submit(copy_current_request_context(_prep_parl_lords), topic, parl_date_range)
+        f_commons = executor.submit(copy_current_request_context(_prep_parl_commons), topic, parl_date_range)
+        f_wqs     = executor.submit(copy_current_request_context(_prep_parl_wqs), topic, parl_start, parl_end)
+        f_stmts   = executor.submit(copy_current_request_context(_prep_parl_statements), topic, parl_date_range)
 
         try:
             peer_info = f_peer.result(timeout=15)
         except Exception:
             peer_info = None
         try:
-            one_pager = f_one_pager.result(timeout=35)
+            one_pager = f_op.result(timeout=35)
         except Exception:
             one_pager = None
         try:
@@ -3634,11 +3620,30 @@ def debate_prep():
         except Exception:
             media_items = []
         try:
-            parl_sections = f_parl.result(timeout=40)
+            lords_debates = f_lords.result(timeout=25)
         except Exception:
-            parl_sections = {}
+            lords_debates = []
+        try:
+            commons_debates = f_commons.result(timeout=25)
+        except Exception:
+            commons_debates = []
+        try:
+            parl_wqs = f_wqs.result(timeout=25)
+        except Exception:
+            parl_wqs = []
+        try:
+            statements = f_stmts.result(timeout=25)
+        except Exception:
+            statements = []
 
-    # Peer contributions requires parliament_id — run after peer resolution
+    parl_sections = {
+        'lords_debates': lords_debates,
+        'commons_debates': commons_debates,
+        'wqs': parl_wqs,
+        'statements': statements,
+    }
+
+    # Peer contributions requires parliament_id — run sequentially after peer resolves
     if peer_info and peer_info.get('parliament_id'):
         try:
             peer_contributions = _prep_peer_contributions(
