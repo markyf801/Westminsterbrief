@@ -3547,12 +3547,27 @@ def _prep_peer_contributions(parliament_id, start_date='', end_date=''):
 # ==========================================
 @debate_scanner_bp.route('/debate_prep', methods=['GET', 'POST'])
 def debate_prep():
+    import logging, traceback
     if request.method == 'GET':
         return render_template('debate_prep.html',
             is_post=False, peer_name='', question_date='', question_text='',
             media_start='', media_end='', peer_info=None, one_pager=None,
             media_items=[], parl_sections={}, peer_contributions={}, error=None)
 
+    try:
+        return _debate_prep_post()
+    except Exception as e:
+        logging.error(f"[debate_prep POST] UNHANDLED: {e}\n{traceback.format_exc()}")
+        return render_template('debate_prep.html',
+            is_post=True, peer_name=request.form.get('peer_name',''),
+            question_date=request.form.get('question_date',''),
+            question_text=request.form.get('question_text',''),
+            media_start='', media_end='', peer_info=None, one_pager=None,
+            media_items=[], parl_sections={}, peer_contributions={},
+            error=f'Server error: {e}'), 200
+
+
+def _debate_prep_post():
     peer_name = request.form.get('peer_name', '').strip()
     question_date = request.form.get('question_date', '').strip()
     question_text = request.form.get('question_text', '').strip()
