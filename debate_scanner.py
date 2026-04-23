@@ -1858,6 +1858,20 @@ def debates_topic():
                             f" — sample parties: {list({r.get('speaker_party','') for r in non_minister_rows[:10]})}"
                         )
                     balanced = minister_rows + opp_rows[:10] + other_rows[:10]
+                    import logging as _dlog
+                    _dlog.warning(
+                        f"[briefing_diag] non_minister={len(non_minister_rows)} "
+                        f"opp={len(opp_rows)} other={len(other_rows)} balanced={len(balanced)}"
+                    )
+                    _dlog.warning(
+                        f"[briefing_diag] opp sample: {[(r.get('speaker_name',''),r.get('speaker_party','')) for r in opp_rows[:5]]}"
+                    )
+                    _dlog.warning(
+                        f"[briefing_diag] other sample: {[(r.get('speaker_name',''),r.get('speaker_party','')) for r in other_rows[:5]]}"
+                    )
+                    _dlog.warning(
+                        f"[briefing_diag] payload parties: {[r.get('speaker_party','') for r in balanced]}"
+                    )
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
                          'party': r['speaker_party'], 'date': r['hdate'],
@@ -1934,6 +1948,7 @@ def debates_topic():
                         raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
                     else:
                         raw_text = _claude_fallback(prompt, max_tokens=3000)
+                    _dlog.warning(f"[briefing_raw] non_govt_speakers snippet: {raw_text[raw_text.find('non_government'):raw_text.find('non_government')+300] if 'non_government' in (raw_text or '') else 'KEY NOT FOUND'}")
                     if raw_text:
                         topic_briefing = _parse_ai_json(raw_text)
 
