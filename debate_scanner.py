@@ -337,6 +337,184 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
     except Exception as e:
         return [{'_error': f"TWFY {source_type} exception: {type(e).__name__}: {e}"}]
 
+
+def _extract_title_queries(search_term):
+    """Return a list of shorter search terms suitable for /search/debates.json title matching.
+    The Hansard debates endpoint matches debate titles, so we need concise phrases.
+    Tries: (1) quoted phrases extracted from an AI-expanded query, (2) first 2-3 words of term."""
+    queries = []
+    # Extract quoted phrases from Boolean-expanded queries like '"student loan" OR "tuition fees"'
+    quoted = re.findall(r'"([^"]+)"', search_term)
+    queries.extend(quoted)
+    # Also add first 2 words of the raw term (covers simple non-expanded terms)
+    words = search_term.replace('"', '').split()
+    if len(words) >= 2:
+        short = ' '.join(words[:2])
+        if short not in queries:
+            queries.append(short)
+    # Add the full term as a fallback (works when term is already short)
+    if search_term not in queries:
+        queries.insert(0, search_term)
+    return queries[:6]  # cap to avoid excess API calls
+
+
+def fetch_hansard_topic(search_term, source_type, date_range, num=50):
+    """Hansard Parliament API keyword/title search. Drop-in replacement for
+    fetch_twfy_topic() when SEARCH_BACKEND=hansard.
+
+    Uses two mechanisms:
+      /search/debates.json — title matching (finds sessions titled about the topic)
+      /search.json         — speech-level matching (supplementary, ~4 results)
+
+    Both return DebateSectionExtId, which session expansion then expands to all speeches.
+    WMS (source_type='wms') is not supported — returns [] so TWFY fallback handles it.
+    """
+    import logging as _htl
+
+    if source_type == 'wms':
+        return []  # WMS has no Hansard search endpoint; caller falls back to TWFY
+
+    # Parse YYYYMMDD..YYYYMMDD → ISO dates
+    start_date_api = end_date_api = ''
+    if date_range and '..' in date_range:
+        parts = date_range.split('..')
+        def _fmt(d): return f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
+        start_date_api = _fmt(parts[0].strip()) if parts[0].strip() else ''
+        end_date_api = _fmt(parts[1].strip()) if parts[1].strip() else ''
+
+    cache_key = f"hansard:topic:{source_type}:{search_term}:{date_range}".strip()
+    cached = CachedTWFYSearch.get(cache_key, source_type, ttl_hours=6)
+    if cached is not None:
+        _htl.warning(f"[hansard_topic] {source_type} from_cache rows={len(cached)}")
+        return cached
+
+    house = 'Lords' if source_type == 'lords' else 'Commons'
+    base_params = {'queryParameters.house': house}
+    if start_date_api:
+        base_params['queryParameters.startDate'] = start_date_api
+    if end_date_api:
+        base_params['queryParameters.endDate'] = end_date_api
+
+    # --- Step 1: /search/debates.json — title-based session discovery ---
+    ext_ids_meta = {}  # ext_id -> {date, title, house}
+    title_queries = _extract_title_queries(search_term)
+    _htl.warning(f"[hansard_topic_title] source={source_type} title_queries={title_queries}")
+    for tq in title_queries:
+        try:
+            resp = requests.get(
+                f"{HANSARD_API_BASE}/search/debates.json",
+                params={**base_params, 'queryParameters.searchTerm': tq},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            d = resp.json()
+            for r in (d.get('Results') or []):
+                ext_id = r.get('DebateSectionExtId', '')
+                if not ext_id or ext_id in ext_ids_meta:
+                    continue
+                section_lower = (r.get('DebateSection', '') or '').lower()
+                if source_type == 'westminsterhall' and 'westminster hall' not in section_lower:
+                    continue
+                if source_type == 'commons' and 'westminster hall' in section_lower:
+                    continue
+                sitting = r.get('SittingDate', '') or ''
+                ext_ids_meta[ext_id] = {
+                    'date': sitting[:10],
+                    'title': r.get('Title', ''),
+                    'house': r.get('House', house),
+                    'rank': r.get('Rank', 0),
+                }
+            _htl.warning(f"[hansard_topic_title] q={tq!r} total={d.get('TotalResultCount',0)} new_ids={len(ext_ids_meta)}")
+        except Exception as e:
+            _htl.warning(f"[hansard_topic_title] q={tq!r} error={e}")
+
+    # --- Step 2: /search.json — speech-level keyword matches (supplementary, ~4 per call) ---
+    contribution_rows = []
+    try:
+        resp = requests.get(
+            f"{HANSARD_API_BASE}/search.json",
+            params={**base_params, 'queryParameters.searchTerm': search_term},
+            timeout=25,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            contribs = data.get('Contributions', [])
+            _htl.warning(f"[hansard_topic_contrib] source={source_type} total={data.get('TotalContributions','?')} returned={len(contribs)}")
+            for r in contribs:
+                h = r.get('House', 'Commons')
+                section = r.get('Section', '')
+                src = _hansard_section_to_source(h, section)
+                if src != source_type:
+                    continue
+                ext_id = r.get('DebateSectionExtId', '') or ''
+                body_raw = r.get('ContributionTextFull', '') or r.get('ContributionText', '') or ''
+                body_text = clean_body_text(body_raw)
+                sitting = r.get('SittingDate', '')
+                hdate = sitting[:10] if sitting else ''
+                house_path = 'lords' if h.lower() == 'lords' else 'commons'
+                listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
+                           if ext_id and hdate else '')
+                debate_title = r.get('DebateSection', '') or ''
+                dtype = get_debate_type(debate_title, source=src)
+                contribution_rows.append({
+                    'listurl': listurl,
+                    'body_clean': body_text[:500],
+                    'body_export': body_text[:3000],
+                    'body_word_count': len(body_text.split()),
+                    'speaker_name': r.get('MemberName', '') or '',
+                    'speaker_party': _parse_hansard_party(r.get('AttributedTo', '')),
+                    'hdate': hdate,
+                    'debate_title': debate_title,
+                    'source': src,
+                    'source_label': get_source_label(src),
+                    'relevance': r.get('Rank', 0),
+                    'debate_type': dtype,
+                    'debate_section_ext_id': ext_id,
+                })
+                if ext_id and ext_id not in ext_ids_meta:
+                    ext_ids_meta[ext_id] = {'date': hdate, 'title': debate_title, 'house': h, 'rank': r.get('Rank', 0)}
+    except Exception as e:
+        _htl.warning(f"[hansard_topic_contrib] error={e}")
+
+    # --- Build final row list: real contribution rows + stub rows for title-only sessions ---
+    contrib_ext_ids = {r.get('debate_section_ext_id', '') for r in contribution_rows}
+    all_rows = list(contribution_rows)
+    for ext_id, meta in ext_ids_meta.items():
+        if ext_id in contrib_ext_ids:
+            continue
+        hdate = meta.get('date', '')
+        title = meta.get('title', '')
+        h = meta.get('house', house)
+        house_path = 'lords' if h.lower() == 'lords' else 'commons'
+        listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
+                   if ext_id and hdate else '')
+        dtype = get_debate_type(title, source=source_type)
+        all_rows.append({
+            'listurl': listurl,
+            'body_clean': '',
+            'body_export': '',
+            'body_word_count': 0,
+            'speaker_name': '',
+            'speaker_party': '',
+            'hdate': hdate,
+            'debate_title': title,
+            'source': source_type,
+            'source_label': get_source_label(source_type),
+            'relevance': meta.get('rank', 0),
+            'debate_type': dtype,
+            'debate_section_ext_id': ext_id,
+        })
+
+    _htl.warning(f"[hansard_topic] source={source_type} contribution_rows={len(contribution_rows)} "
+                 f"title_stubs={len(all_rows)-len(contribution_rows)} total={len(all_rows)} "
+                 f"unique_sessions={len(ext_ids_meta)}")
+
+    if all_rows:
+        CachedTWFYSearch.store(cache_key, source_type, all_rows)
+    return all_rows
+
+
 def deduplicate_by_listurl(rows):
     seen = set()
     out = []
@@ -1934,8 +2112,24 @@ def debates_topic():
 
             source_counts = {}
             use_hansard_minister = os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard'
+            use_hansard_topic = use_hansard_minister  # same flag controls both
             with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-                twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
+                # Route keyword search: Hansard API for commons/lords/westminsterhall;
+                # TWFY fallback for WMS (no Hansard statements search endpoint exists).
+                if use_hansard_topic:
+                    topic_search_futs = {}
+                    for src in sources:
+                        if src == 'wms' and TWFY_API_KEY:
+                            topic_search_futs[executor.submit(
+                                copy_current_request_context(fetch_twfy_topic), search_query, src, date_range
+                            )] = src
+                        elif src != 'wms':
+                            topic_search_futs[executor.submit(
+                                copy_current_request_context(fetch_hansard_topic), search_query, src, date_range
+                            )] = src
+                    twfy_futs = topic_search_futs
+                else:
+                    twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
                 # Fan-out: one future per (minister, source) so all 24 calls run in parallel
                 # Lords ministers only speak in Lords/WMS; Commons ministers only in Commons/WH/WMS
