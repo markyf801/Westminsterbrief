@@ -126,15 +126,15 @@ def morning_tracker():
         selected_dept = request.form.get('department', '').strip()
         results = []
 
-        # Fetch by due date over last 14 days, then narrow to the most recent
-        # day with results (handles weekends and recess automatically)
+        # Fetch questions tabled in the last 14 days, then narrow to the most
+        # recent tabling date — gives yesterday's intake (or last sitting day
+        # if today is Monday/after a recess)
         window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-        today = datetime.now().strftime('%Y-%m-%d')
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         params = {
-            'take': 200,
-            'dateForAnswerFrom': window_start,
-            'dateForAnswerTo': today,
-            'questionStatus': 'NotAnswered',
+            'take': 400,
+            'tabledStartDate': window_start,
+            'tabledEndDate': yesterday,
         }
         if selected_dept:
             params['answeringBodies'] = [int(selected_dept)]
@@ -146,19 +146,17 @@ def morning_tracker():
             if resp.status_code == 200:
                 data = resp.json().get('results') or []
 
-                # Narrow to the most recent past-or-today due date (last sitting day)
-                # Exclude future dates — named-day questions can have answer dates weeks ahead
+                # Narrow to the single most recent tabling date
                 if data:
-                    due_dates = [
-                        (item.get('value') or {}).get('dateForAnswer', '').split('T')[0]
+                    tabled_dates = [
+                        (item.get('value') or {}).get('dateTabled', '').split('T')[0]
                         for item in data
-                        if (item.get('value') or {}).get('dateForAnswer')
+                        if (item.get('value') or {}).get('dateTabled')
                     ]
-                    past_dates = [d for d in due_dates if d <= today]
-                    if past_dates:
-                        last_sitting_day = max(past_dates)
+                    if tabled_dates:
+                        last_tabled_day = max(tabled_dates)
                         data = [item for item in data
-                                if (item.get('value') or {}).get('dateForAnswer', '').split('T')[0] == last_sitting_day]
+                                if (item.get('value') or {}).get('dateTabled', '').split('T')[0] == last_tabled_day]
                     else:
                         data = []
 
@@ -168,17 +166,15 @@ def morning_tracker():
 
                 for item in data:
                     val = item.get('value') or {}
-                    if val.get('answerText') or val.get('dateAnswered'): continue
                     if selected_dept and str(val.get('answeringBodyId')) != selected_dept: continue
 
                     member_id = val.get('askingMemberId')
                     member_name = get_member_name(member_id)
 
-                    due_date_str = (val.get('dateForAnswer') or '').split('T')[0]
-                    group_date_str = due_date_str
+                    tabled_date_str = (val.get('dateTabled') or '').split('T')[0]
 
                     try:
-                        date_obj = datetime.fromisoformat(group_date_str)
+                        date_obj = datetime.fromisoformat(tabled_date_str)
                         f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
                     except:
                         f_date = "N/A"
@@ -191,9 +187,9 @@ def morning_tracker():
                         'member': member_name,
                         'member_id': member_id,
                         'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
-                        'raw_date': group_date_str,
+                        'raw_date': tabled_date_str,
                         'date_asked': f_date,
-                        'due_date': due_date_str or 'TBC',
+                        'due_date': tabled_date_str or 'TBC',
                         'is_answered': is_answered,
                         'status': "ANSWERED" if is_answered else "UNANSWERED"
                     })
