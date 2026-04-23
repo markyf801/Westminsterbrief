@@ -457,22 +457,23 @@ _SOURCE_GID_PREFIX = {
 }
 
 def _listurl_to_parent_gid(listurl, source):
-    """Convert a TWFY listurl to the parent debate-section GID (speech-index replaced with .0).
-    e.g. /debates/?id=2026-01-15.123.4 + commons → uk.org.publicwhip/debate/2026-01-15.123.0
+    """Extract the bare TWFY section ID from a listurl for session expansion.
+    Returns DATE.SECTION.0 (no uk.org.publicwhip prefix) for use with the id= param.
+    e.g. /debates/?id=2026-01-15.123.4 → '2026-01-15.123.0'
     Returns None if listurl cannot be parsed, is a Hansard URL, or source is not expandable."""
     if not listurl or source not in _SOURCE_GID_PREFIX:
         return None
     if listurl.startswith('http'):
-        return None  # Hansard API full URLs have no TWFY GID — cannot expand via this path
+        return None  # Hansard API full URLs cannot expand via TWFY GID path
     try:
-        m = re.search(r'\?id=([^&]+)', listurl)
+        m = re.search(r'\?id=([^&#]+)', listurl)
         if not m:
             return None
         id_val = m.group(1)                   # e.g. "2026-01-15.123.4"
         if '.' not in id_val:
-            return None  # malformed id — no dot separator, would produce invalid GID
+            return None
         section = id_val.rsplit('.', 1)[0]     # e.g. "2026-01-15.123"
-        return f"{_SOURCE_GID_PREFIX[source]}{section}.0"
+        return f"{section}.0"                  # bare ID, no prefix: "2026-01-15.123.0"
     except Exception:
         return None
 
@@ -489,7 +490,9 @@ def fetch_full_debate_session(parent_gid, source):
     try:
         import logging as _sl
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
-        params = {'key': TWFY_API_KEY, 'gid': parent_gid, 'output': 'json'}
+        # Use id= (bare DATE.SECTION.0 format) — the full uk.org.publicwhip/ prefix
+        # with type= returns 404; bare id= matches the format TWFY uses in its own URLs.
+        params = {'key': TWFY_API_KEY, 'id': parent_gid, 'output': 'json'}
         if source != 'wms':
             params['type'] = source
         resp = requests.get(api_url, params=params, timeout=10)
