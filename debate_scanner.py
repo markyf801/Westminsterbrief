@@ -112,18 +112,32 @@ PARTY_COLOURS_RESEARCH = {
     'Plaid Cymru': '#005B54', 'Democratic Unionist Party': '#D46A4C',
 }
 
+_MODEL_CACHE = {}
+_VERIFY_CACHE = {}
+
 def get_working_model(api_key):
+    if api_key in _MODEL_CACHE:
+        return _MODEL_CACHE[api_key]
+    result = 'models/gemini-2.5-flash-lite'
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         resp = requests.get(url, timeout=5)
         if resp.status_code == 200:
-            available = [m['name'] for m in resp.json().get('models', []) 
+            available = [m['name'] for m in resp.json().get('models', [])
                          if 'generateContent' in m.get('supportedGenerationMethods', [])]
-            for pref in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro']:
-                if pref in available: return pref
-            if available: return available[0]
-    except: pass
-    return "models/gemini-pro"
+            for prefix in ['models/gemini-2.5-flash-lite', 'models/gemini-2.5-flash',
+                           'models/gemini-flash-latest']:
+                match = next((m for m in available if m.startswith(prefix)), None)
+                if match:
+                    result = match
+                    break
+            else:
+                if available:
+                    result = available[0]
+    except Exception:
+        pass
+    _MODEL_CACHE[api_key] = result
+    return result
 
 def get_twfy_date_range(start_str, end_str):
     def parse_date(d_str):
@@ -346,6 +360,13 @@ def format_briefing_as_text(briefing_dict, topic):
 
 def expand_search_query(topic, api_key):
     """Use Gemini to expand a topic into related parliamentary search terms."""
+    # Policy vocabulary is stable — cache for 7 days to skip Gemini on repeat searches
+    try:
+        cached = CachedTWFYSearch.get(topic, '_expand', ttl_hours=168)
+        if cached is not None:
+            return cached[0] if cached else f'"{topic}"'
+    except Exception:
+        pass
     try:
         model_path = get_working_model(api_key)
         ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
@@ -385,7 +406,12 @@ def expand_search_query(topic, api_key):
                     all_terms = [str(t) for t in terms[:6]]
                 if not all_terms:
                     return f'"{topic}"'
-                return '(' + ' OR '.join(f'"{t}"' for t in all_terms) + ')'
+                result = '(' + ' OR '.join(f'"{t}"' for t in all_terms) + ')'
+                try:
+                    CachedTWFYSearch.store(topic, '_expand', [result])
+                except Exception:
+                    pass
+                return result
     except Exception:
         pass
     return f'"{topic}"'
@@ -823,16 +849,20 @@ def verify_government_speaker(name):
     2. Parliament Members Search → check each result ID against Cabinet id cache
     3. Parliament Members Biography → governmentPosts with no endDate (gets precise role)
     """
+    norm_name = _normalise_name(name)
+    if norm_name and norm_name in _VERIFY_CACHE:
+        return _VERIFY_CACHE[norm_name]
+
     minister_data = get_minister_list()
     by_norm = minister_data.get('by_norm', {})
     by_id = minister_data.get('by_id', {})
 
     # 1. Normalised match against GOV.UK full minister list
-    norm_name = _normalise_name(name)
     if norm_name and norm_name in by_norm:
-        # Role from cache is generic ('Minister (DfE)') — fetch precise role via Biography
-        cached_role = by_norm[norm_name]
-        return {'confirmed': True, 'role': cached_role}
+        result = {'confirmed': True, 'role': by_norm[norm_name]}
+        if norm_name:
+            _VERIFY_CACHE[norm_name] = result
+        return result
 
     # 2. Parliament Members Search → ID → Cabinet id cache
     try:
@@ -846,7 +876,10 @@ def verify_government_speaker(name):
             for item in items:
                 member_id = str(item['value']['id'])
                 if member_id in by_id:
-                    return {'confirmed': True, 'role': by_id[member_id]}
+                    result = {'confirmed': True, 'role': by_id[member_id]}
+                    if norm_name:
+                        _VERIFY_CACHE[norm_name] = result
+                    return result
 
             # 3. Biography endpoint — has full government post history with endDate
             if items:
@@ -859,11 +892,17 @@ def verify_government_speaker(name):
                     govt_posts = bio_resp.json().get('value', {}).get('governmentPosts', [])
                     current_posts = [p for p in govt_posts if not p.get('endDate')]
                     if current_posts:
-                        return {'confirmed': True, 'role': current_posts[0].get('name', '')}
+                        result = {'confirmed': True, 'role': current_posts[0].get('name', '')}
+                        if norm_name:
+                            _VERIFY_CACHE[norm_name] = result
+                        return result
     except Exception:
         pass
 
-    return {'confirmed': False, 'role': ''}
+    result = {'confirmed': False, 'role': ''}
+    if norm_name:
+        _VERIFY_CACHE[norm_name] = result
+    return result
 
 
 def lookup_twfy_person(name):
@@ -1660,22 +1699,26 @@ def debates_topic():
 
             source_counts = {}
             use_hansard_minister = os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard'
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
                 twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
+                # Fan-out: one future per (minister, source) so all 24 calls run in parallel
                 minister_futs = {}
                 for mp in minister_people:
-                    if use_hansard_minister and mp.get('parliament_id'):
-                        fut = executor.submit(
-                            copy_current_request_context(fetch_hansard_minister_topic),
-                            mp['parliament_id'], expanded, date_range, sources,
-                            is_lord=mp.get('is_lord', False))
-                    else:
-                        fut = executor.submit(
-                            copy_current_request_context(fetch_twfy_minister_topic),
-                            mp['person_id'], expanded, date_range, sources,
-                            is_lord=mp.get('is_lord', False))
-                    minister_futs[fut] = mp
+                    for src in sources:
+                        if mp.get('is_lord') and src not in ('lords', 'wms'):
+                            continue
+                        if use_hansard_minister and mp.get('parliament_id'):
+                            fut = executor.submit(
+                                copy_current_request_context(fetch_hansard_minister_topic),
+                                mp['parliament_id'], expanded, date_range, [src],
+                                is_lord=mp.get('is_lord', False))
+                        else:
+                            fut = executor.submit(
+                                copy_current_request_context(fetch_twfy_minister_topic),
+                                mp['person_id'], expanded, date_range, [src],
+                                is_lord=mp.get('is_lord', False))
+                        minister_futs[fut] = mp
                 all_futs = list(twfy_futs.keys()) + [wq_fut] + list(minister_futs.keys())
                 for future in concurrent.futures.as_completed(all_futs):
                     if future is wq_fut:
@@ -3389,8 +3432,9 @@ def _prep_one_pager(question_text, topic, question_date='', house='lords'):
 
     if GEMINI_API_KEY:
         try:
-            url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-                   f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}")
+            model_path = get_working_model(GEMINI_API_KEY)
+            url = (f"https://generativelanguage.googleapis.com/v1beta/"
+                   f"{model_path}:generateContent?key={GEMINI_API_KEY}")
             body = {"contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1400}}
             resp = requests.post(url, json=body, timeout=30)
