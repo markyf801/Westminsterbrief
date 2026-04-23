@@ -1220,9 +1220,11 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
         start_date_api = _fmt(parts[0].strip()) if parts[0].strip() else ''
         end_date_api = _fmt(parts[1].strip()) if parts[1].strip() else ''
 
+    import logging as _ml
     cache_key_query = f"hansard:minister:{parliament_id}:{topic} {date_range}".strip()
     cached = CachedTWFYSearch.get(cache_key_query, 'hansard_minister', ttl_hours=6)
     if cached is not None:
+        _ml.warning(f"[minister_search] parliament_id={parliament_id} from_cache=True rows={len(cached)}")
         return cached
 
     params = {'queryParameters.memberId': parliament_id, 'take': num, 'skip': 0}
@@ -1284,7 +1286,8 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
 
         with_ext = sum(1 for r in rows if r.get('debate_section_ext_id'))
         _ml.warning(f"[minister_search] parliament_id={parliament_id} rows={len(rows)} with_ext_id={with_ext} sources={set(r['source'] for r in rows)}")
-        CachedTWFYSearch.store(cache_key_query, 'hansard_minister', rows)
+        if rows:  # never cache empty results — empty means API miss, not "no speeches"
+            CachedTWFYSearch.store(cache_key_query, 'hansard_minister', rows)
         return rows
     except Exception as e:
         import logging
