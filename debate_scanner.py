@@ -1195,6 +1195,8 @@ def _hansard_section_to_source(house, section):
     section_lower = (section or '').lower()
     if 'written statement' in section_lower:
         return 'wms'
+    if 'written answer' in section_lower:
+        return 'wrans'
     if 'westminster hall' in section_lower:
         return 'westminsterhall'
     if (house or '').lower() == 'lords':
@@ -1234,11 +1236,14 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
         params['queryParameters.endDate'] = end_date_api
 
     try:
+        import logging as _ml
         resp = requests.get(f"{HANSARD_API_BASE}/search.json", params=params, timeout=25)
         if resp.status_code != 200:
+            _ml.warning(f"[minister_search] parliament_id={parliament_id} status={resp.status_code}")
             return []
         data = resp.json()
         results = data.get('Contributions', [])
+        _ml.warning(f"[minister_search] parliament_id={parliament_id} contributions={len(results)} total={data.get('TotalContributions','?')}")
 
         rows = []
         for r in results:
@@ -1277,9 +1282,13 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
                 'debate_section_ext_id': ext_id,
             })
 
+        with_ext = sum(1 for r in rows if r.get('debate_section_ext_id'))
+        _ml.warning(f"[minister_search] parliament_id={parliament_id} rows={len(rows)} with_ext_id={with_ext} sources={set(r['source'] for r in rows)}")
         CachedTWFYSearch.store(cache_key_query, 'hansard_minister', rows)
         return rows
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.warning(f"[minister_search] parliament_id={parliament_id} exception={type(e).__name__}: {e}")
         return []
 
 
