@@ -44,7 +44,7 @@ def add_hyperlink(paragraph, url, text):
     paragraph._p.append(hyperlink)
     return hyperlink
 
-GEMINI_MODEL = 'gemini-2.0-flash'
+GEMINI_MODEL = 'gemini-1.5-flash'
 
 
 def _gemini_generate(api_key, prompt):
