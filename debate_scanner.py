@@ -486,9 +486,10 @@ def fetch_full_debate_session(parent_gid, source):
     try:
         import logging as _sl
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
-        resp = requests.get(api_url,
-                            params={'key': TWFY_API_KEY, 'gid': parent_gid, 'output': 'json'},
-                            timeout=10)
+        params = {'key': TWFY_API_KEY, 'gid': parent_gid, 'output': 'json'}
+        if source != 'wms':
+            params['type'] = source
+        resp = requests.get(api_url, params=params, timeout=10)
         _sl.warning(f"[session_fetch] gid={parent_gid!r} src={source} status={resp.status_code} body_prefix={resp.text[:120]!r}")
         if resp.status_code != 200:
             return []
@@ -1812,26 +1813,30 @@ def debates_topic():
             hansard_count = sum(1 for r in topic_rows if r.get('listurl', '').startswith('http'))
             _tlog.warning(f"[topic_rows] {len(topic_rows)} total after dedup: {twfy_count} TWFY, {hansard_count} Hansard | source_counts={source_counts}")
 
+            # Apply date filter BEFORE session expansion so we only expand in-range sessions.
+            # TWFY keyword search returns historical results by relevance even with a date
+            # range in the search string — the Python filter is the reliable enforcement.
+            if start_date or end_date:
+                import logging as _flog
+                before_filter = len(topic_rows)
+                topic_rows = [r for r in topic_rows
+                              if (not start_date or r.get('hdate', '') >= start_date)
+                              and (not end_date or r.get('hdate', '') <= end_date)]
+                _flog.warning(f"[date_filter] start={start_date!r} end={end_date!r} before={before_filter} after={len(topic_rows)}")
+
             # Debates-first: expand each matched debate to include ALL speeches.
-            # This ensures ministerial responses appear even when they don't contain
-            # the search keywords (e.g. minister says "supporting graduates" not "loan repayments").
+            # This ensures ministerial responses appear even when their speeches don't
+            # contain the search keywords (minister: "supporting graduates", not "loan repayments").
             if topic_rows:
                 session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=25)
                 if session_speeches:
                     topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
-            # Enforce date range — session expansion can pull in speeches from outside the requested window
+            # Re-apply date filter — session expansion fetches all speeches in a session,
+            # which can occasionally include adjacent-day edge cases.
             if start_date or end_date:
-                import logging as _flog
-                in_range = [r for r in topic_rows
-                            if (not start_date or r.get('hdate', '') >= start_date)
-                            and (not end_date or r.get('hdate', '') <= end_date)]
-                out_range = [r for r in topic_rows
-                             if not ((not start_date or r.get('hdate', '') >= start_date)
-                                     and (not end_date or r.get('hdate', '') <= end_date))]
-                _flog.warning(f"[date_filter] start={start_date!r} end={end_date!r} before={len(topic_rows)} after={len(in_range)}"
-                              f" sample_kept_hdates={[r.get('hdate','') for r in in_range[:3]]}"
-                              f" sample_dropped_hdates={[r.get('hdate','') for r in out_range[:3]]}")
-                topic_rows = in_range
+                topic_rows = [r for r in topic_rows
+                              if (not start_date or r.get('hdate', '') >= start_date)
+                              and (not end_date or r.get('hdate', '') <= end_date)]
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()
