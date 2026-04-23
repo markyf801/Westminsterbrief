@@ -3356,15 +3356,16 @@ def _prep_resolve_peer(peer_name):
         return None
 
 
-def _prep_one_pager(question_text, topic, question_date=''):
+def _prep_one_pager(question_text, topic, question_date='', house='lords'):
     """Generate an AI one-pager briefing for an oral question.
     Returns dict with why_now, sector_context, major_criticisms, opposition_position
     or None on failure."""
     if not GEMINI_API_KEY and not CLAUDE_API_KEY:
         return None
 
+    house_label = 'Commons oral question' if house == 'commons' else 'Lords oral question'
     prompt = (
-        "You are briefing a UK civil servant preparing for a Lords oral question.\n\n"
+        f"You are briefing a UK civil servant preparing for a {house_label}.\n\n"
         f"Question: {question_text}\n"
         f"Topic: {topic}\n"
         f"Date: {question_date or 'upcoming'}\n\n"
@@ -3569,7 +3570,7 @@ def debate_prep():
     if request.method == 'GET':
         return render_template('debate_prep.html',
             is_post=False, peer_name='', question_date='', question_text='',
-            media_start='', media_end='', peer_info=None, one_pager=None,
+            media_start='', media_end='', house='lords', peer_info=None, one_pager=None,
             media_items=[], parl_sections={}, peer_contributions={}, error=None)
 
     try:
@@ -3577,11 +3578,12 @@ def debate_prep():
     except Exception as e:
         tb = traceback.format_exc()
         logging.error(f"[debate_prep POST] UNHANDLED: {e}\n{tb}")
+        _h = request.form.get('house', 'lords')
         return render_template('debate_prep.html',
             is_post=True, peer_name=request.form.get('peer_name',''),
             question_date=request.form.get('question_date',''),
             question_text=request.form.get('question_text',''),
-            media_start='', media_end='', peer_info=None, one_pager=None,
+            media_start='', media_end='', house=_h, peer_info=None, one_pager=None,
             media_items=[], parl_sections={}, peer_contributions={},
             error=f'Server error: {e}'), 200
 
@@ -3592,13 +3594,16 @@ def _debate_prep_post():
     question_text = request.form.get('question_text', '').strip()
     media_start = request.form.get('media_start', '').strip()
     media_end = request.form.get('media_end', '').strip()
+    house = request.form.get('house', 'lords').strip().lower()
+    if house not in ('lords', 'commons'):
+        house = 'lords'
 
     if not peer_name or not question_text:
         return render_template('debate_prep.html',
             is_post=True, peer_name=peer_name, question_date=question_date,
             question_text=question_text, media_start=media_start, media_end=media_end,
-            peer_info=None, one_pager=None, media_items=[], parl_sections={},
-            peer_contributions={}, error='Please provide a peer name and question text.')
+            house=house, peer_info=None, one_pager=None, media_items=[], parl_sections={},
+            peer_contributions={}, error='Please provide a member name and question text.')
 
     # Derive topic from question text — use first sentence as search topic
     topic = re.split(r'[.?]', question_text)[0].strip()[:150]
@@ -3634,7 +3639,7 @@ def _debate_prep_post():
     # All tasks submitted to a single flat executor — no nested thread pools
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         f_peer    = executor.submit(copy_current_request_context(_prep_resolve_peer), peer_name)
-        f_op      = executor.submit(copy_current_request_context(_prep_one_pager), question_text, topic, question_date)
+        f_op      = executor.submit(copy_current_request_context(_prep_one_pager), question_text, topic, question_date, house)
         f_media   = executor.submit(copy_current_request_context(_prep_media), topic, media_start, media_end)
         f_lords   = executor.submit(copy_current_request_context(_prep_parl_lords), topic, parl_date_range)
         f_commons = executor.submit(copy_current_request_context(_prep_parl_commons), topic, parl_date_range)
@@ -3693,6 +3698,7 @@ def _debate_prep_post():
         question_text=question_text,
         media_start=media_start,
         media_end=media_end,
+        house=house,
         peer_info=peer_info,
         one_pager=one_pager,
         media_items=media_items or [],
@@ -3726,6 +3732,8 @@ def download_debate_prep_brief():
     peer_name = request.form.get('peer_name', 'Unknown Peer')
     question_date = request.form.get('question_date', '')
     question_text = request.form.get('question_text', '')
+    house = request.form.get('house', 'lords')
+    member_label = 'MP' if house == 'commons' else 'Peer'
     peer_info = _parse_field('peer_info_json', {})
     one_pager = _parse_field('one_pager_json', {})
     media_items = _parse_field('media_json', [])
@@ -3759,7 +3767,7 @@ def download_debate_prep_brief():
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     for line in filter(None, [
-        f'Peer: {peer_name}',
+        f'{member_label}: {peer_name}',
         f'Question date: {question_date}' if question_date else None,
         f'Generated: {datetime.now().strftime("%d %b %Y %H:%M")}',
     ]):
@@ -3894,8 +3902,8 @@ def download_debate_prep_brief():
                     doc.add_paragraph('─' * 60)
         doc.add_paragraph()
 
-    # ── Section 4: Peer Profile ────────────────────────────────────
-    doc.add_heading(f'Peer Profile — {peer_name}', 1)
+    # ── Section 4: Member Profile ─────────────────────────────────
+    doc.add_heading(f'{member_label} Profile — {peer_name}', 1)
     if peer_info:
         meta = '  ·  '.join(filter(None, [peer_info.get('party', ''),
                                            peer_info.get('house', '')]))
@@ -3929,7 +3937,7 @@ def download_debate_prep_brief():
                     p = doc.add_paragraph(item, style='List Bullet')
                     p.runs[0].font.size = Pt(10)
     else:
-        doc.add_paragraph('Peer not found in Parliament Members API.')
+        doc.add_paragraph(f'{member_label} not found in Parliament Members API.')
 
     speeches = (peer_contributions or {}).get('speeches', [])
     if speeches:

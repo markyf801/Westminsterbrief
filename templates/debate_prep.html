@@ -1,20 +1,36 @@
 {% extends "base.html" %}
 {% block title %}Debate Prep — Westminster Brief{% endblock %}
-{% block meta_description %}Prepare a structured briefing pack for a Lords oral question: sector context, media coverage, parliamentary record, and peer profile.{% endblock %}
+{% block meta_description %}Prepare a structured briefing pack for a Lords or Commons oral question: sector context, media coverage, parliamentary record, and member profile.{% endblock %}
 
 {% block content %}
 <h1 class="page-title">Debate Prep <span class="badge-ai">AI</span></h1>
 <p class="page-sub" style="color:#555;margin-bottom:1.2rem;">
-  Enter an oral question details to generate a structured briefing pack — sector context, media coverage, parliamentary record, and peer profile.
+  Enter an oral question details to generate a structured briefing pack — sector context, media coverage, parliamentary record, and member profile.
 </p>
 
 <!-- ── Input form ─────────────────────────────────────────── -->
 <form method="POST" action="/debate_prep" id="prep-form" onsubmit="showPrepLoading()">
+
+  <!-- House toggle -->
+  <div style="display:flex;gap:1.5rem;margin-bottom:1rem;padding:.6rem .8rem;background:#f0f4f8;border-radius:6px;align-items:center;">
+    <span style="font-size:.88rem;font-weight:600;color:#444;">House:</span>
+    <label style="font-size:.9rem;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:.4rem;">
+      <input type="radio" name="house" value="lords" id="house-lords"
+             {% if house != 'commons' %}checked{% endif %} onchange="updateHouseLabels()">
+      Lords oral question
+    </label>
+    <label style="font-size:.9rem;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:.4rem;">
+      <input type="radio" name="house" value="commons" id="house-commons"
+             {% if house == 'commons' %}checked{% endif %} onchange="updateHouseLabels()">
+      Commons oral question
+    </label>
+  </div>
+
   <div class="form-row">
     <div class="form-group" style="flex:2;">
-      <label>Peer name</label>
-      <input type="text" name="peer_name" value="{{ peer_name or '' }}"
-             placeholder="e.g. Lord John of Southwark" required>
+      <label id="member-name-label">{% if house == 'commons' %}MP name{% else %}Peer name{% endif %}</label>
+      <input type="text" name="peer_name" id="member-name-input" value="{{ peer_name or '' }}"
+             placeholder="{% if house == 'commons' %}e.g. Bridget Phillipson{% else %}e.g. Lord John of Southwark{% endif %}" required>
     </div>
     <div class="form-group" style="flex:1;">
       <label>Date question is scheduled <span style="color:#888;font-weight:400">(upcoming)</span></label>
@@ -47,7 +63,7 @@
 <div id="prep-loading" style="display:none;text-align:center;padding:2rem;">
   <div style="font-size:1.1rem;color:#1C3E6E;font-weight:600;">Generating briefing…</div>
   <div style="color:#666;margin-top:.5rem;font-size:.9rem;">
-    Looking up peer profile, searching parliamentary record, fetching media coverage, running AI analysis…
+    Looking up member profile, searching parliamentary record, fetching media coverage, running AI analysis…
   </div>
   <div style="margin-top:1rem;font-size:1.5rem;">⏳</div>
 </div>
@@ -263,10 +279,10 @@
     </div>
   </details>
 
-  <!-- ── Section 4: Peer Profile ───────────────────────────── -->
+  <!-- ── Section 4: Member Profile ───────────────────────────── -->
   <details class="research-section">
     <summary class="research-section-header">
-      <span class="research-section-title">👤 Peer Profile — {{ peer_name }}</span>
+      <span class="research-section-title">👤 {% if house == 'commons' %}MP{% else %}Peer{% endif %} Profile — {{ peer_name }}</span>
       <span class="research-section-count">
         {% if peer_info %}{{ peer_info.party or '' }} · {{ peer_info.house or '' }}{% else %}Not found{% endif %}
       </span>
@@ -371,6 +387,7 @@
       <input type="hidden" name="peer_name" value="{{ peer_name | e }}">
       <input type="hidden" name="question_date" value="{{ question_date or '' }}">
       <input type="hidden" name="question_text" value="{{ question_text | e }}">
+      <input type="hidden" name="house" value="{{ house or 'lords' }}">
       <input type="hidden" name="peer_info_json" value='{{ peer_info | tojson if peer_info else "{}" }}'>
       <input type="hidden" name="one_pager_json" value='{{ one_pager | tojson if one_pager else "{}" }}'>
       <input type="hidden" name="media_json" value='{{ media_items | tojson }}'>
@@ -390,6 +407,13 @@
 function showPrepLoading() {
     document.getElementById('prep-form').style.display = 'none';
     document.getElementById('prep-loading').style.display = 'block';
+}
+function updateHouseLabels() {
+    const isCommons = document.getElementById('house-commons').checked;
+    document.getElementById('member-name-label').textContent = isCommons ? 'MP name' : 'Peer name';
+    document.getElementById('member-name-input').placeholder = isCommons
+        ? 'e.g. Bridget Phillipson'
+        : 'e.g. Lord John of Southwark';
 }
 </script>
 {% endblock %}
