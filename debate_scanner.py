@@ -297,6 +297,9 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
         if isinstance(data, dict) and 'error' in data:
             return [{'_error': f"TWFY {source_type}: {data['error']}"}]
         rows = data.get('rows', [])
+        if rows and source_type == 'commons':
+            import logging as _kl
+            _kl.warning(f"[twfy_row_keys] sample raw keys={list(rows[0].keys())} section_id={rows[0].get('section_id')} subsection_id={rows[0].get('subsection_id')} gid={rows[0].get('gid')}")
         results = []
         for r in rows:
             body_raw = r.get('body', '')
@@ -490,11 +493,15 @@ def fetch_full_debate_session(parent_gid, source):
         if source != 'wms':
             params['type'] = source
         resp = requests.get(api_url, params=params, timeout=10)
-        _sl.warning(f"[session_fetch] gid={parent_gid!r} src={source} status={resp.status_code} body_prefix={resp.text[:120]!r}")
+        _sl.warning(f"[session_fetch] gid={parent_gid!r} type={params.get('type')!r} status={resp.status_code}")
         if resp.status_code != 200:
             return []
-        rows = resp.json().get('rows', [])
-        _sl.warning(f"[session_fetch] gid={parent_gid!r} rows={len(rows)}")
+        rjson = resp.json()
+        rows = rjson.get('rows', [])
+        _sl.warning(f"[session_fetch] gid={parent_gid!r} rows_returned={len(rows)} response_keys={list(rjson.keys())}")
+        if rows:
+            sample = rows[0]
+            _sl.warning(f"[session_fetch] sample_row keys={list(sample.keys())} speaker={sample.get('speaker')} hdate={sample.get('hdate')} listurl={sample.get('listurl','')[:80]!r}")
         results = []
         for r in rows:
             body_raw = r.get('body', '')
