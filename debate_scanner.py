@@ -710,6 +710,11 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=200):
             return [], 0
         data = resp.json()
         total = data.get('totalResults', 0)
+        api_returned = len(data.get('results', []))
+        logging.warning(
+            f"[wq_diag] topic={topic!r} api_total={total} api_returned={api_returned} "
+            f"dept={list(selected_depts)} stems={[(w[:-1] if w.endswith('s') and len(w) > 4 else w) for w in [x.lower() for x in topic.split() if len(x) > 3]]}"
+        )
         # Client-side dept filter — match answeringBodyName against selected dept names
         dept_names = set(selected_depts)
         # Relevance stems: strip trailing 's' so "repayments" matches "repayment",
@@ -777,6 +782,7 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=200):
                 'heading': val.get('heading', ''),
                 'url': f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date}/{uin}",
             })
+        logging.warning(f"[wq_diag] after_filters={len(results)} (from api_returned={api_returned} api_total={total})")
         return results, total
     except Exception as e:
         import logging
@@ -1191,20 +1197,27 @@ def _parse_hansard_party(attributed_to):
 
 def _extract_attributed_name(attributed_to):
     """Extract clean speaker name from AttributedTo string.
-    Handles: 'Lord Sikka (Lab)' → 'Lord Sikka'
-             'Baroness Barran (Con)' → 'Baroness Barran'
-             'Baroness in Waiting/Government Whip (Baroness Blake of Leeds) (Lab)' → 'Baroness Blake of Leeds'
-             'Lord Sikka' (no party) → 'Lord Sikka'"""
+
+    The name precedes the first '(' in almost all formats:
+      'Lord Leigh of Hurley (Con)'                           → 'Lord Leigh of Hurley'
+      'Helen Hayes (Hayes and Harlington) (Lab)'             → 'Helen Hayes'
+      'Josh MacAlister (Sevenoaks) (Lab)'                    → 'Josh MacAlister'
+
+    Exception: government whip/role format uses '/' in the role text and
+    the real name is in the first paren group:
+      'Baroness in Waiting/Government Whip (Baroness Blake of Leeds) (Lab)'
+                                                             → 'Baroness Blake of Leeds'
+    """
     if not attributed_to:
         return ''
-    parens = re.findall(r'\(([^)]+)\)', attributed_to)
-    if len(parens) >= 2:
-        # Role (Name) (Party) format — name is the second-to-last group
-        return parens[-2].strip()
-    elif len(parens) == 1:
-        # Name (Party) format — name is everything before the opening '('
-        return attributed_to[:attributed_to.rfind('(')].strip()
-    return attributed_to.strip()
+    before_paren = attributed_to.split('(')[0].strip()
+    if not before_paren:
+        return attributed_to.strip()
+    # '/' in the pre-paren text signals a role descriptor — real name is inside first '()'
+    if '/' in before_paren:
+        m = re.search(r'\(([^)]+)\)', attributed_to)
+        return m.group(1).strip() if m else before_paren
+    return before_paren
 
 
 def _hansard_section_to_source(house, section):
@@ -1367,7 +1380,8 @@ def fetch_full_hansard_session(ext_id, source):
                 continue
 
             attributed_to = item.get('AttributedTo', '') or ''
-            member_name = _extract_attributed_name(attributed_to)
+            # MemberName is a clean field when present; fall back to parsing AttributedTo
+            member_name = (item.get('MemberName') or '').strip() or _extract_attributed_name(attributed_to)
             item_date = item.get('SittingDate', '') or raw_date
             item_hdate = item_date[:10] if item_date else hdate
 

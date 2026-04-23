@@ -386,6 +386,15 @@ If the same bug has been attempted more than twice with no progress, stop and pe
 
 This forces analysis of the failure history rather than continuing to guess. Do not make a fourth attempt without first completing this analysis.
 
+### Escalate to Opus when stuck
+If the same feature or bug has been attempted 3+ times without resolving the underlying cause — not just the surface symptom — **stop and tell the user clearly**: "This has been attempted N times without a stable fix. I recommend getting an Opus review before continuing." Do not make another attempt without Opus input.
+
+Opus is particularly valuable for:
+- Data pipeline architecture questions (search → filter → rank → AI payload)
+- API behaviour that is undocumented or inconsistent (e.g. Parliament WQ API search semantics)
+- Issues where the fix keeps oscillating between two failure modes (too strict ↔ too loose)
+- Any change that has been reverted or re-applied more than once
+
 ### Transient vs permanent errors — different responses required
 | Error type | Examples | Correct response |
 |---|---|---|
