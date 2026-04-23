@@ -729,12 +729,16 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
             answering_body = val.get('answeringBodyName', '')
             if dept_names and answering_body not in dept_names:
                 continue
-            # Client-side relevance filter — require at least one topic word in question text or heading
+            # Client-side relevance filter — for multi-word topics require 2+ words to match.
+            # Single-word "student" hits almost every DfE question; requiring 2 of
+            # ["student", "loan", "repayments"] eliminates SEND/environment noise.
             if relevance_words:
                 q_raw = (val.get('questionText') or '').lower()
                 heading_raw = (val.get('heading') or '').lower()
                 combined = q_raw + ' ' + heading_raw
-                if not any(w in combined for w in relevance_words):
+                match_count = sum(1 for w in relevance_words if w in combined)
+                min_matches = 2 if len(relevance_words) >= 2 else 1
+                if match_count < min_matches:
                     continue
             raw_date = (val.get('dateTabled') or '').split('T')[0]
             date_ans = (val.get('dateAnswered') or '').split('T')[0]
