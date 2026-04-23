@@ -29,6 +29,16 @@
                     <option value="Lords"   {% if selected_house == 'Lords'   %}selected{% endif %}>House of Lords</option>
                 </select>
             </div>
+            <div class="form-group">
+                <label class="form-label">Answer Status:</label>
+                <select name="status_filter">
+                    <option value="all"       {% if status_filter == 'all'       %}selected{% endif %}>All statuses</option>
+                    <option value="unanswered"{% if status_filter == 'unanswered'%}selected{% endif %}>Unanswered only</option>
+                    <option value="answered"  {% if status_filter == 'answered'  %}selected{% endif %}>Answered only</option>
+                    <option value="holding"   {% if status_filter == 'holding'   %}selected{% endif %}>Holding answer</option>
+                    <option value="withdrawn" {% if status_filter == 'withdrawn' %}selected{% endif %}>Withdrawn</option>
+                </select>
+            </div>
         </div>
 
         <div class="form-row">
@@ -55,11 +65,14 @@
     {% endif %}
 </div>
 
-{% if total_available and total_available > results|length %}
+{% if pre_filter_count > 0 %}
 <div class="info-box" style="margin-top: 20px;">
-    Showing <strong>{{ results|length }}</strong> of <strong>{{ total_available }}</strong> matching questions.
+    Showing <strong>{{ results|length }}</strong>
+    {% if pre_filter_count > results|length %} of <strong>{{ pre_filter_count }}</strong> retrieved{% endif %}
+    {% if total_available > pre_filter_count %} ({{ total_available }} total in Parliament API){% endif %}
+    questions.
     {% if results|length >= results_cap %}
-    Add a <strong>date range</strong> or <strong>department filter</strong> to see a more focused set of results.
+    Add a <strong>date range</strong> or <strong>department filter</strong> to see a more focused set.
     {% endif %}
 </div>
 {% endif %}
@@ -74,6 +87,7 @@
                 </span>
                 <span class="result-card-dept">{{ r.dept }}</span>
                 <span class="result-card-date">{{ r.date }}</span>
+                {% if r.uin %}<span style="font-size:11px; color:#888; font-family:monospace; margin-left:6px;" title="Unique Identifier Number">{{ r.uin }}</span>{% endif %}
             </div>
             {% if r.heading %}<div class="wq-heading">{{ r.heading }}</div>{% endif %}
             <div class="result-card-body">
