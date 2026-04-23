@@ -357,14 +357,14 @@
   <!-- ── Download ──────────────────────────────────────────── -->
   <div style="margin-top:1.5rem;text-align:center;">
     <form method="POST" action="/download_debate_prep_brief" id="prep-download-form">
-      <input type="hidden" name="peer_name" value="{{ peer_name }}">
+      <input type="hidden" name="peer_name" value="{{ peer_name | e }}">
       <input type="hidden" name="question_date" value="{{ question_date or '' }}">
-      <input type="hidden" name="question_text" value="{{ question_text or '' }}">
-      <input type="hidden" name="peer_info_json" value="{{ peer_info | tojson | e if peer_info else '{}' }}">
-      <input type="hidden" name="one_pager_json" value="{{ one_pager | tojson | e if one_pager else '{}' }}">
-      <input type="hidden" name="media_json" value="{{ media_items | tojson | e }}">
-      <input type="hidden" name="parl_json" value="{{ parl_sections | tojson | e }}">
-      <input type="hidden" name="peer_contrib_json" value="{{ peer_contributions | tojson | e }}">
+      <input type="hidden" name="question_text" value="{{ question_text | e }}">
+      <input type="hidden" name="peer_info_json" value='{{ peer_info | tojson if peer_info else "{}" }}'>
+      <input type="hidden" name="one_pager_json" value='{{ one_pager | tojson if one_pager else "{}" }}'>
+      <input type="hidden" name="media_json" value='{{ media_items | tojson }}'>
+      <input type="hidden" name="parl_json" value='{{ parl_sections | tojson }}'>
+      <input type="hidden" name="peer_contrib_json" value='{{ peer_contributions | tojson }}'>
       <button type="submit" class="btn btn-primary" style="padding:.7rem 2rem;font-size:1rem;">
         ⬇ Download Word Brief
       </button>
