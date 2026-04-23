@@ -59,20 +59,21 @@ def _gemini_generate(api_key, prompt):
             if resp.status_code == 200:
                 available = [m['name'] for m in resp.json().get('models', [])
                              if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                # Strip 'models/' prefix; prefer 2.0-flash-lite, then 2.0-flash, avoid 2.5
-                for prefix in ['models/gemini-2.0-flash-lite', 'models/gemini-2.0-flash',
-                               'models/gemini-1.5-flash']:
-                    match = next((m for m in available if m.startswith(prefix) and '2.5' not in m), None)
+                # Prefer 2.5-flash-lite (same price as 2.0, available to all keys)
+                # 2.0-flash and 2.0-flash-lite deprecated Feb 2026, hard shutdown Jun 2026
+                for prefix in ['models/gemini-2.5-flash-lite', 'models/gemini-2.5-flash',
+                               'models/gemini-flash-latest']:
+                    match = next((m for m in available if m.startswith(prefix)), None)
                     if match:
                         _GEMINI_MODEL_CACHE[api_key] = match.removeprefix('models/')
                         break
                 else:
-                    first = next((m for m in available if '2.5' not in m), available[0] if available else None)
-                    _GEMINI_MODEL_CACHE[api_key] = first.removeprefix('models/') if first else 'gemini-2.0-flash-lite'
+                    first = available[0] if available else None
+                    _GEMINI_MODEL_CACHE[api_key] = first.removeprefix('models/') if first else 'gemini-2.5-flash-lite'
         except Exception:
-            _GEMINI_MODEL_CACHE[api_key] = 'gemini-2.0-flash-lite'
+            _GEMINI_MODEL_CACHE[api_key] = 'gemini-2.5-flash-lite'
 
-    model = _GEMINI_MODEL_CACHE.get(api_key, 'gemini-2.0-flash-lite')
+    model = _GEMINI_MODEL_CACHE.get(api_key, 'gemini-2.5-flash-lite')
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     for version in ('v1', 'v1beta'):
@@ -145,17 +146,21 @@ def morning_tracker():
             if resp.status_code == 200:
                 data = resp.json().get('results') or []
 
-                # Narrow to the single most recent due date (last sitting day)
+                # Narrow to the most recent past-or-today due date (last sitting day)
+                # Exclude future dates — named-day questions can have answer dates weeks ahead
                 if data:
                     due_dates = [
                         (item.get('value') or {}).get('dateForAnswer', '').split('T')[0]
                         for item in data
                         if (item.get('value') or {}).get('dateForAnswer')
                     ]
-                    if due_dates:
-                        last_sitting_day = max(due_dates)
+                    past_dates = [d for d in due_dates if d <= today]
+                    if past_dates:
+                        last_sitting_day = max(past_dates)
                         data = [item for item in data
                                 if (item.get('value') or {}).get('dateForAnswer', '').split('T')[0] == last_sitting_day]
+                    else:
+                        data = []
 
                 m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
                 with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -222,12 +227,15 @@ def morning_tracker():
                     except Exception as e:
                         ai_status = f"(AI Error: {str(e)[:60]})"
 
+                if ai_status:
+                    print(f"[tracker] categorisation issue: {ai_status}")
+
                 if results:
                     temp_group = {}
                     for r in results:
                         r_date = r['raw_date']
                         theme = categories.get(r['uin'])
-                        if not theme: theme = f"Uncategorized {ai_status}".strip()
+                        if not theme: theme = "Uncategorized"
                         if r_date not in temp_group: temp_group[r_date] = {'display_date': r['date_asked'], 'themes': {}}
                         if theme not in temp_group[r_date]['themes']: temp_group[r_date]['themes'][theme] = []
                         temp_group[r_date]['themes'][theme].append(r)
