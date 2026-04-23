@@ -1238,7 +1238,7 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
         if resp.status_code != 200:
             return []
         data = resp.json()
-        results = data.get('Results', data.get('results', []))
+        results = data.get('Contributions', [])
 
         rows = []
         for r in results:
