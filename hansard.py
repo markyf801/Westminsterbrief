@@ -45,6 +45,14 @@ def strip_html(raw):
     return ' '.join(text.split())
 
 
+def _word_root(w):
+    """Strip common English suffixes so 'repayments' matches 'repayment' in text."""
+    for suffix in ('ments', 'ment', 'tions', 'tion', 'ings', 'ing', 'ers', 'es', 's'):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 4:
+            return w[:-len(suffix)]
+    return w
+
+
 def fetch_wq_pages(params_base):
     """Fetch up to WQ_MAX_RESULTS written questions via parallel pagination."""
     all_items, total_available = [], 0
@@ -209,13 +217,13 @@ def index():
             })
             prefetch_members(all_member_ids)
 
-            # Build per-subject word sets for relevance filtering
-            # Each set contains the meaningful words (3+ chars) from one search subject
+            # Build per-subject root sets for relevance filtering
+            # Strip common suffixes so "repayments" matches "repayment" in text
             subject_word_sets = []
             for subj in subjects:
-                words = {w.lower() for w in subj.split() if len(w) >= 3}
-                if words:
-                    subject_word_sets.append(words)
+                roots = {_word_root(w.lower()) for w in subj.split() if len(w) >= 3}
+                if roots:
+                    subject_word_sets.append(roots)
 
             # Python-level filtering and row building
             for item in all_raw_results:

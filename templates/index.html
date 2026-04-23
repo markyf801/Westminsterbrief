@@ -8,7 +8,7 @@
 <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
     <div class="result-card-header" style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
         <input type="checkbox" class="wq-select"
-               data-wq="{{ {'uin': r.uin, 'dept': r.dept, 'name': r.name, 'party': r.party, 'role': r.role, 'date': r.date, 'text': r.text, 'heading': r.heading, 'answered': r.answered, 'is_holding': r.is_holding, 'is_withdrawn': r.is_withdrawn, 'answer_text': r.answer_text, 'answering_minister': r.answering_minister, 'date_answered': r.date_answered, 'url': r.url} | tojson | e }}"
+               data-wq='{{ {"uin": r.uin, "dept": r.dept, "name": r.name, "party": r.party, "role": r.role, "date": r.date, "text": r.text, "heading": r.heading, "answered": r.answered, "is_holding": r.is_holding, "is_withdrawn": r.is_withdrawn, "answer_text": r.answer_text, "answering_minister": r.answering_minister, "date_answered": r.date_answered, "url": r.url} | tojson }}'
                onchange="updateSelectionBar()"
                onclick="event.stopPropagation()"
                style="cursor:pointer; flex-shrink:0; width:15px; height:15px;">
