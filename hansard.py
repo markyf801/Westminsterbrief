@@ -47,7 +47,7 @@ def strip_html(raw):
 def fetch_wq_pages(params_base):
     """Fetch up to WQ_MAX_RESULTS written questions via parallel pagination."""
     all_items, total_available = [], 0
-    r = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': 0}, timeout=30)
+    r = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': 0}, timeout=60)
     if r.status_code != 200:
         return [], 0
     data = r.json()
@@ -59,7 +59,7 @@ def fetch_wq_pages(params_base):
         return all_items, total_available
 
     def _fetch(skip):
-        resp = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': skip}, timeout=30)
+        resp = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': skip}, timeout=60)
         return resp.json().get('results') or [] if resp.status_code == 200 else []
 
     with ThreadPoolExecutor(max_workers=4) as ex:
@@ -176,6 +176,7 @@ def index():
                 return fetch_wq_pages(p)
 
             # Parallel multi-subject fetches
+            fetch_errors = []
             with ThreadPoolExecutor(max_workers=min(len(subjects), 4)) as ex:
                 futures = [ex.submit(_fetch_subject, s) for s in subjects]
                 for f in as_completed(futures):
@@ -187,8 +188,11 @@ def index():
                             if uin and uin not in seen_uins:
                                 seen_uins.add(uin)
                                 all_raw_results.append(item)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        fetch_errors.append(str(e))
+
+            if fetch_errors and not all_raw_results:
+                raise Exception(f"Parliament API unavailable — please try again in a moment. ({fetch_errors[0]})")
 
             pre_filter_count = len(all_raw_results)
 
