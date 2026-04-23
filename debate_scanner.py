@@ -540,6 +540,12 @@ def fetch_all_debate_sessions(matched_rows, max_debates=15):
             gid_source_pairs.append((gid, source))
         if len(gid_source_pairs) >= max_debates:
             break
+    import logging as _slog
+    expandable = len(gid_source_pairs)
+    skipped = sum(1 for r in matched_rows
+                  if r.get('source') != 'wrans'
+                  and not _listurl_to_parent_gid(r.get('listurl', ''), r.get('source', '')))
+    _slog.warning(f"[session_expand] {len(matched_rows)} rows in, {expandable} expandable GIDs, {skipped} skipped (Hansard/unparseable URLs)")
     if not gid_source_pairs:
         return []
     extra = []
@@ -551,6 +557,7 @@ def fetch_all_debate_sessions(matched_rows, max_debates=15):
                 extra.extend(f.result())
             except Exception:
                 pass
+    _slog.warning(f"[session_expand] {len(extra)} total speeches fetched from {expandable} sessions")
     return extra
 
 
@@ -1794,6 +1801,10 @@ def debates_topic():
                 debug_query += ' | ERRORS: ' + '; '.join(set(twfy_errors))
 
             topic_rows = deduplicate_by_listurl(all_rows)
+            import logging as _tlog
+            twfy_count = sum(1 for r in topic_rows if not r.get('listurl', '').startswith('http'))
+            hansard_count = sum(1 for r in topic_rows if r.get('listurl', '').startswith('http'))
+            _tlog.warning(f"[topic_rows] {len(topic_rows)} total after dedup: {twfy_count} TWFY, {hansard_count} Hansard | source_counts={source_counts}")
 
             # Debates-first: expand each matched debate to include ALL speeches.
             # This ensures ministerial responses appear even when they don't contain
