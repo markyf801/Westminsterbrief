@@ -2,6 +2,7 @@ import requests, os, json, re, concurrent.futures, io
 from flask import Blueprint, render_template, request, send_file
 from datetime import datetime, timedelta
 from cache_models import CachedMember
+from google import genai as _genai
 
 try:
     import docx
@@ -43,23 +44,14 @@ def add_hyperlink(paragraph, url, text):
     paragraph._p.append(hyperlink)
     return hyperlink
 
-def get_working_model(api_key):
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200:
-            available = [m['name'] for m in resp.json().get('models', [])
-                         if 'generateContent' in m.get('supportedGenerationMethods', [])]
-            # Use prefix matching — API returns versioned names like gemini-2.0-flash-001
-            # Avoid 2.5 family which is unreliable; prefer 2.0 then 1.5
-            for prefix in ['models/gemini-2.0-flash-lite', 'models/gemini-2.0-flash',
-                           'models/gemini-1.5-flash', 'models/gemini-1.5-pro']:
-                match = next((m for m in available if m.startswith(prefix) and '2.5' not in m), None)
-                if match:
-                    return match
-    except:
-        pass
-    return "models/gemini-1.5-flash-latest"
+GEMINI_MODEL = 'gemini-2.0-flash'
+
+
+def _gemini_generate(api_key, prompt):
+    """Call Gemini via google-genai client. Returns response text or raises."""
+    client = _genai.Client(api_key=api_key)
+    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    return response.text
 
 def get_member_name(member_id):
     if not member_id: return "Unknown Member"
@@ -178,31 +170,22 @@ def morning_tracker():
                             "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
                             f"Data: {json.dumps(questions_data)}"
                         )
-                        
-                        model_path = get_working_model(api_key)
-                        ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
-                        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-                        
-                        if "1.5" in model_path: payload["generationConfig"] = {"responseMimeType": "application/json"}
-                        
-                        ai_resp = requests.post(ai_url, json=payload, timeout=90)
-                        
-                        if ai_resp.status_code == 200:
-                            raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-                            match = re.search(r'\{.*\}|\[.*\]', raw_text.replace('\n', ' '), re.DOTALL)
-                            if match:
-                                parsed = json.loads(match.group(0))
-                                if isinstance(parsed, list):
-                                    for item in parsed:
-                                        k = str(item.get('uin', item.get('id', '')))
-                                        v = str(item.get('theme', 'Uncategorized'))
-                                        if k: categories[k] = v
-                                elif isinstance(parsed, dict):
-                                    for k, v in parsed.items():
-                                        categories[str(k)] = str(v)
-                            else: ai_status = "(AI Data Mismatch)"
-                        else: ai_status = f"(AI System Code {ai_resp.status_code} on {model_path})"
-                    except Exception as e: ai_status = f"(AI Error: {str(e)[:30]})"
+                        raw_text = _gemini_generate(api_key, prompt)
+                        match = re.search(r'\{.*\}|\[.*\]', raw_text.replace('\n', ' '), re.DOTALL)
+                        if match:
+                            parsed = json.loads(match.group(0))
+                            if isinstance(parsed, list):
+                                for item in parsed:
+                                    k = str(item.get('uin', item.get('id', '')))
+                                    v = str(item.get('theme', 'Uncategorized'))
+                                    if k: categories[k] = v
+                            elif isinstance(parsed, dict):
+                                for k, v in parsed.items():
+                                    categories[str(k)] = str(v)
+                        else:
+                            ai_status = "(AI: unexpected response format)"
+                    except Exception as e:
+                        ai_status = f"(AI Error: {str(e)[:60]})"
 
                 if results:
                     temp_group = {}
@@ -249,17 +232,12 @@ def download_tracker_word():
                 "Return a pure JSON dictionary where the keys are the UIN strings and the values are your analysis. "
                 f"Data: {json.dumps(flat_questions)}"
             )
-            model_path = get_working_model(api_key)
-            ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            if "1.5" in model_path: payload["generationConfig"] = {"responseMimeType": "application/json"}
-            
-            ai_resp = requests.post(ai_url, json=payload, timeout=60)
-            if ai_resp.status_code == 200:
-                raw_text = ai_resp.json()['candidates'][0]['content']['parts'][0]['text']
-                match = re.search(r'\{.*\}', raw_text.replace('\n', ' '), re.DOTALL)
-                if match: ai_context_dict = json.loads(match.group(0))
-        except Exception as e: print(f"AI Context Error: {e}")
+            raw_text = _gemini_generate(api_key, prompt)
+            match = re.search(r'\{.*\}', raw_text.replace('\n', ' '), re.DOTALL)
+            if match:
+                ai_context_dict = json.loads(match.group(0))
+        except Exception as e:
+            print(f"AI Context Error: {e}")
 
     doc = Document()
     doc.add_heading('Today’s PQs (Enhanced Briefing)', 0)
