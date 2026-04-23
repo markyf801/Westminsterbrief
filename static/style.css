@@ -105,6 +105,18 @@ body {
     color: #d9534f !important;
 }
 
+.navbar .nav-login {
+    background: rgba(255,255,255,0.15);
+    border-radius: 4px;
+    padding: 4px 12px !important;
+    font-weight: 600 !important;
+}
+
+.navbar .nav-register {
+    font-weight: 500 !important;
+    opacity: 0.85;
+}
+
 .nav-version {
     margin-left: auto;
     font-size: 10px;

@@ -25,6 +25,12 @@
             <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ AI-assisted research</span>
             <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ Free for gov.uk staff</span>
         </div>
+        {% if not current_user.is_authenticated %}
+        <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap;">
+            <a href="/register" style="background:white; color:#1c3e6e; font-weight:700; font-size:14px; padding:9px 22px; border-radius:5px; text-decoration:none;">Register free</a>
+            <a href="/login" style="background:rgba(255,255,255,0.15); color:white; font-weight:600; font-size:14px; padding:9px 22px; border-radius:5px; text-decoration:none; border:1px solid rgba(255,255,255,0.4);">Sign in</a>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -127,39 +133,27 @@
     <div class="tool-card">
         <div class="tool-card-header">
             <span class="tool-card-icon">🗣️</span>
-            <h3 class="tool-card-title">Parliamentary Research Tool</h3>
+            <h3 class="tool-card-title">Hansard Search</h3>
             <span class="tool-card-badge">AI</span>
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
                 Search everything said in Parliament on any topic — Commons chamber, Westminster Hall, House of
-                Lords, and Written Answers — simultaneously. AI synthesises the results into a structured briefing
-                covering the government position, opposition critique, key speakers, notable quotes, and recommended
-                next steps. Also includes Speech Research: analyse a specific minister's debate record and
-                communication style for parliamentary preparation.
+                Lords, and Written Answers — simultaneously. AI synthesises results into a structured briefing
+                covering the government position, opposition critique, key speakers, notable quotes, and suggested
+                areas for further research. Also includes Speech Research: analyse a specific minister's debate
+                record and communication style for parliamentary preparation.
             </p>
-            <a href="/debates" class="tool-card-link">Open Research Tool &rarr;</a>
+            <a href="/debates" class="tool-card-link">Open Hansard Search &rarr;</a>
         </div>
     </div>
 
-    <div class="tool-card" style="opacity:0.7;">
-        <div class="tool-card-header">
-            <span class="tool-card-icon">🔔</span>
-            <h3 class="tool-card-title">Smart AI Radar</h3>
-            <span class="tool-card-badge" style="background:#999;">Coming Soon</span>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Track policy topics across Hansard debates, news media, and stakeholder Bluesky accounts.
-                AI semantic filtering surfaces only genuinely relevant updates for your brief — cutting through
-                the noise to highlight what matters for your policy area.
-            </p>
-            <p class="tool-card-desc" style="color:#999; font-size:13px; margin-top:8px;">
-                🚧 This feature is currently in development and not yet available.
-            </p>
-        </div>
-    </div>
 
+</div>
+
+<div style="margin-top:1.5rem; padding:.7rem 1rem; background:#f8f9fa; border-radius:6px; border:1px solid #e0e0e0; font-size:.85rem; color:#666;">
+    <strong style="color:#444;">🚧 Coming soon:</strong>
+    Smart AI Radar — track policy topics across Hansard, news media, and stakeholder social accounts with AI semantic filtering.
 </div>
 
 {% endblock %}
