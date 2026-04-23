@@ -1,21 +1,22 @@
 {% extends "base.html" %}
 
 {% block content %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+
 <div class="box">
     <h2>🔍 Search PQs by MP or Peer</h2>
-    
+
     <div style="background-color: #f0f7ff; border-left: 4px solid #005a8f; padding: 15px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
         <p style="margin: 0; color: #1c3e6e; font-size: 14.5px; line-height: 1.6;">
-            <strong>How to use this tool:</strong> Enter the name of an MP or Peer to retrieve their recent Written Questions. 
-            You can optionally narrow the results by selecting a specific Department or a Date Range. Once loaded, click the green button to export a clean briefing document.
+            <strong>How to use this tool:</strong> Search for an MP or Peer using the dropdown, then optionally filter by Department or Date Range. Click the green button to export a clean briefing document.
         </p>
     </div>
-    
+
     <form method="POST" onsubmit="showLoading()">
         <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 250px;">
                 <label style="display:block; margin-bottom: 8px; font-weight: 600;">1. MP or Peer Name (Required):</label>
-                <input type="text" name="mp_name" value="{{ search_mp }}" placeholder="e.g., Layla Moran" required style="padding: 12px; border-radius: 4px; border: 1px solid #ccc; width: 100%;">
+                <select name="mp_name" id="member-search" style="width: 100%;" required></select>
             </div>
             <div style="flex: 1; min-width: 250px;">
                 <label style="display:block; margin-bottom: 8px; font-weight: 600;">2. Filter by Department (Optional):</label>
@@ -52,11 +53,19 @@
     {% if results %}
         
         <div class="box" style="margin-top: 20px; padding: 20px; background: #fdfdfd; border-left: 5px solid #1c3e6e;">
-            <h2 style="margin-top: 0; color: #1c3e6e; margin-bottom: 10px;">👤 {{ mp_details.name }}</h2>
-            <div style="display: flex; gap: 20px; font-size: 15px; color: #555;">
-                <span><strong>Party:</strong> {{ mp_details.party }}</span>
-                <span><strong>Role:</strong> {{ mp_details.role }}</span>
-                <span><strong>Total PQs Found:</strong> {{ results|length }}</span>
+            <div style="display: flex; gap: 20px; align-items: center;">
+                {% if mp_details.photo_url %}
+                <img src="{{ mp_details.photo_url }}" alt="{{ mp_details.name }}"
+                     style="width: 80px; height: 100px; object-fit: cover; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.15); flex-shrink: 0;">
+                {% endif %}
+                <div>
+                    <h2 style="margin: 0 0 8px 0; color: #1c3e6e;">{{ mp_details.name }}</h2>
+                    <div style="display: flex; gap: 20px; font-size: 15px; color: #555; flex-wrap: wrap;">
+                        <span><strong>Party:</strong> {{ mp_details.party }}</span>
+                        <span><strong>Role:</strong> {{ mp_details.role }}</span>
+                        <span><strong>Total PQs Found:</strong> {{ results|length }}</span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -123,7 +132,41 @@
     {% endif %}
 {% endif %}
 
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<style>
+    .select2-container--default .select2-selection--single {
+        height: 46px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__arrow { height: 44px; }
+    .select2-container--default .select2-selection--single .select2-selection__rendered { line-height: 28px; }
+</style>
 <script>
+    $(document).ready(function() {
+        $('#member-search').select2({
+            placeholder: 'Start typing a name (e.g. Bridget Phillipson, Smith of Malvern)...',
+            minimumInputLength: 3,
+            ajax: {
+                url: '/api/search_members',
+                dataType: 'json',
+                delay: 250,
+                processResults: function(data) {
+                    return { results: data.results.map(r => ({ id: r.text, text: r.text })) };
+                }
+            }
+        });
+
+        // Auto-submit if arriving from Debate Scanner "View PQs" link
+        const params = new URLSearchParams(window.location.search);
+        const prefill = params.get('name');
+        if (prefill) {
+            // Create an option and trigger select2 + form submit
+            const option = new Option(prefill, prefill, true, true);
+            $('#member-search').append(option).trigger('change');
+            $('form').submit();
+        }
+    });
+
     function showLoading() {
         const btn = document.getElementById('submitBtn');
         const text = document.getElementById('btnText');
@@ -131,18 +174,5 @@
         btn.style.cursor = 'wait';
         text.innerText = "🔍 Searching Database... (Please wait)";
     }
-
-    // Auto-submit if arriving from Debate Scanner "View PQs" link
-    (function() {
-        const params = new URLSearchParams(window.location.search);
-        const prefill = params.get('name');
-        if (prefill) {
-            const input = document.querySelector('input[name="mp_name"]');
-            if (input && !input.value) {
-                input.value = prefill;
-                document.querySelector('form').submit();
-            }
-        }
-    })();
 </script>
 {% endblock %}

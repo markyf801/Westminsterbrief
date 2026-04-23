@@ -71,7 +71,8 @@ def search_mp_pqs():
                     constituency = membership.get('membershipFrom', 'Life Peer')
                     role = "Life Peer" if house == "Lords" else f"MP for {constituency}"
                     
-                    mp_details = {"name": name, "party": party, "role": role}
+                    photo_url = member_data.get('thumbnailUrl', '')
+                    mp_details = {"name": name, "party": party, "role": role, "photo_url": photo_url}
 
                     # 2. PQ Fetching with enforced filters
                     params = {'askingMemberId': int(member_id), 'take': 500}
