@@ -3570,14 +3570,15 @@ def debate_prep():
     try:
         return _debate_prep_post()
     except Exception as e:
-        logging.error(f"[debate_prep POST] UNHANDLED: {e}\n{traceback.format_exc()}")
+        tb = traceback.format_exc()
+        logging.error(f"[debate_prep POST] UNHANDLED: {e}\n{tb}")
         return render_template('debate_prep.html',
             is_post=True, peer_name=request.form.get('peer_name',''),
             question_date=request.form.get('question_date',''),
             question_text=request.form.get('question_text',''),
             media_start='', media_end='', peer_info=None, one_pager=None,
             media_items=[], parl_sections={}, peer_contributions={},
-            error=f'Server error: {e}'), 200
+            error=f'Server error: {e}\n\n{tb}'), 200
 
 
 def _debate_prep_post():
