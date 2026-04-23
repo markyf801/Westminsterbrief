@@ -251,12 +251,12 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
         else:
             api_url = TWFY_API_URL
         # TWFY date range syntax: SEARCHTERM YYYYMMDD..YYYYMMDD in search string.
-        # When combined with a date range, strip outer parentheses from complex OR
-        # expressions — TWFY cannot parse (A OR B) with a date range appended.
+        # TWFY cannot parse (A OR B) with a date range appended.
+        # Strip outer parens from any leading OR group — handles both the plain case
+        # '("a" OR "b")' and the narrow-keyword case '("a" OR "b") AND "narrow"'.
         if date_range:
             clean = search.strip()
-            if clean.startswith('(') and clean.endswith(')'):
-                clean = clean[1:-1]
+            clean = re.sub(r'^\(([^)]+)\)', r'\1', clean)
             query = f"{clean} {date_range}"
         else:
             query = search
@@ -312,7 +312,9 @@ def deduplicate_by_listurl(rows):
     out = []
     for r in rows:
         key = r.get('listurl', '')
-        if key and key not in seen:
+        if not key:
+            out.append(r)  # no URL — always keep, never dedup
+        elif key not in seen:
             seen.add(key)
             out.append(r)
     return out
@@ -427,14 +429,18 @@ _SOURCE_GID_PREFIX = {
 def _listurl_to_parent_gid(listurl, source):
     """Convert a TWFY listurl to the parent debate-section GID (speech-index replaced with .0).
     e.g. /debates/?id=2026-01-15.123.4 + commons → uk.org.publicwhip/debate/2026-01-15.123.0
-    Returns None if listurl cannot be parsed or source is not expandable."""
+    Returns None if listurl cannot be parsed, is a Hansard URL, or source is not expandable."""
     if not listurl or source not in _SOURCE_GID_PREFIX:
         return None
+    if listurl.startswith('http'):
+        return None  # Hansard API full URLs have no TWFY GID — cannot expand via this path
     try:
         m = re.search(r'\?id=([^&]+)', listurl)
         if not m:
             return None
         id_val = m.group(1)                   # e.g. "2026-01-15.123.4"
+        if '.' not in id_val:
+            return None  # malformed id — no dot separator, would produce invalid GID
         section = id_val.rsplit('.', 1)[0]     # e.g. "2026-01-15.123"
         return f"{_SOURCE_GID_PREFIX[source]}{section}.0"
     except Exception:
@@ -478,9 +484,12 @@ def fetch_full_debate_session(parent_gid, source):
                 'debate_type': get_debate_type(debate_title, source=source),
                 'from_session_fetch': True,
             })
-        CachedTWFYSearch.store(parent_gid, f'session_{source}', results)
+        if results:
+            CachedTWFYSearch.store(parent_gid, f'session_{source}', results)
         return results
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.warning(f"[session_expand] {parent_gid} {source}: {type(e).__name__}: {e}")
         return []
 
 
@@ -564,48 +573,51 @@ def _classify_group(grp):
     title = grp.get('title', '').lower()
     speeches = grp.get('speeches', [])
 
+    # Normalise dashes so em-dash/en-dash variants match consistently
+    title_norm = re.sub(r'[–—]', '-', title)
+
     if source == 'wms':
         return 'statement'
     # Written answers must never reach _group_by_debate — filtered out upstream.
     # If any slip through, return 'wq' as a sentinel so they don't appear in Debates.
     if 'written answers' in title or 'written answer' in title:
         return 'wq'
-    if ('bill' in title or 'second reading' in title or 'third reading' in title
+    if (re.search(r'\bbill\b', title) or 'second reading' in title or 'third reading' in title
             or 'committee stage' in title or 'report stage' in title
             or 'lords amendments' in title or 'royal assent' in title):
         return 'legislation'
     if 'urgent question' in title:
         return 'urgent'
+    # Commons oral statements: titled "Statement on X" (source=commons, not wms)
+    if source == 'commons' and 'statement' in title:
+        return 'statement'
     if 'oral answers' in title or 'question time' in title:
         return 'oral'
     if 'prime minister' in title and 'question' in title:
         return 'oral'
-    # Lords oral questions have titles like "Student Loans: Review — Question"
-    # or "Plan 2 Student Loans: Repayment Terms — Question"
-    if source == 'lords' and (title.rstrip().endswith('— question') or
-                              '— oral question' in title or
-                              '— question' in title):
+    # Lords oral questions — normalised title so em-dash/hyphen variants both match
+    if source == 'lords' and (title_norm.rstrip().endswith('- question') or
+                              '- oral question' in title_norm or
+                              '- question' in title_norm):
         return 'oral'
     # Commons oral questions: "Department: Topic" format
-    # e.g. "Education: SEND: Funding", "Home Office: Immigration: Policy"
-    # This is the standard Hansard title format for commons oral question sessions.
     _OQ_DEPT_PREFIXES = (
         'education', 'health', 'treasury', 'home office', 'defence', 'justice',
         'transport', 'environment', 'science', 'work and pensions', 'cabinet office',
         'foreign', 'culture', 'housing', 'digital', 'northern ireland', 'business',
+        'wales', 'scotland', 'attorney general', 'leader of the house',
+        'women and equalities', 'energy security', 'levelling up',
+        'international trade', 'international development',
     )
     if source == 'commons' and any(title.startswith(p + ':') for p in _OQ_DEPT_PREFIXES):
         return 'oral'
-    # Commons Education/department topical questions
     if 'topical question' in title:
         return 'oral'
     # Word-count heuristic: short speeches are likely Oral PQ follow-ups.
-    # Only apply to commons — Lords written answers are short by nature, not oral.
-    # Threshold is 400 (not 300) because after full-session fetch the minister's
-    # topical answer can run to ~350 words.
-    if source == 'commons' and speeches:
+    # Applied to both commons and lords — threshold 400 words.
+    if speeches:
         max_words = max((r.get('body_word_count', 0) for r in speeches), default=0)
-        if 0 < max_words < 400:
+        if source in ('commons', 'lords') and 0 < max_words < 400:
             return 'oral'
     return 'debate'
 
@@ -1779,9 +1791,6 @@ def debates_topic():
                 row['is_minister'] = bool(role)
                 row['minister_role'] = role or ''
 
-            # Ministers always first, then by relevance within each group
-            topic_rows.sort(key=lambda x: (not x.get('is_minister', False), -x.get('relevance', 0)))
-
             if not topic_rows:
                 error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
             elif GEMINI_API_KEY:
@@ -1804,10 +1813,15 @@ def debates_topic():
                     non_minister_rows = [r for r in topic_rows if not r.get('is_minister')]
                     # Scan ALL non-minister rows for opposition speeches (may have relevance=0
                     # from Phase 1 expansion but still contain valuable opposition positions)
-                    opp_rows = [r for r in non_minister_rows
-                                if r.get('speaker_party', '') in _OPPOSITION_PARTIES]
-                    other_rows = [r for r in non_minister_rows
-                                  if r.get('speaker_party', '') not in _OPPOSITION_PARTIES]
+                    # Sort by relevance so keyword hits beat session-context rows (relevance=0)
+                    opp_rows = sorted(
+                        [r for r in non_minister_rows if r.get('speaker_party', '') in _OPPOSITION_PARTIES],
+                        key=lambda x: -x.get('relevance', 0)
+                    )
+                    other_rows = sorted(
+                        [r for r in non_minister_rows if r.get('speaker_party', '') not in _OPPOSITION_PARTIES],
+                        key=lambda x: -x.get('relevance', 0)
+                    )
                     balanced = minister_rows + opp_rows[:10] + other_rows[:10]
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
