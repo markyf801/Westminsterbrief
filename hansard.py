@@ -208,6 +208,14 @@ def index():
             })
             prefetch_members(all_member_ids)
 
+            # Build per-subject word sets for relevance filtering
+            # Each set contains the meaningful words (3+ chars) from one search subject
+            subject_word_sets = []
+            for subj in subjects:
+                words = {w.lower() for w in subj.split() if len(w) >= 3}
+                if words:
+                    subject_word_sets.append(words)
+
             # Python-level filtering and row building
             for item in all_raw_results:
                 val = item.get('value') or {}
@@ -220,6 +228,12 @@ def index():
 
                 if start_date and raw_date_str < start_date: continue
                 if end_date and raw_date_str > end_date: continue
+
+                # Relevance filter: all words from at least one search subject must appear
+                if subject_word_sets:
+                    q_lower = (strip_html(val.get('questionText', '')) + ' ' + (val.get('heading') or '')).lower()
+                    if not any(all(w in q_lower for w in word_set) for word_set in subject_word_sets):
+                        continue
 
                 val_member_id = val.get('askingMemberId')
                 house_raw = val.get('house', 'Commons')
