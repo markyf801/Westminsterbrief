@@ -145,6 +145,7 @@ def index():
     subject, start_date, end_date = "", "", ""
     total_available = 0
     pre_filter_count = 0
+    grouped_results = []
 
     if request.method == 'POST':
         subject = request.form.get('subject', '').strip()
@@ -299,6 +300,13 @@ def index():
             for r in results:
                 r.pop('_sort_date', None)
 
+            # Group by Parliament heading for topic view
+            heading_groups = {}
+            for r in results:
+                key = r.get('heading') or 'Other'
+                heading_groups.setdefault(key, []).append(r)
+            grouped_results = sorted(heading_groups.items(), key=lambda x: len(x[1]), reverse=True)
+
             # Export metadata (shared by Word and CSV)
             dept_label = next((k for k, v in DEPARTMENTS.items() if v == selected_dept_id), 'All Departments')
             filename_ts = datetime.now().strftime('%Y%m%d_%H%M')
@@ -370,6 +378,7 @@ def index():
 
     return render_template('index.html',
                            results=results,
+                           grouped_results=grouped_results,
                            error_message=error_message,
                            departments=DEPARTMENTS,
                            selected_dept=selected_dept_id,

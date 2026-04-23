@@ -2,6 +2,39 @@
 {% block title %}Written Questions Scanner — Westminster Brief{% endblock %}
 
 {% block content %}
+
+{# ── Card macro — used in both flat and grouped views ── #}
+{% macro wq_card(r, show_heading=true) %}
+<div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
+    <div class="result-card-header">
+        <span class="wq-status-badge wq-status-{% if r.is_withdrawn %}withdrawn{% elif r.is_holding %}holding{% elif r.answered %}answered{% else %}unanswered{% endif %}">
+            {% if r.is_withdrawn %}WITHDRAWN{% elif r.is_holding %}HOLDING{% elif r.answered %}ANSWERED{% else %}UNANSWERED{% endif %}
+        </span>
+        <span class="result-card-dept">{{ r.dept }}</span>
+        <span class="result-card-date">{{ r.date }}</span>
+        {% if r.uin %}<span style="font-size:11px; color:#888; font-family:monospace; margin-left:6px;" title="Unique Identifier Number">{{ r.uin }}</span>{% endif %}
+    </div>
+    {% if show_heading and r.heading %}<div class="wq-heading">{{ r.heading }}</div>{% endif %}
+    <div class="result-card-body">
+        <p style="margin-bottom: 8px;">
+            <span class="wq-party-dot" style="background: {{ r.party_colour }};"></span>
+            <strong>{{ r.name }}</strong>
+            <span class="wq-party-label">({{ r.party }}, {{ r.role }})</span> asked:
+        </p>
+        <p class="result-card-quote">"{{ r.text }}"</p>
+        {% if r.answer_text %}
+        <details class="wq-answer-details">
+            <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
+            <div class="wq-answer-text">{{ r.answer_text }}</div>
+        </details>
+        {% elif r.answered %}
+        <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
+        {% endif %}
+        <a href="{{ r.url }}" target="_blank" class="result-card-link">View on Parliament.uk &rarr;</a>
+    </div>
+</div>
+{% endmacro %}
+
 <div class="box">
     <h2>Written Questions Scanner</h2>
 
@@ -56,7 +89,7 @@
             <button type="submit" name="action" value="search" class="btn btn-primary btn-full">Search</button>
             <button type="submit" name="action" value="csv"    class="btn btn-success btn-full">Export CSV</button>
             <button type="submit" name="action" value="word"   class="btn btn-purple  btn-full">Export Word</button>
-            <a href="/" class="btn btn-muted btn-full">Clear</a>
+            <a href="/questions" class="btn btn-muted btn-full">Clear</a>
         </div>
     </form>
 
@@ -78,41 +111,60 @@
 {% endif %}
 
 {% if results %}
-    <div style="margin-top: 20px;">
-    {% for r in results %}
-        <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
-            <div class="result-card-header">
-                <span class="wq-status-badge wq-status-{% if r.is_withdrawn %}withdrawn{% elif r.is_holding %}holding{% elif r.answered %}answered{% else %}unanswered{% endif %}">
-                    {% if r.is_withdrawn %}WITHDRAWN{% elif r.is_holding %}HOLDING{% elif r.answered %}ANSWERED{% else %}UNANSWERED{% endif %}
-                </span>
-                <span class="result-card-dept">{{ r.dept }}</span>
-                <span class="result-card-date">{{ r.date }}</span>
-                {% if r.uin %}<span style="font-size:11px; color:#888; font-family:monospace; margin-left:6px;" title="Unique Identifier Number">{{ r.uin }}</span>{% endif %}
-            </div>
-            {% if r.heading %}<div class="wq-heading">{{ r.heading }}</div>{% endif %}
-            <div class="result-card-body">
-                <p style="margin-bottom: 8px;">
-                    <span class="wq-party-dot" style="background: {{ r.party_colour }};"></span>
-                    <strong>{{ r.name }}</strong>
-                    <span class="wq-party-label">({{ r.party }}, {{ r.role }})</span> asked:
-                </p>
-                <p class="result-card-quote">"{{ r.text }}"</p>
-                {% if r.answer_text %}
-                <details class="wq-answer-details">
-                    <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
-                    <div class="wq-answer-text">{{ r.answer_text }}</div>
-                </details>
-                {% elif r.answered %}
-                <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
-                {% endif %}
-                <a href="{{ r.url }}" target="_blank" class="result-card-link">View on Parliament.uk &rarr;</a>
-            </div>
-        </div>
-    {% endfor %}
+
+    {# ── View toggle ── #}
+    <div style="margin-top: 16px; display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 13px; color: #666; font-weight: 500;">View:</span>
+        <button onclick="showView('flat')" id="btn-flat"
+                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #1c3e6e; background: #1c3e6e; color: white; font-size: 12px; cursor: pointer; font-weight: 600;">
+            Flat list
+        </button>
+        <button onclick="showView('grouped')" id="btn-grouped"
+                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #555; font-size: 12px; cursor: pointer;">
+            By topic ({{ grouped_results|length }} categories)
+        </button>
     </div>
+
+    {# ── Flat list view ── #}
+    <div id="view-flat" style="margin-top: 16px;">
+        {% for r in results %}{{ wq_card(r) }}{% endfor %}
+    </div>
+
+    {# ── Grouped by heading view ── #}
+    <div id="view-grouped" style="margin-top: 16px; display: none;">
+        {% for heading, group in grouped_results %}
+        <details open style="margin-bottom: 12px;">
+            <summary style="cursor: pointer; padding: 10px 16px; background: #1c3e6e; color: white; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none;">
+                <span>{{ heading | title }}</span>
+                <span style="background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;">{{ group|length }}</span>
+            </summary>
+            <div style="margin-top: 4px;">
+                {% for r in group %}{{ wq_card(r, false) }}{% endfor %}
+            </div>
+        </details>
+        {% endfor %}
+    </div>
+
 {% elif request.method == 'POST' and not error_message %}
     <div class="box empty-state" style="margin-top: 20px;">
         <p>No questions found matching those filters.</p>
     </div>
 {% endif %}
+
+<script>
+function showView(mode) {
+    document.getElementById('view-flat').style.display    = mode === 'flat'    ? '' : 'none';
+    document.getElementById('view-grouped').style.display = mode === 'grouped' ? '' : 'none';
+    var btnFlat    = document.getElementById('btn-flat');
+    var btnGrouped = document.getElementById('btn-grouped');
+    if (mode === 'flat') {
+        btnFlat.style.background    = '#1c3e6e'; btnFlat.style.color    = 'white'; btnFlat.style.borderColor    = '#1c3e6e';
+        btnGrouped.style.background = 'white';   btnGrouped.style.color = '#555';  btnGrouped.style.borderColor = '#ccc';
+    } else {
+        btnGrouped.style.background = '#1c3e6e'; btnGrouped.style.color = 'white'; btnGrouped.style.borderColor = '#1c3e6e';
+        btnFlat.style.background    = 'white';   btnFlat.style.color    = '#555';  btnFlat.style.borderColor    = '#ccc';
+    }
+}
+</script>
+
 {% endblock %}
