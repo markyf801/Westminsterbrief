@@ -133,7 +133,7 @@
     {# ── Grouped by heading view ── #}
     <div id="view-grouped" style="margin-top: 16px; display: none;">
         {% for heading, group in grouped_results %}
-        <details open style="margin-bottom: 12px;">
+        <details style="margin-bottom: 12px;">
             <summary style="cursor: pointer; padding: 10px 16px; background: #1c3e6e; color: white; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none;">
                 <span>{{ heading | title }}</span>
                 <span style="background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;">{{ group|length }}</span>
