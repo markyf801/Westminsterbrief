@@ -536,49 +536,61 @@ def fetch_full_debate_session(parent_gid, source):
 def fetch_all_debate_sessions(matched_rows, max_debates=15):
     """For each unique debate in matched_rows, fetch all speeches via TWFY GID lookup.
     This guarantees ministers appear even when their responses don't contain search keywords.
-    Skips wrans (written answers have no multi-speaker session to expand)."""
+    Skips wrans (written answers have no multi-speaker session to expand).
+    Routes by data source: rows with debate_section_ext_id use Hansard API;
+    rows without (TWFY keyword search) fall back to TWFY GID expansion."""
     seen_sections = set()
-    gid_source_pairs = []
+    hansard_pairs = []   # (ext_id, source) — Hansard API expansion
+    gid_source_pairs = []  # (gid, source) — TWFY GID expansion (fallback)
+
     for r in matched_rows:
         source = r.get('source', '')
         if source == 'wrans':
             continue
-        # Don't expand Lords "Written Answers" sessions — they're Q&A pairs not debates
         title = r.get('debate_title', '').lower()
         if 'written answers' in title or 'written answer' in title:
             continue
-        gid = _listurl_to_parent_gid(r.get('listurl', ''), source)
-        if gid:
-            # Dedup at section level — strip the final .POSITION so two speeches from the same
-            # section (e.g. ...483.1 and ...483.3) don't cause duplicate expansion calls.
-            last_dot = gid.rfind('.')
-            section_key = gid[:last_dot] if last_dot != -1 else gid
-            if section_key not in seen_sections:
-                seen_sections.add(section_key)
-                gid_source_pairs.append((gid, source))
-        if len(gid_source_pairs) >= max_debates:
+
+        ext_id = r.get('debate_section_ext_id', '')
+        if ext_id:
+            if ext_id not in seen_sections:
+                seen_sections.add(ext_id)
+                hansard_pairs.append((ext_id, source))
+        else:
+            gid = _listurl_to_parent_gid(r.get('listurl', ''), source)
+            if gid:
+                last_dot = gid.rfind('.')
+                section_key = gid[:last_dot] if last_dot != -1 else gid
+                if section_key not in seen_sections:
+                    seen_sections.add(section_key)
+                    gid_source_pairs.append((gid, source))
+
+        if len(hansard_pairs) + len(gid_source_pairs) >= max_debates:
             break
+
     import logging as _slog
-    expandable = len(gid_source_pairs)
-    skipped = sum(1 for r in matched_rows
-                  if r.get('source') != 'wrans'
-                  and not _listurl_to_parent_gid(r.get('listurl', ''), r.get('source', '')))
-    sample_listurls = [r.get('listurl', '') for r in matched_rows[:3] if r.get('source') != 'wrans']
-    sample_gids = gid_source_pairs[:3]
-    _slog.warning(f"[session_expand] {len(matched_rows)} rows in, {expandable} expandable GIDs, {skipped} skipped"
-                  f" | sample_listurls={sample_listurls} | sample_gids={sample_gids}")
-    if not gid_source_pairs:
+    _slog.warning(f"[session_expand] {len(matched_rows)} rows in → "
+                  f"{len(hansard_pairs)} hansard + {len(gid_source_pairs)} twfy sessions"
+                  f" | hansard_sample={hansard_pairs[:2]} | twfy_sample={gid_source_pairs[:2]}")
+
+    if not hansard_pairs and not gid_source_pairs:
         return []
+
     extra = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {ex.submit(copy_current_request_context(fetch_full_debate_session), gid, src): (gid, src)
-                for gid, src in gid_source_pairs}
+        futs = {}
+        for ext_id, src in hansard_pairs:
+            futs[ex.submit(copy_current_request_context(fetch_full_hansard_session), ext_id, src)] = ext_id
+        for gid, src in gid_source_pairs:
+            futs[ex.submit(copy_current_request_context(fetch_full_debate_session), gid, src)] = gid
         for f in concurrent.futures.as_completed(futs):
             try:
                 extra.extend(f.result())
             except Exception:
                 pass
-    _slog.warning(f"[session_expand] {len(extra)} total speeches fetched from {expandable} sessions")
+
+    _slog.warning(f"[session_expand] {len(extra)} total speeches fetched from "
+                  f"{len(hansard_pairs) + len(gid_source_pairs)} sessions")
     return extra
 
 
@@ -1247,6 +1259,87 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
         CachedTWFYSearch.store(cache_key_query, 'hansard_minister', rows)
         return rows
     except Exception:
+        return []
+
+
+def fetch_full_hansard_session(ext_id, source):
+    """Fetch ALL speeches from a Hansard debate section via DebateSectionExtId.
+    Used instead of fetch_full_debate_session() for rows that came via the Hansard API.
+    Returns normalised speech list with same schema as fetch_twfy_topic. relevance=0."""
+    if not ext_id:
+        return []
+    cache_key = f"hansard:session:{ext_id}"
+    cached = CachedTWFYSearch.get(cache_key, f'session_{source}', ttl_hours=720)
+    if cached is not None:
+        return cached
+    try:
+        import logging as _hl
+        resp = requests.get(f"{HANSARD_API_BASE}/debates/debate/{ext_id}.json", timeout=15)
+        _hl.warning(f"[hansard_session] ext_id={ext_id!r} status={resp.status_code}")
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+
+        # Flatten Items from top-level debate and all nested ChildDebates
+        items = []
+
+        def _collect(node):
+            for item in node.get('Items', []):
+                items.append(item)
+            for child in node.get('ChildDebates', []):
+                _collect(child)
+
+        _collect(data)
+        _hl.warning(f"[hansard_session] ext_id={ext_id!r} items={len(items)}")
+        if items:
+            s = items[0]
+            _hl.warning(f"[hansard_session] sample keys={list(s.keys())[:15]} attributed={s.get('AttributedTo','')!r}")
+
+        debate_title = data.get('Title', '') or data.get('DebateSection', '') or ''
+        sitting_date = data.get('SittingDate', '') or ''
+        hdate = sitting_date[:10] if sitting_date else ''
+        house = data.get('House', 'Commons')
+        house_path = 'lords' if 'lord' in house.lower() else 'commons'
+        base_url = f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
+
+        results = []
+        for item in items:
+            body_raw = (item.get('Value', '') or item.get('ContributionText', '') or
+                        item.get('ContributionTextFull', '') or '')
+            if not body_raw:
+                continue
+            body_text = clean_body_text(body_raw)
+            if not body_text.strip():
+                continue
+
+            attributed_to = item.get('AttributedTo', '') or ''
+            member_name = item.get('MemberName', '') or attributed_to.split('(')[0].strip()
+            item_date = item.get('SittingDate', '') or sitting_date
+            item_hdate = item_date[:10] if item_date else hdate
+
+            results.append({
+                'listurl': base_url,
+                'body_clean': body_text[:500],
+                'body_export': body_text[:3000],
+                'body_word_count': len(body_text.split()),
+                'speaker_name': member_name,
+                'speaker_party': _parse_hansard_party(attributed_to),
+                'hdate': item_hdate,
+                'debate_title': debate_title,
+                'source': source,
+                'source_label': get_source_label(source),
+                'relevance': 0,
+                'debate_type': get_debate_type(debate_title, source=source),
+                'from_session_fetch': True,
+                'debate_section_ext_id': ext_id,
+            })
+
+        if results:
+            CachedTWFYSearch.store(cache_key, f'session_{source}', results)
+        return results
+    except Exception as e:
+        import logging
+        logging.warning(f"[hansard_session] {ext_id} {source}: {type(e).__name__}: {e}")
         return []
 
 
