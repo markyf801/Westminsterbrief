@@ -62,7 +62,14 @@
 
     <div id="bio-content" style="display: none;">
         <div id="bio-text" style="font-size: 15px; line-height: 1.6;"></div>
-        
+
+        <div style="margin-top:1rem;padding:.6rem .9rem;background:#fffbea;border-left:3px solid #f0ad4e;border-radius:4px;font-size:.82rem;color:#666;">
+            <strong style="color:#856404;">⚠ Data sources and currency</strong><br>
+            Career history and background draw partly on <strong>Wikipedia</strong>, which is publicly editable and may contain errors — verify against official sources before use in ministerial briefings.
+            Registered interests are fetched live from the Parliament Members API and reflect the register at the time of generation (<span id="bio-fetch-time"></span>).
+            Interests may not reflect declarations made in the last 24–48 hours.
+        </div>
+
         <div style="margin-top: 25px; text-align: right; border-top: 1px solid #eee; padding-top: 15px;">
             <form method="POST" action="/export_biography_word">
                 <input type="hidden" name="mp_name" value="{{ mp_data.name }}">
@@ -151,6 +158,8 @@
             if (data.biography) {
                 document.getElementById('bio-text').innerHTML = marked.parse(data.biography);
                 document.getElementById('hidden-bio-text').value = data.biography;
+                document.getElementById('bio-fetch-time').textContent =
+                    new Date().toLocaleString('en-GB', {day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'});
                 loadingContainer.style.display = 'none';
                 bioContent.style.display = 'block';
             }
