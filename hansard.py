@@ -1,4 +1,5 @@
 import re
+import json
 import html as _html_mod
 import requests, io, csv
 from flask import Blueprint, render_template, request, make_response
@@ -408,3 +409,66 @@ def index():
                            total_available=total_available,
                            pre_filter_count=pre_filter_count,
                            results_cap=WQ_MAX_RESULTS)
+
+
+@hansard_bp.route('/questions/download_selected', methods=['POST'])
+def download_selected():
+    try:
+        items = json.loads(request.form.get('items_json', '[]'))
+    except Exception:
+        items = []
+    if not items:
+        return "No items selected", 400
+
+    fmt = request.form.get('format', 'word')
+    filename_ts = datetime.now().strftime('%Y%m%d_%H%M')
+
+    if fmt == 'csv':
+        si = io.StringIO()
+        si.write('﻿')
+        cw = csv.writer(si)
+        cw.writerow(['UIN', 'Status', 'Department', 'Member', 'Party', 'Role',
+                     'Date Asked', 'Answering Minister', 'Date Answered',
+                     'Question', 'Answer', 'URL'])
+        for r in items:
+            status_label = ('WITHDRAWN' if r.get('is_withdrawn') else
+                            'HOLDING ANSWER' if r.get('is_holding') else
+                            'ANSWERED' if r.get('answered') else 'UNANSWERED')
+            cw.writerow([r.get('uin', ''), status_label, r.get('dept', ''),
+                         r.get('name', ''), r.get('party', ''), r.get('role', ''),
+                         r.get('date', ''), r.get('answering_minister') or '',
+                         r.get('date_answered', ''), r.get('text', ''),
+                         r.get('answer_text', ''), r.get('url', '')])
+        resp = make_response(si.getvalue())
+        resp.headers["Content-Disposition"] = f"attachment; filename=WQ_selected_{filename_ts}.csv"
+        resp.headers["Content-type"] = "text/csv; charset=utf-8"
+        return resp
+
+    doc = Document()
+    doc.add_heading('Selected Parliamentary Written Questions', 0)
+    p = doc.add_paragraph(f"Generated: {datetime.now().strftime('%d %b %Y %H:%M')}  ·  {len(items)} question{'s' if len(items) != 1 else ''}")
+    p.runs[0].italic = True
+    doc.add_paragraph()
+    for r in items:
+        p = doc.add_paragraph()
+        status_label = ('WITHDRAWN' if r.get('is_withdrawn') else
+                        'HOLDING ANSWER' if r.get('is_holding') else
+                        'ANSWERED' if r.get('answered') else 'UNANSWERED')
+        p.add_run(f"[{status_label}] [{r.get('dept', '')}] {r.get('name', '')} ({r.get('party', '')}, {r.get('role', '')})\n").bold = True
+        meta = f"UIN: {r.get('uin', '')}  ·  Date Asked: {r.get('date', '')}"
+        if r.get('answering_minister'):
+            meta += f"  ·  Answered by: {r['answering_minister']}"
+        if r.get('date_answered'):
+            meta += f" ({r['date_answered']})"
+        p.add_run(meta + "\n")
+        p.add_run(f"Question: {r.get('text', '')}\n")
+        if r.get('answer_text'):
+            p.add_run(f"Answer: {r['answer_text']}\n")
+        p.add_run("Link: ")
+        add_hyperlink(p, r.get('url', ''), r.get('url', ''))
+    b = io.BytesIO()
+    doc.save(b)
+    b.seek(0)
+    resp = make_response(b.getvalue())
+    resp.headers["Content-Disposition"] = f"attachment; filename=WQ_selected_{filename_ts}.docx"
+    return resp

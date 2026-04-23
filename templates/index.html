@@ -6,7 +6,12 @@
 {# ── Card macro — used in both flat and grouped views ── #}
 {% macro wq_card(r, show_heading=true) %}
 <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
-    <div class="result-card-header">
+    <div class="result-card-header" style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+        <input type="checkbox" class="wq-select"
+               data-wq="{{ {'uin': r.uin, 'dept': r.dept, 'name': r.name, 'party': r.party, 'role': r.role, 'date': r.date, 'text': r.text, 'heading': r.heading, 'answered': r.answered, 'is_holding': r.is_holding, 'is_withdrawn': r.is_withdrawn, 'answer_text': r.answer_text, 'answering_minister': r.answering_minister, 'date_answered': r.date_answered, 'url': r.url} | tojson | e }}"
+               onchange="updateSelectionBar()"
+               onclick="event.stopPropagation()"
+               style="cursor:pointer; flex-shrink:0; width:15px; height:15px;">
         <span class="wq-status-badge wq-status-{% if r.is_withdrawn %}withdrawn{% elif r.is_holding %}holding{% elif r.answered %}answered{% else %}unanswered{% endif %}">
             {% if r.is_withdrawn %}WITHDRAWN{% elif r.is_holding %}HOLDING{% elif r.answered %}ANSWERED{% else %}UNANSWERED{% endif %}
         </span>
@@ -116,26 +121,32 @@
     <div style="margin-top: 16px; display: flex; align-items: center; gap: 8px;">
         <span style="font-size: 13px; color: #666; font-weight: 500;">View:</span>
         <button onclick="showView('flat')" id="btn-flat"
-                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #1c3e6e; background: #1c3e6e; color: white; font-size: 12px; cursor: pointer; font-weight: 600;">
+                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #555; font-size: 12px; cursor: pointer;">
             Flat list
         </button>
         <button onclick="showView('grouped')" id="btn-grouped"
-                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #555; font-size: 12px; cursor: pointer;">
+                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #1c3e6e; background: #1c3e6e; color: white; font-size: 12px; cursor: pointer; font-weight: 600;">
             By topic ({{ grouped_results|length }} categories)
         </button>
     </div>
 
     {# ── Flat list view ── #}
-    <div id="view-flat" style="margin-top: 16px;">
+    <div id="view-flat" style="margin-top: 16px; display: none;">
         {% for r in results %}{{ wq_card(r) }}{% endfor %}
     </div>
 
     {# ── Grouped by heading view ── #}
-    <div id="view-grouped" style="margin-top: 16px; display: none;">
+    <div id="view-grouped" style="margin-top: 16px;">
         {% for heading, group in grouped_results %}
         <details style="margin-bottom: 12px;">
             <summary style="cursor: pointer; padding: 10px 16px; background: #1c3e6e; color: white; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none;">
-                <span>{{ heading | title }}</span>
+                <span style="display:flex; align-items:center; gap:10px;">
+                    <input type="checkbox" class="section-select-all"
+                           onclick="event.stopPropagation()"
+                           onchange="toggleSection(this)"
+                           style="cursor:pointer; width:15px; height:15px; flex-shrink:0;">
+                    <span>{{ heading | title }}</span>
+                </span>
                 <span style="background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;">{{ group|length }}</span>
             </summary>
             <div style="margin-top: 4px;">
@@ -152,6 +163,14 @@
     </div>
 {% endif %}
 
+{# ── Selection bar — fixed to bottom, shown when checkboxes are ticked ── #}
+<div id="wq-sel-bar" style="display:none; position:fixed; bottom:0; left:0; right:0; background:#1c3e6e; color:white; padding:12px 20px; z-index:1000; align-items:center; gap:12px; justify-content:center; box-shadow:0 -2px 8px rgba(0,0,0,0.3);">
+    <span id="wq-sel-count" style="font-weight:600; font-size:14px;"></span>
+    <button onclick="downloadSelected('word')" style="padding:6px 16px; background:#fff; color:#1c3e6e; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:13px;">Download Word</button>
+    <button onclick="downloadSelected('csv')"  style="padding:6px 16px; background:rgba(255,255,255,0.15); color:white; border:1px solid rgba(255,255,255,0.5); border-radius:4px; cursor:pointer; font-weight:600; font-size:13px;">Download CSV</button>
+    <button onclick="clearSelection()"         style="padding:6px 12px; background:transparent; color:rgba(255,255,255,0.7); border:1px solid rgba(255,255,255,0.3); border-radius:4px; cursor:pointer; font-size:13px;">Clear</button>
+</div>
+
 <script>
 function showView(mode) {
     document.getElementById('view-flat').style.display    = mode === 'flat'    ? '' : 'none';
@@ -159,12 +178,52 @@ function showView(mode) {
     var btnFlat    = document.getElementById('btn-flat');
     var btnGrouped = document.getElementById('btn-grouped');
     if (mode === 'flat') {
-        btnFlat.style.background    = '#1c3e6e'; btnFlat.style.color    = 'white'; btnFlat.style.borderColor    = '#1c3e6e';
-        btnGrouped.style.background = 'white';   btnGrouped.style.color = '#555';  btnGrouped.style.borderColor = '#ccc';
+        btnFlat.style.background    = '#1c3e6e'; btnFlat.style.color    = 'white'; btnFlat.style.borderColor    = '#1c3e6e'; btnFlat.style.fontWeight = '600';
+        btnGrouped.style.background = 'white';   btnGrouped.style.color = '#555';  btnGrouped.style.borderColor = '#ccc';   btnGrouped.style.fontWeight = '';
     } else {
-        btnGrouped.style.background = '#1c3e6e'; btnGrouped.style.color = 'white'; btnGrouped.style.borderColor = '#1c3e6e';
-        btnFlat.style.background    = 'white';   btnFlat.style.color    = '#555';  btnFlat.style.borderColor    = '#ccc';
+        btnGrouped.style.background = '#1c3e6e'; btnGrouped.style.color = 'white'; btnGrouped.style.borderColor = '#1c3e6e'; btnGrouped.style.fontWeight = '600';
+        btnFlat.style.background    = 'white';   btnFlat.style.color    = '#555';  btnFlat.style.borderColor    = '#ccc';    btnFlat.style.fontWeight = '';
     }
+}
+
+function updateSelectionBar() {
+    var checked = document.querySelectorAll('.wq-select:checked');
+    var bar = document.getElementById('wq-sel-bar');
+    if (checked.length > 0) {
+        bar.style.display = 'flex';
+        document.getElementById('wq-sel-count').textContent = checked.length + ' question' + (checked.length !== 1 ? 's' : '') + ' selected';
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+function toggleSection(masterCb) {
+    var details = masterCb.closest('details');
+    details.querySelectorAll('.wq-select').forEach(function(cb) { cb.checked = masterCb.checked; });
+    updateSelectionBar();
+}
+
+function clearSelection() {
+    document.querySelectorAll('.wq-select, .section-select-all').forEach(function(cb) { cb.checked = false; });
+    updateSelectionBar();
+}
+
+function downloadSelected(format) {
+    var checked = document.querySelectorAll('.wq-select:checked');
+    var items = [];
+    checked.forEach(function(cb) {
+        try { items.push(JSON.parse(cb.dataset.wq)); } catch(e) { console.error('WQ parse error', e); }
+    });
+    if (!items.length) return;
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/questions/download_selected';
+    var inp = document.createElement('input'); inp.type = 'hidden'; inp.name = 'items_json'; inp.value = JSON.stringify(items);
+    var fmt = document.createElement('input'); fmt.type = 'hidden'; fmt.name = 'format'; fmt.value = format;
+    form.appendChild(inp); form.appendChild(fmt);
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
 }
 </script>
 
