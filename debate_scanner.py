@@ -689,7 +689,7 @@ def _classify_group(grp):
     return 'debate'
 
 
-def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
+def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=200):
     """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count).
     Does NOT pass answeringBodies to the API — that filter causes severe timeouts (>30s).
     Instead fetches without dept filter and filters client-side by answeringBodyName."""
@@ -699,7 +699,7 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
         # Client-side filter is applied below instead.
         # expandMember=true returns full member objects including names.
         params = {'searchTerm': topic, 'take': limit, 'skip': 0,
-                  'expandMember': 'true'}
+                  'expandMember': 'true', 'orderBy': 'DateTabledDesc'}
         if start_date:
             params['tabledWhenFrom'] = start_date
         if end_date:
@@ -712,10 +712,11 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
         total = data.get('totalResults', 0)
         # Client-side dept filter — match answeringBodyName against selected dept names
         dept_names = set(selected_depts)
-        # Relevance words: topic words >3 chars used to filter out loose API matches.
-        # Parliament WQ API does tokenised OR search so "student loan repayments" returns
-        # any question containing "student" or "loan" or "repayments" — far too broad.
-        relevance_words = [w.lower() for w in topic.split() if len(w) > 3]
+        # Relevance stems: strip trailing 's' so "repayments" matches "repayment",
+        # "loans" matches "loan", "students" matches "student".
+        # Parliament WQ API does tokenised OR search — client-side filter enforces relevance.
+        raw_words = [w.lower() for w in topic.split() if len(w) > 3]
+        relevance_stems = [(w[:-1] if w.endswith('s') and len(w) > 4 else w) for w in raw_words]
         results = []
         seen_uins = set()
         for item in data.get('results', []):
@@ -729,15 +730,15 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
             answering_body = val.get('answeringBodyName', '')
             if dept_names and answering_body not in dept_names:
                 continue
-            # Client-side relevance filter — for multi-word topics require 2+ words to match.
-            # Single-word "student" hits almost every DfE question; requiring 2 of
-            # ["student", "loan", "repayments"] eliminates SEND/environment noise.
-            if relevance_words:
+            # Client-side relevance filter — require 2+ stems to match for multi-word topics.
+            # "student" alone hits almost every DfE question; 2-of-3 for "student loan repayment"
+            # keeps genuine WQs while removing SEND/environment/dyslexia noise.
+            if relevance_stems:
                 q_raw = (val.get('questionText') or '').lower()
                 heading_raw = (val.get('heading') or '').lower()
                 combined = q_raw + ' ' + heading_raw
-                match_count = sum(1 for w in relevance_words if w in combined)
-                min_matches = 2 if len(relevance_words) >= 2 else 1
+                match_count = sum(1 for stem in relevance_stems if stem in combined)
+                min_matches = 2 if len(relevance_stems) >= 2 else 1
                 if match_count < min_matches:
                     continue
             raw_date = (val.get('dateTabled') or '').split('T')[0]
