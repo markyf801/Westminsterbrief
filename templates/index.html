@@ -148,6 +148,7 @@
 {% elif request.method == 'POST' and not error_message %}
     <div class="box empty-state" style="margin-top: 20px;">
         <p>No questions found matching those filters.</p>
+        <p style="font-size: 13px; color: #888; margin-top: 6px;">If you expected results, the Parliament API may be temporarily slow — please try your search again.</p>
     </div>
 {% endif %}
 
