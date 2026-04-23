@@ -1541,8 +1541,10 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
         #    but we use parliament_id as key so we need it first — check JSON cache for it)
         cached_entry = twfy_ids_cache.get(display, {})
 
-        # Fast path: JSON cache already has the TWFY ID
-        if cached_entry.get('person_id'):
+        # Fast path: JSON cache has a resolved TWFY ID AND parliament_id.
+        # If parliament_id is missing from cache (stale entry predating this fix),
+        # fall through to re-resolve so we get the parliament_id for Hansard routing.
+        if cached_entry.get('person_id') and cached_entry.get('parliament_id') is not None:
             results.append({
                 'person_id': cached_entry['person_id'],
                 'parliament_id': cached_entry.get('parliament_id'),
@@ -1552,8 +1554,8 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
             })
             continue
 
-        # Skip if previously marked as failed in JSON cache
-        if cached_entry.get('lookup_failed'):
+        # Skip if previously marked as totally failed (no TWFY or Parliament ID)
+        if cached_entry.get('lookup_failed') and not cached_entry.get('person_id'):
             continue
 
         # Resolve Parliament ID → DB lookup → TWFY lookup
@@ -1573,14 +1575,16 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
         }
         json_updated = True
 
-        if person_id:
+        # Include minister if we have at least one usable ID.
+        # parliament_id alone is sufficient for the Hansard API path.
+        if person_id or parliament_id:
             results.append({
                 'person_id': person_id, 'parliament_id': parliament_id,
                 'name': display, 'role': m.get('role', ''), 'is_lord': is_lord
             })
         else:
             import logging
-            logging.warning(f"TWFY person ID lookup failed for minister: {display!r}")
+            logging.warning(f"Minister ID lookup failed (no TWFY or Parliament ID): {display!r}")
 
     if json_updated:
         try:
@@ -1952,11 +1956,13 @@ def debates_topic():
                                 copy_current_request_context(fetch_hansard_minister_topic),
                                 mp['parliament_id'], expanded, date_range, [src],
                                 is_lord=mp.get('is_lord', False))
-                        else:
+                        elif mp.get('person_id'):
                             fut = executor.submit(
                                 copy_current_request_context(fetch_twfy_minister_topic),
                                 mp['person_id'], expanded, date_range, [src],
                                 is_lord=mp.get('is_lord', False))
+                        else:
+                            continue  # no usable ID for this path — skip
                         minister_futs[fut] = mp
                 all_futs = list(twfy_futs.keys()) + [wq_fut] + list(minister_futs.keys())
                 for future in concurrent.futures.as_completed(all_futs):
