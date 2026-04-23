@@ -2047,6 +2047,20 @@ def debates_topic():
                             f" — sample parties: {list({r.get('speaker_party','') for r in non_minister_rows[:10]})}"
                         )
                     balanced = minister_rows + opp_rows[:10] + other_rows[:10]
+                    # Frequency boost: speakers who appeared 2+ times across fetched sessions
+                    # are significant participants — ensure their best speech is in balanced
+                    # even if individual relevance scores didn't get them into the top-10.
+                    from collections import Counter
+                    speaker_counts = Counter(
+                        r.get('speaker_name', '') for r in non_minister_rows if r.get('speaker_name')
+                    )
+                    already_in = {r.get('speaker_name') for r in balanced}
+                    for name, count in speaker_counts.items():
+                        if count >= 2 and name not in already_in:
+                            candidates = [r for r in non_minister_rows if r.get('speaker_name') == name]
+                            best = max(candidates, key=lambda x: x.get('relevance', 0))
+                            balanced.append(best)
+                            already_in.add(name)
                     # Build name → URL lookup for opposition/backbench speakers so the
                     # template can render a "View Speech" link alongside "View PQs".
                     opp_speaker_links = {}
@@ -2076,7 +2090,8 @@ def debates_topic():
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
                          'party': r['speaker_party'], 'date': r['hdate'],
                          'source': r['source_label'], 'text': r['body_clean'][:250],
-                         'is_minister': r.get('is_minister', False)}
+                         'is_minister': r.get('is_minister', False),
+                         'speech_count': speaker_counts.get(r.get('speaker_name', ''), 1)}
                         for r in balanced
                     ]
                     dept_context = (
@@ -2111,8 +2126,11 @@ def debates_topic():
                         "then opposition backbenchers, then crossbenchers. "
                         "IMPORTANT: In Oral Questions, Conservative or other opposition MPs asking "
                         "supplementary questions ARE non-government speakers — always include them. "
+                        "speech_count in the DATA shows how many times each speaker contributed across "
+                        "all fetched sessions — prioritise speakers with speech_count >= 2 as they are "
+                        "the most active participants in this topic. "
                         "Return empty array ONLY if the DATA genuinely contains zero non-government speakers. "
-                        "Up to 10 entries.\n\n"
+                        "Up to 12 entries.\n\n"
                         "\"key_questions\": Array of {\"speaker\", \"role_or_party\", \"date\", \"source\", \"listurl\", \"question\"} — "
                         "The most significant questions raised by OPPOSITION and non-government speakers about this topic. "
                         "These should be actual interrogative challenges, probing questions, or lines of attack that a minister "
