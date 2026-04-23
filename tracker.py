@@ -6,7 +6,7 @@ from cache_models import CachedMember
 try:
     import docx
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import RGBColor
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 except ImportError:
@@ -49,11 +49,12 @@ def get_working_model(api_key):
         resp = requests.get(url, timeout=5)
         if resp.status_code == 200:
             available = [m['name'] for m in resp.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-            for pref in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro', 'models/gemini-1.0-pro']:
+            for pref in ['models/gemini-2.0-flash', 'models/gemini-2.0-flash-lite',
+                         'models/gemini-1.5-flash', 'models/gemini-1.5-pro',
+                         'models/gemini-2.5-flash', 'models/gemini-pro']:
                 if pref in available: return pref
-            if available: return available[0]
     except: pass
-    return "models/gemini-pro"
+    return "models/gemini-2.0-flash"
 
 def get_member_name(member_id):
     if not member_id: return "Unknown Member"
