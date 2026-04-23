@@ -697,8 +697,9 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
     try:
         # No answeringBodies param — server-side dept filter causes 30s+ timeouts.
         # Client-side filter is applied below instead.
+        # expandMember=true returns full member objects including names.
         params = {'searchTerm': topic, 'take': limit, 'skip': 0,
-                  'expandMember': 'false'}
+                  'expandMember': 'true'}
         if start_date:
             params['tabledWhenFrom'] = start_date
         if end_date:
@@ -711,6 +712,10 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
         total = data.get('totalResults', 0)
         # Client-side dept filter — match answeringBodyName against selected dept names
         dept_names = set(selected_depts)
+        # Relevance words: topic words >3 chars used to filter out loose API matches.
+        # Parliament WQ API does tokenised OR search so "student loan repayments" returns
+        # any question containing "student" or "loan" or "repayments" — far too broad.
+        relevance_words = [w.lower() for w in topic.split() if len(w) > 3]
         results = []
         seen_uins = set()
         for item in data.get('results', []):
@@ -724,6 +729,13 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=100):
             answering_body = val.get('answeringBodyName', '')
             if dept_names and answering_body not in dept_names:
                 continue
+            # Client-side relevance filter — require at least one topic word in question text or heading
+            if relevance_words:
+                q_raw = (val.get('questionText') or '').lower()
+                heading_raw = (val.get('heading') or '').lower()
+                combined = q_raw + ' ' + heading_raw
+                if not any(w in combined for w in relevance_words):
+                    continue
             raw_date = (val.get('dateTabled') or '').split('T')[0]
             date_ans = (val.get('dateAnswered') or '').split('T')[0]
             answer_raw = val.get('answerText') or ''
