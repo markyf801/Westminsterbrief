@@ -232,6 +232,33 @@ def get_source_label(source):
             'lords': 'Lords', 'wrans': 'Written Answer',
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
+# TWFY returns a mix of abbreviated and full party names — normalise to canonical
+# full names so set membership checks work consistently everywhere in the pipeline.
+_TWFY_PARTY_NORM = {
+    'snp':          'Scottish National Party',
+    'ld':           'Liberal Democrat',
+    'lib dem':      'Liberal Democrat',
+    'con':          'Conservative',
+    'lab':          'Labour',
+    'green':        'Green Party',
+    'dup':          'Democratic Unionist Party',
+    'uup':          'Ulster Unionist Party',
+    'sdlp':         'Social Democratic and Labour Party',
+    'pc':           'Plaid Cymru',
+    'reform':       'Reform UK',
+    'ind':          'Independent',
+    'alba':         'Alba Party',
+    'sf':           'Sinn Féin',
+    'alliance':     'Alliance Party of Northern Ireland',
+    'crossbench':   'Crossbench',
+}
+
+def _normalise_party(raw):
+    """Normalise TWFY party strings to canonical full names."""
+    if not raw:
+        return ''
+    return _TWFY_PARTY_NORM.get(raw.strip().lower(), raw.strip())
+
 def fetch_twfy_topic(search, source_type, date_range, num=150):
     """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure.
     Results are cached for 6h (date-filtered) or 24h (open) to reduce API usage."""
@@ -294,7 +321,7 @@ def fetch_twfy_topic(search, source_type, date_range, num=150):
                 'body_export': body_text[:3000],
                 'body_word_count': len(body_text.split()),
                 'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
-                'speaker_party': (r.get('speaker') or {}).get('party', ''),
+                'speaker_party': _normalise_party((r.get('speaker') or {}).get('party', '')),
                 'hdate': r.get('hdate', ''),
                 'debate_title': debate_title,
                 'source': source_type,
@@ -475,7 +502,7 @@ def fetch_full_debate_session(parent_gid, source):
                 'body_export': body_text[:3000],
                 'body_word_count': len(body_text.split()),
                 'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
-                'speaker_party': (r.get('speaker') or {}).get('party', ''),
+                'speaker_party': _normalise_party((r.get('speaker') or {}).get('party', '')),
                 'hdate': r.get('hdate', ''),
                 'debate_title': debate_title,
                 'source': source,
@@ -1054,7 +1081,7 @@ def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_
                     'body_export': body_text[:3000],
                     'body_word_count': len(body_text.split()),
                     'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
-                    'speaker_party': (r.get('speaker') or {}).get('party', ''),
+                    'speaker_party': _normalise_party((r.get('speaker') or {}).get('party', '')),
                     'hdate': r.get('hdate', ''),
                     'debate_title': debate_title,
                     'source': source,
@@ -1796,32 +1823,40 @@ def debates_topic():
             elif GEMINI_API_KEY:
                 try:
                     # Build a balanced AI payload:
-                    # - Ministers: cap at 25 (highest relevance) so they don't crowd out opposition
-                    # - Opposition party speeches: explicitly selected so they're always present
-                    # - Other non-minister: backbenchers, crossbenchers, etc.
-                    # Without explicit opposition selection, minister-led search results dominate
-                    # and Gemini sees no opposition voices even when sessions were expanded.
+                    # - Ministers first (capped at 15, highest relevance)
+                    # - Formal opposition parties next — ordered first within non-minister rows
+                    #   so they're not crowded out by Labour backbenchers or empty-party rows
+                    # - All other non-government voices: Labour backbenchers, Crossbench peers,
+                    #   Independents, unknown party — included via _GOVERNMENT_PARTIES exclusion
+                    #   (not in _OPPOSITION_PARTIES is intentionally broader)
+                    _GOVERNMENT_PARTIES = {'Labour'}
                     _OPPOSITION_PARTIES = {
                         'Conservative', 'Liberal Democrat', 'Scottish National Party',
                         'Reform UK', 'Plaid Cymru', 'Green Party', 'Democratic Unionist Party',
-                        'Alba Party',
+                        'Ulster Unionist Party', 'Social Democratic and Labour Party',
+                        'Sinn Féin', 'Alliance Party of Northern Ireland', 'Alba Party',
                     }
                     minister_rows = sorted(
                         [r for r in topic_rows if r.get('is_minister')],
                         key=lambda x: -x.get('relevance', 0)
                     )[:15]
                     non_minister_rows = [r for r in topic_rows if not r.get('is_minister')]
-                    # Scan ALL non-minister rows for opposition speeches (may have relevance=0
-                    # from Phase 1 expansion but still contain valuable opposition positions)
-                    # Sort by relevance so keyword hits beat session-context rows (relevance=0)
+                    # opp_rows: formal opposition parties — prioritised in payload ordering
                     opp_rows = sorted(
                         [r for r in non_minister_rows if r.get('speaker_party', '') in _OPPOSITION_PARTIES],
                         key=lambda x: -x.get('relevance', 0)
                     )
+                    # other_rows: Labour backbenchers, Crossbench peers, Independents, unknown
                     other_rows = sorted(
                         [r for r in non_minister_rows if r.get('speaker_party', '') not in _OPPOSITION_PARTIES],
                         key=lambda x: -x.get('relevance', 0)
                     )
+                    if not opp_rows and non_minister_rows:
+                        import logging as _log
+                        _log.warning(
+                            f"[briefing] opp_rows empty despite {len(non_minister_rows)} non-minister rows"
+                            f" — sample parties: {list({r.get('speaker_party','') for r in non_minister_rows[:10]})}"
+                        )
                     balanced = minister_rows + opp_rows[:10] + other_rows[:10]
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
