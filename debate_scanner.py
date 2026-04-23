@@ -472,8 +472,8 @@ def _listurl_to_parent_gid(listurl, source):
         id_val = m.group(1)                   # e.g. "2026-01-15.123.4"
         if '.' not in id_val:
             return None
-        section = id_val.rsplit('.', 1)[0]     # e.g. "2026-01-15.123"
-        return f"{section}.0"                  # bare ID, no prefix: "2026-01-15.123.0"
+        section = id_val.rsplit('.', 1)[0]     # e.g. "2026-01-15.123" (strips speech position)
+        return section                         # bare section ID, no .0 suffix
     except Exception:
         return None
 
@@ -501,7 +501,7 @@ def fetch_full_debate_session(parent_gid, source):
             return []
         rjson = resp.json()
         rows = rjson.get('rows', [])
-        _sl.warning(f"[session_fetch] gid={parent_gid!r} rows_returned={len(rows)} response_keys={list(rjson.keys())}")
+        _sl.warning(f"[session_fetch] id={parent_gid!r} rows_returned={len(rows)} response_keys={list(rjson.keys())} error={rjson.get('error','')!r}")
         if rows:
             sample = rows[0]
             _sl.warning(f"[session_fetch] sample_row keys={list(sample.keys())} speaker={sample.get('speaker')} hdate={sample.get('hdate')} listurl={sample.get('listurl','')[:80]!r}")
