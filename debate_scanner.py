@@ -3257,24 +3257,37 @@ def _prep_resolve_peer(peer_name):
     """Look up a peer's Parliament profile.
     Returns dict with parliament_id, display_name, party, house,
     biography_posts, interests — or None if not found."""
+    # Build a list of name variants to try — full name first, then with
+    # honorifics stripped (Parliament API searches on the name part, not title)
+    _HONORIFICS = re.compile(
+        r'^(The\s+)?(Lord|Baroness|Baron|Lady|Viscount|Viscountess|Earl|Countess|Duke|Duchess|Marquess|Prince|Princess)\s+',
+        re.IGNORECASE
+    )
+    name_variants = [peer_name]
+    stripped = _HONORIFICS.sub('', peer_name).strip()
+    if stripped and stripped != peer_name:
+        name_variants.append(stripped)
+
     try:
-        resp = requests.get(
-            'https://members-api.parliament.uk/api/Members/Search',
-            params={'Name': peer_name, 'IsCurrentMember': 'true', 'take': 5},
-            timeout=8
-        )
         items = []
-        if resp.status_code == 200:
-            items = resp.json().get('items', [])
-        if not items:
-            # Try without IsCurrentMember — some Lords are former ministers
-            resp2 = requests.get(
+        for name in name_variants:
+            if items:
+                break
+            resp = requests.get(
                 'https://members-api.parliament.uk/api/Members/Search',
-                params={'Name': peer_name, 'take': 5},
+                params={'Name': name, 'IsCurrentMember': 'true', 'take': 5},
                 timeout=8
             )
-            if resp2.status_code == 200:
-                items = resp2.json().get('items', [])
+            if resp.status_code == 200:
+                items = resp.json().get('items', [])
+            if not items:
+                resp2 = requests.get(
+                    'https://members-api.parliament.uk/api/Members/Search',
+                    params={'Name': name, 'take': 5},
+                    timeout=8
+                )
+                if resp2.status_code == 200:
+                    items = resp2.json().get('items', [])
         if not items:
             return None
 
