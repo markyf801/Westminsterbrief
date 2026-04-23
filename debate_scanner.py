@@ -1828,6 +1828,7 @@ def debates_topic():
     wq_total = 0
     topic_briefing = None
     topic_briefing_as_text = ""
+    opp_speaker_links = {}
     error_message = None
     topic = ""
     narrow_keyword = ""
@@ -2034,6 +2035,17 @@ def debates_topic():
                             f" — sample parties: {list({r.get('speaker_party','') for r in non_minister_rows[:10]})}"
                         )
                     balanced = minister_rows + opp_rows[:10] + other_rows[:10]
+                    # Build name → URL lookup for opposition/backbench speakers so the
+                    # template can render a "View Speech" link alongside "View PQs".
+                    opp_speaker_links = {}
+                    for r in opp_rows + other_rows:
+                        name = r.get('speaker_name', '')
+                        url = r.get('listurl', '')
+                        if name and url and name not in opp_speaker_links:
+                            # TWFY listurls are relative — prepend domain
+                            if url and not url.startswith('http'):
+                                url = 'https://www.theyworkforyou.com' + url
+                            opp_speaker_links[name] = url
                     import logging as _dlog
                     _dlog.warning(
                         f"[briefing_diag] non_minister={len(non_minister_rows)} "
@@ -2251,6 +2263,7 @@ def debates_topic():
                            wq_rows=wq_rows, wq_total=wq_total,
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
+                           opp_speaker_links=opp_speaker_links,
                            start_date=start_date, end_date=end_date,
                            house_filter=house_filter,
                            narrow_keyword=narrow_keyword,

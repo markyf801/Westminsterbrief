@@ -183,6 +183,9 @@
                         <li>
                             <strong>{{ s.name }}</strong> <span class="topic-party-badge">{{ s.role_or_party }}</span>
                             <button onclick="togglePQs(this, '{{ s.name | e }}', '{{ topic | e }}', '{{ (effective_depts[0] if effective_depts else '') | e }}')" style="font-size:11px; color:#005a8f; background:none; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View PQs</button>
+                            {% if opp_speaker_links and s.name in opp_speaker_links %}
+                            <a href="{{ opp_speaker_links[s.name] }}" target="_blank" rel="noopener" style="font-size:11px; color:#005a8f; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; margin-left:4px; text-decoration:none; white-space:nowrap;">↗ View Speech</a>
+                            {% endif %}
                             <br><span style="font-size:12px; color:#555;">{{ s.stance }}</span>
                             <div class="pq-expand" style="display:none; margin-top:8px;"></div>
                         </li>
