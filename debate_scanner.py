@@ -689,7 +689,7 @@ def _classify_group(grp):
     return 'debate'
 
 
-def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=200):
+def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=800):
     """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count).
     Does NOT pass answeringBodies to the API — that filter causes severe timeouts (>30s).
     Instead fetches without dept filter and filters client-side by answeringBodyName."""
@@ -1545,6 +1545,7 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
         if cached_entry.get('person_id'):
             results.append({
                 'person_id': cached_entry['person_id'],
+                'parliament_id': cached_entry.get('parliament_id'),
                 'name': display,
                 'role': m.get('role', ''),
                 'is_lord': cached_entry.get('is_lord', False),
@@ -1567,14 +1568,15 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
         # Write result back to JSON cache so next search is instant
         twfy_ids_cache[display] = {
             'person_id': person_id, 'is_lord': is_lord,
+            'parliament_id': parliament_id,
             'lookup_failed': person_id is None
         }
         json_updated = True
 
         if person_id:
             results.append({
-                'person_id': person_id, 'name': display,
-                'role': m.get('role', ''), 'is_lord': is_lord
+                'person_id': person_id, 'parliament_id': parliament_id,
+                'name': display, 'role': m.get('role', ''), 'is_lord': is_lord
             })
         else:
             import logging
@@ -1933,6 +1935,11 @@ def debates_topic():
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
                 # Fan-out: one future per (minister, source) so all 24 calls run in parallel
                 # Lords ministers only speak in Lords/WMS; Commons ministers only in Commons/WH/WMS
+                import logging as _mlog
+                _mlog.warning(
+                    f"[minister_dispatch] use_hansard={use_hansard_minister} "
+                    f"ministers={[(mp.get('name',''),bool(mp.get('parliament_id'))) for mp in minister_people]}"
+                )
                 minister_futs = {}
                 for mp in minister_people:
                     for src in sources:
