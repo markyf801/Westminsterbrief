@@ -1703,10 +1703,13 @@ def debates_topic():
                 twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
                 # Fan-out: one future per (minister, source) so all 24 calls run in parallel
+                # Lords ministers only speak in Lords/WMS; Commons ministers only in Commons/WH/WMS
                 minister_futs = {}
                 for mp in minister_people:
                     for src in sources:
                         if mp.get('is_lord') and src not in ('lords', 'wms'):
+                            continue
+                        if not mp.get('is_lord') and src == 'lords':
                             continue
                         if use_hansard_minister and mp.get('parliament_id'):
                             fut = executor.submit(
