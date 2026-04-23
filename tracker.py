@@ -48,13 +48,18 @@ def get_working_model(api_key):
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
         resp = requests.get(url, timeout=5)
         if resp.status_code == 200:
-            available = [m['name'] for m in resp.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-            for pref in ['models/gemini-2.0-flash', 'models/gemini-2.0-flash-lite',
-                         'models/gemini-1.5-flash', 'models/gemini-1.5-pro',
-                         'models/gemini-2.5-flash', 'models/gemini-pro']:
-                if pref in available: return pref
-    except: pass
-    return "models/gemini-2.0-flash"
+            available = [m['name'] for m in resp.json().get('models', [])
+                         if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            # Use prefix matching — API returns versioned names like gemini-2.0-flash-001
+            # Avoid 2.5 family which is unreliable; prefer 2.0 then 1.5
+            for prefix in ['models/gemini-2.0-flash-lite', 'models/gemini-2.0-flash',
+                           'models/gemini-1.5-flash', 'models/gemini-1.5-pro']:
+                match = next((m for m in available if m.startswith(prefix) and '2.5' not in m), None)
+                if match:
+                    return match
+    except:
+        pass
+    return "models/gemini-1.5-flash-latest"
 
 def get_member_name(member_id):
     if not member_id: return "Unknown Member"
