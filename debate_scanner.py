@@ -496,7 +496,7 @@ def fetch_full_debate_session(parent_gid, source):
         if source != 'wms':
             params['type'] = source
         resp = requests.get(api_url, params=params, timeout=10)
-        _sl.warning(f"[session_fetch] gid={parent_gid!r} type={params.get('type')!r} status={resp.status_code}")
+        _sl.warning(f"[session_fetch] id={parent_gid!r} type={params.get('type')!r} status={resp.status_code}")
         if resp.status_code != 200:
             return []
         rjson = resp.json()
