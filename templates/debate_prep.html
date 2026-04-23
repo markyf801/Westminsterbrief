@@ -3,6 +3,7 @@
 {% block meta_description %}Prepare a structured briefing pack for a Lords or Commons oral question: sector context, media coverage, parliamentary record, and member profile.{% endblock %}
 
 {% block content %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
 <h1 class="page-title">Debate Prep <span class="badge-ai">AI</span></h1>
 <p class="page-sub" style="color:#555;margin-bottom:1.2rem;">
   Enter an oral question details to generate a structured briefing pack — sector context, media coverage, parliamentary record, and member profile.
@@ -29,8 +30,8 @@
   <div class="form-row">
     <div class="form-group" style="flex:2;">
       <label id="member-name-label">{% if house == 'commons' %}MP name{% else %}Peer name{% endif %}</label>
-      <input type="text" name="peer_name" id="member-name-input" value="{{ peer_name or '' }}"
-             placeholder="{% if house == 'commons' %}e.g. Bridget Phillipson{% else %}e.g. Lord John of Southwark{% endif %}" required>
+      <select name="peer_name" id="member-name-input" style="width:100%;" required
+              data-prefill="{{ peer_name | e if peer_name else '' }}"></select>
     </div>
     <div class="form-group" style="flex:1;">
       <label>Date question is scheduled <span style="color:#888;font-weight:400">(upcoming)</span></label>
@@ -403,17 +404,52 @@
 </div>
 {% endif %}
 
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<style>
+    #member-name-input + .select2-container--default .select2-selection--single,
+    .select2-container--default .select2-selection--single {
+        height: 46px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__arrow { height: 44px; }
+    .select2-container--default .select2-selection--single .select2-selection__rendered { line-height: 28px; }
+</style>
 <script>
+function initMemberSearch() {
+    const isCommons = document.getElementById('house-commons') && document.getElementById('house-commons').checked;
+    const placeholder = isCommons ? 'e.g. Bridget Phillipson' : 'e.g. Lord John of Southwark, Smith of Malvern...';
+    $('#member-name-input').select2({
+        placeholder: placeholder,
+        minimumInputLength: 3,
+        ajax: {
+            url: '/api/search_members',
+            dataType: 'json',
+            delay: 250,
+            processResults: function(data) {
+                return { results: data.results.map(r => ({ id: r.text, text: r.text })) };
+            }
+        }
+    });
+    var prefill = document.getElementById('member-name-input').dataset.prefill;
+    if (prefill) {
+        var opt = new Option(prefill, prefill, true, true);
+        $('#member-name-input').append(opt).trigger('change');
+    }
+}
+
 function showPrepLoading() {
     document.getElementById('prep-form').style.display = 'none';
     document.getElementById('prep-loading').style.display = 'block';
 }
+
 function updateHouseLabels() {
     const isCommons = document.getElementById('house-commons').checked;
     document.getElementById('member-name-label').textContent = isCommons ? 'MP name' : 'Peer name';
-    document.getElementById('member-name-input').placeholder = isCommons
-        ? 'e.g. Bridget Phillipson'
-        : 'e.g. Lord John of Southwark';
+    // Reinit Select2 with updated placeholder
+    $('#member-name-input').select2('destroy');
+    initMemberSearch();
 }
+
+$(document).ready(initMemberSearch);
 </script>
 {% endblock %}
