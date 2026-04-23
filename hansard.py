@@ -238,9 +238,13 @@ def index():
                 if start_date and raw_date_str < start_date: continue
                 if end_date and raw_date_str > end_date: continue
 
-                # Relevance filter: all words from at least one search subject must appear
+                # Relevance filter: all root words must appear somewhere in question, heading, or answer
                 if subject_word_sets:
-                    q_lower = (strip_html(val.get('questionText', '')) + ' ' + (val.get('heading') or '')).lower()
+                    q_lower = (
+                        strip_html(val.get('questionText', '')) + ' ' +
+                        (val.get('heading') or '') + ' ' +
+                        strip_html(val.get('answerText') or '')
+                    ).lower()
                     if not any(all(w in q_lower for w in word_set) for word_set in subject_word_sets):
                         continue
 
