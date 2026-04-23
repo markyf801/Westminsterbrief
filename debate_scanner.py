@@ -484,13 +484,16 @@ def fetch_full_debate_session(parent_gid, source):
     if cached is not None:
         return cached
     try:
+        import logging as _sl
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
         resp = requests.get(api_url,
                             params={'key': TWFY_API_KEY, 'gid': parent_gid, 'output': 'json'},
                             timeout=10)
+        _sl.warning(f"[session_fetch] gid={parent_gid!r} src={source} status={resp.status_code} body_prefix={resp.text[:120]!r}")
         if resp.status_code != 200:
             return []
         rows = resp.json().get('rows', [])
+        _sl.warning(f"[session_fetch] gid={parent_gid!r} rows={len(rows)}")
         results = []
         for r in rows:
             body_raw = r.get('body', '')
@@ -545,7 +548,10 @@ def fetch_all_debate_sessions(matched_rows, max_debates=15):
     skipped = sum(1 for r in matched_rows
                   if r.get('source') != 'wrans'
                   and not _listurl_to_parent_gid(r.get('listurl', ''), r.get('source', '')))
-    _slog.warning(f"[session_expand] {len(matched_rows)} rows in, {expandable} expandable GIDs, {skipped} skipped (Hansard/unparseable URLs)")
+    sample_listurls = [r.get('listurl', '') for r in matched_rows[:3] if r.get('source') != 'wrans']
+    sample_gids = gid_source_pairs[:3]
+    _slog.warning(f"[session_expand] {len(matched_rows)} rows in, {expandable} expandable GIDs, {skipped} skipped"
+                  f" | sample_listurls={sample_listurls} | sample_gids={sample_gids}")
     if not gid_source_pairs:
         return []
     extra = []
@@ -1815,9 +1821,17 @@ def debates_topic():
                     topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
             # Enforce date range — session expansion can pull in speeches from outside the requested window
             if start_date or end_date:
-                topic_rows = [r for r in topic_rows
-                              if (not start_date or r.get('hdate', '') >= start_date)
-                              and (not end_date or r.get('hdate', '') <= end_date)]
+                import logging as _flog
+                in_range = [r for r in topic_rows
+                            if (not start_date or r.get('hdate', '') >= start_date)
+                            and (not end_date or r.get('hdate', '') <= end_date)]
+                out_range = [r for r in topic_rows
+                             if not ((not start_date or r.get('hdate', '') >= start_date)
+                                     and (not end_date or r.get('hdate', '') <= end_date))]
+                _flog.warning(f"[date_filter] start={start_date!r} end={end_date!r} before={len(topic_rows)} after={len(in_range)}"
+                              f" sample_kept_hdates={[r.get('hdate','') for r in in_range[:3]]}"
+                              f" sample_dropped_hdates={[r.get('hdate','') for r in out_range[:3]]}")
+                topic_rows = in_range
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()
@@ -1847,6 +1861,8 @@ def debates_topic():
                         'Ulster Unionist Party', 'Social Democratic and Labour Party',
                         'Sinn Féin', 'Alliance Party of Northern Ireland', 'Alba Party',
                     }
+                    import logging as _dlog2
+                    _dlog2.warning(f"[briefing_diag] topic_rows_at_briefing={len(topic_rows)} minister_flags={sum(1 for r in topic_rows if r.get('is_minister'))}")
                     minister_rows = sorted(
                         [r for r in topic_rows if r.get('is_minister')],
                         key=lambda x: -x.get('relevance', 0)
