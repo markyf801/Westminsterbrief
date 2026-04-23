@@ -201,8 +201,10 @@ def morning_tracker():
                     try:
                         questions_data = [{"uin": r['uin'], "text": r['text'][:200]} for r in results]
                         prompt = (
-                            "Categorize these UK Parliamentary questions into highly specific policy themes "
-                            "(e.g., 'SEND', 'Early Years', 'Higher Education Finance'). "
+                            "Categorize these UK Parliamentary questions into broad team-level policy themes "
+                            "that a single policy team would own (e.g., 'SEND', 'Early Years', 'Higher Education Finance', "
+                            "'Disabled Children\\'s Social Care', 'School Standards'). "
+                            "Use short, team-level labels — do NOT add sub-categories or qualifiers after a dash. "
                             "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
                             f"Data: {json.dumps(questions_data)}"
                         )
@@ -232,6 +234,9 @@ def morning_tracker():
                         r_date = r['raw_date']
                         theme = categories.get(r['uin'])
                         if not theme: theme = "Uncategorized"
+                        # Collapse "Parent - Sub-category" → "Parent" so one team = one group
+                        if ' - ' in theme:
+                            theme = theme.split(' - ')[0].strip()
                         if r_date not in temp_group: temp_group[r_date] = {'display_date': r['date_asked'], 'themes': {}}
                         if theme not in temp_group[r_date]['themes']: temp_group[r_date]['themes'][theme] = []
                         temp_group[r_date]['themes'][theme].append(r)
