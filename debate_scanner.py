@@ -1161,12 +1161,33 @@ _HANSARD_PARTY_ABBREV = {
 
 
 def _parse_hansard_party(attributed_to):
-    """Extract full party name from 'Name (Abbrev)' format returned by Hansard API."""
+    """Extract full party name from AttributedTo string.
+    Handles: 'Lord Sikka (Lab)', 'Baroness Barran (Con)',
+    'Baroness in Waiting/Government Whip (Baroness Blake of Leeds) (Lab)'
+    Party is always the last (...) group."""
     m = re.search(r'\(([^)]+)\)\s*$', attributed_to or '')
     if m:
         abbrev = m.group(1).strip().lower()
         return _HANSARD_PARTY_ABBREV.get(abbrev, m.group(1).strip())
     return ''
+
+
+def _extract_attributed_name(attributed_to):
+    """Extract clean speaker name from AttributedTo string.
+    Handles: 'Lord Sikka (Lab)' → 'Lord Sikka'
+             'Baroness Barran (Con)' → 'Baroness Barran'
+             'Baroness in Waiting/Government Whip (Baroness Blake of Leeds) (Lab)' → 'Baroness Blake of Leeds'
+             'Lord Sikka' (no party) → 'Lord Sikka'"""
+    if not attributed_to:
+        return ''
+    parens = re.findall(r'\(([^)]+)\)', attributed_to)
+    if len(parens) >= 2:
+        # Role (Name) (Party) format — name is the second-to-last group
+        return parens[-2].strip()
+    elif len(parens) == 1:
+        # Name (Party) format — name is everything before the opening '('
+        return attributed_to[:attributed_to.rfind('(')].strip()
+    return attributed_to.strip()
 
 
 def _hansard_section_to_source(house, section):
@@ -1293,19 +1314,23 @@ def fetch_full_hansard_session(ext_id, source):
         _hl.warning(f"[hansard_session] ext_id={ext_id!r} items={len(items)}")
         if items:
             s = items[0]
-            _hl.warning(f"[hansard_session] sample keys={list(s.keys())[:15]} attributed={s.get('AttributedTo','')!r}")
+            _hl.warning(f"[hansard_session] sample keys={list(s.keys())[:12]} attributed={s.get('AttributedTo','')!r}")
 
-        debate_title = data.get('Title', '') or data.get('DebateSection', '') or ''
-        sitting_date = data.get('SittingDate', '') or ''
-        hdate = sitting_date[:10] if sitting_date else ''
-        house = data.get('House', 'Commons')
+        # Metadata lives in Overview, not at the root level
+        overview = data.get('Overview') or {}
+        debate_title = overview.get('Title', '') or ''
+        raw_date = overview.get('Date', '') or ''
+        hdate = raw_date[:10] if raw_date else ''
+        house = overview.get('House', 'Commons') or 'Commons'
         house_path = 'lords' if 'lord' in house.lower() else 'commons'
         base_url = f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
 
         results = []
         for item in items:
-            body_raw = (item.get('Value', '') or item.get('ContributionText', '') or
-                        item.get('ContributionTextFull', '') or '')
+            # Skip procedural items (no speaker attached)
+            if not item.get('MemberId') and not item.get('AttributedTo'):
+                continue
+            body_raw = item.get('Value', '') or ''
             if not body_raw:
                 continue
             body_text = clean_body_text(body_raw)
@@ -1313,8 +1338,8 @@ def fetch_full_hansard_session(ext_id, source):
                 continue
 
             attributed_to = item.get('AttributedTo', '') or ''
-            member_name = item.get('MemberName', '') or attributed_to.split('(')[0].strip()
-            item_date = item.get('SittingDate', '') or sitting_date
+            member_name = _extract_attributed_name(attributed_to)
+            item_date = item.get('SittingDate', '') or raw_date
             item_hdate = item_date[:10] if item_date else hdate
 
             results.append({
