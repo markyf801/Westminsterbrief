@@ -2,7 +2,6 @@ import requests, os, json, re, concurrent.futures, io
 from flask import Blueprint, render_template, request, send_file
 from datetime import datetime, timedelta
 from cache_models import CachedMember
-from google import genai as _genai
 
 try:
     import docx
@@ -44,14 +43,50 @@ def add_hyperlink(paragraph, url, text):
     paragraph._p.append(hyperlink)
     return hyperlink
 
-GEMINI_MODEL = 'gemini-1.5-flash'
+_GEMINI_MODEL_CACHE = {}
 
 
 def _gemini_generate(api_key, prompt):
-    """Call Gemini via google-genai client. Returns response text or raises."""
-    client = _genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-    return response.text
+    """Call Gemini REST API. Auto-detects a working model and endpoint version."""
+    global _GEMINI_MODEL_CACHE
+
+    if api_key not in _GEMINI_MODEL_CACHE:
+        try:
+            resp = requests.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                timeout=5
+            )
+            if resp.status_code == 200:
+                available = [m['name'] for m in resp.json().get('models', [])
+                             if 'generateContent' in m.get('supportedGenerationMethods', [])]
+                # Strip 'models/' prefix; prefer 2.0-flash-lite, then 2.0-flash, avoid 2.5
+                for prefix in ['models/gemini-2.0-flash-lite', 'models/gemini-2.0-flash',
+                               'models/gemini-1.5-flash']:
+                    match = next((m for m in available if m.startswith(prefix) and '2.5' not in m), None)
+                    if match:
+                        _GEMINI_MODEL_CACHE[api_key] = match.removeprefix('models/')
+                        break
+                else:
+                    first = next((m for m in available if '2.5' not in m), available[0] if available else None)
+                    _GEMINI_MODEL_CACHE[api_key] = first.removeprefix('models/') if first else 'gemini-2.0-flash-lite'
+        except Exception:
+            _GEMINI_MODEL_CACHE[api_key] = 'gemini-2.0-flash-lite'
+
+    model = _GEMINI_MODEL_CACHE.get(api_key, 'gemini-2.0-flash-lite')
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    for version in ('v1', 'v1beta'):
+        url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={api_key}"
+        try:
+            r = requests.post(url, json=payload, timeout=90)
+            if r.status_code == 200:
+                return r.json()['candidates'][0]['content']['parts'][0]['text']
+            if r.status_code not in (404, 400):
+                raise Exception(f"HTTP {r.status_code}")
+        except Exception:
+            continue
+
+    raise Exception(f"All endpoints failed for {model}")
 
 def get_member_name(member_id):
     if not member_id: return "Unknown Member"
