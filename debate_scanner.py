@@ -457,9 +457,11 @@ _SOURCE_GID_PREFIX = {
 }
 
 def _listurl_to_parent_gid(listurl, source):
-    """Extract the bare TWFY section ID from a listurl for session expansion.
-    Returns DATE.SECTION.0 (no uk.org.publicwhip prefix) for use with the id= param.
-    e.g. /debates/?id=2026-01-15.123.4 → '2026-01-15.123.0'
+    """Convert a TWFY listurl to the full TWFY speech GID for use with gid= parameter.
+    Uses the actual speech position from the listurl — constructing a fake .0 parent
+    causes 404 because that position may not exist in TWFY's database.
+    Returns the full uk.org.publicwhip/PREFIX/DATE.SECTION.POSITION GID.
+    Deduplication in fetch_all_debate_sessions uses just the section portion as the key.
     Returns None if listurl cannot be parsed, is a Hansard URL, or source is not expandable."""
     if not listurl or source not in _SOURCE_GID_PREFIX:
         return None
@@ -469,11 +471,10 @@ def _listurl_to_parent_gid(listurl, source):
         m = re.search(r'\?id=([^&#]+)', listurl)
         if not m:
             return None
-        id_val = m.group(1)                   # e.g. "2026-01-15.123.4"
+        id_val = m.group(1)                   # e.g. "2026-01-15.123.4" (actual speech position)
         if '.' not in id_val:
             return None
-        section = id_val.rsplit('.', 1)[0]     # e.g. "2026-01-15.123" (strips speech position)
-        return section                         # bare section ID, no .0 suffix
+        return f"{_SOURCE_GID_PREFIX[source]}{id_val}"  # full GID with actual position
     except Exception:
         return None
 
@@ -490,18 +491,16 @@ def fetch_full_debate_session(parent_gid, source):
     try:
         import logging as _sl
         api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
-        # Use id= (bare DATE.SECTION.0 format) — the full uk.org.publicwhip/ prefix
-        # with type= returns 404; bare id= matches the format TWFY uses in its own URLs.
-        params = {'key': TWFY_API_KEY, 'id': parent_gid, 'output': 'json'}
+        params = {'key': TWFY_API_KEY, 'gid': parent_gid, 'output': 'json'}
         if source != 'wms':
             params['type'] = source
         resp = requests.get(api_url, params=params, timeout=10)
-        _sl.warning(f"[session_fetch] id={parent_gid!r} type={params.get('type')!r} status={resp.status_code}")
+        _sl.warning(f"[session_fetch] gid={parent_gid!r} type={params.get('type')!r} status={resp.status_code}")
         if resp.status_code != 200:
             return []
         rjson = resp.json()
         rows = rjson.get('rows', [])
-        _sl.warning(f"[session_fetch] id={parent_gid!r} rows_returned={len(rows)} response_keys={list(rjson.keys())} error={rjson.get('error','')!r}")
+        _sl.warning(f"[session_fetch] gid={parent_gid!r} rows_returned={len(rows)} response_keys={list(rjson.keys())} error={rjson.get('error','')!r}")
         if rows:
             sample = rows[0]
             _sl.warning(f"[session_fetch] sample_row keys={list(sample.keys())} speaker={sample.get('speaker')} hdate={sample.get('hdate')} listurl={sample.get('listurl','')[:80]!r}")
@@ -538,7 +537,7 @@ def fetch_all_debate_sessions(matched_rows, max_debates=15):
     """For each unique debate in matched_rows, fetch all speeches via TWFY GID lookup.
     This guarantees ministers appear even when their responses don't contain search keywords.
     Skips wrans (written answers have no multi-speaker session to expand)."""
-    seen_gids = set()
+    seen_sections = set()
     gid_source_pairs = []
     for r in matched_rows:
         source = r.get('source', '')
@@ -549,9 +548,14 @@ def fetch_all_debate_sessions(matched_rows, max_debates=15):
         if 'written answers' in title or 'written answer' in title:
             continue
         gid = _listurl_to_parent_gid(r.get('listurl', ''), source)
-        if gid and gid not in seen_gids:
-            seen_gids.add(gid)
-            gid_source_pairs.append((gid, source))
+        if gid:
+            # Dedup at section level — strip the final .POSITION so two speeches from the same
+            # section (e.g. ...483.1 and ...483.3) don't cause duplicate expansion calls.
+            last_dot = gid.rfind('.')
+            section_key = gid[:last_dot] if last_dot != -1 else gid
+            if section_key not in seen_sections:
+                seen_sections.add(section_key)
+                gid_source_pairs.append((gid, source))
         if len(gid_source_pairs) >= max_debates:
             break
     import logging as _slog
