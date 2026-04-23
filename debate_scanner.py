@@ -3368,17 +3368,22 @@ def _prep_one_pager(question_text, topic, question_date=''):
         f"Question: {question_text}\n"
         f"Topic: {topic}\n"
         f"Date: {question_date or 'upcoming'}\n\n"
-        "Generate a structured background briefing with these four sections:\n"
+        "Generate a structured background briefing with these five sections:\n"
         "1. why_now: 2-3 sentences explaining why this question is being asked at this "
         "time — recent events, policy changes, sector pressures, or public debate driving it\n"
         "2. sector_context: 3-4 sentences of factual background on the sector or policy area\n"
         "3. major_criticisms: Array of 3-5 specific criticisms or concerns currently being "
         "raised about this area by campaigners, academics, media or opposition\n"
         "4. opposition_position: 2-3 sentences summarising the likely opposition angle — "
-        "what they want the government to commit to, and what they may push back on\n\n"
+        "what they want the government to commit to, and what they may push back on\n"
+        "5. sources: Array of 3-6 specific, real sources that a civil servant could consult — "
+        "e.g. named government reports, parliamentary publications, think-tank research, "
+        "named media outlets or academic bodies. Use the format 'Organisation/Publication — "
+        "Title or description (Year if known)'. Only cite sources that are likely to genuinely "
+        "exist; do not invent titles.\n\n"
         'Return as JSON only, no prose, no markdown fences:\n'
         '{"why_now": "...", "sector_context": "...", "major_criticisms": ["...", "..."], '
-        '"opposition_position": "..."}'
+        '"opposition_position": "...", "sources": ["...", "..."]}'
     )
 
     if GEMINI_API_KEY:
@@ -3386,7 +3391,7 @@ def _prep_one_pager(question_text, topic, question_date=''):
             url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                    f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}")
             body = {"contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1000}}
+                    "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1400}}
             resp = requests.post(url, json=body, timeout=30)
             if resp.status_code == 200:
                 raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
@@ -3792,6 +3797,14 @@ def download_debate_prep_brief():
             doc.add_heading('Major Criticisms', 2)
             for crit in one_pager['major_criticisms']:
                 doc.add_paragraph(crit, style='List Bullet')
+        if one_pager.get('sources'):
+            doc.add_heading('Suggested Sources', 2)
+            for src in one_pager['sources']:
+                doc.add_paragraph(src, style='List Bullet')
+            p = doc.add_paragraph('AI-suggested — verify existence before citing')
+            p.runs[0].italic = True
+            p.runs[0].font.size = Pt(9)
+            _clr(p.runs[0], '888888')
         doc.add_paragraph()
 
     # ── Section 2: Media ──────────────────────────────────────────
