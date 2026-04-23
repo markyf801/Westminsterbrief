@@ -1,4 +1,4 @@
-import os, requests, io, json, re, concurrent.futures
+import os, requests, io, json, re, concurrent.futures, logging
 from flask import Blueprint, render_template, request, jsonify, send_file
 from datetime import datetime, timedelta
 from cache_models import CachedMember
@@ -19,9 +19,13 @@ except ImportError:
 biography_bp = Blueprint('biography', __name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+_MODEL_CACHE = None
 
 
 def _gemini_model():
+    global _MODEL_CACHE
+    if _MODEL_CACHE:
+        return _MODEL_CACHE
     if not GEMINI_API_KEY:
         return None
     try:
@@ -30,13 +34,21 @@ def _gemini_model():
             timeout=5
         )
         if resp.status_code == 200:
-            for pref in ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']:
-                for m in resp.json().get('models', []):
-                    if pref in m['name'] and 'generateContent' in m.get('supportedGenerationMethods', []):
-                        return m['name']
-    except:
+            available = [m['name'] for m in resp.json().get('models', [])
+                         if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            for pref in ['models/gemini-2.5-flash-lite', 'models/gemini-2.5-flash',
+                         'models/gemini-flash-latest']:
+                match = next((m for m in available if m.startswith(pref)), None)
+                if match:
+                    _MODEL_CACHE = match
+                    return _MODEL_CACHE
+            if available:
+                _MODEL_CACHE = available[0]
+                return _MODEL_CACHE
+    except Exception:
         pass
-    return "models/gemini-1.5-flash"
+    _MODEL_CACHE = "models/gemini-2.5-flash-lite"
+    return _MODEL_CACHE
 
 
 def _add_hyperlink(paragraph, url, text):
@@ -67,7 +79,7 @@ def _fetch_parliament_biography(member_id):
         )
         if resp.status_code == 200:
             return resp.json().get('value', {})
-    except:
+    except Exception:
         pass
     return {}
 
@@ -84,12 +96,12 @@ def _fetch_recent_pqs(member_id, limit=20):
             results = []
             for item in resp.json().get('results', []):
                 val = item.get('value', {})
-                text = val.get('questionText', '').replace('<p>', '').replace('</p>', '')
+                text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', val.get('questionText') or '')).strip()
                 dept = val.get('answeringBodyName', '')
                 if text:
                     results.append(f"[{dept}] {text[:200]}")
             return results
-    except:
+    except Exception:
         pass
     return []
 
@@ -101,7 +113,7 @@ def _fetch_registered_interests(member_id):
             timeout=8
         )
         if resp.status_code == 200:
-            categories = resp.json().get('value', {}).get('categories', []) or []
+            categories = resp.json().get('value', []) or []
             lines = []
             for cat in categories:
                 cat_name = cat.get('name', '')
@@ -110,7 +122,7 @@ def _fetch_registered_interests(member_id):
                     if desc:
                         lines.append(f"  [{cat_name}] {desc[:200]}")
             return lines
-    except:
+    except Exception:
         pass
     return []
 
@@ -123,9 +135,14 @@ def _fetch_wikipedia(mp_name):
         if not search:
             search = wikipedia.search(mp_name)
         if search:
-            page = wikipedia.page(search[0], auto_suggest=False)
+            try:
+                page = wikipedia.page(search[0], auto_suggest=False)
+            except wikipedia.DisambiguationError as e:
+                options = [o for o in e.options
+                           if any(k in o.lower() for k in ('politician', ' mp', 'member of parliament', 'lord', 'baroness'))]
+                page = wikipedia.page(options[0] if options else e.options[0], auto_suggest=False)
             return page.content[:4000]
-    except:
+    except Exception:
         pass
     return ""
 
@@ -134,7 +151,7 @@ def _format_posts(posts, label):
     if not posts:
         return ""
     lines = [f"\n{label}:"]
-    for p in posts:
+    for p in sorted(posts, key=lambda x: x.get('startDate') or '', reverse=True):
         name = p.get('name', '')
         start = (p.get('startDate') or '').split('T')[0][:7]
         end = (p.get('endDate') or '').split('T')[0][:7]
@@ -148,7 +165,7 @@ def _format_committees(committees):
     if not committees:
         return ""
     lines = ["\nCommittee Memberships (current and historical):"]
-    for c in committees:
+    for c in sorted(committees, key=lambda x: x.get('startDate') or '', reverse=True):
         name = c.get('name', '')
         start = (c.get('startDate') or '').split('T')[0][:7]
         end = (c.get('endDate') or '').split('T')[0][:7]
@@ -180,7 +197,10 @@ def generate_mp_biography(mp_name, member_id):
 
     interests_context = ""
     if interests:
-        interests_context = "\nRegistered Interests:\n" + "\n".join(f"  • {i}" for i in interests[:20])
+        cap = 30
+        interests_context = "\nRegistered Interests:\n" + "\n".join(f"  • {i}" for i in interests[:cap])
+        if len(interests) > cap:
+            interests_context += f"\n  ... and {len(interests) - cap} further interests (see Parliament.uk for full register)"
 
     pq_context = ""
     if pqs:
@@ -226,7 +246,7 @@ Based on their written questions and stated interests — be specific, not gener
 ## Key Context for Meetings
 2–3 sentences a civil servant would want to know before a ministerial meeting or correspondence.
 
-Keep each section concise and factual. Do not invent information not present in the source data."""
+Keep each section concise and factual. Only include information present in the source data above — do not supplement from your training data or general knowledge. If a section has no source data, say so briefly rather than inferring."""
 
     model = _gemini_model()
     if not model or not GEMINI_API_KEY:
@@ -238,9 +258,11 @@ Keep each section concise and factual. Do not invent information not present in 
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=45
         )
+        resp.raise_for_status()
         return resp.json()['candidates'][0]['content']['parts'][0]['text']
-    except:
-        return "AI summary unavailable — the AI service did not respond in time. Please try again."
+    except Exception as e:
+        logging.warning(f"[biography] AI generation failed for {mp_name} (model={model}): {type(e).__name__}: {e}")
+        return "AI summary unavailable — please try again."
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -275,7 +297,7 @@ def biography_home():
                         'id': resp.get('id'), 'name': name, 'party': party,
                         'constituency': constituency, 'image_url': image_url
                     }
-                except:
+                except Exception:
                     error = "Could not load member details."
     return render_template('biography.html', mp_data=mp_data, error_message=error)
 
@@ -287,13 +309,14 @@ def api_search_members():
         return jsonify({"results": []})
     try:
         items = requests.get(
-            f"https://members-api.parliament.uk/api/Members/Search?Name={term}&take=15",
+            "https://members-api.parliament.uk/api/Members/Search",
+            params={'Name': term, 'take': 15},
             timeout=5
         ).json().get('items') or []
         return jsonify({
-            "results": [{"id": i['value']['id'], "text": i['value']['nameFullTitle']} for i in items]
+            "results": [{"id": i['value']['id'], "text": i['value']['nameDisplayAs']} for i in items]
         })
-    except:
+    except Exception:
         return jsonify({"results": []})
 
 
@@ -350,7 +373,7 @@ def export_biography_word():
             img_resp = requests.get(image_url, timeout=5)
             if img_resp.status_code == 200:
                 img_stream = io.BytesIO(img_resp.content)
-        except:
+        except Exception:
             pass
 
     # ── Header: photo left, name/details right ───────────────────────────────
