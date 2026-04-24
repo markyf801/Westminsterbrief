@@ -45,6 +45,13 @@ def debate_url_filter(url):
         return url
     return f"https://www.theyworkforyou.com{url}"
 
+
+def _make_hansard_slug(title):
+    """Derive URL path segment for hansard.parliament.uk from debate title.
+    Hansard expects PascalCase with no spaces or special chars, e.g. 'StudentLoans'."""
+    clean = re.sub(r'[^a-zA-Z0-9\s]', '', title or '')
+    return ''.join(w.capitalize() for w in clean.split())
+
 TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
 
@@ -1485,8 +1492,9 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
             hdate = sitting_date[:10] if sitting_date else ''
 
             ext_id = r.get('DebateSectionExtId', '') or ''
-            house_path = 'lords' if house.lower() == 'lords' else 'commons'
-            listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
+            house_path = 'Lords' if house.lower() == 'lords' else 'Commons'
+            slug = _make_hansard_slug(debate_title)
+            listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/{slug}"
                        if ext_id and hdate else '')
 
             dtype = get_debate_type(debate_title, source=source)
@@ -1556,8 +1564,9 @@ def fetch_full_hansard_session(ext_id, source):
         raw_date = overview.get('Date', '') or ''
         hdate = raw_date[:10] if raw_date else ''
         house = overview.get('House', 'Commons') or 'Commons'
-        house_path = 'lords' if 'lord' in house.lower() else 'commons'
-        base_url = f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
+        house_path = 'Lords' if 'lord' in house.lower() else 'Commons'
+        slug = _make_hansard_slug(debate_title)
+        base_url = f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/{slug}"
 
         results = []
         for item in items:

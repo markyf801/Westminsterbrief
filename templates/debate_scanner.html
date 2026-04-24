@@ -283,9 +283,11 @@
                             <span class="rel-indicator rel-{{ grp.relevance_level }}" title="{{ grp.matched_count }} keyword match{{ 'es' if grp.matched_count != 1 else '' }}"></span>
                             <span class="topic-source-badge topic-source-{{ grp.source }}">{{ grp.source_label }}</span>
                             <span class="debate-group-date">{{ grp.date }}</span>
-                            <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title">{{ grp.title }}</a>
+                            <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title" onclick="event.stopPropagation()">{{ grp.title }}</a>
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
+                        <details class="debate-speeches-details" {% if grp.has_minister %}open{% endif %}>
+                            <summary class="debate-speeches-summary">{{ grp.speeches|length }} speaker{{ 's' if grp.speeches|length != 1 else '' }}</summary>
                         {% for r in grp.speeches %}
                         <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
                             <label class="speech-select-wrap">
@@ -302,6 +304,7 @@
                             </div>
                         </div>
                         {% endfor %}
+                        </details>
                     </div>
                     {% endfor %}
                 </div>
