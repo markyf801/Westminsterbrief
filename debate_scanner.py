@@ -521,10 +521,17 @@ def deduplicate_by_listurl(rows):
     seen = set()
     out = []
     for r in rows:
-        key = r.get('listurl', '')
-        if not key:
+        url = r.get('listurl', '')
+        if not url:
             out.append(r)  # no URL — always keep, never dedup
-        elif key not in seen:
+            continue
+        if url.startswith('https://hansard.parliament.uk'):
+            # Hansard uses session-level URLs shared by all speeches in a session.
+            # Include speaker to keep every contribution rather than collapsing to one.
+            key = (url, r.get('speaker_name', ''))
+        else:
+            key = url
+        if key not in seen:
             seen.add(key)
             out.append(r)
     return out
@@ -2223,7 +2230,17 @@ def debates_topic():
             if topic_rows:
                 session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=25)
                 if session_speeches:
-                    topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
+                    # Hansard stub rows (from topic or minister search) share the same session-level
+                    # URL as all their expanded speeches — keeping them causes dedup to drop the
+                    # expansion. Remove original stubs for sessions that were successfully expanded
+                    # so the richer expansion rows replace them cleanly.
+                    expanded_ext_ids = {
+                        r['debate_section_ext_id'] for r in session_speeches
+                        if r.get('debate_section_ext_id')
+                    }
+                    stub_free = [r for r in topic_rows
+                                 if r.get('debate_section_ext_id') not in expanded_ext_ids]
+                    topic_rows = deduplicate_by_listurl(stub_free + session_speeches)
             # Re-apply date filter — session expansion fetches all speeches in a session,
             # which can occasionally include adjacent-day edge cases.
             if start_date or end_date:
