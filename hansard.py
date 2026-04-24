@@ -238,14 +238,22 @@ def index():
                 if start_date and raw_date_str < start_date: continue
                 if end_date and raw_date_str > end_date: continue
 
-                # Relevance filter: all root words must appear somewhere in question, heading, or answer
+                # Relevance filter: at least 2 of N root words must appear (matching debate scanner logic).
+                # Requiring ALL words is too strict for multi-word topics — "student loan repayments"
+                # drops questions that say "loan repayment" without "student", etc.
                 if subject_word_sets:
                     q_lower = (
                         strip_html(val.get('questionText', '')) + ' ' +
                         (val.get('heading') or '') + ' ' +
                         strip_html(val.get('answerText') or '')
                     ).lower()
-                    if not any(all(w in q_lower for w in word_set) for word_set in subject_word_sets):
+                    matched = False
+                    for word_set in subject_word_sets:
+                        min_m = 2 if len(word_set) >= 2 else 1
+                        if sum(1 for w in word_set if w in q_lower) >= min_m:
+                            matched = True
+                            break
+                    if not matched:
                         continue
 
                 val_member_id = val.get('askingMemberId')
