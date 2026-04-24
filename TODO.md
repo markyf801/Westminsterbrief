@@ -86,12 +86,10 @@
 
 ## 🔴 Next Priority — Reliability & AI Briefing Quality
 
-- [ ] **Claude API fallback for Gemini** ⬅ do first — when Gemini returns 503/fails, silently retry with `claude-haiku-4-5`; affects briefing generation, `expand_search_query()`, stakeholder briefing; full implementation plan in plan file
-  - Gemini 503s confirmed in production (Apr 7–9, ~20% failure rate); time-pressured users cannot retry
-  - Affects 3 priority functions: briefing generation, `expand_search_query()`, stakeholder briefing
+- [x] **Claude API fallback for Gemini** — already implemented: `_claude_fallback()` at line 59 of `debate_scanner.py`; `anthropic>=0.25.0` in requirements.txt; wired to `expand_search_query()`, briefing generation, and stakeholder briefing. **Requires `CLAUDE_API_KEY` env var on Railway to activate.**
 
-- [ ] **Suggested lines to take (AI draft)** ⬅ do second — add `lines_to_take` field to AI prompt: 3–5 draft holding lines clearly labelled as AI draft requiring official clearance; highest-value output civil servants currently write manually
-  - Already in Word Document section below — moved here as priority 2
+- [ ] **Suggested lines to take (AI draft)** ⬅ do next — add `lines_to_take` field to AI prompt: 3–5 draft holding lines clearly labelled as AI draft requiring official clearance; highest-value output civil servants currently write manually
+  - Already in Word Document section below — promoted here as next priority
 
 - [ ] **Inline Hansard citations in AI briefing** — hyperlink every speaker name / quote in the AI briefing output to the source Hansard column; reduces verification burden; briefing currently has links in the speech cards but not in the AI summary text
 
