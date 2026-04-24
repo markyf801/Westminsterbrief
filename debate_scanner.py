@@ -462,9 +462,10 @@ def fetch_hansard_topic(search_term, source_type, date_range, num=50):
                 sitting = r.get('SittingDate', '')
                 hdate = sitting[:10] if sitting else ''
                 house_path = 'lords' if h.lower() == 'lords' else 'commons'
-                listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
-                           if ext_id and hdate else '')
                 debate_title = r.get('DebateSection', '') or ''
+                slug = _make_hansard_slug(debate_title)
+                listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/{slug}"
+                           if ext_id and hdate else '')
                 dtype = get_debate_type(debate_title, source=src)
                 contribution_rows.append({
                     'listurl': listurl,
@@ -496,7 +497,8 @@ def fetch_hansard_topic(search_term, source_type, date_range, num=50):
         title = meta.get('title', '')
         h = meta.get('house', house)
         house_path = 'lords' if h.lower() == 'lords' else 'commons'
-        listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/"
+        slug = _make_hansard_slug(title)
+        listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/{slug}"
                    if ext_id and hdate else '')
         dtype = get_debate_type(title, source=source_type)
         all_rows.append({
