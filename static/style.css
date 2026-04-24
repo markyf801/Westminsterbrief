@@ -570,6 +570,20 @@ input:focus, select:focus, textarea:focus {
     letter-spacing: 0.5px;
 }
 
+.scanner-tab .badge-beta {
+    display: inline-block;
+    background: #e67e22;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 10px;
+    margin-left: 4px;
+    vertical-align: middle;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
 .scanner-panel { display: none; }
 .scanner-panel.active { display: block; }
 
