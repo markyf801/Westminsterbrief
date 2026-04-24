@@ -126,136 +126,123 @@ def morning_tracker():
         selected_dept = request.form.get('department', '').strip()
         results = []
 
-        # Fetch questions tabled in the last 14 days, then narrow to the most
-        # recent tabling date — gives yesterday's intake (or last sitting day
-        # if today is Monday/after a recess).
-        # No answeringBodies param — it causes 30s+ timeouts on the Parliament
-        # API. Dept filter applied client-side below.
-        window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        params = {
-            'take': 500,
-            'tabledStartDate': window_start,
-            'tabledEndDate': yesterday,
-        }
-
         try:
-            url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
-            resp = requests.get(url, params=params, timeout=30)
+            # Fetch the most recent sitting day's questions for the selected dept.
+            # Try yesterday first; fall back up to 14 days to cover weekends/recess.
+            wq_url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+            data = []
+            for days_back in range(1, 15):
+                day = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+                params = {
+                    'take': 200,
+                    'tabledStartDate': day,
+                    'tabledEndDate': day,
+                }
+                if selected_dept:
+                    params['answeringBodies'] = [int(selected_dept)]
+                try:
+                    resp = requests.get(wq_url, params=params, timeout=20)
+                    if resp.status_code == 200:
+                        raw = resp.json().get('results') or []
+                        if raw:
+                            # Deduplicate by UIN — API can return same question twice
+                            seen_uins = set()
+                            for item in raw:
+                                uin = str((item.get('value') or {}).get('uin', ''))
+                                if uin and uin not in seen_uins:
+                                    seen_uins.add(uin)
+                                    data.append(item)
+                            break  # found a sitting day with results — stop looking back
+                except Exception:
+                    pass
 
-            if resp.status_code == 200:
-                data = resp.json().get('results') or []
+            m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+                executor.map(get_member_name, m_ids)
 
-                # Narrow to the single most recent tabling date
-                if data:
-                    tabled_dates = [
-                        (item.get('value') or {}).get('dateTabled', '').split('T')[0]
-                        for item in data
-                        if (item.get('value') or {}).get('dateTabled')
-                    ]
-                    if tabled_dates:
-                        last_tabled_day = max(tabled_dates)
-                        data = [item for item in data
-                                if (item.get('value') or {}).get('dateTabled', '').split('T')[0] == last_tabled_day]
+            for item in data:
+                val = item.get('value') or {}
+                if selected_dept and str(val.get('answeringBodyId')) != selected_dept:
+                    continue
+
+                member_id = val.get('askingMemberId')
+                member_name = get_member_name(member_id)
+
+                tabled_date_str = (val.get('dateTabled') or '').split('T')[0]
+
+                try:
+                    date_obj = datetime.fromisoformat(tabled_date_str)
+                    f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
+                except Exception:
+                    f_date = "N/A"
+
+                is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
+
+                results.append({
+                    'dept': val.get('answeringBodyName'),
+                    'uin': str(val.get('uin')),
+                    'member': member_name,
+                    'member_id': member_id,
+                    'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
+                    'raw_date': tabled_date_str,
+                    'date_asked': f_date,
+                    'due_date': tabled_date_str or 'TBC',
+                    'is_answered': is_answered,
+                    'status': "ANSWERED" if is_answered else "UNANSWERED"
+                })
+
+            categories = {}
+            ai_status = ""
+
+            if results and api_key:
+                try:
+                    questions_data = [{"uin": r['uin'], "text": r['text'][:200]} for r in results]
+                    prompt = (
+                        "Categorize these UK Parliamentary questions into broad team-level policy themes "
+                        "that a single policy team would own (e.g., 'SEND', 'Early Years', 'Higher Education Finance', "
+                        "'Disabled Children\\'s Social Care', 'School Standards'). "
+                        "Use short, team-level labels — do NOT add sub-categories or qualifiers after a dash. "
+                        "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
+                        f"Data: {json.dumps(questions_data)}"
+                    )
+                    raw_text = _gemini_generate(api_key, prompt)
+                    match = re.search(r'\{.*\}|\[.*\]', raw_text.replace('\n', ' '), re.DOTALL)
+                    if match:
+                        parsed = json.loads(match.group(0))
+                        if isinstance(parsed, list):
+                            for item in parsed:
+                                k = str(item.get('uin', item.get('id', '')))
+                                v = str(item.get('theme', 'Uncategorized'))
+                                if k: categories[k] = v
+                        elif isinstance(parsed, dict):
+                            for k, v in parsed.items():
+                                categories[str(k)] = str(v)
                     else:
-                        data = []
+                        ai_status = "(AI: unexpected response format)"
+                except Exception as e:
+                    ai_status = f"(AI Error: {str(e)[:60]})"
 
-                # Deduplicate by UIN — the API can return the same question
-                # more than once (e.g. before and after it is answered).
-                seen_uins = set()
-                deduped = []
-                for item in data:
-                    uin = str((item.get('value') or {}).get('uin', ''))
-                    if uin and uin not in seen_uins:
-                        seen_uins.add(uin)
-                        deduped.append(item)
-                data = deduped
+            if ai_status:
+                print(f"[tracker] categorisation issue: {ai_status}")
 
-                m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
-                with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-                    executor.map(get_member_name, m_ids)
+            if results:
+                temp_group = {}
+                for r in results:
+                    r_date = r['raw_date']
+                    theme = categories.get(r['uin'])
+                    if not theme: theme = "Uncategorized"
+                    # Collapse "Parent - Sub-category" → "Parent" so one team = one group
+                    if ' - ' in theme:
+                        theme = theme.split(' - ')[0].strip()
+                    if r_date not in temp_group: temp_group[r_date] = {'display_date': r['date_asked'], 'themes': {}}
+                    if theme not in temp_group[r_date]['themes']: temp_group[r_date]['themes'][theme] = []
+                    temp_group[r_date]['themes'][theme].append(r)
 
-                for item in data:
-                    val = item.get('value') or {}
-                    if selected_dept and str(val.get('answeringBodyId')) != selected_dept: continue
+                for date_key in sorted(temp_group.keys(), reverse=True):
+                    sorted_grouped_results[date_key] = temp_group[date_key]
 
-                    member_id = val.get('askingMemberId')
-                    member_name = get_member_name(member_id)
-
-                    tabled_date_str = (val.get('dateTabled') or '').split('T')[0]
-
-                    try:
-                        date_obj = datetime.fromisoformat(tabled_date_str)
-                        f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
-                    except:
-                        f_date = "N/A"
-
-                    is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
-
-                    results.append({
-                        'dept': val.get('answeringBodyName'),
-                        'uin': str(val.get('uin')),
-                        'member': member_name,
-                        'member_id': member_id,
-                        'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
-                        'raw_date': tabled_date_str,
-                        'date_asked': f_date,
-                        'due_date': tabled_date_str or 'TBC',
-                        'is_answered': is_answered,
-                        'status': "ANSWERED" if is_answered else "UNANSWERED"
-                    })
-                        
-                categories = {}
-                ai_status = "" 
-                
-                if results and api_key:
-                    try:
-                        questions_data = [{"uin": r['uin'], "text": r['text'][:200]} for r in results]
-                        prompt = (
-                            "Categorize these UK Parliamentary questions into broad team-level policy themes "
-                            "that a single policy team would own (e.g., 'SEND', 'Early Years', 'Higher Education Finance', "
-                            "'Disabled Children\\'s Social Care', 'School Standards'). "
-                            "Use short, team-level labels — do NOT add sub-categories or qualifiers after a dash. "
-                            "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
-                            f"Data: {json.dumps(questions_data)}"
-                        )
-                        raw_text = _gemini_generate(api_key, prompt)
-                        match = re.search(r'\{.*\}|\[.*\]', raw_text.replace('\n', ' '), re.DOTALL)
-                        if match:
-                            parsed = json.loads(match.group(0))
-                            if isinstance(parsed, list):
-                                for item in parsed:
-                                    k = str(item.get('uin', item.get('id', '')))
-                                    v = str(item.get('theme', 'Uncategorized'))
-                                    if k: categories[k] = v
-                            elif isinstance(parsed, dict):
-                                for k, v in parsed.items():
-                                    categories[str(k)] = str(v)
-                        else:
-                            ai_status = "(AI: unexpected response format)"
-                    except Exception as e:
-                        ai_status = f"(AI Error: {str(e)[:60]})"
-
-                if ai_status:
-                    print(f"[tracker] categorisation issue: {ai_status}")
-
-                if results:
-                    temp_group = {}
-                    for r in results:
-                        r_date = r['raw_date']
-                        theme = categories.get(r['uin'])
-                        if not theme: theme = "Uncategorized"
-                        # Collapse "Parent - Sub-category" → "Parent" so one team = one group
-                        if ' - ' in theme:
-                            theme = theme.split(' - ')[0].strip()
-                        if r_date not in temp_group: temp_group[r_date] = {'display_date': r['date_asked'], 'themes': {}}
-                        if theme not in temp_group[r_date]['themes']: temp_group[r_date]['themes'][theme] = []
-                        temp_group[r_date]['themes'][theme].append(r)
-                    
-                    for date_key in sorted(temp_group.keys(), reverse=True):
-                        sorted_grouped_results[date_key] = temp_group[date_key]
-                    
-        except Exception as e: error_message = f"Search error: {str(e)}"
+        except Exception as e:
+            error_message = f"Search error: {str(e)}"
 
     return render_template('tracker.html', sorted_grouped_results=sorted_grouped_results, error_message=error_message, departments=DEPARTMENTS, selected_dept=selected_dept, is_post=(request.method == 'POST'))
 
