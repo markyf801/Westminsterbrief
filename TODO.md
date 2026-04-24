@@ -25,10 +25,11 @@
     - URLs constructable: `hansard.parliament.uk/{house}/{date}/debates/{ExtId}/{slug}`
     - Note: WMS may live at a separate endpoint (`/search/statements.json`) — confirm before migrating
     - Note: `student loan` works, `student loan repayments` returns 0 — shorter terms needed (AI query expansion handles this)
-  - **Phase 1** (minister search) done and deployed
-  - **Phase 2a** (session expansion via Hansard API) just shipped — `fetch_full_hansard_session()` deployed, routes by `debate_section_ext_id`; awaiting log confirmation
-  - **Phase 2b** (keyword search migration): replace `fetch_twfy_topic()` with `fetch_hansard_contributions()`
-  - **Goal: eliminate TWFY API key cost**
+  - **Phase 1** (minister search) ✅ done and deployed
+  - **Phase 2a** (session expansion via Hansard API) ✅ confirmed working — `fetch_full_hansard_session()` live; dedup fix deployed (Apr 2026) so all speakers show correctly
+  - **Phase 2b** (keyword search) ✅ main search migrated — `fetch_hansard_topic()` live for Commons/Lords/WH under `SEARCH_BACKEND=hansard`; WMS still TWFY (no statements endpoint tested yet)
+  - **Phase 2c** (secondary features) — stakeholder briefing `_do_hansard` (~line 3201) and Alerts/Debate Prep `_prep_parl_*` (~lines 4158–4193) still call TWFY directly; not yet gated
+  - **Goal: eliminate TWFY API key cost** — blocked only on 2c + WMS endpoint test
 
   ### Architecture — Opus recommendations (Apr 2026)
   Do these in order; each is a reviewable increment:
@@ -46,6 +47,17 @@
   8. **Architectural split** (later, not now): `hansard_client.py` (fetch only) + pipeline layer + route/view; migration is the cheapest moment to do this while the fetch path is being rewritten anyway
 
 ## Recently Completed
+
+- [x] **Research Tool stability fixes** (Apr 2026)
+  - Government Speakers: Baroness Smith of Malvern, Georgia Gould, Josh MacAlister all confirmed showing
+  - Minister search 403 fixed (missing `queryParameters.house` param on Hansard API)
+  - Minister search 0 results fixed (OR query syntax stripped to first quoted phrase)
+  - Hansard dedup fixed: `(url, speaker_name)` key so all speakers in a session survive, not just the first stub
+  - Collapsible speech list added to each debate card (minister debates open by default)
+  - Hansard debate title links fixed: URL now includes PascalCase slug so links resolve (was 404)
+  - WQ timeout: yellow warning banner + `-1` sentinel to distinguish timeout from genuine zero results
+  - Word export IndexError fixed (`src_p.runs` guarded before index)
+  - Contact email updated to `mark@westminsterbrief.co.uk` across footer, banners, Privacy, Terms
 
 - [x] **WQ Scanner improvements** (Opus review Apr 2026)
   - HTML stripping (`strip_html()` using regex + `html.unescape`)
@@ -69,13 +81,17 @@
 
 - [ ] **Cross-party breakdown in AI prompt** — AI prompt already asks for opposition parties by name; verify SNP, LibDem, Crossbench are consistently surfaced in the Word doc's Opposition Position section, not collapsed into a binary govt/opposition view
 - [ ] **HMG minute structure** — reformat AI briefing sections to match standard civil service minute: Purpose / Key Facts / Parliamentary Record / Lines to Take / Background
-- [ ] **Suggested lines to take (AI draft)** — add a new `lines_to_take` field to the AI prompt: 3–5 draft holding lines clearly labelled as AI draft requiring official clearance; this is the highest-value output civil servants currently have to write manually
+- [ ] **Suggested lines to take (AI draft)** — see 🔴 Next Priority above; moved there
 - [ ] **Urgency classification surfaced in Word doc** — debate_type classification already exists; surface it more prominently in the Word doc (e.g. "URGENT QUESTION" badge on relevant sections, not just a metadata field)
 
-## 🟠 Reliability & AI
+## 🔴 Next Priority — Reliability & AI Briefing Quality
 
-- [ ] **Claude API fallback for Gemini** — when Gemini returns 503/fails, silently retry with `claude-haiku-4-5`; affects briefing generation, `expand_search_query()`, stakeholder briefing; see plan file for implementation detail
-  - Reviewer flagged single-provider as a reliability risk for time-pressured users
+- [ ] **Claude API fallback for Gemini** ⬅ do first — when Gemini returns 503/fails, silently retry with `claude-haiku-4-5`; affects briefing generation, `expand_search_query()`, stakeholder briefing; full implementation plan in plan file
+  - Gemini 503s confirmed in production (Apr 7–9, ~20% failure rate); time-pressured users cannot retry
+  - Affects 3 priority functions: briefing generation, `expand_search_query()`, stakeholder briefing
+
+- [ ] **Suggested lines to take (AI draft)** ⬅ do second — add `lines_to_take` field to AI prompt: 3–5 draft holding lines clearly labelled as AI draft requiring official clearance; highest-value output civil servants currently write manually
+  - Already in Word Document section below — moved here as priority 2
 
 - [ ] **Inline Hansard citations in AI briefing** — hyperlink every speaker name / quote in the AI briefing output to the source Hansard column; reduces verification burden; briefing currently has links in the speech cards but not in the AI summary text
 
