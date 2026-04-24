@@ -1440,7 +1440,13 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
     params = {'queryParameters.memberId': parliament_id, 'take': num, 'skip': 0}
     params['queryParameters.house'] = 'Lords' if is_lord else 'Commons'
     if topic:
-        params['queryParameters.searchTerm'] = topic
+        # Hansard /search.json rejects boolean OR syntax — extract first quoted phrase
+        simple_topic = topic
+        if topic.startswith('(') and '"' in topic:
+            m = re.search(r'"([^"]+)"', topic)
+            if m:
+                simple_topic = m.group(1)
+        params['queryParameters.searchTerm'] = simple_topic
     if start_date_api:
         params['queryParameters.startDate'] = start_date_api
     if end_date_api:
