@@ -1,0 +1,23 @@
+# Scoring weights for stakeholder relevance computation.
+# Source: docs/stakeholder-directory-design.md, Section 8.1.
+# Edit these values to tune scoring. Run scoring tests after any change.
+# WeightsConfigError is raised at import time if a source type key does not
+# match a value in config/source_types.yaml.
+
+source_type_weights:
+  oral_evidence_committee: 4.0
+  government_review_role: 3.5
+  ministerial_meeting: 3.0
+  appg_secretariat: 2.5
+  advisory_group_member: 2.5
+  expert_panel_member: 2.5
+  appg_officer: 2.0
+  cited_in_parliamentary_record: 1.5
+  consultation_response: 1.0
+  written_evidence_committee: 1.0
+  lobbying_register: 0.5
+
+cited_in_outcome_bonus: 1.5
+recency_half_life_days: 1825   # 60 months
+policy_area_match_multiplier: 2.0
+department_match_multiplier: 1.5

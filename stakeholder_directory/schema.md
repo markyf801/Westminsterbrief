@@ -14,15 +14,47 @@ Full design spec: `docs/stakeholder-directory-design.md`
 
 ## Enum enforcement
 
-Populated vocabs (`org_type`, `source_type`, `scope`, `status`, `registration_status`, `flag_type`) use
-SQLAlchemy `Enum(native_enum=False)`, which generates a CHECK constraint at database level.
+**Populated vocabs** (`org_type`, `source_type`, `scope`, `status`, `registration_status`,
+`flag_type`) are enforced at database level via explicit `db.CheckConstraint` in each
+model's `__table_args__`. The constraint expressions are generated from YAML values at
+import time in `vocab.py`.
 
-`department` and `policy_area` columns are plain `String` until `config/departments.yaml`
-and `config/policy_areas.yaml` are populated. Enforcement will be added via migration at that point.
+**Deferred vocabs** (`department`, `policy_area`, `area`) use SQLAlchemy `@validates`
+ORM-level guards that raise `VocabularyNotReadyError` if you attempt to write a non-None
+value before the vocabulary YAML has been populated. Raw SQL inserts bypass this guard —
+ingesters must use the ORM.
+
+## YAML vocabulary formats
+
+All vocabulary YAML files live in `config/`. Two formats are used:
+
+**Flat list** (populated vocabs — `org_types.yaml`, `scope.yaml`, etc.):
+```yaml
+org_types:
+  - membership_body
+  - professional_body
+  ...
+```
+
+**Dict-of-dicts** (deferred vocabs — `departments.yaml`, `policy_areas.yaml`):
+```yaml
+departments:
+  department_for_education:
+    name: "Department for Education"
+    scope: "Schools, further education, skills..."
+```
+
+The dict-of-dicts format stores stable snake_case keys as vocabulary values and carries
+display metadata (`name`, `scope`) for use by ingesters and the UI. `DEPARTMENT_META`
+and `POLICY_AREA_META` in `vocab.py` expose this metadata at runtime.
+
+`policy_areas.yaml` is currently `policy_areas: {}` (empty). Populate it before writing
+any `policy_area` or `area` column values.
 
 ## Adding a vocabulary value
 
-1. Add the value to the relevant `config/*.yaml` file.
-2. Run `python stakeholder_directory/migrations.py` — the table will be dropped and recreated
-   only if it doesn't yet exist (if data exists, a manual ALTER is needed to update the CHECK constraint).
-3. No code changes required in models.py — values are sourced from YAML at import time.
+1. Add the value (and optional metadata) to the relevant `config/*.yaml` file.
+2. Run `python stakeholder_directory/migrations.py --sync-vocab` — detects drift and
+   rebuilds CHECK constraints on SQLite, or ALTERs them on PostgreSQL.
+3. No changes to `models.py` or `vocab.py` required — values are sourced from YAML at
+   import time.

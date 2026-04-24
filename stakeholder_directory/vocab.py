@@ -26,6 +26,26 @@ def _load_dict(yaml_key: str, filename: str) -> dict[str, float]:
     return {k: float(v) for k, v in (data.get(yaml_key) or {}).items()}
 
 
+def _load_dict_of_dicts_keys(yaml_key: str, filename: str) -> tuple[str, ...]:
+    """Load keys from a dict-of-dicts YAML section (key: {name, scope} format).
+
+    Used for departments.yaml and policy_areas.yaml. Handles both the populated
+    dict-of-dicts format and an empty {} placeholder. Falls back to plain list.
+    """
+    data = _load_yaml(filename)
+    value = data.get(yaml_key) or {}
+    if isinstance(value, dict):
+        return tuple(value.keys())
+    return tuple(value)  # fallback: plain list
+
+
+def _load_dict_of_dicts_meta(yaml_key: str, filename: str) -> dict[str, dict]:
+    """Return the full dict-of-dicts metadata (key → {name, scope, ...})."""
+    data = _load_yaml(filename)
+    value = data.get(yaml_key) or {}
+    return {k: v for k, v in value.items()} if isinstance(value, dict) else {}
+
+
 # --- Populated vocabs (used for CHECK constraint enforcement) ---
 
 ORG_TYPE_VALUES: tuple[str, ...] = _load_list('org_types', 'org_types.yaml')
@@ -38,24 +58,14 @@ _source_types_dict: dict[str, float] = _load_dict('source_types', 'source_types.
 SOURCE_TYPE_VALUES: tuple[str, ...] = tuple(_source_types_dict.keys())
 SOURCE_TYPE_WEIGHTS: dict[str, float] = _source_types_dict
 
-# --- Empty vocabs (enforcement deferred until configs are populated) ---
+# --- Deferred vocabs (enforcement deferred until configs are populated) ---
+# Both use dict-of-dicts format: key: {name: "...", scope: "..."}
 
-def _load_dept_keys(filename: str) -> tuple[str, ...]:
-    """Load department keys from the richer dict-of-dicts format used in departments.yaml."""
-    data = _load_yaml(filename)
-    value = data.get('departments') or {}
-    if isinstance(value, dict):
-        return tuple(value.keys())
-    return tuple(value)  # fallback: plain list (e.g. still empty [])
+DEPARTMENT_VALUES: tuple[str, ...] = _load_dict_of_dicts_keys('departments', 'departments.yaml')
+DEPARTMENT_META: dict[str, dict] = _load_dict_of_dicts_meta('departments', 'departments.yaml')
 
-
-DEPARTMENT_VALUES: tuple[str, ...] = _load_dept_keys('departments.yaml')
-POLICY_AREA_VALUES: tuple[str, ...] = _load_list('policy_areas', 'policy_areas.yaml')
-
-# Full department metadata (key → {name, scope}) — for ingesters and display
-DEPARTMENT_META: dict[str, dict] = (
-    lambda d: {k: v for k, v in d.items()} if isinstance(d, dict) else {}
-)(_load_yaml('departments.yaml').get('departments') or {})
+POLICY_AREA_VALUES: tuple[str, ...] = _load_dict_of_dicts_keys('policy_areas', 'policy_areas.yaml')
+POLICY_AREA_META: dict[str, dict] = _load_dict_of_dicts_meta('policy_areas', 'policy_areas.yaml')
 
 # --- Aliases / internal government lists ---
 
@@ -105,12 +115,12 @@ def validate_against_vocab(value: str, vocab_name: str) -> None:
     Raises InvalidVocabularyValueError if the value is not in the vocabulary.
 
     Call before inserting or updating columns whose vocabulary is deferred
-    (currently: policy_area, department, area). This guard fires explicitly
-    so that "vocabulary not ready" is a visible error, not silent drift.
+    (currently: policy_area, area). This guard fires explicitly so that
+    "vocabulary not ready" is a visible error, not silent drift.
 
     For columns with populated vocabs (type, scope, status, source_type,
-    flag_type), CHECK constraints enforce correctness at database level
-    and this function is not needed.
+    flag_type, department), CHECK constraints enforce correctness at database
+    level and this function is not needed.
     """
     allowed = _VOCAB_MAP.get(vocab_name)
     if allowed is None:

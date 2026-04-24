@@ -1,3 +1,5 @@
-# To be populated before first ingester (cross-government policy area taxonomy)
+# Cross-government policy area taxonomy for engagement.policy_area and policy_area_tag.area.
+# Format: key: {name: "...", scope: "..."} — same as departments.yaml.
 # Draft and agree taxonomy before writing any ingester that uses this field.
-policy_areas: []
+# See docs/stakeholder-directory-design.md, Section 5.8.
+policy_areas: {}
