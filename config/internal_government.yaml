@@ -1,0 +1,4 @@
+# To be populated before ministerial meetings ingester.
+# Lists core government department name variants to exclude from stakeholder records
+# (only arm's-length bodies and external orgs should be in the directory).
+internal_government: []

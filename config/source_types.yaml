@@ -1,0 +1,13 @@
+# Keys are source type identifiers; values are default scoring weights.
+source_types:
+  oral_evidence_committee: 4.0
+  government_review_role: 3.5
+  ministerial_meeting: 3.0
+  appg_secretariat: 2.5
+  advisory_group_member: 2.5
+  expert_panel_member: 2.5
+  appg_officer: 2.0
+  cited_in_parliamentary_record: 1.5
+  consultation_response: 1.0
+  written_evidence_committee: 1.0
+  lobbying_register: 0.5

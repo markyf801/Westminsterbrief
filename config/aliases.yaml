@@ -1,0 +1,3 @@
+# Populated as normalisation edge cases surface during ingestion.
+# Format: canonical_name: [alias1, alias2, ...]
+aliases: {}

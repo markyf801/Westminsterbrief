@@ -1,0 +1,3 @@
+# To be populated before first ingester (cross-government policy area taxonomy)
+# Draft and agree taxonomy before writing any ingester that uses this field.
+policy_areas: []

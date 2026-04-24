@@ -1,0 +1,7 @@
+registration_status:
+  - registered_charity
+  - registered_company
+  - public_body
+  - unincorporated
+  - government_review
+  - unknown

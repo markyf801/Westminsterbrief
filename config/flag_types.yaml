@@ -1,0 +1,11 @@
+flag_types:
+  - url_dead
+  - url_parked
+  - engagement_stale
+  - possible_duplicate
+  - status_dissolved
+  - status_merged
+  - name_ambiguous
+  - description_unverified
+  - individual_possibly_institutional
+  - potentially_same_as_other_org

@@ -1,0 +1,16 @@
+org_types:
+  - membership_body
+  - professional_body
+  - trade_association
+  - union
+  - think_tank_or_research
+  - academic_body
+  - learned_society
+  - charity
+  - campaign_group
+  - public_body
+  - regulator
+  - government_review
+  - private_company
+  - consultancy
+  - individual_expert
