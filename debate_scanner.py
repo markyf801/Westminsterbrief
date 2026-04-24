@@ -1438,8 +1438,7 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
         return cached
 
     params = {'queryParameters.memberId': parliament_id, 'take': num, 'skip': 0}
-    if is_lord:
-        params['queryParameters.house'] = 'Lords'
+    params['queryParameters.house'] = 'Lords' if is_lord else 'Commons'
     if topic:
         params['queryParameters.searchTerm'] = topic
     if start_date_api:
