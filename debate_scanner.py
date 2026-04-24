@@ -72,14 +72,15 @@ TWFY_WMS_URL = "https://www.theyworkforyou.com/api/getWMS"
 HANSARD_API_BASE = "https://hansard-api.parliament.uk"
 MINISTER_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'minister_cache.json')
 MINISTER_CACHE_TTL = 30 * 24 * 3600  # 30 days — reshuffles are infrequent
-MINISTER_CACHE_VERSION = 2  # increment when display_name logic changes to bust stale files
+MINISTER_CACHE_VERSION = 3  # increment when display_name logic changes to bust stale files
 
 # Ministers whose names the TWFY getLords/getMPs search endpoint fails to match.
 # Verified person_ids from direct debate records — these are seeded at cache-write time.
 KNOWN_TWFY_IDS = {
-    'Baroness Smith of Malvern': {'person_id': '10549', 'is_lord': True, 'lookup_failed': False},
-    # Parliamentary Under-Secretary of State for Education (DfE) — TWFY person_id verified 2026-04
-    'Josh MacAlister': {'person_id': '26321', 'is_lord': False, 'lookup_failed': False},
+    # parliament_id included so Hansard minister search works without re-resolving via Parliament API.
+    # person_id is the TWFY ID (TWFY fallback path). Both verified 2026-04.
+    'Baroness Smith of Malvern': {'person_id': '10549', 'parliament_id': 269, 'is_lord': True, 'lookup_failed': False},
+    'Josh MacAlister': {'person_id': '26321', 'parliament_id': 5033, 'is_lord': False, 'lookup_failed': False},
 }
 
 DEPARTMENTS_TWFY = [
@@ -3639,6 +3640,15 @@ def download_research_brief():
                     if role_party or date:
                         p.add_run(f' ({", ".join(filter(None, [role_party, date]))})')
                     p.add_run(f': {q.get("question", "")}')
+                    # Source hyperlink on its own line
+                    url = q.get('listurl', '')
+                    if url:
+                        if not url.startswith('http'):
+                            url = 'https://www.theyworkforyou.com' + url
+                        src_p = doc.add_paragraph()
+                        _add_hyperlink(src_p, url, '↗ View on Hansard')
+                        src_p.runs[0].font.size = Pt(8) if src_p.runs else None
+                        src_p.paragraph_format.left_indent = Pt(18)
 
             # Anticipated / harder questions
             aqs = b.get('anticipated_questions', [])
