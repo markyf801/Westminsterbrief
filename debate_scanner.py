@@ -2230,17 +2230,11 @@ def debates_topic():
             if topic_rows:
                 session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=25)
                 if session_speeches:
-                    # Hansard stub rows (from topic or minister search) share the same session-level
-                    # URL as all their expanded speeches — keeping them causes dedup to drop the
-                    # expansion. Remove original stubs for sessions that were successfully expanded
-                    # so the richer expansion rows replace them cleanly.
-                    expanded_ext_ids = {
-                        r['debate_section_ext_id'] for r in session_speeches
-                        if r.get('debate_section_ext_id')
-                    }
-                    stub_free = [r for r in topic_rows
-                                 if r.get('debate_section_ext_id') not in expanded_ext_ids]
-                    topic_rows = deduplicate_by_listurl(stub_free + session_speeches)
+                    # Stubs from minister search are kept alongside expanded rows — the stubs
+                    # are what marks a minister as a Government Speaker even when the session
+                    # expansion is a false positive. deduplicate_by_listurl now keys Hansard
+                    # rows on (url, speaker_name) so stubs and expanded speeches all survive.
+                    topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
             # Re-apply date filter — session expansion fetches all speeches in a session,
             # which can occasionally include adjacent-day edge cases.
             if start_date or end_date:
