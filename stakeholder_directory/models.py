@@ -2,11 +2,26 @@
 SQLAlchemy models for the stakeholder directory.
 
 Design spec: docs/stakeholder-directory-design.md, Section 4.
+
 Enum-like columns are enforced at database level via explicit CHECK constraints
-so that both SQLite (local) and PostgreSQL (Railway) reject invalid values.
+(see __table_args__ on each model). CHECK constraint values are sourced from
+YAML configs at import time; to update them, edit the relevant config/*.yaml
+then run: python -m stakeholder_directory.migrations --sync-vocab
+
+Columns whose vocabulary is intentionally deferred (policy_area, department,
+area) use runtime guards via @validates decorators. Attempts to write
+non-None values to these columns while their YAML vocab is empty will
+raise VocabularyNotReadyError — this is intentional: populate the config
+file before ingesting.
+
+NAMING NOTE: Flag.engagement_ref is the correct accessor for the engagement
+relationship. The backref cannot be named 'engagement' because that would
+collide with the 'engagement_id' FK column name on the same model.
+Do not use flag.engagement in calling code — use flag.engagement_ref.
 """
 from datetime import datetime
 from extensions import db
+from sqlalchemy.orm import validates
 from stakeholder_directory.vocab import (
     ORG_TYPE_VALUES,
     SOURCE_TYPE_VALUES,
@@ -14,6 +29,7 @@ from stakeholder_directory.vocab import (
     STATUS_VALUES,
     REGISTRATION_STATUS_VALUES,
     FLAG_TYPE_VALUES,
+    validate_against_vocab,
 )
 
 
@@ -82,7 +98,7 @@ class Engagement(db.Model):
     )
     source_type = db.Column(db.String(50), nullable=False)
     source_url = db.Column(db.String(500), nullable=False)
-    # department and policy_area: plain String until YAML vocabs are populated
+    # department and policy_area: guarded by @validates below until YAML vocabs are populated
     department = db.Column(db.String(50), nullable=True)
     policy_area = db.Column(db.String(100), nullable=True)
     engagement_date = db.Column(db.Date, nullable=False, index=True)
@@ -95,6 +111,18 @@ class Engagement(db.Model):
 
     flags = db.relationship('Flag', backref='engagement_ref', lazy=True)
 
+    @validates('department')
+    def _guard_department(self, key: str, value):
+        if value is not None:
+            validate_against_vocab(value, 'departments')
+        return value
+
+    @validates('policy_area')
+    def _guard_policy_area(self, key: str, value):
+        if value is not None:
+            validate_against_vocab(value, 'policy_areas')
+        return value
+
 
 class PolicyAreaTag(db.Model):
     __tablename__ = 'sd_policy_area_tag'
@@ -106,8 +134,14 @@ class PolicyAreaTag(db.Model):
     organisation_id = db.Column(
         db.Integer, db.ForeignKey('sd_organisation.id'), nullable=False, index=True
     )
-    # area validates against policy_areas.yaml once that vocab is populated
+    # area: guarded by @validates below until policy_areas.yaml is populated
     area = db.Column(db.String(100), nullable=False)
+
+    @validates('area')
+    def _guard_area(self, key: str, value):
+        if value is not None:
+            validate_against_vocab(value, 'policy_areas')
+        return value
 
 
 class Flag(db.Model):
@@ -120,6 +154,7 @@ class Flag(db.Model):
     organisation_id = db.Column(
         db.Integer, db.ForeignKey('sd_organisation.id'), nullable=False, index=True
     )
+    # See NAMING NOTE at top of file: use flag.engagement_ref, not flag.engagement
     engagement_id = db.Column(
         db.Integer, db.ForeignKey('sd_engagement.id'), nullable=True
     )
