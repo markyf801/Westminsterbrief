@@ -128,16 +128,19 @@ def morning_tracker():
 
         # Fetch questions tabled in the last 14 days, then narrow to the most
         # recent tabling date — gives yesterday's intake (or last sitting day
-        # if today is Monday/after a recess)
+        # if today is Monday/after a recess).
+        # orderBy=DateTabledDesc ensures the 500 results are the most recently
+        # tabled, so max(tabled_dates) reliably lands on the right sitting day.
         window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         params = {
-            'take': 400,
+            'take': 500,
             'tabledStartDate': window_start,
             'tabledEndDate': yesterday,
+            'orderBy': 'DateTabledDesc',
         }
-        if selected_dept:
-            params['answeringBodies'] = [int(selected_dept)]
+        # NOTE: do NOT pass answeringBodies — it causes 30s+ timeouts on the
+        # Parliament API. Filter by dept client-side after fetching (line below).
 
         try:
             url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
@@ -159,6 +162,17 @@ def morning_tracker():
                                 if (item.get('value') or {}).get('dateTabled', '').split('T')[0] == last_tabled_day]
                     else:
                         data = []
+
+                # Deduplicate by UIN — the API can return the same question
+                # more than once (e.g. before and after it is answered).
+                seen_uins = set()
+                deduped = []
+                for item in data:
+                    uin = str((item.get('value') or {}).get('uin', ''))
+                    if uin and uin not in seen_uins:
+                        seen_uins.add(uin)
+                        deduped.append(item)
+                data = deduped
 
                 m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
                 with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
