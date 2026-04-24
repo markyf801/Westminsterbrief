@@ -582,8 +582,18 @@ def format_briefing_as_text(briefing_dict, topic):
                 lines.append(f"  [Why: {q.get('rationale', '')}]")
         lines.append("")
 
-    lines.append(f"## 8. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
-    lines.append(f"## 9. COVERAGE NOTE\n{briefing_dict.get('coverage_note', '')}\n")
+    key_statements = briefing_dict.get('key_ministerial_statements', [])
+    if key_statements:
+        lines.append("## 8. KEY MINISTERIAL STATEMENTS (ON-RECORD)")
+        for s in key_statements:
+            speaker_line = f"{s.get('speaker', '')} ({s.get('role', '')}), {s.get('date', '')}"
+            lines.append(f"- {speaker_line}: \"{s.get('statement', '')}\"")
+            if s.get('listurl'):
+                lines.append(f"  Source: {s.get('listurl', '')}")
+        lines.append("")
+
+    lines.append(f"## 9. NEXT STEPS\n{briefing_dict.get('next_steps', '')}\n")
+    lines.append(f"## 10. COVERAGE NOTE\n{briefing_dict.get('coverage_note', '')}\n")
     return "\n".join(lines)
 
 def expand_search_query(topic, api_key):
@@ -2406,6 +2416,15 @@ def debates_topic():
                         "unresolved policy tensions, or areas where the evidence base is thin. "
                         "\"rationale\" should be a brief (1 sentence) explanation of why this question is likely to arise. "
                         "These are for ministerial preparation — make them specific and genuinely challenging.\n\n"
+                        "\"key_ministerial_statements\": Array of {\"speaker\", \"role\", \"date\", \"statement\", \"listurl\"} — "
+                        "The 3–5 most significant on-record statements made by GOVERNMENT ministers on this topic in the DATA. "
+                        "\"statement\" must be VERBATIM or a very close paraphrase of what was actually said — "
+                        "quote directly from the DATA speeches, do not invent or infer. "
+                        "Include the exact speaker name, their ministerial role, the date (YYYY-MM-DD), "
+                        "and the listurl from the matching DATA entry. "
+                        "Prioritise statements that: announce a commitment, give a specific figure or date, "
+                        "directly rebut an opposition challenge, or articulate the clearest statement of government policy. "
+                        "Return empty array if the DATA contains no clear ministerial statements. Up to 5 entries.\n\n"
                         "\"next_steps\": Any upcoming parliamentary business or announced policy milestones.\n\n"
                         "\"coverage_note\": Two sentences: (1) the exact date range of Hansard sources "
                         "in this synthesis (e.g. 'Sources cover January–March 2026'); "
