@@ -377,12 +377,12 @@ def fetch_hansard_topic(search_term, source_type, date_range, num=50):
       /search.json         — speech-level matching (supplementary, ~4 results)
 
     Both return DebateSectionExtId, which session expansion then expands to all speeches.
-    WMS (source_type='wms') is not supported — returns [] so TWFY fallback handles it.
+    WMS (source_type='wms') is handled by fetch_parliament_wms(); this function returns [] for it.
     """
     import logging as _htl
 
     if source_type == 'wms':
-        return []  # WMS has no Hansard search endpoint; caller falls back to TWFY
+        return []  # WMS uses fetch_parliament_wms() via debates_topic dispatcher
 
     # Parse YYYYMMDD..YYYYMMDD → ISO dates
     start_date_api = end_date_api = ''
@@ -4386,12 +4386,14 @@ def _prep_parl_wqs(topic, start_date, end_date):
 
 
 def _prep_parl_statements(topic, date_range):
-    """Oral/written ministerial statements for topic — called directly in the top-level executor.
-    WMS has no Hansard API endpoint; falls back to TWFY if key is available."""
+    """Written ministerial statements for topic — called directly in the top-level executor."""
     try:
-        if not TWFY_API_KEY:
+        if os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard':
+            rows = fetch_parliament_wms(topic, date_range, dept_id=None, num=20)
+        elif TWFY_API_KEY:
+            rows = fetch_twfy_topic(topic, 'wms', date_range, num=20)
+        else:
             return []
-        rows = fetch_twfy_topic(topic, 'wms', date_range, num=20)
         return [r for r in rows if not r.get('_error')]
     except Exception:
         return []
