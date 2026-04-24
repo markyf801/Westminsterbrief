@@ -469,6 +469,11 @@
             {% endif %}
 
             <!-- Written Questions & Answers -->
+            {% if wq_error %}
+            <div class="alert-warning" style="margin:8px 0;padding:8px 12px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;font-size:0.85em;">
+                ⚠ Written Questions could not be loaded — the Parliament API timed out. Try running the search again.
+            </div>
+            {% endif %}
             {% if wq_rows %}
             <details class="research-section" data-type="wq">
                 <summary class="research-section-header">

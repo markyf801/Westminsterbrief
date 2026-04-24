@@ -967,7 +967,7 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=800):
     except Exception as e:
         import logging
         logging.error(f"WQ fetch exception: {type(e).__name__}: {e}")
-        return [], 0
+        return [], -1  # -1 signals fetch error (timeout etc.) vs genuine zero results
 
 
 def _display_name(title):
@@ -2047,6 +2047,7 @@ def debates_topic():
     statement_grouped = []
     wq_rows = []
     wq_total = 0
+    wq_error = False
     topic_briefing = None
     topic_briefing_as_text = ""
     opp_speaker_links = {}
@@ -2169,8 +2170,11 @@ def debates_topic():
                     if future is wq_fut:
                         try:
                             wq_rows, wq_total = future.result()
+                            if wq_total == -1:
+                                wq_error = True
+                                wq_total = 0
                         except Exception:
-                            pass
+                            wq_error = True
                     elif future in twfy_futs:
                         src = twfy_futs[future]
                         try:
@@ -2526,7 +2530,7 @@ def debates_topic():
                            urgent_grouped=urgent_grouped,
                            legislation_grouped=legislation_grouped,
                            legislation_rows=legislation_rows,
-                           wq_rows=wq_rows, wq_total=wq_total,
+                           wq_rows=wq_rows, wq_total=wq_total, wq_error=wq_error,
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
                            opp_speaker_links=opp_speaker_links,
