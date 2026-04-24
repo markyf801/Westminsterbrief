@@ -129,18 +129,15 @@ def morning_tracker():
         # Fetch questions tabled in the last 14 days, then narrow to the most
         # recent tabling date — gives yesterday's intake (or last sitting day
         # if today is Monday/after a recess).
-        # orderBy=DateTabledDesc ensures the 500 results are the most recently
-        # tabled, so max(tabled_dates) reliably lands on the right sitting day.
+        # No answeringBodies param — it causes 30s+ timeouts on the Parliament
+        # API. Dept filter applied client-side below.
         window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         params = {
             'take': 500,
             'tabledStartDate': window_start,
             'tabledEndDate': yesterday,
-            'orderBy': 'DateTabledDesc',
         }
-        # NOTE: do NOT pass answeringBodies — it causes 30s+ timeouts on the
-        # Parliament API. Filter by dept client-side after fetching (line below).
 
         try:
             url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
