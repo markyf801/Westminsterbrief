@@ -77,10 +77,11 @@ MINISTER_CACHE_VERSION = 3  # increment when display_name logic changes to bust 
 # Ministers whose names the TWFY getLords/getMPs search endpoint fails to match.
 # Verified person_ids from direct debate records — these are seeded at cache-write time.
 KNOWN_TWFY_IDS = {
-    # parliament_id included so Hansard minister search works without re-resolving via Parliament API.
-    # person_id is the TWFY ID (TWFY fallback path). Both verified 2026-04.
+    # parliament_id is all that's needed for Hansard minister search.
+    # person_id is the TWFY ID for fallback. Both verified 2026-04.
     'Baroness Smith of Malvern': {'person_id': '10549', 'parliament_id': 269, 'is_lord': True, 'lookup_failed': False},
     'Josh MacAlister': {'person_id': '26321', 'parliament_id': 5033, 'is_lord': False, 'lookup_failed': False},
+    'Georgia Gould': {'person_id': None, 'parliament_id': 5305, 'is_lord': False, 'lookup_failed': False},
 }
 
 DEPARTMENTS_TWFY = [
@@ -1720,21 +1721,20 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
         #    but we use parliament_id as key so we need it first — check JSON cache for it)
         cached_entry = twfy_ids_cache.get(display, {})
 
-        # Fast path: JSON cache has a resolved TWFY ID AND parliament_id.
-        # If parliament_id is missing from cache (stale entry predating this fix),
-        # fall through to re-resolve so we get the parliament_id for Hansard routing.
-        if cached_entry.get('person_id') and cached_entry.get('parliament_id') is not None:
+        # Fast path: JSON cache has a parliament_id — sufficient for Hansard path.
+        # person_id may also be present (for TWFY fallback) but is not required.
+        if cached_entry.get('parliament_id') is not None:
             results.append({
-                'person_id': cached_entry['person_id'],
-                'parliament_id': cached_entry.get('parliament_id'),
+                'person_id': cached_entry.get('person_id'),
+                'parliament_id': cached_entry['parliament_id'],
                 'name': display,
                 'role': m.get('role', ''),
                 'is_lord': cached_entry.get('is_lord', False),
             })
             continue
 
-        # Skip if previously marked as totally failed (no TWFY or Parliament ID)
-        if cached_entry.get('lookup_failed') and not cached_entry.get('person_id'):
+        # Skip only if both IDs are absent and we've already tried
+        if cached_entry.get('lookup_failed') and not cached_entry.get('person_id') and not cached_entry.get('parliament_id'):
             continue
 
         # Resolve Parliament ID → DB lookup → TWFY lookup
