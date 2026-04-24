@@ -93,10 +93,19 @@ login_manager.login_view = 'login'
 # ==========================================
 # 3. DATABASE MODELS
 # ==========================================
+# Access control — all configurable via env vars, no hardcoding needed.
+# PAYWALL_ENABLED=false  → bypass all tier checks (useful in dev)
+# APPROVED_DOMAINS=gov.uk,parliament.uk  → comma-separated; default gov.uk
+# APPROVED_EMAILS=you@gmail.com,colleague@gmail.com  → individual overrides
+_PAYWALL_ENABLED = os.environ.get('PAYWALL_ENABLED', 'true').lower() != 'false'
+_APPROVED_DOMAINS = [d.strip().lower() for d in os.environ.get('APPROVED_DOMAINS', 'gov.uk').split(',') if d.strip()]
+_APPROVED_EMAILS  = {e.strip().lower() for e in os.environ.get('APPROVED_EMAILS', '').split(',') if e.strip()}
+
 def _is_approved_email(email: str) -> bool:
-    """Returns True for gov.uk addresses and the site owner — these get free access."""
     e = email.lower().strip()
-    return e == 'markjforde@gmail.com' or e.endswith('.gov.uk')
+    if e in _APPROVED_EMAILS:
+        return True
+    return any(e.endswith('.' + d) or e.endswith('@' + d) for d in _APPROVED_DOMAINS)
 
 
 class User(UserMixin, db.Model):
@@ -377,6 +386,8 @@ _PAYWALL_EXEMPT = {
 
 @app.before_request
 def check_tier_access():
+    if not _PAYWALL_ENABLED:
+        return None
     if request.path.startswith('/static'):
         return None
     if request.path in _PAYWALL_EXEMPT:
