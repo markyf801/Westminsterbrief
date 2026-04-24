@@ -2375,7 +2375,11 @@ def debates_topic():
                         "\"rationale\" should be a brief (1 sentence) explanation of why this question is likely to arise. "
                         "These are for ministerial preparation — make them specific and genuinely challenging.\n\n"
                         "\"next_steps\": Any upcoming parliamentary business or announced policy milestones.\n\n"
-                        "\"coverage_note\": Brief note on the date range and sources covered.\n\n"
+                        "\"coverage_note\": Two sentences: (1) the exact date range of Hansard sources "
+                        "in this synthesis (e.g. 'Sources cover January–March 2026'); "
+                        "(2) the most recent ministerial statement identified — name the speaker and date explicitly "
+                        "(e.g. 'Most recent government statement: Josh MacAlister MP, 15 March 2026'). "
+                        "If the most recent date is not determinable from the data, state the latest date visible.\n\n"
                         f"DATA: {json.dumps(ai_payload)}"
                     )
                     model_path = get_working_model(GEMINI_API_KEY)
@@ -3509,6 +3513,13 @@ def download_research_brief():
     title_p = doc.add_heading('Parliamentary Research Brief', 0)
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+    total_contributions = sum(len(s.get('items', [])) for s in sections)
+    unique_debates = len({
+        (r.get('listurl', '')[:50] or r.get('debate_title', ''))
+        for s in sections for r in s.get('items', [])
+        if s.get('type') != 'wq'
+    })
+
     meta_lines = [f'Topic: {topic}']
     if depts:
         meta_lines.append(f'Department(s): {", ".join(depts)}')
@@ -3517,7 +3528,11 @@ def download_research_brief():
     if end_date: date_parts.append(f'to {end_date}')
     if date_parts:
         meta_lines.append('Date range: ' + ' '.join(date_parts))
+    if total_contributions:
+        debate_note = f'{unique_debates} debate(s)' if unique_debates else ''
+        meta_lines.append(f'Sources: {total_contributions} contributions' + (f' from {debate_note}' if debate_note else ''))
     meta_lines.append(f'Generated: {datetime.now().strftime("%d %B %Y at %H:%M")}')
+    meta_lines.append('AI model: Gemini 1.5 Flash (with Claude Haiku fallback)')
     meta_lines.append('Source: Westminster Brief — westminsterbrief.co.uk')
 
     for line in meta_lines:
@@ -3560,17 +3575,30 @@ def download_research_brief():
 
         if briefing_struct:
             b = briefing_struct
+            coverage = b.get('coverage_note', '')
+
+            def _section_caveat(label):
+                caveat_text = f'AI synthesis — {label}. Verify against source links before ministerial submission.'
+                if coverage:
+                    caveat_text += f' {coverage}'
+                cp = doc.add_paragraph(caveat_text)
+                cp.runs[0].font.size = Pt(8)
+                cp.runs[0].italic = True
+                _set_run_colour(cp.runs[0], '856404')
+
             # Topic summary
             if b.get('topic_summary'):
                 doc.add_heading('Summary', 2)
                 doc.add_paragraph(b['topic_summary'])
 
-            # Government / Opposition positions side by side as plain sections
+            # Government / Opposition positions with per-section caveats
             if b.get('government_position'):
                 doc.add_heading('Government Position', 2)
+                _section_caveat('government statements from Hansard')
                 doc.add_paragraph(b['government_position'])
             if b.get('opposition_position'):
                 doc.add_heading('Opposition Position', 2)
+                _section_caveat('opposition contributions from Hansard')
                 doc.add_paragraph(b['opposition_position'])
 
             # Government speakers
@@ -3800,6 +3828,68 @@ def download_research_brief():
                 _add_hyperlink(p, entry['url'], label)
             else:
                 p.add_run(label)
+        doc.add_paragraph()
+
+    # ── Hansard Citations — per-speech reference table ─────────────────
+    citation_rows = []
+    for sec_type in ['oral', 'urgent', 'statement', 'debate']:
+        section = sections_by_type.get(sec_type)
+        if not section:
+            continue
+        for r in section.get('items', []):
+            spk = r.get('speaker_name', '') or ''
+            if not spk:
+                continue
+            url = r.get('listurl', '') or ''
+            if url and not url.startswith('http'):
+                url = 'https://www.theyworkforyou.com' + url
+            role_or_party = (r.get('minister_role') or r.get('speaker_party') or '')
+            citation_rows.append({
+                'speaker': spk,
+                'role': role_or_party,
+                'date': r.get('hdate', ''),
+                'house': r.get('source_label', ''),
+                'debate': r.get('debate_title', ''),
+                'url': url,
+            })
+
+    if citation_rows:
+        doc.add_heading('Hansard Citations', 1)
+        note = doc.add_paragraph(
+            'Full source list for all parliamentary contributions included in this brief. '
+            'Cross-reference against the AI synthesis above to verify specific statements.')
+        note.runs[0].font.size = Pt(9)
+        note.runs[0].italic = True
+        _set_run_colour(note.runs[0], '555555')
+
+        cite_tbl = doc.add_table(rows=1, cols=5)
+        cite_tbl.style = 'Table Grid'
+        for i, label in enumerate(['Speaker', 'Role / Party', 'Date', 'House / Type', 'Debate']):
+            cell = cite_tbl.rows[0].cells[i]
+            cell.text = label
+            cell.paragraphs[0].runs[0].bold = True
+            _set_cell_bg(cell, '1C3E6E')
+            cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            cell.paragraphs[0].runs[0].font.size = Pt(9)
+
+        for cr in citation_rows:
+            row = cite_tbl.add_row().cells
+            row[0].text = cr['speaker']
+            row[1].text = cr['role']
+            row[2].text = cr['date']
+            row[3].text = cr['house']
+            # Debate cell: hyperlink if URL available, plain text if not
+            debate_cell = row[4]
+            debate_cell.paragraphs[0].clear()
+            if cr['url']:
+                _add_hyperlink(debate_cell.paragraphs[0], cr['url'],
+                               cr['debate'][:80] or '↗ View')
+            else:
+                debate_cell.text = cr['debate'][:80]
+            for cell in row:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9)
         doc.add_paragraph()
 
     mem_doc = io.BytesIO()
