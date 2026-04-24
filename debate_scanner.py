@@ -109,6 +109,7 @@ DEPT_KEYWORDS = {
 }
 
 PARLIAMENT_WQ_API = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+PARLIAMENT_WMS_API = "https://questions-statements-api.parliament.uk/api/writtenstatements/statements"
 PARLIAMENT_DEPT_IDS = {
     "Department for Education": 60, "Department of Health and Social Care": 17,
     "HM Treasury": 14, "Home Office": 1, "Ministry of Defence": 11,
@@ -1624,6 +1625,145 @@ def fetch_full_hansard_session(ext_id, source):
         return []
 
 
+_wms_member_cache: dict = {}  # memberId → (name, party_abbrev)
+
+
+def _lookup_wms_member(member_id):
+    """Return (name, party_abbrev) for a Parliament member ID. In-process cache."""
+    if member_id in _wms_member_cache:
+        return _wms_member_cache[member_id]
+    result = ('', '')
+    try:
+        resp = requests.get(
+            f"https://members-api.parliament.uk/api/Members/{member_id}",
+            timeout=8
+        )
+        if resp.status_code == 200:
+            v = resp.json().get('value', {})
+            name = v.get('nameDisplayAs', '')
+            party = (v.get('latestParty') or {}).get('abbreviation', '') or \
+                    (v.get('latestParty') or {}).get('name', '')
+            result = (name, party)
+    except Exception:
+        pass
+    _wms_member_cache[member_id] = result
+    return result
+
+
+def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
+    """Fetch Written Ministerial Statements from Parliament Q&S API.
+    Drop-in replacement for fetch_twfy_topic(query, 'wms', date_range).
+    No API key required. Returns normalised row schema.
+
+    Keyword matching: Parliament API does OR-word matching, not phrase matching.
+    When dept_id is provided, returns all WMS for that dept in the date range
+    and post-filters by keyword. Without dept_id, uses the first significant word
+    as API filter then post-filters client-side.
+    """
+    import logging as _wms_log
+
+    # Parse YYYYMMDD..YYYYMMDD → YYYY-MM-DD (date_range may have query prefix)
+    from_date = to_date = ''
+    if date_range and '..' in date_range:
+        raw = date_range.split('..')
+        raw_from = re.sub(r'^\D+', '', raw[0].strip())
+        raw_to   = re.sub(r'^\D+', '', raw[1].strip())
+        if len(raw_from) == 8:
+            from_date = f"{raw_from[:4]}-{raw_from[4:6]}-{raw_from[6:]}"
+        if len(raw_to) == 8:
+            to_date = f"{raw_to[:4]}-{raw_to[4:6]}-{raw_to[6:]}"
+
+    cache_key = f"parl_wms:{query}:{date_range}:{dept_id}"
+    cached = CachedTWFYSearch.get(cache_key, 'wms', ttl_hours=6)
+    if cached is not None:
+        return cached
+
+    params = {'take': num}
+    if from_date:
+        params['madeWhenFrom'] = from_date
+    if to_date:
+        params['madeWhenTo'] = to_date
+    if dept_id:
+        params['answeringBodies'] = dept_id
+    else:
+        # Single-word API filter to narrow the result set before post-filtering
+        words = [w for w in query.lower().split() if len(w) > 3]
+        if words:
+            params['searchTerm'] = words[0]
+
+    try:
+        resp = requests.get(PARLIAMENT_WMS_API, params=params, timeout=15)
+        if resp.status_code != 200:
+            _wms_log.warning(f"[parl_wms] HTTP {resp.status_code} params={params}")
+            return [{'_error': f"Parliament WMS API HTTP {resp.status_code}"}]
+        raw_results = resp.json().get('results', [])
+    except Exception as e:
+        _wms_log.warning(f"[parl_wms] exception: {e}")
+        return []
+
+    # Keyword stems for post-filter relevance check
+    query_stems = set()
+    for w in query.lower().split():
+        if len(w) > 3:
+            query_stems.add(w[:-1] if w.endswith('s') and len(w) > 4 else w)
+
+    # Batch member lookups (one per unique ID)
+    unique_ids = {r['value']['memberId'] for r in raw_results
+                  if r.get('value', {}).get('memberId')}
+    for mid in unique_ids:
+        _lookup_wms_member(mid)
+
+    results = []
+    for r in raw_results:
+        v = r.get('value', {})
+        title = v.get('title', '')
+        text  = v.get('text', '')
+
+        # Post-filter: require at least half of query stems to appear in title+text
+        if query_stems:
+            combined = (title + ' ' + text).lower()
+            hits = sum(1 for stem in query_stems if stem in combined)
+            min_hits = max(1, len(query_stems) // 2)
+            if hits < min_hits:
+                continue
+
+        member_id = v.get('memberId')
+        speaker_name, speaker_party = _lookup_wms_member(member_id) if member_id else ('', '')
+
+        raw_date = v.get('dateMade', '')
+        hdate = raw_date[:10] if raw_date else ''
+        house = v.get('house', 'Commons')
+        uin   = v.get('uin', '')
+        house_path = 'Lords' if house.lower() == 'lords' else 'Commons'
+        listurl = (f"https://hansard.parliament.uk/{house_path}/{hdate}/writtenstatements/{uin}"
+                   if hdate and uin else '')
+
+        results.append({
+            'body_clean':      text,
+            'body_export':     text[:2000],
+            'body_word_count': len(text.split()),
+            'speaker_name':    speaker_name,
+            'speaker_party':   _normalise_party(speaker_party),
+            'hdate':           hdate,
+            'debate_title':    title,
+            'source':          'wms',
+            'source_label':    'Ministerial Statement',
+            'relevance':       0,
+            'debate_type':     '📜 Ministerial Statement',
+            'listurl':         listurl,
+            'dept':            v.get('answeringBodyName', ''),
+            'is_minister':     True,
+            'debate_section_ext_id': '',
+            'member_role':     v.get('memberRole', ''),
+        })
+
+    _wms_log.warning(
+        f"[parl_wms] query={query!r} dept_id={dept_id} raw={len(raw_results)} kept={len(results)}"
+    )
+    CachedTWFYSearch.store(cache_key, 'wms', results)
+    return results
+
+
 def _resolve_parliament_id(display_name):
     """Look up the Parliament member ID for a minister by name.
     Returns (parliament_id, house) or (None, None)."""
@@ -1807,6 +1947,20 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
     return results
 
 
+def _debate_group_key(title: str) -> str:
+    """Extract a grouping key from a debate title by stripping chamber/motion suffixes.
+    'Children's Wellbeing and Schools Bill - Commons Reason and Amendments: Motion A'
+    → 'Children's Wellbeing and Schools Bill'
+    Single sessions pass through unchanged."""
+    m = re.match(r'^(.+?)\s+[-—]\s+(?:Commons|Lords)\b', title)
+    if m:
+        return m.group(1).strip()
+    m = re.match(r'^(.+?)\s+[-—]\s+(?:Second|Third|Report|Committee)\s+Reading', title, re.I)
+    if m:
+        return m.group(1).strip()
+    return title
+
+
 def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
     """Fetch debates where a minister spoke, deduped by unique debate section."""
     sources = []
@@ -1840,7 +1994,8 @@ def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
         if key not in unique_debates:
             unique_debates[key] = {
                 'title': parent_body, 'date': date_val, 'url': url,
-                'type': get_debate_type(parent_body), 'contributions': 1
+                'type': get_debate_type(parent_body), 'contributions': 1,
+                'group_key': _debate_group_key(parent_body),
             }
         else:
             unique_debates[key]['contributions'] += 1
@@ -2153,12 +2308,19 @@ def debates_topic():
                 # TWFY fallback for WMS (no Hansard statements search endpoint exists).
                 if use_hansard_topic:
                     topic_search_futs = {}
+                    # Resolve dept_id for WMS filter (Parliament API uses numeric body IDs)
+                    wms_dept_id = None
+                    for dept in (selected_depts or []):
+                        wms_dept_id = PARLIAMENT_DEPT_IDS.get(dept)
+                        if wms_dept_id:
+                            break
                     for src in sources:
-                        if src == 'wms' and TWFY_API_KEY:
+                        if src == 'wms':
                             topic_search_futs[executor.submit(
-                                copy_current_request_context(fetch_twfy_topic), search_query, src, date_range
+                                copy_current_request_context(fetch_parliament_wms),
+                                search_query, date_range, wms_dept_id
                             )] = src
-                        elif src != 'wms':
+                        else:
                             topic_search_futs[executor.submit(
                                 copy_current_request_context(fetch_hansard_topic), search_query, src, date_range
                             )] = src

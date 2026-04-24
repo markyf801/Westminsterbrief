@@ -304,7 +304,7 @@
                             <a href="{{ grp.speeches[0].listurl | debate_url }}" target="_blank" class="debate-group-title" onclick="event.stopPropagation()">{{ grp.title }}</a>
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
-                        <details class="debate-speeches-details" {% if grp.has_minister %}open{% endif %}>
+                        <details class="debate-speeches-details">
                             <summary class="debate-speeches-summary">{{ grp.speeches|length }} speaker{{ 's' if grp.speeches|length != 1 else '' }}</summary>
                         {% for r in grp.speeches %}
                         <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
@@ -646,26 +646,68 @@
         <form method="POST" action="/debates_minister_analyze" onsubmit="showMinisterAnalyzeLoading()">
             <input type="hidden" name="minister_name" value="{{ minister_info.name }}">
             <div style="border:1px solid #e0e0e0; border-radius:6px; background:#fafafa; padding:10px;">
-                {% for d in minister_debates %}
-                <div style="display:flex; align-items:flex-start; gap:15px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #f0f0f0;">
-                    <input type="checkbox" name="selected_debates" value="{{ d.url }}||{{ d.title }}||{{ d.date }}" style="width:18px; height:18px; margin-top:3px; cursor:pointer;">
-                    <div style="flex:1;">
-                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                            <span style="background:#eef2f5; color:#005a8f; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:700;">{{ d.type }}</span>
-                            <strong style="font-size:14px; color:#222;">{{ d.title }}</strong>
-                        </div>
-                        <div style="font-size:12px; color:#777; margin-top:4px;">
-                            📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
-                            &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on TheyWorkForYou</a>
+                {% for group_key, group_debates in minister_debates | groupby('group_key') %}
+                {% set glist = group_debates | list %}
+                {% if glist | length == 1 %}
+                    {# Single session — show flat as before #}
+                    {% set d = glist[0] %}
+                    <div style="display:flex; align-items:flex-start; gap:15px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #f0f0f0;">
+                        <input type="checkbox" name="selected_debates" value="{{ d.url }}||{{ d.title }}||{{ d.date }}" style="width:18px; height:18px; margin-top:3px; cursor:pointer;">
+                        <div style="flex:1;">
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <span style="background:#eef2f5; color:#005a8f; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:700;">{{ d.type }}</span>
+                                <strong style="font-size:14px; color:#222;">{{ d.title }}</strong>
+                            </div>
+                            <div style="font-size:12px; color:#777; margin-top:4px;">
+                                📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
+                                &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on TheyWorkForYou</a>
+                            </div>
                         </div>
                     </div>
-                </div>
+                {% else %}
+                    {# Multiple sessions sharing a parent bill/topic — group under collapsible header #}
+                    <details style="margin-bottom:10px; border-bottom:1px solid #f0f0f0; padding-bottom:10px;" open>
+                        <summary style="display:flex; align-items:center; gap:10px; cursor:pointer; list-style:none; padding:4px 0;">
+                            <input type="checkbox" class="group-select-all" data-group="{{ group_key | e }}"
+                                   onclick="toggleGroupCheckboxes(this)" style="width:18px; height:18px; flex-shrink:0;">
+                            <span style="background:#eef2f5; color:#005a8f; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:700; flex-shrink:0;">{{ glist[0].type }}</span>
+                            <strong style="font-size:14px; color:#222;">{{ group_key }}</strong>
+                            <span style="font-size:12px; color:#888; margin-left:4px;">{{ glist | length }} sessions · {{ glist[0].date }}</span>
+                        </summary>
+                        <div style="padding-left:36px; margin-top:6px;">
+                            {% for d in glist %}
+                            <div style="display:flex; align-items:flex-start; gap:12px; margin-bottom:7px; padding:6px 8px; background:#fff; border-radius:4px; border:1px solid #eee;"
+                                 data-group="{{ group_key | e }}">
+                                <input type="checkbox" name="selected_debates" value="{{ d.url }}||{{ d.title }}||{{ d.date }}"
+                                       class="group-child" style="width:16px; height:16px; margin-top:3px; cursor:pointer;">
+                                <div style="flex:1;">
+                                    <div style="font-size:13px; color:#222; font-weight:500;">
+                                        {{ d.title | replace(group_key ~ ' - ', '') | replace(group_key ~ ' — ', '') }}
+                                    </div>
+                                    <div style="font-size:11px; color:#777; margin-top:2px;">
+                                        📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
+                                        &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on TheyWorkForYou</a>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </details>
+                {% endif %}
                 {% endfor %}
             </div>
             <button type="submit" id="btnMinisterAnalyze" class="btn btn-purple" style="margin-top:16px; width:100%; padding:14px;">
                 <span id="btnMinisterAnalyzeText">📋 Get Full Script &amp; Follow-up Questions</span>
             </button>
         </form>
+        <script>
+        function toggleGroupCheckboxes(masterCb) {
+            const group = masterCb.dataset.group;
+            document.querySelectorAll('[data-group="' + group + '"] input.group-child').forEach(cb => {
+                cb.checked = masterCb.checked;
+            });
+        }
+        </script>
         {% endif %}
     </div>
 
