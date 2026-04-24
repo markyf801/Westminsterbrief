@@ -40,8 +40,22 @@ SOURCE_TYPE_WEIGHTS: dict[str, float] = _source_types_dict
 
 # --- Empty vocabs (enforcement deferred until configs are populated) ---
 
-DEPARTMENT_VALUES: tuple[str, ...] = _load_list('departments', 'departments.yaml')
+def _load_dept_keys(filename: str) -> tuple[str, ...]:
+    """Load department keys from the richer dict-of-dicts format used in departments.yaml."""
+    data = _load_yaml(filename)
+    value = data.get('departments') or {}
+    if isinstance(value, dict):
+        return tuple(value.keys())
+    return tuple(value)  # fallback: plain list (e.g. still empty [])
+
+
+DEPARTMENT_VALUES: tuple[str, ...] = _load_dept_keys('departments.yaml')
 POLICY_AREA_VALUES: tuple[str, ...] = _load_list('policy_areas', 'policy_areas.yaml')
+
+# Full department metadata (key → {name, scope}) — for ingesters and display
+DEPARTMENT_META: dict[str, dict] = (
+    lambda d: {k: v for k, v in d.items()} if isinstance(d, dict) else {}
+)(_load_yaml('departments.yaml').get('departments') or {})
 
 # --- Aliases / internal government lists ---
 

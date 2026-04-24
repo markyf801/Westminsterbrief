@@ -1,3 +1,102 @@
-# To be populated before first ingester (all 24 UK ministerial departments)
-# Reference: https://www.gov.uk/government/organisations#ministerial_departments
-departments: []
+# UK ministerial departments — controlled vocabulary for engagement.department.
+# Keys are stable snake_case identifiers; names are the canonical display form
+# as used on gov.uk. Scope notes are for ingesters and AI passes only.
+# Source: https://www.gov.uk/government/organisations (ministerial departments section)
+# Last verified: 24 April 2026
+
+departments:
+  prime_ministers_office:
+    name: "Prime Minister's Office, 10 Downing Street"
+    scope: "Cross-government coordination, Cabinet government, PM's policy priorities"
+
+  attorney_generals_office:
+    name: "Attorney General's Office"
+    scope: "Legal advice to government, Crown Prosecution Service oversight, Serious Fraud Office"
+
+  cabinet_office:
+    name: "Cabinet Office"
+    scope: "Civil service reform, government efficiency, union policy, elections, procurement"
+
+  department_for_business_and_trade:
+    name: "Department for Business & Trade"
+    scope: "Business environment, trade policy, export promotion, investment, regulation"
+
+  department_for_culture_media_and_sport:
+    name: "Department for Culture, Media & Sport"
+    scope: "Arts, culture, broadcasting, sport, tourism, gambling, heritage, creative industries"
+
+  department_for_education:
+    name: "Department for Education"
+    scope: "Schools, further education, higher education, skills, children's services, early years"
+
+  department_for_energy_security_and_net_zero:
+    name: "Department for Energy Security & Net Zero"
+    scope: "Energy supply, electricity grid, oil and gas, nuclear, net zero transition"
+
+  department_for_environment_food_and_rural_affairs:
+    name: "Department for Environment, Food & Rural Affairs"
+    scope: "Environment, food safety, farming, fisheries, rural affairs, animal welfare, flooding"
+
+  department_for_science_innovation_and_technology:
+    name: "Department for Science, Innovation & Technology"
+    scope: "R&D funding, digital infrastructure, AI policy, tech regulation, space, cyber"
+
+  department_for_transport:
+    name: "Department for Transport"
+    scope: "Roads, rail, aviation, maritime, cycling, vehicle standards, HS2"
+
+  department_for_work_and_pensions:
+    name: "Department for Work & Pensions"
+    scope: "Benefits, pensions, labour market, disability, Universal Credit, JobCentre Plus"
+
+  department_of_health_and_social_care:
+    name: "Department of Health & Social Care"
+    scope: "NHS, public health, adult social care, medicines regulation, mental health"
+
+  foreign_commonwealth_and_development_office:
+    name: "Foreign, Commonwealth & Development Office"
+    scope: "Foreign policy, diplomacy, overseas aid, international development, consular services"
+
+  hm_treasury:
+    name: "HM Treasury"
+    scope: "Tax policy, public spending, economic policy, financial services regulation, Budget"
+
+  home_office:
+    name: "Home Office"
+    scope: "Immigration, policing, counter-terrorism, crime, fire service, borders, passports"
+
+  ministry_of_defence:
+    name: "Ministry of Defence"
+    scope: "Armed forces, defence procurement, veterans, nuclear deterrent, NATO commitments"
+
+  ministry_of_housing_communities_and_local_government:
+    name: "Ministry of Housing, Communities & Local Government"
+    scope: "Housing supply, planning, local government, building safety, devolution, homelessness"
+
+  ministry_of_justice:
+    name: "Ministry of Justice"
+    scope: "Courts, prisons, probation, legal aid, sentencing, family justice, judicial appointments"
+
+  northern_ireland_office:
+    name: "Northern Ireland Office"
+    scope: "UK government's relationship with Northern Ireland, devolution, political stability"
+
+  office_of_the_advocate_general_for_scotland:
+    name: "Office of the Advocate General for Scotland"
+    scope: "Legal advice to UK government on Scots law, Scottish devolution legal matters"
+
+  office_of_the_leader_of_the_house_of_commons:
+    name: "Office of the Leader of the House of Commons"
+    scope: "Parliamentary business management, Commons procedure, government legislation timetable"
+
+  office_of_the_leader_of_the_house_of_lords:
+    name: "Office of the Leader of the House of Lords"
+    scope: "Lords business management, Lords procedure, government business in the upper chamber"
+
+  scotland_office:
+    name: "Scotland Office"
+    scope: "UK government's relationship with Scotland, devolution, reserved matters in Scotland"
+
+  wales_office:
+    name: "Wales Office"
+    scope: "UK government's relationship with Wales, devolution, reserved matters in Wales"
