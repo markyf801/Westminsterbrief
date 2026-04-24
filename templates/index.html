@@ -105,12 +105,19 @@
 
 {% if pre_filter_count > 0 %}
 <div class="info-box" style="margin-top: 20px;">
-    Showing <strong>{{ results|length }}</strong>
-    {% if pre_filter_count > results|length %} of <strong>{{ pre_filter_count }}</strong> retrieved{% endif %}
-    {% if total_available > pre_filter_count %} ({{ total_available }} total in Parliament API){% endif %}
-    questions.
+    Showing <strong>{{ results|length }}</strong> question{{ 's' if results|length != 1 else '' }} matching your filters.
+    {% if pre_filter_count > results|length %}
+    <strong>{{ pre_filter_count - results|length }}</strong> of the {{ pre_filter_count }} retrieved from the Parliament API were removed by your active filters (date range, relevance, house, or answer status).
+    {% endif %}
+    {% if total_available > pre_filter_count %}
+    The Parliament API has <strong>{{ total_available }}</strong> total results for this search.
+    {% endif %}
     {% if results|length >= results_cap %}
     Add a <strong>date range</strong> or <strong>department filter</strong> to see a more focused set.
+    {% endif %}
+    {% if selected_dept %}
+    <span style="margin-left: 6px;">|</span>
+    <a href="#" onclick="searchAllDepts(); return false;" style="color: #1c3e6e; font-weight: 600; font-size: 13px; margin-left: 6px;">Search all departments for this topic →</a>
     {% endif %}
 </div>
 {% endif %}
@@ -206,6 +213,11 @@ function toggleSection(masterCb) {
 function clearSelection() {
     document.querySelectorAll('.wq-select, .section-select-all').forEach(function(cb) { cb.checked = false; });
     updateSelectionBar();
+}
+
+function searchAllDepts() {
+    document.querySelector('select[name="department"]').value = '';
+    document.querySelector('form[action="/questions"]').submit();
 }
 
 function downloadSelected(format) {
