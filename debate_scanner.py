@@ -2052,10 +2052,15 @@ def scan_debates():
 
     # Handle stakeholder tab GET — show search form + org directory
     if request.method == 'GET' and request.args.get('mode') == 'stakeholder':
+        from flask_app import TrackedStakeholder as _TS
+        _user_sh = (_TS.query.filter_by(user_id=current_user.id).all()
+                    if current_user.is_authenticated else [])
         return render_template('debate_scanner.html',
                                mode='stakeholder',
                                stakeholder_topic=request.args.get('stakeholder_topic', ''),
                                stakeholder_org=None,
+                               stakeholder_org_id='',
+                               user_stakeholders=_user_sh,
                                stakeholder_hansard=[], stakeholder_news=[],
                                stakeholder_publications=[], stakeholder_social=[],
                                stakeholder_briefing=None,
@@ -3239,7 +3244,8 @@ def generate_stakeholder_briefing(topic, org=None, hansard_rows=None, news=None,
     publications = publications or []
     social = social or []
 
-    org_context = f'Organisation: {org.name}\n' if org else 'Multiple stakeholder organisations\n'
+    org_name = (org['name'] if isinstance(org, dict) else org.name) if org else None
+    org_context = f'Organisation: {org_name}\n' if org_name else 'Multiple stakeholder organisations\n'
 
     # Build evidence summary (capped to avoid 503)
     evidence_lines = []
@@ -3320,11 +3326,29 @@ def _discover_rss(website):
     return None
 
 
+def _stakeholder_org_view(obj):
+    """Return a uniform dict from either a StakeholderOrg or TrackedStakeholder.
+    All downstream code (templates, fetch functions) uses this shape."""
+    return {
+        'id':                  obj.id,
+        'name':                obj.name,
+        'short_name':          getattr(obj, 'short_name', None) or obj.name,
+        'category':            getattr(obj, 'category', 'My Stakeholders'),
+        'website':             getattr(obj, 'website', None),
+        'bsky_handle':         getattr(obj, 'bsky_handle', None),
+        'rss_url':             getattr(obj, 'rss_url', None),
+        'hansard_search_name': getattr(obj, 'hansard_search_name', None) or obj.name,
+        'description':         getattr(obj, 'description', None),
+        '_type':               'user' if obj.__class__.__name__ == 'TrackedStakeholder' else 'global',
+    }
+
+
 # ==========================================
 # ROUTE 9: STAKEHOLDER SEARCH
 # ==========================================
 @debate_scanner_bp.route('/stakeholder_search', methods=['POST'])
 def stakeholder_search():
+    from flask_app import TrackedStakeholder
     topic = request.form.get('stakeholder_topic', '').strip()
     org_id = request.form.get('stakeholder_org_id', '').strip()
     start_date = request.form.get('stakeholder_start', '')
@@ -3333,9 +3357,16 @@ def stakeholder_search():
     all_orgs = StakeholderOrg.all_active()
     orgs_by_category = StakeholderOrg.by_category()
 
+    # Load user's personal stakeholders for the dropdown
+    user_stakeholders = []
+    if current_user.is_authenticated:
+        user_stakeholders = TrackedStakeholder.query.filter_by(user_id=current_user.id).all()
+
     if not topic:
         return render_template('debate_scanner.html', mode='stakeholder',
                                stakeholder_topic='', stakeholder_org=None,
+                               stakeholder_org_id='',
+                               user_stakeholders=user_stakeholders,
                                all_orgs=all_orgs, orgs_by_category=orgs_by_category,
                                stakeholder_hansard=[], stakeholder_news=[],
                                stakeholder_publications=[], stakeholder_social=[],
@@ -3349,17 +3380,31 @@ def stakeholder_search():
                                legislation_grouped=[], debug_query='',
                                user_pref=None, is_post=False)
 
-    # Resolve selected org (if any)
+    # Resolve selected org — global StakeholderOrg or user's TrackedStakeholder
     org = None
     if org_id:
-        try:
-            org = StakeholderOrg.query.get(int(org_id))
-        except Exception:
-            pass
+        if org_id.startswith('user-'):
+            try:
+                sh_id = int(org_id[5:])
+                sh = TrackedStakeholder.query.get(sh_id)
+                if sh and sh.user_id == current_user.id:
+                    org = _stakeholder_org_view(sh)
+            except Exception:
+                pass
+        else:
+            try:
+                db_org = StakeholderOrg.query.get(int(org_id))
+                if db_org:
+                    org = _stakeholder_org_view(db_org)
+            except Exception:
+                pass
+
+    # Convert all_orgs to view dicts for downstream uniformity
+    all_org_views = [_stakeholder_org_view(o) for o in all_orgs]
 
     # Determine which orgs to search
-    search_orgs = [org] if org else all_orgs
-    org_names = [o.hansard_search_name or o.short_name or o.name for o in search_orgs]
+    search_org_views = [org] if org else all_org_views
+    org_names = [o['hansard_search_name'] or o['short_name'] or o['name'] for o in search_org_views]
 
     date_range = ''
     if start_date and end_date:
@@ -3369,7 +3414,7 @@ def stakeholder_search():
 
     # Build Hansard search: topic + org name(s)
     if org:
-        hansard_query = f'"{topic}" AND "{org.hansard_search_name or org.name}"'
+        hansard_query = f'"{topic}" AND "{org["hansard_search_name"] or org["name"]}"'
     else:
         hansard_query = f'"{topic}"'
         if date_range:
@@ -3385,7 +3430,8 @@ def stakeholder_search():
         rows = []
         use_hansard = os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard'
         if use_hansard:
-            clean_query = f'"{topic}" AND "{org.hansard_search_name or org.name}"' if org else f'"{topic}"'
+            clean_query = (f'"{topic}" AND "{org["hansard_search_name"] or org["name"]}"'
+                           if org else f'"{topic}"')
             for src in ['commons', 'lords', 'westminsterhall']:
                 rows.extend(fetch_hansard_topic(clean_query, src, date_range))
         elif TWFY_API_KEY:
@@ -3398,21 +3444,21 @@ def stakeholder_search():
 
     def _do_rss():
         results = []
-        rss_orgs = [o for o in search_orgs if o.rss_url]
-        for o in rss_orgs[:10]:  # cap parallel RSS fetches
-            items = fetch_org_rss(o.rss_url, topic)
+        rss_orgs = [o for o in search_org_views if o.get('rss_url')]
+        for o in rss_orgs[:10]:
+            items = fetch_org_rss(o['rss_url'], topic)
             for item in items:
-                item['org_name'] = o.name
+                item['org_name'] = o['name']
             results.extend(items)
         return sorted(results, key=lambda x: x.get('published', ''), reverse=True)
 
     def _do_bluesky():
         results = []
-        bsky_orgs = [o for o in search_orgs if o.bsky_handle]
+        bsky_orgs = [o for o in search_org_views if o.get('bsky_handle')]
         for o in bsky_orgs[:5]:
-            items = fetch_org_bluesky(o.bsky_handle, topic)
+            items = fetch_org_bluesky(o['bsky_handle'], topic)
             for item in items:
-                item['org_name'] = o.name
+                item['org_name'] = o['name']
             results.extend(items)
         return sorted(results, key=lambda x: x.get('published', ''), reverse=True)
 
@@ -3475,6 +3521,7 @@ def stakeholder_search():
         mode='stakeholder',
         stakeholder_topic=topic,
         stakeholder_org=org,
+        stakeholder_org_id=org_id,
         stakeholder_hansard=hansard_rows,
         stakeholder_news=news_items,
         stakeholder_publications=publications,
@@ -3482,6 +3529,7 @@ def stakeholder_search():
         stakeholder_briefing=briefing,
         all_orgs=all_orgs,
         orgs_by_category=orgs_by_category,
+        user_stakeholders=user_stakeholders,
         # other tab defaults (required by template)
         topic=topic, topic_rows=[], topic_briefing=None,
         topic_briefing_as_text='', house_filter='all',

@@ -40,15 +40,50 @@
         <h3 style="color: #6f42c1; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
             👥 Stakeholder Radar
         </h3>
-        
-        <form method="POST" action="/add_stakeholder">
-            <div style="margin-bottom: 10px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Organization Name</label>
-                <input type="text" name="name" placeholder="e.g., Universities UK" required style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+
+        {% if stakeholders %}
+        <div style="margin-bottom: 14px;">
+            {% for sh in stakeholders %}
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid #f0f0f0; font-size:13px;">
+                <div>
+                    <strong>{{ sh.name }}</strong>
+                    {% if sh.bsky_handle %}<span style="color:#888; font-size:11px; margin-left:6px;">{{ sh.bsky_handle }}</span>{% endif %}
+                    {% if sh.website %}<span style="color:#888; font-size:11px; margin-left:6px;">🌐</span>{% endif %}
+                    {% if sh.rss_url %}<span style="color:#888; font-size:11px; margin-left:4px;">📡</span>{% endif %}
+                </div>
+                <form method="POST" action="/delete_stakeholder/{{ sh.id }}" onsubmit="return confirm('Remove {{ sh.name }}?');" style="margin:0;">
+                    <button type="submit" style="background:none; border:1px solid #ff7675; color:#d63031; padding:2px 7px; border-radius:4px; cursor:pointer; font-size:11px;">✕</button>
+                </form>
             </div>
-            <div style="margin-bottom: 15px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Bluesky Handle</label>
-                <input type="text" name="bsky_handle" placeholder="@uuk.bsky.social" style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <form method="POST" action="/add_stakeholder">
+            <div style="margin-bottom: 8px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Organisation Name</label>
+                <input type="text" name="name" id="sh-name" placeholder="e.g., Universities UK" required
+                       style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+            <div style="margin-bottom: 8px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Website <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <input type="url" name="website" id="sh-website" placeholder="https://www.example.org"
+                       style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+            <div style="margin-bottom: 8px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">RSS Feed URL <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <input type="url" name="rss_url" id="sh-rss" placeholder="https://www.example.org/feed"
+                       style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+            <div style="margin-bottom: 8px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Bluesky Handle <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <input type="text" name="bsky_handle" id="sh-bsky" placeholder="@handle.bsky.social"
+                       style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+            <div style="margin-bottom: 12px;">
+                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Description <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <input type="text" name="description" id="sh-desc" placeholder="One sentence about this organisation"
+                       style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
             <button type="submit" class="btn-search" style="background: #6f42c1; padding: 10px; font-size: 14px; width: 100%; color: white; border: none; border-radius: 4px; cursor: pointer;">Add Stakeholder</button>
         </form>

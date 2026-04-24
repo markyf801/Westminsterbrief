@@ -1,7 +1,10 @@
 import os
+import ipaddress
+import socket
 import requests
 import re
 import numpy as np
+from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash
 from sqlalchemy import text
@@ -17,6 +20,32 @@ load_dotenv()
 from newsapi import NewsApiClient
 from google import genai
 from atproto import Client as BskyClient
+
+_PRIVATE_NETS = [
+    ipaddress.ip_network(n) for n in [
+        '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
+        '127.0.0.0/8', '169.254.0.0/16', '::1/128', 'fc00::/7',
+    ]
+]
+
+def _validate_external_url(url: str) -> str:
+    """Raise ValueError if url is not a safe external http/https URL.
+    Blocks SSRF by rejecting private/loopback IP ranges."""
+    if not url or len(url) > 500:
+        raise ValueError('URL missing or too long')
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        raise ValueError(f'URL scheme must be http/https, got {parsed.scheme!r}')
+    if not parsed.hostname:
+        raise ValueError('URL has no hostname')
+    try:
+        ip = ipaddress.ip_address(socket.gethostbyname(parsed.hostname))
+        if any(ip in net for net in _PRIVATE_NETS):
+            raise ValueError(f'URL resolves to private IP {ip}')
+    except socket.gaierror:
+        raise ValueError(f'Cannot resolve hostname {parsed.hostname!r}')
+    return url
+
 
 # Import existing blueprints
 from hansard import hansard_bp
@@ -81,11 +110,14 @@ class TrackedTopic(db.Model):
     alerts = db.relationship('Alert', backref='topic', lazy=True)
 
 class TrackedStakeholder(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
+    id          = db.Column(db.Integer, primary_key=True)
+    name        = db.Column(db.String(100), nullable=False)
     bsky_handle = db.Column(db.String(100))
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    alerts = db.relationship('Alert', backref='stakeholder', lazy=True)
+    website     = db.Column(db.String(300))
+    rss_url     = db.Column(db.String(500))
+    description = db.Column(db.Text)
+    user_id     = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    alerts      = db.relationship('Alert', backref='stakeholder', lazy=True)
 
 class Alert(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -131,6 +163,17 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass  # Already renamed or table doesn't exist yet
+    # Add new columns to tracked_stakeholder (website, rss_url, description)
+    from sqlalchemy import inspect as _sa_inspect
+    _ts_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('tracked_stakeholder')}
+    for _col, _defn in [('website', 'VARCHAR(300)'), ('rss_url', 'VARCHAR(500)'), ('description', 'TEXT')]:
+        if _col not in _ts_cols:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE tracked_stakeholder ADD COLUMN {_col} {_defn}'))
+                    conn.commit()
+            except Exception as _e:
+                app.logger.warning('tracked_stakeholder migration failed for %s: %s', _col, _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
@@ -427,15 +470,51 @@ def remove_topic(topic_id):
         db.session.commit()
     return redirect(url_for('my_alerts'))
 
+MAX_STAKEHOLDERS_PER_USER = 50
+
 @app.route('/add_stakeholder', methods=['POST'])
 @login_required
 def add_stakeholder():
-    name = request.form.get('name')
-    handle = request.form.get('bsky_handle')
-    if name:
-        db.session.add(TrackedStakeholder(name=name, bsky_handle=handle, user_id=current_user.id))
+    name = request.form.get('name', '').strip()
+    if not name:
+        return redirect(url_for('my_alerts'))
+    if TrackedStakeholder.query.filter_by(user_id=current_user.id).count() >= MAX_STAKEHOLDERS_PER_USER:
+        flash(f'Maximum {MAX_STAKEHOLDERS_PER_USER} stakeholders reached.')
+        return redirect(url_for('my_alerts'))
+    website = request.form.get('website', '').strip() or None
+    rss_url = request.form.get('rss_url', '').strip() or None
+    if website:
+        try:
+            _validate_external_url(website)
+        except ValueError:
+            website = None
+    if rss_url:
+        try:
+            _validate_external_url(rss_url)
+        except ValueError:
+            rss_url = None
+    db.session.add(TrackedStakeholder(
+        name=name,
+        bsky_handle=request.form.get('bsky_handle', '').strip() or None,
+        website=website,
+        rss_url=rss_url,
+        description=request.form.get('description', '').strip() or None,
+        user_id=current_user.id,
+    ))
+    db.session.commit()
+    return redirect(url_for('my_alerts'))
+
+
+@app.route('/delete_stakeholder/<int:sh_id>', methods=['POST'])
+@login_required
+def delete_stakeholder(sh_id):
+    sh = TrackedStakeholder.query.get_or_404(sh_id)
+    if sh.user_id == current_user.id:
+        Alert.query.filter_by(stakeholder_id=sh.id).delete()
+        db.session.delete(sh)
         db.session.commit()
     return redirect(url_for('my_alerts'))
+
 
 # Helper for Semantic Scoring (Cosine Similarity)
 def get_similarity(vec1, vec2):

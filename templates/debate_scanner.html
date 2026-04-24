@@ -736,11 +736,18 @@
                     <label>Organisation <span style="font-weight:normal; color:#888; font-size:12px;">(optional — leave blank for all)</span></label>
                     <select name="stakeholder_org_id" id="stakeholder-org-select">
                         <option value="">All tracked organisations</option>
+                        {% if user_stakeholders %}
+                        <optgroup label="★ My Stakeholders">
+                            {% for sh in user_stakeholders %}
+                            <option value="user-{{ sh.id }}" {% if stakeholder_org_id == 'user-' ~ sh.id %}selected{% endif %}>{{ sh.name }}</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endif %}
                         {% if orgs_by_category %}
                         {% for cat, orgs in orgs_by_category.items() %}
                         <optgroup label="{{ cat }}">
                             {% for org in orgs %}
-                            <option value="{{ org.id }}" {% if stakeholder_org and stakeholder_org.id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                            <option value="{{ org.id }}" {% if stakeholder_org_id == org.id|string %}selected{% endif %}>{{ org.name }}</option>
                             {% endfor %}
                         </optgroup>
                         {% endfor %}
