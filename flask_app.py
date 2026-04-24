@@ -93,11 +93,18 @@ login_manager.login_view = 'login'
 # ==========================================
 # 3. DATABASE MODELS
 # ==========================================
+def _is_approved_email(email: str) -> bool:
+    """Returns True for gov.uk addresses and the site owner — these get free access."""
+    e = email.lower().strip()
+    return e == 'markjforde@gmail.com' or e.endswith('.gov.uk')
+
+
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
     has_completed_onboarding = db.Column(db.Boolean, default=False, nullable=False)
+    access_tier = db.Column(db.String(20), nullable=False, default='restricted')
     topics = db.relationship('TrackedTopic', backref='owner', lazy=True)
     stakeholders = db.relationship('TrackedStakeholder', backref='owner', lazy=True)
     preference = db.relationship('UserPreference', backref='user', uselist=False, lazy=True)
@@ -163,8 +170,18 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass  # Already renamed or table doesn't exist yet
-    # Add new columns to tracked_stakeholder (website, rss_url, description)
+    # Add access_tier to user table; backfill gov.uk + owner email
     from sqlalchemy import inspect as _sa_inspect
+    _user_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('user')}
+    if 'access_tier' not in _user_cols:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN access_tier VARCHAR(20) NOT NULL DEFAULT 'restricted'"))
+                conn.execute(text("UPDATE \"user\" SET access_tier = 'civil_servant' WHERE email LIKE '%.gov.uk' OR email = 'markjforde@gmail.com'"))
+                conn.commit()
+        except Exception as _e:
+            app.logger.warning('user access_tier migration failed: %s', _e)
+    # Add new columns to tracked_stakeholder (website, rss_url, description)
     _ts_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('tracked_stakeholder')}
     for _col, _defn in [('website', 'VARCHAR(300)'), ('rss_url', 'VARCHAR(500)'), ('description', 'TEXT')]:
         if _col not in _ts_cols:
@@ -352,6 +369,30 @@ def terms():
 def privacy():
     return render_template('privacy.html')
 
+_PAYWALL_EXEMPT = {
+    '/', '/home', '/login', '/register', '/logout',
+    '/paywall', '/health', '/terms', '/privacy',
+    '/robots.txt', '/sitemap.xml',
+}
+
+@app.before_request
+def check_tier_access():
+    if request.path.startswith('/static'):
+        return None
+    if request.path in _PAYWALL_EXEMPT:
+        return None
+    if not current_user.is_authenticated:
+        return None  # @login_required on the route handles unauthenticated users
+    if getattr(current_user, 'access_tier', 'civil_servant') == 'restricted':
+        return redirect(url_for('paywall'))
+    return None
+
+
+@app.route('/paywall')
+def paywall():
+    return render_template('paywall.html')
+
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -381,10 +422,13 @@ def register():
         elif User.query.filter_by(email=email).first():
             flash('An account with that email already exists.')
         else:
-            user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'))
+            tier = 'civil_servant' if _is_approved_email(email) else 'restricted'
+            user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'), access_tier=tier)
             db.session.add(user)
             db.session.commit()
             login_user(user)
+            if tier == 'restricted':
+                return redirect(url_for('paywall'))
             return redirect(url_for('onboarding'))
     return render_template('register.html')
 

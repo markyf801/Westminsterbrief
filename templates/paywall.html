@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Access Restricted — Westminster Brief{% endblock %}
+
+{% block content %}
+<div style="display:flex; justify-content:center; align-items:center; min-height:60vh;">
+    <div class="box" style="width:100%; max-width:540px; border-top:5px solid #1c3e6e; text-align:center;">
+
+        <div style="font-size:48px; margin-bottom:16px;">🔒</div>
+        <h2 style="color:#1c3e6e; margin-bottom:10px;">Access Restricted</h2>
+        <p style="color:#555; font-size:15px; line-height:1.6; margin-bottom:20px;">
+            Westminster Brief is currently in <strong>closed beta</strong>, available to
+            UK government and parliamentary staff with a <strong>.gov.uk</strong> email address.
+        </p>
+
+        <div style="background:#f0f4f8; border-radius:8px; padding:16px 20px; margin-bottom:24px; text-align:left;">
+            <p style="font-size:13px; color:#444; margin:0 0 10px; font-weight:600;">Are you a civil servant?</p>
+            <p style="font-size:13px; color:#555; margin:0;">
+                Register or sign in with your <strong>.gov.uk</strong> work email address for instant free access.
+                Your current account ({{ current_user.email if current_user.is_authenticated else '' }}) is not a recognised government address.
+            </p>
+        </div>
+
+        <div style="background:#fef9e7; border:1px solid #f0c040; border-radius:8px; padding:16px 20px; margin-bottom:24px; text-align:left;">
+            <p style="font-size:13px; color:#7d6608; margin:0 0 6px; font-weight:600;">Not a civil servant?</p>
+            <p style="font-size:13px; color:#7d6608; margin:0;">
+                Paid access for public affairs professionals, trade bodies, consultancies, and journalists
+                is coming soon. Get in touch to be notified when it launches.
+            </p>
+        </div>
+
+        <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+            <a href="/register" class="btn btn-primary" style="text-decoration:none; padding:12px 24px; border-radius:6px; font-weight:600; font-size:14px;">
+                Register with .gov.uk email
+            </a>
+            <a href="mailto:mark@westminsterbrief.co.uk" class="btn btn-muted" style="text-decoration:none; padding:12px 24px; border-radius:6px; font-size:14px;">
+                Contact us
+            </a>
+        </div>
+
+        {% if current_user.is_authenticated %}
+        <p style="margin-top:20px; font-size:13px; color:#888;">
+            Signed in as {{ current_user.email }} —
+            <a href="/logout" style="color:#d63031;">sign out</a>
+        </p>
+        {% endif %}
+
+    </div>
+</div>
+{% endblock %}
