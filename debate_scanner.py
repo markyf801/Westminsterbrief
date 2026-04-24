@@ -3656,7 +3656,8 @@ def download_research_brief():
                             url = 'https://www.theyworkforyou.com' + url
                         src_p = doc.add_paragraph()
                         _add_hyperlink(src_p, url, '↗ View on Hansard')
-                        src_p.runs[0].font.size = Pt(8) if src_p.runs else None
+                        if src_p.runs:
+                            src_p.runs[0].font.size = Pt(8)
                         src_p.paragraph_format.left_indent = Pt(18)
 
             # Anticipated / harder questions
