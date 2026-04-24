@@ -3197,8 +3197,14 @@ def stakeholder_search():
 
     def _do_hansard():
         rows = []
-        for src in ['commons', 'lords', 'westminsterhall']:
-            rows.extend(fetch_twfy_topic(hansard_query, src, date_range))
+        use_hansard = os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard'
+        if use_hansard:
+            clean_query = f'"{topic}" AND "{org.hansard_search_name or org.name}"' if org else f'"{topic}"'
+            for src in ['commons', 'lords', 'westminsterhall']:
+                rows.extend(fetch_hansard_topic(clean_query, src, date_range))
+        elif TWFY_API_KEY:
+            for src in ['commons', 'lords', 'westminsterhall']:
+                rows.extend(fetch_twfy_topic(hansard_query, src, date_range))
         return deduplicate_by_listurl(rows)
 
     def _do_news():
@@ -4158,7 +4164,12 @@ def _prep_media(topic, start_date='', end_date=''):
 def _prep_parl_lords(topic, date_range):
     """Lords debates for topic — called directly in the top-level executor."""
     try:
-        rows = fetch_twfy_topic(topic, 'lords', date_range, num=50)
+        if os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard':
+            rows = fetch_hansard_topic(topic, 'lords', date_range, num=50)
+        elif TWFY_API_KEY:
+            rows = fetch_twfy_topic(topic, 'lords', date_range, num=50)
+        else:
+            return []
         return [r for r in rows if not r.get('_error')]
     except Exception:
         return []
@@ -4168,8 +4179,12 @@ def _prep_parl_commons(topic, date_range):
     """Commons + Westminster Hall debates for topic — called directly in the top-level executor."""
     try:
         rows = []
-        rows.extend(fetch_twfy_topic(topic, 'commons', date_range, num=40))
-        rows.extend(fetch_twfy_topic(topic, 'westminsterhall', date_range, num=30))
+        if os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard':
+            rows.extend(fetch_hansard_topic(topic, 'commons', date_range, num=40))
+            rows.extend(fetch_hansard_topic(topic, 'westminsterhall', date_range, num=30))
+        elif TWFY_API_KEY:
+            rows.extend(fetch_twfy_topic(topic, 'commons', date_range, num=40))
+            rows.extend(fetch_twfy_topic(topic, 'westminsterhall', date_range, num=30))
         return [r for r in rows if not r.get('_error')]
     except Exception:
         return []
@@ -4185,8 +4200,11 @@ def _prep_parl_wqs(topic, start_date, end_date):
 
 
 def _prep_parl_statements(topic, date_range):
-    """Oral/written ministerial statements for topic — called directly in the top-level executor."""
+    """Oral/written ministerial statements for topic — called directly in the top-level executor.
+    WMS has no Hansard API endpoint; falls back to TWFY if key is available."""
     try:
+        if not TWFY_API_KEY:
+            return []
         rows = fetch_twfy_topic(topic, 'wms', date_range, num=20)
         return [r for r in rows if not r.get('_error')]
     except Exception:
