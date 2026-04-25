@@ -32,6 +32,7 @@ def run_migrations(app):
     """Create all stakeholder_directory tables. Safe to call on every startup."""
     from extensions import db
     import stakeholder_directory.models  # noqa: F401 — registers models with db.metadata
+    import stakeholder_directory.ingesters.staging  # noqa: F401 — registers staging models
 
     with app.app_context():
         db.create_all()

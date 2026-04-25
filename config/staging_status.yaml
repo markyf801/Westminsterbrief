@@ -1,0 +1,6 @@
+staging_status:
+  - pending
+  - normalised
+  - committed
+  - rejected
+  - flagged

@@ -49,6 +49,7 @@ def _load_dict_of_dicts_meta(yaml_key: str, filename: str) -> dict[str, dict]:
 # --- Populated vocabs (used for CHECK constraint enforcement) ---
 
 ORG_TYPE_VALUES: tuple[str, ...] = _load_list('org_types', 'org_types.yaml')
+STAGING_STATUS_VALUES: tuple[str, ...] = _load_list('staging_status', 'staging_status.yaml')
 SCOPE_VALUES: tuple[str, ...] = _load_list('scope', 'scope.yaml')
 STATUS_VALUES: tuple[str, ...] = _load_list('status', 'status.yaml')
 REGISTRATION_STATUS_VALUES: tuple[str, ...] = _load_list('registration_status', 'registration_status.yaml')
@@ -105,6 +106,7 @@ _VOCAB_MAP: dict[str, tuple[str, ...]] = {
     'flag_types': FLAG_TYPE_VALUES,
     'departments': DEPARTMENT_VALUES,
     'policy_areas': POLICY_AREA_VALUES,
+    'staging_status': STAGING_STATUS_VALUES,
 }
 
 

@@ -1,4 +1,113 @@
-# To be populated before ministerial meetings ingester.
-# Lists core government department name variants to exclude from stakeholder records
-# (only arm's-length bodies and external orgs should be in the directory).
-internal_government: []
+# Core government departments and common name variants to exclude from stakeholder records.
+# Design spec: docs/stakeholder-directory-design.md, Section 2.9.
+# Matching is case-insensitive substring: any variant that appears inside the org name
+# triggers exclusion. Include abbreviations and common variants, not generic English words.
+# Arm's-length bodies (Ofsted, OfS, NHS England) are NOT listed here — they are stakeholders.
+
+internal_government:
+  # Prime Minister's Office
+  - "Prime Minister's Office"
+  - "10 Downing Street"
+  - "No. 10"
+
+  # Attorney General's Office
+  - "Attorney General's Office"
+
+  # Cabinet Office
+  - "Cabinet Office"
+
+  # Department for Business and Trade
+  - "Department for Business and Trade"
+  - "Department for Business & Trade"
+  - "DBT"
+
+  # Department for Culture, Media and Sport
+  - "Department for Culture, Media and Sport"
+  - "Department for Culture, Media & Sport"
+  - "DCMS"
+
+  # Department for Education
+  - "Department for Education"
+  - "DfE"
+
+  # Department for Energy Security and Net Zero
+  - "Department for Energy Security and Net Zero"
+  - "Department for Energy Security & Net Zero"
+  - "DESNZ"
+
+  # Department for Environment, Food and Rural Affairs
+  - "Department for Environment, Food and Rural Affairs"
+  - "Defra"
+  - "DEFRA"
+
+  # Department for Science, Innovation and Technology
+  - "Department for Science, Innovation and Technology"
+  - "DSIT"
+
+  # Department for Transport
+  - "Department for Transport"
+  - "DfT"
+
+  # Department for Work and Pensions
+  - "Department for Work and Pensions"
+  - "DWP"
+
+  # Department of Health and Social Care
+  - "Department of Health and Social Care"
+  - "DHSC"
+
+  # Foreign, Commonwealth and Development Office
+  - "Foreign, Commonwealth and Development Office"
+  - "FCDO"
+
+  # HM Treasury
+  - "HM Treasury"
+  - "Her Majesty's Treasury"
+  - "His Majesty's Treasury"
+
+  # Home Office
+  - "Home Office"
+
+  # Ministry of Defence
+  - "Ministry of Defence"
+  # MoD omitted: "mod" matches "model", "modern" etc. — full name sufficient
+
+  # Ministry of Housing, Communities and Local Government
+  - "Ministry of Housing, Communities and Local Government"
+  - "MHCLG"
+
+  # Ministry of Justice
+  - "Ministry of Justice"
+  - "MoJ"
+
+  # Northern Ireland Office
+  - "Northern Ireland Office"
+  # NIO omitted: "nio" matches "union", "opinion" etc. — full name sufficient
+
+  # Office of the Advocate General for Scotland
+  - "Office of the Advocate General for Scotland"
+
+  # Office of the Leader of the House of Commons
+  - "Office of the Leader of the House of Commons"
+
+  # Office of the Leader of the House of Lords
+  - "Office of the Leader of the House of Lords"
+
+  # Scotland Office
+  - "Scotland Office"
+  - "Office of the Secretary of State for Scotland"
+
+  # Wales Office
+  - "Wales Office"
+  - "Office of the Secretary of State for Wales"
+
+  # HMRC (non-ministerial department)
+  - "HM Revenue and Customs"
+  - "HMRC"
+
+  # Generic internal-government patterns
+  - "Civil servant"
+  - "Permanent Secretary"
+  - "Director General"
+  - "Government official"
+  - "Cabinet Secretary"
