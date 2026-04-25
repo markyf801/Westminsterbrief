@@ -168,6 +168,10 @@
                                 <span style="background:#fef9c3; color:#854d0e; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; margin-left:4px;">Government (AI)</span>
                             {% endif %}
                             <button onclick="toggleSpeeches(this, '{{ s.name | e }}')" style="font-size:11px; color:#166534; background:none; border:1px solid #166534; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View Speeches</button>
+                            {% set speech_url = s.listurl if s.listurl else (gov_speaker_links[s.name] if gov_speaker_links and s.name in gov_speaker_links else '') %}
+                            {% if speech_url %}
+                            <a href="{{ speech_url | debate_url }}" target="_blank" rel="noopener" style="font-size:11px; color:#166534; border:1px solid #166534; border-radius:4px; padding:1px 7px; margin-left:4px; text-decoration:none; white-space:nowrap;">↗ View Speech</a>
+                            {% endif %}
                             <br><span style="font-size:12px; color:#555;">{{ s.stance }}</span>
                             <div class="speech-expand" style="display:none; margin-top:8px;"></div>
                         </li>

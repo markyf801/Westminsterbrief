@@ -2239,6 +2239,7 @@ def debates_topic():
     topic_briefing = None
     topic_briefing_as_text = ""
     opp_speaker_links = {}
+    gov_speaker_links = {}
     error_message = None
     topic = ""
     narrow_keyword = ""
@@ -2496,17 +2497,24 @@ def debates_topic():
                             best = max(candidates, key=lambda x: x.get('relevance', 0))
                             balanced.append(best)
                             already_in.add(name)
-                    # Build name → URL lookup for opposition/backbench speakers so the
-                    # template can render a "View Speech" link alongside "View PQs".
+                    # Build name → URL lookups so templates can render "View Speech" links.
                     opp_speaker_links = {}
                     for r in opp_rows + other_rows:
                         name = r.get('speaker_name', '')
                         url = r.get('listurl', '')
                         if name and url and name not in opp_speaker_links:
-                            # TWFY listurls are relative — prepend domain
-                            if url and not url.startswith('http'):
+                            if not url.startswith('http'):
                                 url = 'https://www.theyworkforyou.com' + url
                             opp_speaker_links[name] = url
+
+                    gov_speaker_links = {}
+                    for r in minister_rows:
+                        name = r.get('speaker_name', '')
+                        url = r.get('listurl', '')
+                        if name and url and name not in gov_speaker_links:
+                            if not url.startswith('http'):
+                                url = 'https://www.theyworkforyou.com' + url
+                            gov_speaker_links[name] = url
                     import logging as _dlog
                     _dlog.warning(
                         f"[briefing_diag] non_minister={len(non_minister_rows)} "
@@ -2549,8 +2557,9 @@ def debates_topic():
                         "(Conservative, Liberal Democrat, SNP, Reform UK, Plaid Cymru, and any others). "
                         "Give each party's distinct stance where they differ. "
                         "Do NOT include Labour backbenchers here — Labour is the governing party.\n\n"
-                        "\"government_speakers\": Array of {\"name\", \"role\", \"stance\"} — "
-                        "only ministers, Secretaries of State, and PPSs who spoke on this topic"
+                        "\"government_speakers\": Array of {\"name\", \"role\", \"stance\", \"listurl\"} — "
+                        "only ministers, Secretaries of State, and PPSs who spoke on this topic. "
+                        "\"listurl\" must be the exact listurl from the matching DATA entry for this speaker."
                         + (f" in the context of {', '.join(selected_depts)}" if selected_depts else "")
                         + ". Include Lords ministers (e.g. Baroness X). Up to 8 entries.\n\n"
                         "\"non_government_speakers\": Array of {\"name\", \"role_or_party\", \"stance\"} — "
@@ -2742,6 +2751,7 @@ def debates_topic():
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
                            opp_speaker_links=opp_speaker_links,
+                           gov_speaker_links=gov_speaker_links,
                            start_date=start_date, end_date=end_date,
                            house_filter=house_filter,
                            narrow_keyword=narrow_keyword,
