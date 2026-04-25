@@ -18,8 +18,6 @@
 
 ## 🔴 Next Priority — AI Briefing Quality
 
-- [ ] **Key Ministerial Statements** — extract 3–5 on-record ministerial quotes from Hansard data already passed to AI; add `key_ministerial_statements` array to AI prompt; render in template with speaker, role, date, Hansard link; flows through to Word doc automatically
-- [ ] **Suggested lines to take (AI draft)** — 3–5 draft holding lines, clearly labelled as AI draft requiring official clearance; highest-value output civil servants currently write manually
 - [ ] **Inline Hansard citations** — hyperlink speaker names/quotes in AI briefing text to source Hansard column; briefing currently has links in speech cards but not in AI summary
 
 ---
@@ -110,6 +108,9 @@ Replace all upstream API dependencies with a proprietary ingestion pipeline from
 ---
 
 ## ✅ Recently Completed (Apr 2026)
+
+- [x] **Key Ministerial Statements** — `key_ministerial_statements` in AI prompt, `format_briefing_as_text()`, template, and Word doc; verbatim quotes with speaker, role, date, Hansard link; "Suggested lines to take" dropped in favour of this cited approach
+- [x] **Access tier gating** — `PAYWALL_ENABLED` / `APPROVED_DOMAINS` / `APPROVED_EMAILS` env vars; gov.uk + approved emails get `civil_servant` tier; all others hit paywall page; bypass with `PAYWALL_ENABLED=false` locally
 
 - [x] **WQ filter consistency** — relevance threshold aligned across WQ Scanner and Hansard Research (2-of-N, not all-words); count message clarified to explain filtered-out questions; "Search all departments" shortcut added
 - [x] **BETA badges** — Speech Research and Stakeholder Research tabs labelled as early development
