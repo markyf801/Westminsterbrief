@@ -23,6 +23,56 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_DIR = Path(__file__).parent.parent / 'config'
 
+_SOURCE_TYPE_DISPLAY: dict[str, str] = {
+    'oral_evidence_committee':       'Oral evidence to a select committee',
+    'government_review_role':        'Government review role',
+    'ministerial_meeting':           'Ministerial meeting',
+    'appg_secretariat':              'APPG secretariat',
+    'advisory_group_member':         'Advisory group member',
+    'expert_panel_member':           'Expert panel member',
+    'appg_officer':                  'APPG officer',
+    'cited_in_parliamentary_record': 'Named in parliamentary record',
+    'consultation_response':         'Consultation response',
+    'written_evidence_committee':    'Written evidence to a select committee',
+    'lobbying_register':             'Lobbying register entry',
+}
+
+
+def _format_date(d: date) -> str:
+    """Format a date as '15 March 2024' (no leading zero, cross-platform)."""
+    return f"{d.day} {d.strftime('%B %Y')}"
+
+
+def _build_human_explanation(
+    source_type: str,
+    engagement_date: date,
+    score: float,
+    recency_factor: float,
+    cited_bonus: float,
+    policy_area_mult: float,
+    department_mult: float,
+    reference_date: date,
+) -> str:
+    """Build a human-readable sentence explaining an engagement's score contribution."""
+    display = _SOURCE_TYPE_DISPLAY.get(source_type, source_type.replace('_', ' '))
+    date_str = 'today' if engagement_date == reference_date else _format_date(engagement_date)
+    headline = f"{display}, {date_str} — score {score:.2f}"
+
+    clauses = []
+    if recency_factor < 0.95:
+        clauses.append(f"recency × {recency_factor:.2f}")
+    if cited_bonus > 1.0:
+        clauses.append(f"cited in outcome (×{cited_bonus:.1f})")
+    if policy_area_mult > 1.0:
+        clauses.append(f"matches your policy area (×{policy_area_mult:.1f})")
+    if department_mult > 1.0:
+        clauses.append(f"matches your department (×{department_mult:.1f})")
+
+    if not clauses:
+        return f"{headline}."
+    reasons = ', '.join(clauses)
+    return f"{headline}. {reasons[0].upper() + reasons[1:]}."
+
 
 class WeightsConfigError(Exception):
     """Raised at import time if weights.yaml references an unknown source type."""
@@ -75,6 +125,7 @@ class EngagementBreakdown:
     cited_bonus: float
     policy_area_mult: float
     department_mult: float
+    human_explanation: str = ''
 
 
 @dataclass
@@ -172,6 +223,16 @@ def compute_relevance(
             cited_bonus=cited,
             policy_area_mult=pa_mult,
             department_mult=dept_mult,
+            human_explanation=_build_human_explanation(
+                source_type=eng.source_type,
+                engagement_date=eng.engagement_date,
+                score=score,
+                recency_factor=recency,
+                cited_bonus=cited,
+                policy_area_mult=pa_mult,
+                department_mult=dept_mult,
+                reference_date=reference_date,
+            ),
         ))
 
     return RelevanceResult(

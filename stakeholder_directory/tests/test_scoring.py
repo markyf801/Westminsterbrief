@@ -291,3 +291,45 @@ class TestConfigValidation:
         }
         result = _build_defaults(good_data)
         assert result['source_type_weights']['consultation_response'] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# 11. human_explanation field
+# ---------------------------------------------------------------------------
+
+class TestHumanExplanation:
+    def test_all_multipliers_produces_all_clauses(self):
+        # Old enough that recency < 0.95 (~5 years back from REF)
+        old_date = date.fromordinal(REF.toordinal() - 1825)
+        eng = _eng(
+            source_type='oral_evidence_committee',
+            engagement_date=old_date,
+            cited_in_outcome=True,
+            policy_area='education',
+            department='department_for_education',
+        )
+        query = ScoringQuery(policy_area='education', department='department_for_education')
+        result = compute_relevance(1, [eng], query, reference_date=REF)
+        expl = result.breakdown[0].human_explanation
+        assert 'recency' in expl.lower()
+        assert 'cited in outcome' in expl.lower()
+        assert 'your policy area' in expl.lower()
+        assert 'your department' in expl.lower()
+        assert 'score' in expl.lower()
+
+    def test_no_multipliers_produces_headline_only(self):
+        eng = _eng(source_type='consultation_response', engagement_date=REF)
+        result = compute_relevance(1, [eng], ScoringQuery(), reference_date=REF)
+        expl = result.breakdown[0].human_explanation
+        assert 'Consultation response' in expl
+        assert 'score 1.00' in expl
+        assert 'recency' not in expl.lower()
+        assert 'cited' not in expl.lower()
+        assert 'policy area' not in expl.lower()
+        assert 'department' not in expl.lower()
+
+    def test_today_renders_as_today(self):
+        eng = _eng(source_type='consultation_response', engagement_date=REF)
+        result = compute_relevance(1, [eng], ScoringQuery(), reference_date=REF)
+        expl = result.breakdown[0].human_explanation
+        assert ', today' in expl
