@@ -124,10 +124,20 @@ def _split_orgs(org_str: str) -> list[str]:
 # Internal government filtering
 # ---------------------------------------------------------------------------
 
-def _is_internal_government(org_name: str, internal_govt: list[str]) -> bool:
-    """True if any internal-government variant is a case-insensitive substring of org_name."""
+def _matching_internal_govt_variant(org_name: str, internal_govt: list[str]) -> str | None:
+    """Return the first internal-government variant that matches org_name as a whole word,
+    or None if no match. Matching is case-insensitive word-boundary regex."""
     name_lower = org_name.lower()
-    return any(variant.lower() in name_lower for variant in internal_govt)
+    for variant in internal_govt:
+        pattern = r'\b' + re.escape(variant.lower()) + r'\b'
+        if re.search(pattern, name_lower):
+            return variant
+    return None
+
+
+def _is_internal_government(org_name: str, internal_govt: list[str]) -> bool:
+    """True if any internal-government variant matches org_name as a whole word."""
+    return _matching_internal_govt_variant(org_name, internal_govt) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +203,7 @@ def _detect_columns(fieldnames: list[str]) -> dict[str, str | None]:
 def _write_to_staging(records: list[dict], source_url: str) -> int:
     """Insert records into staging, skipping any that already exist.
 
+    Each record must carry a '_status' key ('pending', 'rejected', or 'errored').
     Bulk-fetches existing keys for source_url to avoid N+1 queries.
     Returns count of records actually written.
     """
@@ -208,6 +219,7 @@ def _write_to_staging(records: list[dict], source_url: str) -> int:
 
     written = 0
     for rec in records:
+        status = rec.pop('_status')
         key = (rec['raw_organisation_name'], rec['minister_name'], rec['meeting_date'])
         if key in existing_keys:
             logger.debug('Skipping duplicate: %s / %s / %s', *key)
@@ -215,7 +227,7 @@ def _write_to_staging(records: list[dict], source_url: str) -> int:
         db.session.add(StagingMinisterialMeeting(
             **rec,
             ingested_at=datetime.utcnow(),
-            processing_status='pending',
+            processing_status=status,
         ))
         written += 1
 
@@ -266,7 +278,7 @@ def ingest_ministerial_meetings(
     cols = _detect_columns(list(rows[0].keys()))
 
     result = IngestionResult()
-    staging_records: list[dict] = []
+    all_records: list[dict] = []  # all rows: pending + rejected + errored
 
     for row_num, row in enumerate(rows, start=2):  # row 1 is the CSV header
         # Skip fully-blank rows
@@ -281,29 +293,64 @@ def ingest_ministerial_meetings(
         purpose_col = cols.get('purpose')
         purpose = (row.get(purpose_col) or '').strip() if purpose_col else ''
 
-        # Parse date
+        csv_row_json = json.dumps(dict(row))
+
+        # Parse date — on failure persist an errored row
         try:
             meeting_date, date_flag = _parse_date(raw_date)
         except ValueError as exc:
-            result.errors.append(f'Row {row_num}: {exc}')
+            error_msg = f'Row {row_num}: {exc}'
+            result.errors.append(error_msg)
+            all_records.append({
+                '_status': 'errored',
+                'raw_organisation_name': raw_orgs or '',
+                'minister_name': minister,
+                'department': department,
+                'meeting_date': None,
+                'meeting_purpose': purpose or None,
+                'source_url': source_url,
+                'source_csv_row': csv_row_json,
+                'processing_notes': f'date parse error: {exc}',
+            })
             continue
 
-        # Parse organisations
+        # Parse organisations — on empty persist an errored row
         orgs = _split_orgs(raw_orgs)
         if not orgs:
-            result.errors.append(
-                f'Row {row_num} ({minister}, {raw_date}): empty organisation field'
-            )
+            error_msg = f'Row {row_num} ({minister}, {raw_date}): empty organisation field'
+            result.errors.append(error_msg)
+            all_records.append({
+                '_status': 'errored',
+                'raw_organisation_name': '',
+                'minister_name': minister,
+                'department': department,
+                'meeting_date': meeting_date,
+                'meeting_purpose': purpose or None,
+                'source_url': source_url,
+                'source_csv_row': csv_row_json,
+                'processing_notes': 'empty organisation field',
+            })
             continue
 
-        csv_row_json = json.dumps(dict(row))
-
         for org_name in orgs:
-            if _is_internal_government(org_name, internal_govt):
+            matched_variant = _matching_internal_govt_variant(org_name, internal_govt)
+            if matched_variant:
                 logger.info(
-                    'Row %d: excluding internal-government attendee "%s"', row_num, org_name
+                    'Row %d: rejecting internal-government attendee "%s" (matched "%s")',
+                    row_num, org_name, matched_variant,
                 )
                 result.rows_excluded += 1
+                all_records.append({
+                    '_status': 'rejected',
+                    'raw_organisation_name': org_name,
+                    'minister_name': minister,
+                    'department': department,
+                    'meeting_date': meeting_date,
+                    'meeting_purpose': purpose or None,
+                    'source_url': source_url,
+                    'source_csv_row': csv_row_json,
+                    'processing_notes': f'excluded: internal government ("{matched_variant}")',
+                })
                 continue
 
             notes_parts = []
@@ -314,7 +361,8 @@ def ingest_ministerial_meetings(
             if notes_str:
                 result.rows_flagged += 1
 
-            staging_records.append({
+            all_records.append({
+                '_status': 'pending',
                 'raw_organisation_name': org_name,
                 'minister_name': minister,
                 'department': department,
@@ -326,7 +374,7 @@ def ingest_ministerial_meetings(
             })
             result.rows_staged += 1
 
-    if not dry_run and staging_records:
-        _write_to_staging(staging_records, source_url)
+    if not dry_run and all_records:
+        _write_to_staging(all_records, source_url)
 
     return result

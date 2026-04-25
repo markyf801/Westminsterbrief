@@ -48,7 +48,9 @@ class TestHappyPath:
         from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting
 
         ingest_ministerial_meetings(FIXTURE_CSV, DEPT, SOURCE_URL)
-        count = db.session.query(StagingMinisterialMeeting).count()
+        count = db.session.query(StagingMinisterialMeeting).filter(
+            StagingMinisterialMeeting.processing_status == 'pending'
+        ).count()
         assert count == EXPECTED_STAGED
 
 
@@ -119,7 +121,7 @@ class TestDateRangeParsing:
 # ---------------------------------------------------------------------------
 
 class TestInternalGovernmentExclusion:
-    def test_hm_treasury_not_in_staging(self, app):
+    def test_hm_treasury_staged_as_rejected(self, app):
         from extensions import db
         from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting
 
@@ -128,7 +130,9 @@ class TestInternalGovernmentExclusion:
         treasury_records = db.session.query(StagingMinisterialMeeting).filter(
             StagingMinisterialMeeting.raw_organisation_name.ilike('%treasury%')
         ).all()
-        assert treasury_records == []
+        assert len(treasury_records) == 1
+        assert treasury_records[0].processing_status == 'rejected'
+        assert 'internal government' in treasury_records[0].processing_notes.lower()
 
     def test_excluded_count_is_one(self, app):
         result = ingest_ministerial_meetings(FIXTURE_CSV, DEPT, SOURCE_URL)
@@ -165,7 +169,6 @@ class TestIdempotency:
         count_after_second = db.session.query(StagingMinisterialMeeting).count()
 
         assert count_after_first == count_after_second
-        assert count_after_second == EXPECTED_STAGED
 
 
 # ---------------------------------------------------------------------------

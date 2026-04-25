@@ -1,7 +1,10 @@
 # Westminster Brief — Project Instructions
 
 ## What this project is
-Westminster Brief (`westminsterbrief.co.uk`) is an AI-powered parliamentary research tool built for UK government officials. It lets users search Hansard, track Written Questions, analyse debates, and generate Word briefings. Deployed on Railway.
+
+Westminster Brief is a parliamentary research and stakeholder intelligence tool for UK policy professionals — built by a civil servant, free for gov.uk users.
+
+Lets users search Hansard, track Written Questions, analyse debates, research stakeholders, and generate Word briefings. Deployed on Railway at `westminsterbrief.co.uk`.
 
 ## Stack
 - **Backend:** Flask 3.0 with blueprints, deployed on Railway
@@ -10,6 +13,33 @@ Westminster Brief (`westminsterbrief.co.uk`) is an AI-powered parliamentary rese
 - **Frontend:** Jinja2 templates + vanilla JS, static CSS at `static/style.css`
 - **Auth:** Flask-Login with werkzeug password hashing
 - **Exports:** python-docx for Word document generation
+
+## Product audience and positioning
+
+Built for UK policy professionals doing parliamentary research. Primary audiences:
+
+- Civil servants writing briefings, submissions, and parliamentary returns
+- Charity and trade body policy officers researching engagement
+- Public affairs professionals tracking parliamentary activity
+- Academic researchers studying policy and Parliament
+- Journalists and engaged citizens following specific topics
+
+Civil servants are the most demanding edge case for accuracy, evidence trails, and rigorous citation — meeting their needs raises quality for everyone.
+
+**Pricing model:** free for gov.uk email addresses; paid subscription for everyone else (pricing TBD as product matures).
+
+**Feature design rule:** prefer the version that works for all five audiences to one optimised only for civil servants. Where there's genuine tension, flag it for the user — don't silently optimise for one audience over another.
+
+**Marketing language must be evidence-based.** Claims about adoption, trust, or external validation must be true and verifiable. "Built for" is fine; "trusted by" requires actual trust. Avoid "thousands of users", "industry-leading", "loved by professionals" and similar early-stage overclaim. The absence of overclaim is itself a positioning asset for a tool aimed at policy professionals — they have high BS-detection and respond well to honest framing.
+
+## Module-level design docs
+
+When working on a specific module, read its design doc first:
+
+- `stakeholder_directory/`: `docs/stakeholder-directory-design.md`
+- (others as added)
+
+Module design docs are authoritative for that module — they override general guidance in this file where they conflict. If a module-level doc and CLAUDE.md disagree, raise it rather than guessing.
 
 ## Project structure
 ```
@@ -106,24 +136,15 @@ Full instructions and known fragilities are in `C:\Users\marky\wb_tester\CLAUDE.
 - Backup files in root (bckup_flask.py etc.) and backup templates are clutter — safe to delete eventually
 - No database migration system — relies on `db.create_all()` which is fine for now
 
-## Next priority: minister-led search for selected department
+## Active work in progress
 
-**The problem (affects ALL departments, not just DfE):**
-Keyword search misses ministers whose speeches don't contain the search terms. Phase 1 (full session fetch) helps but only when the session was already found. If no speech in a session contains the keywords, the session is invisible.
+**Stakeholder directory module** — see `docs/stakeholder-directory-design.md` for full spec. Foundation phase complete (schema, vocabularies, scoring module). Next: ingester for ministerial meetings (Prompt 3 in the build plan). Module is parallel to existing tables — does not modify `StakeholderOrg`, `TrackedStakeholder`, or any existing data layer.
 
-**The proper fix:**
-When a department is selected, pull the ENTIRE ministerial team from GOV.UK, search each minister's debates via TWFY person search, merge with keyword search.
+**Hansard migration** — substantively complete. The `SEARCH_BACKEND=hansard` flag is the production path for parliamentary search; TWFY is no longer the primary data source.
 
-**Critical insight — portfolio doesn't matter:**
-In Oral Questions, whoever is at the dispatch box answers — regardless of their specific portfolio.
-MacAlister is "Minister for Children and Families" but answers ANY DfE question when present.
-Baroness Smith covers ALL DfE business in the Lords, not just Skills.
-DO NOT filter minister search by portfolio area. Search ALL ministers in the selected department.
+## Completed (recent)
 
-This is universal across departments:
-- Treasury: Reeves + all junior ministers may answer any Treasury question
-- Home Office: Cooper + juniors may answer any HO question
-- DfE: Phillipson, MacAlister, McKinnell, Morgan, Daby, Baroness Smith — any may answer repayments
+The minister-led search via Hansard backend is now in production. The original problem (keyword search missing ministers whose responses didn't contain the search terms) is resolved by the search-finds-debates → fetch-all-speeches architecture documented below.
 
 **Implementation plan:**
 1. `get_dept_minister_twfy_ids(dept_name)` — GOV.UK minister list for dept → resolve each name to TWFY person ID via Members API name match
@@ -154,11 +175,14 @@ This is implemented in `fetch_all_debate_sessions()` in `debate_scanner.py`.
 
 ## Working with the user
 
-### Who the user is
-- UK civil servant working in higher education policy, writing parliamentary briefings professionally
+### Who the user is (Mark, the developer)
+
+Note: this section describes the user *of Claude Code* — i.e. Mark, the developer. The product itself serves a wider audience (see "Product audience and positioning" above).
+
+- UK civil servant working in higher education policy
 - Knows Parliament well from the inside — knows which ministers spoke, which debates happened, which questions were tabled
-- If the tool misses something they know happened, the tool is wrong — trust their domain knowledge
-- Building this as a tool they and colleagues across government would use; thinks about it from a practitioner's perspective
+- If Mark says the tool misses something he knows happened, trust his domain knowledge — investigate the tool, don't second-guess his memory
+- Builds Westminster Brief as a side project, not a venture-backed product. Solo developer with a day job and family. Time is genuinely constrained.
 
 ### How they communicate
 - Often types quickly with typos — interpret intent, don't get hung up on spelling
@@ -218,97 +242,9 @@ This is a live, high-stakes policy area (student loan repayments is currently a 
 - Debates are the unit of meaning, not individual speeches
 - Lords ministers (e.g. Baroness Smith of Malvern) are easy to miss — name normalisation must handle "Baroness X of Y" patterns
 
-### Parliamentary debate types — full reference
+### Parliamentary debate types
 
-This is the complete taxonomy used for classifying TWFY results. Classification is two-tier: `get_debate_type()` assigns a display label; `_classify_group()` assigns a section bucket for rendering.
-
-#### TWFY source types (API-level)
-| Source code | What it is | Endpoint |
-|---|---|---|
-| `commons` | House of Commons chamber debates | `getDebates` |
-| `westminsterhall` | Westminster Hall debates | `getDebates` |
-| `lords` | House of Lords chamber debates | `getDebates` |
-| `wrans` | Written Answers to Questions | `getWrans` |
-| `wms` | Written Ministerial Statements | `getWMS` |
-
-#### Debate type classification — structural signatures
-
-Each type has a predictable structure in TWFY data. Use these to tune both detection and display:
-
-**🗣️ Oral Questions (Commons or Lords)**
-- Title pattern: `"Oral Answers to Questions — [Department]"` or `"[Department] Questions"`
-- Structure: Short question (~50 words) → minister answer (~150 words) → supplementaries (~50–100 words each)
-- Word count heuristic: max speech in group < 300 words → likely Oral Questions
-- PMQs title pattern: `"Prime Minister — Questions"` or `"Oral Answers to the Prime Minister"`
-- Lords oral questions: shorter, less structured, title often `"[Topic] — Oral Questions"`
-- Detection rule: word-count heuristic applies **Commons only** — Lords oral questions are short too but structured differently
-
-**❗ Urgent Questions**
-- Title pattern: `"[Topic] — Urgent Question"` or `"Urgent Question — [Minister name]"`
-- Structure: Short question statement (~100 words) → minister statement (~500 words) → rapid supplementaries
-- Rarer — speaker's discretion, maximum 20 mins, granted without notice
-- Often follows a news event — high relevance for policy monitoring
-
-**📜 Ministerial Statement**
-- Source `wms` OR title contains `"statement"`
-- Structure: Single long minister speech (~800–1500 words) → supplementaries from MPs/peers
-- Commons statements usually follow PMQs or urgent questions on same sitting day
-- Lords statements are separate sessions, titled `"[Topic] — Statement"`
-- Key difference from debates: minister controls the floor for the opening statement
-
-**💬 General Debate / Backbench Business**
-- Title patterns: `"[Topic]"` (bare), `"[Topic] — Motion"`, `"Backbench Business — [Topic]"`
-- Structure: Multiple speeches 5–20 mins each (~600–2500 words), minister responds at the end
-- End-of-day adjournment debates: one backbencher raises a topic, minister responds, ~30 mins total
-- Usually lower relevance for policy monitoring unless minister's closing speech is captured
-
-**🏛️ Westminster Hall**
-- All debates from this source are Westminster Hall
-- Structure: Backbencher opens (~15 mins), other MPs speak, minister responds (~10 mins)
-- Adjournment debates: single MP raises constituency/policy issue, minister responds — very short sessions
-- Title often: `"[Topic] — Westminster Hall"` or just `"[Topic]"`
-- Important for monitoring: Westminster Hall debates frequently cover niche policy areas not debated in the chamber
-
-**⚖️ Statutory Instrument / Delegated Legislation**
-- Title patterns: `"draft [X] regulations"`, `"[X] order [year]"`, `"affirmative resolution"`, `"delegated legislation"`, `"statutory instrument"`
-- Structure: Short minister opening (~300 words) → brief contributions → division or formal approval
-- Lords often has more substantive SI debates than Commons
-- Detection is title-only — word counts are unreliable (some SIs are hotly contested, some are nodded through)
-
-**⚖️ Legislation (Bills)**
-- Title patterns: `"[Bill name] — [reading]"`, `"second reading"`, `"committee stage"`, `"report stage"`, `"third reading"`, `"Lords amendments"`
-- Structure varies enormously by stage — Second Reading is set-piece speeches; Committee is clause-by-clause
-- High word counts, many speakers, long sessions
-
-**✍️ Written Answer (via Lords TWFY)**
-- Source `wrans` OR title contains `"Written Answers"` (common in Lords records)
-- Structure: Single question → single minister answer, no supplementaries
-- Lords written answers come through the `lords` TWFY source with title `"Written Answers — [Dept]: [Topic]"` — this is NOT an oral debate
-- Critical: these must NOT be classified as Oral Questions even though they appear in the lords source
-
-**📝 Motion**
-- Title contains `"motion"` — e.g. `"Opposition Day Motion"`, `"Take Note Motion"` (Lords), `"humble address"`
-- Lords Take Note motions: government introduces a topic for discussion without a vote — common for policy areas
-- Often high-quality debate content — multiple long speeches from experienced peers
-
-#### Word count guide for classification
-| Speech length | Likely type |
-|---|---|
-| < 100 words | Supplementary oral question or brief intervention |
-| 100–300 words | Oral PQ minister answer, or brief Lords oral answer |
-| 300–800 words | Urgent Question response, short ministerial statement, Westminster Hall contribution |
-| 800–1500 words | Full ministerial statement, main debate speech |
-| 1500+ words | Major debate speech, Second Reading, Budget statement |
-
-#### Title patterns to add if detection improves in future
-These debate types currently fall through to `💬 General Debate` but could be classified more precisely:
-- `"take note"` → Lords debate (low urgency)
-- `"adjournment"` → End-of-day adjournment debate (one MP + one minister)
-- `"opposition day"` → Opposition-led debate
-- `"backbench business"` → Backbench Business Committee debate
-- `"estimates day"` → Estimates debate (spending scrutiny)
-- `"ten minute rule"` → Ten-minute rule bill introduction
-- `"private member"` → Private Member's Bill
+Full taxonomy and classification rules for the debate types found in Hansard live in `docs/parliamentary-debate-types.md`. Read this when working on classification logic in the Research Tool.
 
 ### Minister substitution — a known real-world complication
 Ministers are regularly absent (illness, clashes, recess duties) and are covered by substitutes. This breaks name-based minister detection in several ways:
@@ -331,24 +267,9 @@ Ministers are regularly absent (illness, clashes, recess duties) and are covered
 - Topic search → full session fetch is MORE reliable than name search for Lords, precisely because it finds the session first and shows whoever spoke for the government in it
 - When displaying Lords results, consider flagging government peers broadly, not just the named departmental minister
 
-## ⚠️ Pre-launch checklist — complete BEFORE promoting on Google / wider marketing
+## Pre-launch checklist
 
-The site currently has `noindex, nofollow` in base.html meta tags and robots.txt blocks crawlers. Before removing these and going public, the following MUST be completed:
-
-### Legal / compliance
-- [ ] **ICO registration** — collecting email addresses from UK users requires ICO registration (~£40/year, ~10 mins at ico.org.uk). Not yet done. Must be done before public launch.
-- [ ] **Named Data Controller** — Privacy Policy and Terms must name a real person or company as the Data Controller, not just "Westminster Brief and its operators". User to supply company name + contact email.
-- [ ] **Legal basis for processing** — Privacy Policy must state Article 6 basis (likely "performance of a contract")
-- [ ] **Right to complain to ICO** — must be added to Privacy Policy (UK GDPR requirement)
-- [ ] **Register consent checkbox** — registration form needs explicit T&C + Privacy Policy acceptance checkbox
-- [ ] **ICO registration number** — add to Privacy Policy footer once registered
-- [ ] **Governing law clause** — add "governed by laws of England and Wales" to Terms
-
-### Technical / SEO
-- [ ] **robots.txt** — currently blocks all crawlers. Update to allow Googlebot when ready.
-- [ ] **Remove noindex** — `<meta name="robots" content="noindex, nofollow">` in base.html needs removing or conditional logic
-- [ ] **Google Search Console** — verify site and submit sitemap
-- [ ] **sitemap.xml** — create and register with Google
+The site currently has `noindex, nofollow` and crawler-blocked robots.txt. Full pre-launch checklist (legal/compliance and technical/SEO) lives in `docs/pre-launch-checklist.md`. Do not remove the noindex tags or update robots.txt without working through that checklist.
 
 ## API error handling rules — prevent looping
 
@@ -526,17 +447,18 @@ Currently active flags:
 
 When testing after a backend change, always state which backend is active so results are interpretable.
 
-### Known good baseline (as of 2026-04)
-The fixes applied in the April 2026 sessions resolved:
-- WQ cards showing minister answer as the question (TWFY wrans removed)
-- Duplicate WQ cards (UIN deduplication added)
-- `is_answered` incorrectly false (answer HTML stripping fixed)
-- Lords oral questions not classified correctly (title pattern + word count threshold)
-- Minister search using wrong query (now passes `expanded` not raw `topic`)
-- WMS dept filter too aggressive (now title-match based)
-- Checkboxes missing from Oral/WMS/WQ sections (added)
+### Current invariants — must hold
 
-If any of these regress, check the git log for the relevant commit.
+These behaviours have been verified working and must continue to work. If any regress, check git log for the original fix and ensure recent changes haven't broken the assumption.
+
+- WQ cards show the question text as the question, not the minister's answer
+- WQ deduplication by UIN — no duplicate cards
+- `is_answered` set correctly based on answer HTML being non-empty after stripping
+- Lords oral questions classified correctly via title pattern + word count threshold
+- Minister search uses the AI-expanded query, not the raw topic
+- WMS department filter is title-match based, not full-text
+- Checkboxes present on Oral, WMS, WQ, and Debates sections
+- Minister-led search via Hansard backend works for canonical test case (DfE + student loan repayments)
 
 ---
 

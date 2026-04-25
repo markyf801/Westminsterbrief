@@ -2237,6 +2237,8 @@ def debates_topic():
     wq_total = 0
     wq_error = False
     topic_briefing = None
+    result_counts = {}
+    result_sources = []
     topic_briefing_as_text = ""
     opp_speaker_links = {}
     gov_speaker_links = {}
@@ -2736,6 +2738,21 @@ def debates_topic():
             debate_rows = [r for grp in debate_grouped for r in grp['speeches']]
             legislation_rows = [r for grp in legislation_grouped for r in grp['speeches']]
 
+            # Result count summary for transparency bar
+            _all_grps = oral_grouped + urgent_grouped + statement_grouped + debate_grouped + legislation_grouped
+            result_sources = list(dict.fromkeys(
+                g['source_label'] for g in _all_grps if g.get('source_label')
+            ))
+            result_counts = {
+                'oral': len(oral_grouped),
+                'urgent': len(urgent_grouped),
+                'statement': len(statement_grouped),
+                'debate': len(debate_grouped),
+                'legislation': len(legislation_grouped),
+                'wq': len(wq_rows),
+                'sessions': len(_all_grps),
+            }
+
     return render_template('debate_scanner.html',
                            mode='topic',
                            topic=topic, topic_rows=topic_rows,
@@ -2762,7 +2779,8 @@ def debates_topic():
                            grouped_debates={}, departments=DEPARTMENTS_TWFY,
                            selected_dept="All Departments", selected_house="all",
                            content_type="exclude_bills", is_post=True,
-                           stakeholder_topic='')
+                           stakeholder_topic='',
+                           result_counts=result_counts, result_sources=result_sources)
 
 
 # ==========================================

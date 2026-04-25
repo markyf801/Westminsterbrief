@@ -4,3 +4,4 @@ staging_status:
   - committed
   - rejected
   - flagged
+  - errored

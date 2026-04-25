@@ -70,7 +70,7 @@ internal_government:
 
   # Ministry of Defence
   - "Ministry of Defence"
-  # MoD omitted: "mod" matches "model", "modern" etc. — full name sufficient
+  - "MoD"
 
   # Ministry of Housing, Communities and Local Government
   - "Ministry of Housing, Communities and Local Government"
@@ -82,7 +82,7 @@ internal_government:
 
   # Northern Ireland Office
   - "Northern Ireland Office"
-  # NIO omitted: "nio" matches "union", "opinion" etc. — full name sufficient
+  - "NIO"
 
   # Office of the Advocate General for Scotland
   - "Office of the Advocate General for Scotland"

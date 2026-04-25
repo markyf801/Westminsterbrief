@@ -18,7 +18,7 @@
 
 ## 🔴 Next Priority — AI Briefing Quality
 
-- [ ] **Inline Hansard citations** — hyperlink speaker names/quotes in AI briefing text to source Hansard column; briefing currently has links in speech cards but not in AI summary
+- [x] **Inline Hansard citations** — government speakers now get `↗ View Speech` link (AI returns listurl; fallback to gov_speaker_links dict); matches existing opposition speaker pattern
 
 ---
 

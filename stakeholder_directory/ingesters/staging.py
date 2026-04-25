@@ -32,7 +32,7 @@ class StagingMinisterialMeeting(db.Model):
     raw_organisation_name = db.Column(db.String(300), nullable=False, index=True)
     minister_name = db.Column(db.String(200), nullable=False)
     department = db.Column(db.String(50), nullable=False)
-    meeting_date = db.Column(db.Date, nullable=False, index=True)
+    meeting_date = db.Column(db.Date, nullable=True, index=True)
     meeting_purpose = db.Column(db.Text, nullable=True)
     source_url = db.Column(db.String(500), nullable=False)
     source_csv_row = db.Column(db.Text, nullable=False)
