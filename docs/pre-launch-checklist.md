@@ -12,6 +12,10 @@ Complete ALL of the following before removing `noindex`/`nofollow` from `base.ht
 - [ ] **ICO registration number** — add to Privacy Policy footer once registered
 - [ ] **Governing law clause** — add "governed by laws of England and Wales" to Terms
 
+## Nav / auth
+
+- [ ] **Restore Register and Sign In links** — currently hidden from the nav (`base.html` lines 41–44). Re-enable the `{% else %}` block showing Register and Sign In before public beta launch. Routes (`/register`, `/login`) are still active; only the nav links are hidden.
+
 ## Technical / SEO
 
 - [ ] **robots.txt** — currently blocks all crawlers. Update to allow Googlebot when ready.

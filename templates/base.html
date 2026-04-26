@@ -38,10 +38,8 @@
             <a href="/my_alerts" class="nav-auth-alerts {% if request.path == '/my_alerts' %}nav-active{% endif %}">👤 My Alerts</a>
             <a href="/my_preferences" {% if request.path == '/my_preferences' %}class="nav-active"{% endif %}>⚙️ Preferences</a>
             <a href="/logout" class="nav-logout">Logout</a>
-        {% else %}
-            <a href="/register" class="nav-register">Register</a>
-            <a href="/login" class="nav-login">Sign In</a>
         {% endif %}
+        {# Register and Sign In links hidden until public launch — restore for beta #}
         <span class="nav-version">{{ app_version }}</span>
     </nav>
 
