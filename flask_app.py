@@ -5,7 +5,7 @@ import requests
 import re
 import numpy as np
 from urllib.parse import urlparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, redirect, url_for, flash
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -758,6 +758,64 @@ def admin_panel():
                 db.session.rollback()
                 message = f'Error resetting failed links: {e}'
 
+        elif action == 'ingest_directory_csv':
+            import tempfile
+            csv_file = request.files.get('csv_file')
+            department = request.form.get('department', '').strip()
+            source_url = request.form.get('source_url', '').strip() or 'uploaded via admin panel'
+            if not csv_file or not csv_file.filename:
+                message = 'Error: no CSV file selected.'
+            elif not department:
+                message = 'Error: department is required.'
+            else:
+                tmp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as tmp:
+                        tmp_path = tmp.name
+                        csv_file.save(tmp_path)
+                    from stakeholder_directory.ingesters.ministerial_meetings import ingest_ministerial_meetings
+                    from stakeholder_directory.normalisation.normaliser import normalise_pending_staging
+                    from stakeholder_directory.models import IngestionRun, Organisation, Engagement
+                    import time as _time
+                    orgs_before = Organisation.query.count()
+                    eng_before = Engagement.query.count()
+                    t0 = _time.monotonic()
+                    ing = ingest_ministerial_meetings(tmp_path, department, source_url)
+                    norm = normalise_pending_staging('staging_ministerial_meeting', batch_size=2000)
+                    duration = int(_time.monotonic() - t0)
+                    orgs_after = Organisation.query.count()
+                    eng_after = Engagement.query.count()
+                    log = IngestionRun(
+                        run_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        script_invocation='admin panel upload',
+                        source_files=[csv_file.filename],
+                        department=department,
+                        rows_ingested=ing.rows_processed,
+                        rows_committed=norm.staging_records_processed,
+                        organisations_created=orgs_after - orgs_before,
+                        engagements_created=eng_after - eng_before,
+                        errors=ing.errors + norm.errors or None,
+                        duration_seconds=duration,
+                    )
+                    db.session.add(log)
+                    db.session.commit()
+                    message = (
+                        f'Done in {duration}s. '
+                        f'Rows processed: {ing.rows_processed} '
+                        f'(staged {ing.rows_staged}, excluded {ing.rows_excluded}, '
+                        f'nil-return skipped {ing.skipped_nil_return}). '
+                        f'Normalised: {norm.staging_records_processed} staging rows — '
+                        f'new orgs: {orgs_after - orgs_before}, '
+                        f'new engagements: {eng_after - eng_before}. '
+                        f'Errors: {len(ing.errors) + len(norm.errors)}.'
+                    )
+                except Exception as e:
+                    db.session.rollback()
+                    message = f'Ingestion error: {e}'
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+
     # --- Build cache status ---
     minister_status = {}
     try:
@@ -788,13 +846,30 @@ def admin_panel():
 
     member_link_stats = MemberLink.stats()
 
+    # --- Directory stats ---
+    dir_stats = {}
+    try:
+        import yaml
+        from stakeholder_directory.models import Organisation, Engagement, IngestionRun
+        dir_stats['org_count'] = Organisation.query.count()
+        dir_stats['eng_count'] = Engagement.query.count()
+        last_run = IngestionRun.query.order_by(IngestionRun.run_at.desc()).first()
+        dir_stats['last_run'] = last_run
+        with open(os.path.join(os.path.dirname(__file__), 'config', 'departments.yaml')) as f:
+            dept_yaml = yaml.safe_load(f)
+        dir_stats['departments'] = {k: v['name'] for k, v in dept_yaml.get('departments', {}).items()}
+    except Exception:
+        dir_stats = {'org_count': 0, 'eng_count': 0, 'last_run': None, 'departments': {}}
+
     return render_template('admin.html',
                            message=message,
                            minister_status=minister_status,
                            twfy_total=twfy_total,
                            twfy_session=twfy_session,
                            twfy_keyword=twfy_keyword,
-                           member_link_stats=member_link_stats)
+                           member_link_stats=member_link_stats,
+                           dir_stats=dir_stats,
+                           admin_token=token)
 
 
 # ==========================================

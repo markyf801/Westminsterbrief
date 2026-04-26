@@ -80,6 +80,55 @@
     {% endif %}
   </div>
 
+  <!-- ── Directory Ingestion ─────────────────────────────────────── -->
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+    <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — CSV Ingestion</h3>
+
+    <table style="width:100%; font-size:0.85rem; border-collapse:collapse; margin-bottom:14px;">
+      <tr><td style="padding:4px 0; color:#555;">Organisations</td><td style="font-weight:600;">{{ dir_stats.org_count }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Engagements</td><td style="font-weight:600;">{{ dir_stats.eng_count }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Last run</td>
+        <td style="font-weight:600;">
+          {% if dir_stats.last_run %}
+            {{ dir_stats.last_run.run_at.strftime('%Y-%m-%d %H:%M') }} UTC —
+            {{ dir_stats.last_run.rows_ingested or 0 }} rows from {{ dir_stats.last_run.department or '?' }}
+          {% else %}Never{% endif %}
+        </td>
+      </tr>
+    </table>
+
+    <form method="post" action="?token={{ admin_token }}" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="ingest_directory_csv">
+
+      <div style="margin-bottom:12px;">
+        <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">CSV file (GOV.UK ministerial meetings transparency CSV)</label>
+        <input type="file" name="csv_file" accept=".csv"
+               style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%;">
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Department</label>
+        <select name="department" style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%;">
+          <option value="">— select —</option>
+          {% for key, name in dir_stats.departments.items() %}
+            <option value="{{ key }}">{{ name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Source URL <span style="font-weight:400; color:#888;">(optional — GOV.UK page this CSV came from)</span></label>
+        <input type="text" name="source_url" placeholder="https://www.gov.uk/government/collections/..."
+               style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
+      </div>
+
+      <button type="submit"
+              style="background:#1c3e6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
+        Upload &amp; Ingest
+      </button>
+    </form>
+  </div>
+
   <!-- Clear Everything -->
   <div style="border:1px solid #ffcdd2; border-radius:8px; padding:20px; background:#fff9f9;">
     <h3 style="font-size:1rem; margin:0 0 8px; color:#c62828;">Clear Everything</h3>
