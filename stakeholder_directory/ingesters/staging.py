@@ -37,7 +37,7 @@ class StagingCommitteeEvidence(db.Model):
     publication_date = db.Column(db.Date, nullable=True, index=True)
     inquiry_id = db.Column(db.String(100), nullable=True)
     inquiry_title = db.Column(db.String(500), nullable=True)
-    raw_organisation_name = db.Column(db.String(300), nullable=False, index=True)
+    raw_organisation_name = db.Column(db.Text, nullable=False, index=True)
     attendee_role = db.Column(db.String(500), nullable=True)
     source_url = db.Column(db.String(500), nullable=False)
     processing_status = db.Column(db.String(30), nullable=False, default='pending')
@@ -96,7 +96,7 @@ class StagingMinisterialMeeting(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    raw_organisation_name = db.Column(db.String(300), nullable=False, index=True)
+    raw_organisation_name = db.Column(db.Text, nullable=False, index=True)
     minister_name = db.Column(db.String(200), nullable=False)
     department = db.Column(db.String(50), nullable=False)
     meeting_date = db.Column(db.Date, nullable=True, index=True)
