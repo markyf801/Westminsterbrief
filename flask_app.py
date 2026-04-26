@@ -161,7 +161,8 @@ def load_user(user_id):
 # Import cache models so their tables are created
 from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedTWFYSearch, MemberLink, StakeholderOrg
 # Register stakeholder directory models with SQLAlchemy metadata before db.create_all()
-import stakeholder_directory.models  # noqa: F401
+import stakeholder_directory.models          # noqa: F401
+import stakeholder_directory.ingesters.staging  # noqa: F401
 
 # ==========================================
 # 4. AUTO-BUILD DATABASE
