@@ -8,7 +8,6 @@ Routes:
 """
 import re
 from flask import Blueprint, render_template, request, abort
-from flask_login import login_required
 from sqlalchemy import func
 from extensions import db
 from stakeholder_directory.models import Organisation, Alias, Engagement, Flag
@@ -62,7 +61,6 @@ def _engagement_stats(org_ids: list) -> dict:
 
 
 @directory_bp.route('')
-@login_required
 def index():
     total_orgs = db.session.query(func.count(Organisation.id)).scalar() or 0
     total_engs = db.session.query(func.count(Engagement.id)).scalar() or 0
@@ -83,7 +81,6 @@ def index():
 
 
 @directory_bp.route('/search')
-@login_required
 def search():
     q = (request.args.get('q') or '').strip()
     sort = request.args.get('sort', 'engagement_count_desc')
@@ -198,7 +195,6 @@ def search():
 
 
 @directory_bp.route('/org/<int:org_id>')
-@login_required
 def organisation(org_id):
     org = db.session.get(Organisation, org_id)
     if org is None:

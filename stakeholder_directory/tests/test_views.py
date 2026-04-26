@@ -153,10 +153,11 @@ class TestDirectoryIndex:
             resp = client.get('/directory')
             assert b'1' in resp.data  # 1 org seeded
 
-    def test_anonymous_access_redirects(self, view_app_auth_required):
-        with view_app_auth_required.test_client() as client:
+    def test_anonymous_access_allowed(self, view_app):
+        # Directory is public — no login required
+        with view_app.test_client() as client:
             resp = client.get('/directory')
-            assert resp.status_code == 302
+            assert resp.status_code == 200
 
 
 class TestDirectorySearch:
