@@ -80,6 +80,12 @@ def load_internal_government() -> list[str]:
     return list(data.get('internal_government') or [])
 
 
+def load_distinct_pairs() -> list[list[str]]:
+    """Return the list of known-distinct org name pairs from distinct_orgs.yaml."""
+    data = _load_yaml('distinct_orgs.yaml')
+    return list(data.get('distinct_org_pairs') or [])
+
+
 # --- Runtime vocabulary guard ---
 
 class VocabularyNotReadyError(Exception):

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Stakeholder Directory — Westminster Brief{% endblock %}
+{% block meta_description %}Search UK policy organisations that engage with Parliament and government. Browse ministerial meetings, committee evidence, and lobbying register data.{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='stakeholder_directory.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="box">
+    <div style="display:flex; align-items:baseline; gap:10px; margin-bottom:6px;">
+        <h1 style="margin-bottom:0;">Stakeholder Directory</h1>
+        <span class="badge-beta">BETA</span>
+    </div>
+    <p style="color:#555; margin-bottom:20px; font-size:15px;">
+        Search {{ "{:,}".format(total_orgs) }} organisations with recorded engagement with Parliament and government —
+        ministerial meetings, select committee evidence, and lobbying register entries.
+    </p>
+
+    <form action="{{ url_for('directory.search') }}" method="GET" id="dir-search-form">
+        <div class="form-row" style="align-items:flex-end;">
+            <div class="form-group" style="flex:1;">
+                <label class="form-label" for="dir-q">Organisation name</label>
+                <input type="text" id="dir-q" name="q" placeholder="e.g. Universities UK, Ofsted, CBI, NASUWT…"
+                       autocomplete="off" style="margin-bottom:0;">
+            </div>
+            <div style="padding-bottom:0;">
+                <button type="submit" class="btn btn-primary">Search</button>
+            </div>
+        </div>
+    </form>
+    <p style="font-size:12.5px; color:#888; margin-top:8px;">
+        Minimum 3 characters. Matches organisation names and known aliases.
+    </p>
+</div>
+
+<div class="box">
+    <h3 style="margin-bottom:16px;">Directory at a glance</h3>
+    <div class="dir-stats-row">
+        <div class="dir-stat-card">
+            <div class="dir-stat-number">{{ "{:,}".format(total_orgs) }}</div>
+            <div class="dir-stat-label">Organisations</div>
+        </div>
+        <div class="dir-stat-card">
+            <div class="dir-stat-number">{{ "{:,}".format(total_engs) }}</div>
+            <div class="dir-stat-label">Engagement records</div>
+        </div>
+    </div>
+
+    {% if source_counts %}
+    <table class="dir-source-table">
+        <thead>
+            <tr>
+                <th>Source</th>
+                <th style="text-align:right;">Records</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in source_counts %}
+            <tr>
+                <td>
+                    <span class="badge-st {{ source_color.get(row.source_type, 'badge-st-grey') }}">
+                        {{ source_labels.get(row.source_type, row.source_type) }}
+                    </span>
+                </td>
+                <td style="text-align:right; font-variant-numeric:tabular-nums; color:#444;">
+                    {{ "{:,}".format(row.n) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <p style="font-size:12.5px; color:#888; margin-top:12px; margin-bottom:0;">
+        Data coverage: Department for Education pilot — ministerial meetings 2025, select committee evidence 2024–2025, lobbying register Q4 2022.
+        Additional departments and quarters will be added progressively.
+    </p>
+</div>
+{% endblock %}

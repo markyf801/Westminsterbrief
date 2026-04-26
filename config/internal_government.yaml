@@ -105,9 +105,10 @@ internal_government:
   - "HM Revenue and Customs"
   - "HMRC"
 
-  # Generic internal-government patterns
+  # Generic internal-government patterns.
+  # NOTE: "Director General", "Permanent Secretary", and "Cabinet Secretary" are
+  # intentionally omitted — external organisations (Council of Europe DGs, NHS
+  # Trust Permanent Secretaries, etc.) use the same job titles. Full department
+  # names above are sufficient to catch actual UK civil-servant attendees.
   - "Civil servant"
-  - "Permanent Secretary"
-  - "Director General"
   - "Government official"
-  - "Cabinet Secretary"

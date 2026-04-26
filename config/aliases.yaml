@@ -1,3 +1,26 @@
-# Populated as normalisation edge cases surface during ingestion.
-# Format: canonical_name: [alias1, alias2, ...]
-aliases: {}
+# Canonical name -> list of known aliases (case-insensitive matching applied).
+# Expand this list as ingesters surface new aliases in real data.
+aliases:
+  Universities UK:
+    - UUK
+  Royal College of General Practitioners:
+    - RCGP
+  Royal College of Nursing:
+    - RCN
+  British Medical Association:
+    - BMA
+  Trades Union Congress:
+    - TUC
+  Confederation of British Industry:
+    - CBI
+  National Education Union:
+    - NEU
+  National Association of Schoolmasters Union of Women Teachers:
+    - NASUWT
+  Association of Colleges:
+    - AoC
+  Russell Group:
+    - The Russell Group
+  HM Treasury:
+    - Treasury
+    - HMT

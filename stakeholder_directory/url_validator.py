@@ -15,6 +15,15 @@ Full implementation will add:
   still create the record
 - On parked-domain signatures: raise url_parked flag
 - Log results to url_validation_log table (reserved for revalidation passes)
+
+IMPORTANT — source_url must also be validated. This function is currently
+called on canonical_url and evidence_url. The full implementation must also
+be called on engagement source_url values at ingestion time. Non-200
+responses on source_url should raise url_dead flags on the engagement record.
+The DfE pilot ingest demonstrated the consequence of skipping this: broken
+committee evidence URLs (missing /html/ suffix) and non-resolving ministerial
+meeting URLs were stored silently and required manual post-hoc discovery.
+See docs/stakeholder-directory-design.md Section 7 for full spec.
 """
 import logging
 from dataclasses import dataclass

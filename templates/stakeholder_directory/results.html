@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}{% if q %}{{ q }} — {% endif %}Directory Search — Westminster Brief{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='stakeholder_directory.css') }}">
+{% endblock %}
+
+{% block content %}
+
+{# ── Search bar ─────────────────────────────────────────────────────────── #}
+<div class="box" style="padding:18px 24px;">
+    <form action="{{ url_for('directory.search') }}" method="GET" id="dir-search-form">
+        <div class="form-row" style="align-items:flex-end; margin-bottom:10px;">
+            <div class="form-group" style="flex:1; margin-bottom:0;">
+                <input type="text" name="q" value="{{ q }}" placeholder="Search organisations…"
+                       autocomplete="off" style="margin-bottom:0; font-size:15px;">
+            </div>
+            <div>
+                <button type="submit" class="btn btn-primary">Search</button>
+            </div>
+            <div>
+                <a href="{{ url_for('directory.index') }}" class="btn btn-muted">Clear</a>
+            </div>
+        </div>
+
+        {# Filters (collapsed when no active filters) #}
+        <details {% if source_types_filter or date_from or date_to %}open{% endif %}
+                 style="font-size:13.5px; color:#555;">
+            <summary style="cursor:pointer; font-weight:600; color:#1c3e6e;">Filters &amp; sort</summary>
+            <div style="padding-top:12px; display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start;">
+                <div>
+                    <label class="form-label" style="font-size:12.5px;">Source type</label>
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:2px;">
+                        {% for st in all_source_types %}
+                        <label style="display:flex; align-items:center; gap:5px; font-size:13px; cursor:pointer; font-weight:400;">
+                            <input type="checkbox" name="source_types" value="{{ st }}"
+                                   {% if st in source_types_filter %}checked{% endif %}>
+                            <span class="badge-st {{ source_color.get(st, 'badge-st-grey') }}">
+                                {{ source_labels.get(st, st) }}
+                            </span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
+                    <label class="form-label" style="font-size:12.5px;">From</label>
+                    <input type="date" name="date_from" value="{{ date_from }}"
+                           style="width:150px; margin-bottom:0; font-size:13px; padding:6px 10px;">
+                </div>
+                <div>
+                    <label class="form-label" style="font-size:12.5px;">To</label>
+                    <input type="date" name="date_to" value="{{ date_to }}"
+                           style="width:150px; margin-bottom:0; font-size:13px; padding:6px 10px;">
+                </div>
+                <div>
+                    <label class="form-label" style="font-size:12.5px;">Sort by</label>
+                    <select name="sort" style="width:200px; margin-bottom:0; font-size:13px; padding:6px 10px;">
+                        <option value="engagement_count_desc" {% if sort == 'engagement_count_desc' %}selected{% endif %}>
+                            Most engagements
+                        </option>
+                        <option value="most_recent" {% if sort == 'most_recent' %}selected{% endif %}>
+                            Most recent
+                        </option>
+                        <option value="name_asc" {% if sort == 'name_asc' %}selected{% endif %}>
+                            Name (A–Z)
+                        </option>
+                    </select>
+                </div>
+            </div>
+        </details>
+    </form>
+</div>
+
+{# ── Error / empty states ────────────────────────────────────────────────── #}
+{% if error %}
+<div class="info-box" style="border-left-color:#d97706; background:#fffbeb;">
+    ⚠️ {{ error }}
+</div>
+{% elif q and total == 0 and not did_you_mean %}
+<div class="box" style="text-align:center; padding:40px 24px;">
+    <p style="font-size:16px; color:#555; margin-bottom:8px;">
+        No organisations found matching <strong>{{ q }}</strong>.
+    </p>
+    <p style="font-size:14px; color:#888;">Try a different search term, or
+        <a href="{{ url_for('directory.index') }}" style="color:#005a8f;">browse the directory</a>.
+    </p>
+</div>
+{% elif did_you_mean %}
+<div class="box">
+    <p style="color:#555; margin-bottom:10px;">
+        No exact matches for <strong>{{ q }}</strong>. Did you mean:
+    </p>
+    <ul style="list-style:none; padding:0; margin:0; display:flex; flex-wrap:wrap; gap:8px;">
+        {% for suggestion in did_you_mean %}
+        <li>
+            <a href="{{ url_for('directory.search', q=suggestion) }}"
+               style="display:inline-block; padding:6px 14px; background:#f0f7ff;
+                      border:1.5px solid #b3d4f0; border-radius:20px; color:#005a8f;
+                      font-weight:600; text-decoration:none; font-size:14px;">
+                {{ suggestion }}
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{# ── Results ─────────────────────────────────────────────────────────────── #}
+{% if results %}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; color:#555; font-size:14px;">
+    <span>
+        <strong>{{ "{:,}".format(total) }}</strong> organisation{{ 's' if total != 1 }} found for
+        <strong>{{ q }}</strong>
+    </span>
+    {% if pages > 1 %}
+    <span>Page {{ page }} of {{ pages }}</span>
+    {% endif %}
+</div>
+
+{% for r in results %}
+<div class="result-card dir-org-card">
+    <div class="result-card-header">
+        <div style="flex:1; min-width:0;">
+            <a href="{{ url_for('directory.organisation', org_id=r.org.id) }}"
+               class="dir-org-name">
+                {{ r.org.canonical_name }}
+                {% if r.exact_match %}
+                <span class="dir-exact-badge">exact</span>
+                {% endif %}
+            </a>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+            <span class="dir-eng-count" title="{{ r.engagement_count }} engagement records">
+                {{ r.engagement_count }} engagement{{ 's' if r.engagement_count != 1 }}
+            </span>
+        </div>
+    </div>
+    <div class="result-card-body" style="padding-top:10px; padding-bottom:12px;">
+        <div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:8px;">
+            {% for st in r.source_types %}
+            <span class="badge-st {{ source_color.get(st, 'badge-st-grey') }}">
+                {{ source_labels.get(st, st) }}
+            </span>
+            {% endfor %}
+        </div>
+        {% if r.latest_date %}
+        <div style="font-size:12.5px; color:#888;">
+            Latest engagement: {{ r.latest_date.strftime('%d %b %Y') if r.latest_date else '—' }}
+        </div>
+        {% endif %}
+        <a href="{{ url_for('directory.organisation', org_id=r.org.id) }}"
+           class="result-card-link">View organisation →</a>
+    </div>
+</div>
+{% endfor %}
+
+{# ── Pagination ───────────────────────────────────────────────────────────── #}
+{% if pages > 1 %}
+<div class="dir-pagination">
+    {% if page > 1 %}
+    <a href="{{ url_for('directory.search', q=q, page=page-1, sort=sort,
+               source_types=source_types_filter, date_from=date_from, date_to=date_to) }}"
+       class="btn btn-muted" style="font-size:13px; padding:8px 16px;">← Previous</a>
+    {% endif %}
+    <span style="font-size:13px; color:#555;">Page {{ page }} / {{ pages }}</span>
+    {% if page < pages %}
+    <a href="{{ url_for('directory.search', q=q, page=page+1, sort=sort,
+               source_types=source_types_filter, date_from=date_from, date_to=date_to) }}"
+       class="btn btn-muted" style="font-size:13px; padding:8px 16px;">Next →</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% elif not error and not did_you_mean and q %}
+{# handled above #}
+{% endif %}
+
+{% endblock %}

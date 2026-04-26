@@ -127,34 +127,56 @@ def morning_tracker():
         results = []
 
         try:
-            # Fetch the most recent sitting day's questions for the selected dept.
-            # Try yesterday first; fall back up to 14 days to cover weekends/recess.
+            # WQ API quirks (verified by experiment, see commits 12851b6 → 5a2f5d5):
+            #
+            # 1. tabledStartDate / tabledEndDate are silently ignored — pass them but
+            #    don't rely on them. The API returns results regardless.
+            #
+            # 2. answeringBodies parameter causes 30s+ timeouts. Do not pass it.
+            #    Filter by department client-side instead.
+            #
+            # 3. Results are returned in UIN-descending order (most recently tabled
+            #    first). This lets us fetch take=500 and use max(tabled_dates) to
+            #    reliably identify the most recent sitting day.
+            #
+            # Do not reintroduce answeringBodies or shift to a date-filter-based
+            # approach without verifying these behaviours have changed on Parliament's
+            # end. Both have caused regressions in past changes.
             wq_url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
-            data = []
-            for days_back in range(1, 15):
-                day = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-                params = {
-                    'take': 200,
-                    'tabledStartDate': day,
-                    'tabledEndDate': day,
-                }
-                if selected_dept:
-                    params['answeringBodies'] = [int(selected_dept)]
-                try:
-                    resp = requests.get(wq_url, params=params, timeout=20)
-                    if resp.status_code == 200:
-                        raw = resp.json().get('results') or []
-                        if raw:
-                            # Deduplicate by UIN — API can return same question twice
-                            seen_uins = set()
-                            for item in raw:
-                                uin = str((item.get('value') or {}).get('uin', ''))
-                                if uin and uin not in seen_uins:
-                                    seen_uins.add(uin)
-                                    data.append(item)
-                            break  # found a sitting day with results — stop looking back
-                except Exception:
-                    pass
+            window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            params = {
+                'take': 500,
+                'tabledStartDate': window_start,
+                'tabledEndDate': yesterday,
+            }
+            resp = requests.get(wq_url, params=params, timeout=30)
+            data = resp.json().get('results') or [] if resp.status_code == 200 else []
+
+            # Deduplicate by UIN — API can return the same question more than once
+            seen_uins: set = set()
+            deduped = []
+            for item in data:
+                uin = str((item.get('value') or {}).get('uin', ''))
+                if uin and uin not in seen_uins:
+                    seen_uins.add(uin)
+                    deduped.append(item)
+            data = deduped
+
+            # Identify the most recent sitting day from the returned results.
+            # Because results are UIN-descending, max(tabled_dates) is the last
+            # day Parliament tabled questions — i.e. the previous sitting day.
+            tabled_dates = [
+                (item.get('value') or {}).get('dateTabled', '').split('T')[0]
+                for item in data
+                if (item.get('value') or {}).get('dateTabled')
+            ]
+            last_tabled_day = max(tabled_dates) if tabled_dates else ''
+            if last_tabled_day:
+                data = [item for item in data
+                        if (item.get('value') or {}).get('dateTabled', '').split('T')[0] == last_tabled_day]
+            else:
+                data = []
 
             m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
             with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:

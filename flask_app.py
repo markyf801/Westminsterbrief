@@ -53,6 +53,7 @@ from biography import biography_bp
 from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
 from mp_search import mp_search_bp
+from stakeholder_directory.views import directory_bp
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -804,6 +805,7 @@ app.register_blueprint(biography_bp)
 app.register_blueprint(tracker_bp)
 app.register_blueprint(debate_scanner_bp)
 app.register_blueprint(mp_search_bp)
+app.register_blueprint(directory_bp)
 
 @app.context_processor
 def inject_version():

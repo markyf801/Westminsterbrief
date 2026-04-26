@@ -28,14 +28,40 @@ if _PROJECT_ROOT not in sys.path:
 # Table creation (idempotent)
 # ---------------------------------------------------------------------------
 
+def _add_column_if_missing(engine, table_name: str, column_name: str, column_type: str) -> None:
+    """Add a column to an existing table if it is not already present.
+
+    Safe on both SQLite and PostgreSQL. No-ops if the table or column already exists.
+    """
+    from sqlalchemy import text, inspect as sa_inspect
+    try:
+        insp = sa_inspect(engine)
+        if not insp.has_table(table_name):
+            return  # table will be created with the column by db.create_all()
+        existing = [c['name'] for c in insp.get_columns(table_name)]
+        if column_name not in existing:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {column_type}'
+                ))
+            print(f'  Added column {column_name} to {table_name}')
+    except Exception as exc:
+        print(f'  WARNING: Could not add column {column_name} to {table_name}: {exc}')
+
+
 def run_migrations(app):
     """Create all stakeholder_directory tables. Safe to call on every startup."""
     from extensions import db
-    import stakeholder_directory.models  # noqa: F401 — registers models with db.metadata
+    import stakeholder_directory.models  # noqa: F401 — registers Organisation, Alias, Engagement, Flag, IngestionRun
     import stakeholder_directory.ingesters.staging  # noqa: F401 — registers staging models
 
     with app.app_context():
         db.create_all()
+        # Committee evidence columns added to Engagement in Prompt 6 (May 2026).
+        # These ALTER TABLE calls are no-ops if the columns already exist (fresh DB)
+        # or if the table was created after the model update.
+        _add_column_if_missing(db.engine, 'sd_engagement', 'committee_id', 'INTEGER')
+        _add_column_if_missing(db.engine, 'sd_engagement', 'committee_name', 'VARCHAR(200)')
         print('[stakeholder_directory] tables: OK (created or already existed)')
 
 

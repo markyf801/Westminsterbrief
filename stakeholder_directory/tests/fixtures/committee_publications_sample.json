@@ -1,0 +1,212 @@
+{
+  "_description": "Fixture data for committee evidence ingester tests (Prompt 6).",
+
+  "committees": {
+    "totalResults": 2,
+    "items": [
+      {
+        "id": 203,
+        "name": "Education, Children and Families Committee",
+        "displayName": "Education, Children and Families Committee",
+        "house": "Commons",
+        "isCurrentCommittee": true
+      },
+      {
+        "id": 127,
+        "name": "Public Accounts Committee",
+        "displayName": "Public Accounts Committee",
+        "house": "Commons",
+        "isCurrentCommittee": true
+      }
+    ]
+  },
+
+  "oral_evidence_happy_path": {
+    "totalResults": 1,
+    "items": [
+      {
+        "id": 10001,
+        "publicationDate": "2026-01-15T00:00:00",
+        "committeeBusinesses": [
+          {"id": 5001, "title": "Student Finance Inquiry"}
+        ],
+        "witnesses": [
+          {
+            "id": 101,
+            "name": "Universities UK",
+            "submitterType": "Organisation",
+            "organisations": [
+              {"name": "Universities UK", "role": ""}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+
+  "written_evidence_happy_path": {
+    "totalResults": 1,
+    "items": [
+      {
+        "id": 20001,
+        "publicationDate": "2026-01-20T00:00:00",
+        "committeeBusiness": {
+          "id": 5002,
+          "title": "Research Funding Inquiry"
+        },
+        "witnesses": [
+          {
+            "id": 201,
+            "name": "National Union of Students",
+            "submitterType": "Organisation",
+            "organisations": [
+              {"name": "National Union of Students", "role": ""}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+
+  "oral_evidence_multi_org": {
+    "totalResults": 1,
+    "items": [
+      {
+        "id": 10002,
+        "publicationDate": "2026-02-01T00:00:00",
+        "committeeBusinesses": [
+          {"id": 5003, "title": "Schools Funding Inquiry"}
+        ],
+        "witnesses": [
+          {
+            "id": 102,
+            "name": "NAHT; NASUWT",
+            "submitterType": "Organisation",
+            "organisations": [
+              {"name": "NAHT; NASUWT", "role": ""}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+
+  "oral_evidence_internal_govt": {
+    "totalResults": 1,
+    "items": [
+      {
+        "id": 10003,
+        "publicationDate": "2026-02-10T00:00:00",
+        "committeeBusinesses": [
+          {"id": 5004, "title": "DfE Budget Scrutiny"}
+        ],
+        "witnesses": [
+          {
+            "id": 103,
+            "name": "Department for Education",
+            "submitterType": "Organisation",
+            "organisations": [
+              {"name": "Department for Education", "role": ""}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+
+  "oral_evidence_page1": {
+    "totalResults": 3,
+    "items": [
+      {
+        "id": 10010,
+        "publicationDate": "2026-01-10T00:00:00",
+        "committeeBusinesses": [{"id": 5010, "title": "Pagination Inquiry"}],
+        "witnesses": [
+          {
+            "id": 110,
+            "name": "Pagination Org Alpha",
+            "submitterType": "Organisation",
+            "organisations": [{"name": "Pagination Org Alpha", "role": ""}]
+          }
+        ]
+      },
+      {
+        "id": 10011,
+        "publicationDate": "2026-01-11T00:00:00",
+        "committeeBusinesses": [{"id": 5010, "title": "Pagination Inquiry"}],
+        "witnesses": [
+          {
+            "id": 111,
+            "name": "Pagination Org Beta",
+            "submitterType": "Organisation",
+            "organisations": [{"name": "Pagination Org Beta", "role": ""}]
+          }
+        ]
+      }
+    ]
+  },
+
+  "oral_evidence_page2": {
+    "totalResults": 3,
+    "items": [
+      {
+        "id": 10012,
+        "publicationDate": "2026-01-12T00:00:00",
+        "committeeBusinesses": [{"id": 5010, "title": "Pagination Inquiry"}],
+        "witnesses": [
+          {
+            "id": 112,
+            "name": "Pagination Org Gamma",
+            "submitterType": "Organisation",
+            "organisations": [{"name": "Pagination Org Gamma", "role": ""}]
+          }
+        ]
+      }
+    ]
+  },
+
+  "oral_evidence_empty_witnesses": {
+    "totalResults": 1,
+    "items": [
+      {
+        "id": 10020,
+        "publicationDate": "2026-01-05T00:00:00",
+        "committeeBusinesses": [{"id": 5020, "title": "Preliminary Session"}],
+        "witnesses": []
+      }
+    ]
+  },
+
+  "oral_evidence_individual_with_org": {
+    "totalResults": 1,
+    "items": [
+      {
+        "id": 10030,
+        "publicationDate": "2026-03-01T00:00:00",
+        "committeeBusinesses": [
+          {"id": 5030, "title": "Higher Education Inquiry"}
+        ],
+        "witnesses": [
+          {
+            "id": 130,
+            "name": "Prof. Brian Cox",
+            "submitterType": "Individual",
+            "organisations": [
+              {"name": "University of Manchester", "role": "Professor of Physics"}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+
+  "oral_evidence_empty": {
+    "totalResults": 0,
+    "items": []
+  },
+
+  "written_evidence_empty": {
+    "totalResults": 0,
+    "items": []
+  }
+}

@@ -104,8 +104,12 @@ class Engagement(db.Model):
     engagement_date = db.Column(db.Date, nullable=False, index=True)
     evidence_url = db.Column(db.String(500), nullable=True)
     inquiry_id = db.Column(db.String(200), nullable=True)
+    committee_id = db.Column(db.Integer, nullable=True)
+    committee_name = db.Column(db.String(200), nullable=True)
     cited_in_outcome = db.Column(db.Boolean, nullable=False, default=False)
     engagement_depth = db.Column(db.String(50), nullable=True)
+    engagement_subject = db.Column(db.Text, nullable=True)
+    inquiry_status = db.Column(db.String(20), nullable=True)
     ingested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     ingester_source = db.Column(db.String(100), nullable=False)
 
@@ -164,3 +168,23 @@ class Flag(db.Model):
     raised_by = db.Column(db.String(100), nullable=False)
     resolved = db.Column(db.Boolean, nullable=False, default=False)
     resolved_at = db.Column(db.DateTime, nullable=True)
+
+
+class IngestionRun(db.Model):
+    """Audit log — one row per end-to-end pipeline execution."""
+    __tablename__ = 'sd_ingestion_run'
+
+    id = db.Column(db.Integer, primary_key=True)
+    run_at = db.Column(db.DateTime, nullable=False, index=True)
+    script_invocation = db.Column(db.String(500), nullable=True)
+    source_files = db.Column(db.JSON, nullable=True)
+    department = db.Column(db.String(50), nullable=True)
+    rows_ingested = db.Column(db.Integer, nullable=True)
+    rows_committed = db.Column(db.Integer, nullable=True)
+    organisations_created = db.Column(db.Integer, nullable=True)
+    engagements_created = db.Column(db.Integer, nullable=True)
+    aliases_created = db.Column(db.Integer, nullable=True)
+    flags_created = db.Column(db.Integer, nullable=True)
+    errors = db.Column(db.JSON, nullable=True)
+    duration_seconds = db.Column(db.Integer, nullable=True)
+    notes = db.Column(db.Text, nullable=True)

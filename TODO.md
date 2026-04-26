@@ -35,7 +35,6 @@
 ## 🟠 Word Document / AI Briefing Quality
 
 - [ ] **Cross-party breakdown** — verify SNP, LibDem, Crossbench are consistently surfaced in Opposition Position section, not collapsed into binary govt/opposition
-- [ ] **HMG minute structure** — reformat AI briefing sections to match civil service minute: Purpose / Key Facts / Parliamentary Record / Lines to Take / Background
 - [ ] **Urgency classification in Word doc** — surface "URGENT QUESTION" badge more prominently in Word doc (classification exists, not visible enough)
 
 ---
@@ -54,21 +53,34 @@
 
 - [ ] **Real-time PQ & Hansard alerts** — email digest (daily/immediate) when new PQs tabled on keyword or by named MP; needs background scheduler (Railway cron or Celery); single biggest competitive gap vs Dods/DeHavilland
 - [ ] **EDM tracker** — Early Day Motions; primary formal backbench signalling mechanism; Parliament EDMs API available
-- [ ] **Select Committee evidence tracker** — oral + written evidence; transcripts; report publication alerts
+- [ ] **Select Committee evidence tracker** — oral + written evidence; transcripts; report publication alerts. Plan saved at `docs/select-committee-plan.md`. API confirmed: `committees-api.parliament.uk` public, no auth. New standalone page `/committees`. Ready to build.
 - [ ] **Bills & legislation tracker** — reading stages, amendment text, Lords ping-pong; alert on new stages
 - [ ] **Voting / division records** — voting history for any MP/Lord; searchable by Bill, date, or party line
 - [ ] **Saved searches with scheduled re-runs** — "send me this search every Monday morning"
 
-### Pricing model (vs Dods/DeHavilland/Vuelio)
+### Pricing model
 
-| Tier | Price | Target | Key hook |
-|---|---|---|---|
-| **Civil Servant** | Free (perpetual) | gov.uk verified | Credibility signal + referral pipeline |
-| **Individual** | £29–39/month | Freelancers, journalists, academics, SpAds | Under expense-claim threshold |
-| **Team (5 users)** | £149–199/month | Small lobbying firms, trade bodies, charities | Replaces one consultant day/month |
-| **Enterprise (unlimited)** | £499–799/month | Large firms, corporates, devolved govt | 40–60% below Dods/DeHavilland |
+| Tier | Price | Target |
+|---|---|---|
+| **Civil Servant** | Free (perpetual) | gov.uk verified email |
+| **Individual** | £29–39/month | Freelancers, journalists, academics, SpAds, small in-house teams |
+| **Team (5 users)** | £149–199/month | Small policy teams in charities, trade bodies, or consultancies |
 
-**Realistic near-term target:** Individual + Team tiers. 200 × £35/month = £84k/year.
+**Charity & academic discount:** 50% off any tier for UK registered charities (charity number required, verified via Charity Commission API) and users with `.ac.uk` email addresses (verified via email domain). Discount applied automatically at signup, no manual approval.
+
+**Realistic near-term target:** 200 paying users (mix of Individual and Team) at average £35/month = £84k/year. See `## Product audience and positioning` for the broader audience model.
+
+### Positioning principles
+
+These constrain pricing, marketing copy, and feature decisions. Apply them whenever any of the three are being changed.
+
+- **No comparison-pricing language.** Westminster Brief is not "X% below Dods" or "DeHavilland for less." Those companies offer fundamentally different products — analyst services, established relationships, bespoke briefings, 24/7 support, decades of editorial judgement. Westminster Brief is its own tool serving users below their price floor, not a discount version of their service. Pricing copy must stand on its own merits, not as a percentage of someone else's.
+
+- **Build for users, not against competitors.** Feature decisions are driven by what users ask for, not by feature parity with established monitoring services. Any direct comparison on breadth, analyst services, or institutional relationships will be lost. Westminster Brief can win on search quality, evidence trails, transparency, and price fit for users incumbents don't serve well. Choose that ground.
+
+- **Honest scope.** This is a research and stakeholder intelligence tool, not a managed service. No human analysts. No bespoke briefings. No 24/7 support. No party press office relationships. Users who need those things should buy Dods or similar — that's a different product category, not a failure of Westminster Brief. Marketing must not imply otherwise.
+
+- **No enterprise tier without demand.** No "Enterprise" pricing tier in the model. If a real enterprise opportunity ever materialises (a devolved government body, a large multinational with stated need), reintroduce a tier from a position of demand rather than aspiration. Listing aspirational tiers in the pricing model invites building features for customers who don't exist.
 
 ---
 

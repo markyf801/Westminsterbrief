@@ -32,6 +32,14 @@ Civil servants are the most demanding edge case for accuracy, evidence trails, a
 
 **Marketing language must be evidence-based.** Claims about adoption, trust, or external validation must be true and verifiable. "Built for" is fine; "trusted by" requires actual trust. Avoid "thousands of users", "industry-leading", "loved by professionals" and similar early-stage overclaim. The absence of overclaim is itself a positioning asset for a tool aimed at policy professionals — they have high BS-detection and respond well to honest framing.
 
+**Output rule: factual or extracted, never authored.** The tool finds and surfaces evidence — speeches, citations, engagements, statements. It does not draft positions, lines to take, recommended responses, or anything that implies authored content for which a civil servant would normally hold accountability. Where AI is used (summary, classification, extraction), it operates on factual material the tool has actually retrieved, with citations — not on training-data knowledge. Outputs that look or feel like authored civil service work product (minutes, submissions, drafted lines) are explicitly out of scope.
+
+This rules out, for example: AI-drafted PQ responses, suggested ministerial statements, auto-generated press lines, draft holding lines, recommended Q&A briefs. The reframed "Key ministerial statements" feature (verbatim extraction with citations, parser-rejection of unmatched quotes) is consistent with this principle and remains on the roadmap. Anything that requires the tool to author rather than extract does not.
+
+## Design principles
+
+`docs/design-principles.md` is the authoritative visual and copy guide for any redesign work. Read it before implementing any UI or landing page changes. Key summary: restrained, content-first, type-led; reference gov.uk, FT, Stripe docs; avoid gradients, glassmorphism, oversized hero text, generic SaaS copy.
+
 ## Module-level design docs
 
 When working on a specific module, read its design doc first:
@@ -400,6 +408,75 @@ return render_template('page.html', total_available=total_available)
 - **Date format**: TWFY expects `YYYYMMDD..YYYYMMDD` in the search string. Python `hdate` fields return `YYYY-MM-DD`. These are different — convert before comparing.
 - **Empty result ≠ no data**: TWFY returns `{"rows": []}` (not an error) when it finds nothing. Always check `len(rows) == 0` separately from checking for error keys.
 - **`type=` param**: Only valid for the `getDebates` endpoint. Do not pass it to `getWrans` or `getWMS` — it will be silently ignored or cause errors.
+
+## WQ API constraints — read before changing any tracker or WQ-related code
+
+The Parliament Written Questions API at `questions-statements-api.parliament.uk/api/writtenquestions/questions` has several non-obvious behaviours that have caused multiple regressions when ignored. These have been verified by experimentation and form the basis of how the tracker, WQ scanner, and any other WQ-consuming code works.
+
+### Confirmed API behaviours
+
+1. **`tabledStartDate` and `tabledEndDate` are silently ignored.** The API accepts them without error but does not filter results. `totalResults` returns the full ~661k result count whether you pass these parameters or not. Do not rely on them for date filtering.
+
+2. **`answeringBodies` parameter causes 30+ second timeouts.** Passing a department ID via this parameter results in the API hanging for half a minute or more before either responding slowly or failing. Confirmed across multiple departments. Do not pass `answeringBodies` — filter by `answeringBodyId` client-side instead.
+
+3. **`isAnswered` parameter is silently ignored.** Filter by the `is_answered` field on returned results client-side.
+
+4. **Results are returned in UIN-descending order** (most recently tabled first). This is the basis of the tracker's "find the most recent sitting day" logic — fetch a moderate batch (`take=500`), take `max(tabled_dates)` over the results, and that's the most recent sitting day.
+
+### What works
+
+- `searchTerm` works (reduces results from ~661k to relevant subset)
+- `take` and `skip` for pagination work
+- `house=Commons` / `house=Lords` parameter works
+- Returned items reliably carry `dateTabled`, `dateForAnswer`, `answeringBodyId`, `answeringBodyName`, `uin` — all suitable for client-side filtering
+
+### Implementation pattern for "most recent sitting day" queries
+
+The tracker uses this pattern (working in commits `f3168f2`, `5a2f5d5`, broken in `833856b`, restored in the April 2026 regression fix):
+
+1. Fetch `take=500` with no department filter, no working date filter (the 14-day window is passed but ignored)
+2. Use `max(tabled_dates)` over the returned results to identify the most recent sitting day
+3. Filter to that date client-side
+4. Filter by `answeringBodyId == selected_dept` client-side
+5. Apply `is_answered` filter client-side if needed
+
+This works *because of* the API's quirks, not despite them — the UIN-desc ordering means `take=500` reliably contains the most recent sitting day in full. Do not "improve" this by reintroducing date filters or `answeringBodies` — both have caused regressions before.
+
+### Domain facts that constrain the design
+
+- **MPs and Lords cannot table written questions during recess.** The Table Office is closed for tabling. Each WQ has a real `dateTabled` reflecting an actual sitting day. There is no "post-recess backlog of mixed dates" — the first sitting day after recess sees a high volume of newly-tabled questions, but they're all genuinely tabled on that day.
+
+- **A typical sitting day produces 200–500 WQs across all departments and houses.** Heavy days (post-recess return, end of session, major events) can reach 600–1200. Extreme cases (politically charged days after long recess) have hit 1500+. `take=500` covers normal days; if the most recent batch returns 500 results all carrying the same `dateTabled`, fetch additional pages with `skip` to capture the full day.
+
+- **Recess detection is implicit.** If `max(tabled_dates)` in fresh results is more than a few days old, Parliament is currently not sitting. Surface a banner showing "Parliament not currently sitting — showing last sitting day, [date]" rather than presenting stale data without context.
+
+---
+
+## Preserving documented architectural decisions
+
+When previous commits deliberately removed or avoided something with a stated reason, do not reintroduce it without engaging with that reason. This is the standard "Chesterton's fence" principle: there was a fence; before removing it, find out why it was put there.
+
+This has bitten the project before. The tracker regression of April 2026 was caused by reintroducing the `answeringBodies` parameter that two prior commits had removed deliberately with a clear stated reason ("causes 30s+ timeouts"). The reintroducing commit's message claimed to be fixing an indentation bug — the actual diff replaced the working architecture with a previously-rejected approach.
+
+### Working principle
+
+When changing any code in this codebase that has a documented constraint or a deliberate architectural pattern:
+
+1. **Read the relevant constraint document before making the change.** For WQ-related code, read the WQ API constraints section above. For directory-related code, read `docs/stakeholder-directory-design.md`. For dashboard-related code, `docs/dashboard-roadmap.md`. For design changes, `docs/design-principles.md`.
+
+2. **If a previous commit's documented decision conflicts with the change being made, surface it.** Don't silently override. Either: refute the original reasoning explicitly with new evidence, or design around the constraint. Don't pretend the constraint isn't there.
+
+3. **Commit messages must accurately describe the diff.** A commit that replaces a working architecture should not be described as "fix indentation bug" even if there's an indentation issue elsewhere in the changed lines. Future debugging depends on commit messages matching reality.
+
+4. **Verify regressions haven't been introduced.** Before declaring a change complete, test that the previous working behaviour still holds. The tracker regression existed undetected for over a week because the change wasn't tested against its actual user-facing function.
+
+### When asking Claude (Code or otherwise) to change WQ-related, directory-related, or other constraint-bearing code
+
+Begin the request with: "before making changes, read [the relevant constraint document] and confirm the constraints you'll be working within." This forces explicit acknowledgement of prior decisions and reduces accidental regression risk.
+
+If asked to "refactor" or "improve" code that's working, the right starting question is "what constraints does this code currently respect, and which (if any) is the refactor relaxing?" Refactors that quietly relax documented constraints are how regressions land.
+
+---
 
 ## After fixing a caching bug — clear the cache
 

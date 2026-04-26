@@ -1,4 +1,6 @@
 org_types:
+  # Used for newly-created organisations awaiting enrichment. Populated by the enrichment pass.
+  - unknown
   - membership_body
   - professional_body
   - trade_association

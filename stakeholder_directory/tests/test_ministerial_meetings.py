@@ -154,6 +154,61 @@ class TestEmptyOrgField:
 
 
 # ---------------------------------------------------------------------------
+# 5b. Errored row persistence
+# ---------------------------------------------------------------------------
+
+class TestErroredRowPersistence:
+    def test_empty_org_row_staged_as_errored(self, app):
+        from extensions import db
+        from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting
+
+        ingest_ministerial_meetings(FIXTURE_CSV, DEPT, SOURCE_URL)
+
+        errored = db.session.query(StagingMinisterialMeeting).filter(
+            StagingMinisterialMeeting.processing_status == 'errored'
+        ).all()
+        assert len(errored) == 1
+        assert errored[0].minister_name == 'Catherine McKinnell'
+        assert 'empty organisation' in errored[0].processing_notes.lower()
+
+    def test_pending_count_unchanged_by_error_rows(self, app):
+        from extensions import db
+        from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting
+
+        ingest_ministerial_meetings(FIXTURE_CSV, DEPT, SOURCE_URL)
+
+        pending_count = db.session.query(StagingMinisterialMeeting).filter(
+            StagingMinisterialMeeting.processing_status == 'pending'
+        ).count()
+        assert pending_count == EXPECTED_STAGED
+
+
+# ---------------------------------------------------------------------------
+# 5c. Word-boundary matching
+# ---------------------------------------------------------------------------
+
+class TestWordBoundaryMatching:
+    def test_nio_matches_standalone(self):
+        from stakeholder_directory.ingesters.ministerial_meetings import _matching_internal_govt_variant
+        assert _matching_internal_govt_variant('the NIO', ['NIO']) is not None
+        assert _matching_internal_govt_variant('NIO official', ['NIO']) is not None
+
+    def test_nio_does_not_match_union(self):
+        from stakeholder_directory.ingesters.ministerial_meetings import _matching_internal_govt_variant
+        assert _matching_internal_govt_variant('National Education Union', ['NIO']) is None
+        assert _matching_internal_govt_variant('an opinion poll', ['NIO']) is None
+
+    def test_mod_matches_standalone(self):
+        from stakeholder_directory.ingesters.ministerial_meetings import _matching_internal_govt_variant
+        assert _matching_internal_govt_variant('MoD procurement', ['MoD']) is not None
+
+    def test_mod_does_not_match_modern(self):
+        from stakeholder_directory.ingesters.ministerial_meetings import _matching_internal_govt_variant
+        assert _matching_internal_govt_variant('Modern Slavery Act', ['MoD']) is None
+        assert _matching_internal_govt_variant('model railway', ['MoD']) is None
+
+
+# ---------------------------------------------------------------------------
 # 6. Idempotency
 # ---------------------------------------------------------------------------
 
@@ -204,6 +259,86 @@ class TestVocabularyGuard:
     def test_valid_department_does_not_raise(self, app):
         result = ingest_ministerial_meetings(FIXTURE_CSV, DEPT, SOURCE_URL, dry_run=True)
         assert result.rows_processed > 0
+
+
+# ---------------------------------------------------------------------------
+# 8b. Nil-return skipping
+# ---------------------------------------------------------------------------
+
+class TestNilReturnSkipping:
+    def test_nil_return_row_is_skipped(self, tmp_path, app):
+        content = (
+            'Minister,Date of meeting,Organisation(s) met,Purpose of meeting\n'
+            'Seema Malhotra,Nil Return,Nil Return,\n'
+            'Bridget Phillipson,8 January 2025,Universities UK,Test meeting\n'
+        )
+        csv_path = tmp_path / 'nil_return.csv'
+        csv_path.write_text(content, encoding='utf-8')
+
+        result = ingest_ministerial_meetings(csv_path, DEPT, SOURCE_URL + '/nil')
+        assert result.skipped_nil_return == 1
+        assert result.rows_processed == 1
+        assert result.rows_staged == 1
+        assert result.errors == []
+
+    def test_nil_return_row_not_in_staging(self, tmp_path, app):
+        from extensions import db
+        from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting
+
+        content = (
+            'Minister,Date of meeting,Organisation(s) met,Purpose of meeting\n'
+            'Seema Malhotra,Nil Return,Nil Return,\n'
+        )
+        csv_path = tmp_path / 'nil_only.csv'
+        csv_path.write_text(content, encoding='utf-8')
+
+        ingest_ministerial_meetings(csv_path, DEPT, SOURCE_URL + '/nil2')
+        assert db.session.query(StagingMinisterialMeeting).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# 8c. Multi-org comma flagging
+# ---------------------------------------------------------------------------
+
+class TestMultiOrgCommaFlag:
+    def test_four_commas_adds_processing_note(self, tmp_path, app):
+        from extensions import db
+        from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting
+
+        content = (
+            'Minister,Date of meeting,Organisation(s) met,Purpose of meeting\n'
+            'Bridget Phillipson,8 January 2025,'
+            '"BT Group, Mace Group, NatWest, Sage Group, Vodafone",'
+            'Roundtable\n'
+        )
+        csv_path = tmp_path / 'multiorg_comma.csv'
+        csv_path.write_text(content, encoding='utf-8')
+
+        result = ingest_ministerial_meetings(csv_path, DEPT, SOURCE_URL + '/comma')
+        assert result.rows_staged == 1  # treated as single record, not split
+
+        row = db.session.query(StagingMinisterialMeeting).first()
+        assert row is not None
+        assert 'multi-org' in row.processing_notes.lower()
+
+    def test_three_commas_no_note(self, tmp_path, app):
+        """Three commas (threshold is 4+) should not trigger the multi-org note."""
+        from extensions import db
+        from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting
+
+        content = (
+            'Minister,Date of meeting,Organisation(s) met,Purpose of meeting\n'
+            'Bridget Phillipson,8 January 2025,'
+            '"Department for Children, Schools and Families",'
+            'Policy discussion\n'
+        )
+        csv_path = tmp_path / 'few_commas.csv'
+        csv_path.write_text(content, encoding='utf-8')
+
+        ingest_ministerial_meetings(csv_path, DEPT, SOURCE_URL + '/fewcomma')
+        row = db.session.query(StagingMinisterialMeeting).first()
+        assert row is not None
+        assert row.processing_notes is None or 'multi-org' not in (row.processing_notes or '').lower()
 
 
 # ---------------------------------------------------------------------------

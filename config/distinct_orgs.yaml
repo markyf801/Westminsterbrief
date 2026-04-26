@@ -1,0 +1,14 @@
+# Pairs of organisations that should NOT be flagged as possible duplicates,
+# despite high textual similarity. Each pair represents a human decision
+# that these are genuinely distinct organisations.
+#
+# Add new pairs here when reviewing the Tier 3 flag queue and confirming
+# two orgs are different. Order within the pair does not matter.
+#
+# Entries can use either the canonical name or a known alias from aliases.yaml
+# (alias expansion is applied at normalisation time, so "NASUWT" resolves to
+# the full canonical form automatically).
+
+distinct_org_pairs:
+  - ["National Association of Head Teachers", "NASUWT"]
+  - ["Sixth Form Colleges Association", "Association of Colleges"]

@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}{{ org.canonical_name }} — Stakeholder Directory — Westminster Brief{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='stakeholder_directory.css') }}">
+{% endblock %}
+
+{% block content %}
+
+{# ── Breadcrumb ─────────────────────────────────────────────────────────── #}
+<div style="font-size:13px; color:#888; margin-bottom:12px;">
+    <a href="{{ url_for('directory.index') }}" style="color:#005a8f; text-decoration:none;">Directory</a>
+    &nbsp;›&nbsp; {{ org.canonical_name }}
+</div>
+
+{# ── Org header ──────────────────────────────────────────────────────────── #}
+<div class="box">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+        <div style="flex:1; min-width:0;">
+            <h1 style="margin-bottom:6px; word-wrap:break-word;">{{ org.canonical_name }}</h1>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:8px;">
+                <span class="dir-type-badge">{{ org.type.replace('_', ' ').title() }}</span>
+                {% if org.status == 'active' %}
+                <span class="dir-status-badge dir-status-active">Active</span>
+                {% else %}
+                <span class="dir-status-badge dir-status-historical">{{ org.status.replace('_', ' ').title() }}</span>
+                {% endif %}
+                {% if org.scope != 'national' %}
+                <span class="dir-scope-badge">{{ org.scope.title() }}</span>
+                {% endif %}
+            </div>
+
+            {% if org.description %}
+            <p style="color:#444; font-size:14.5px; margin-bottom:0;">{{ org.description }}</p>
+            {% endif %}
+        </div>
+
+        <div style="text-align:right; flex-shrink:0;">
+            <div class="dir-stat-number" style="font-size:28px;">{{ total_engs }}</div>
+            <div style="font-size:12px; color:#888;">engagement record{{ 's' if total_engs != 1 }}</div>
+        </div>
+    </div>
+
+    {# Aliases #}
+    {% if org.aliases %}
+    <div style="margin-top:14px; border-top:1px solid #eef0f4; padding-top:12px;">
+        <span style="font-size:13px; color:#888; font-weight:600;">Also known as: </span>
+        {% for alias in org.aliases %}
+        <span class="dir-alias-chip">{{ alias.alias_name }}</span>{% if not loop.last %} {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+{# ── Source type breakdown ────────────────────────────────────────────────── #}
+{% if source_breakdown %}
+<div class="box">
+    <h3 style="margin-bottom:14px;">Engagement summary</h3>
+    <div style="display:flex; flex-wrap:wrap; gap:10px;">
+        {% for st, count in source_breakdown.items()|sort(attribute='1', reverse=true) %}
+        <div class="dir-source-summary-card">
+            <span class="badge-st {{ source_color.get(st, 'badge-st-grey') }}" style="font-size:12px;">
+                {{ source_labels.get(st, st) }}
+            </span>
+            <span class="dir-source-summary-count">{{ count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# ── May be related to (possible_duplicate flags) ─────────────────────────── #}
+{% if related_orgs %}
+<div class="box" style="border-left:4px solid #d97706; background:#fffdf7;">
+    <h3 style="color:#b45309; margin-bottom:8px;">⚠️ May be related to</h3>
+    <p style="font-size:13.5px; color:#666; margin-bottom:12px;">
+        The normaliser flagged possible duplicates with the following organisations.
+        These matches have not been reviewed — they may be the same org under a different name,
+        or genuinely distinct organisations with similar names.
+    </p>
+    <div style="display:flex; flex-direction:column; gap:8px;">
+        {% for rel in related_orgs %}
+        <div style="display:flex; align-items:center; gap:10px; padding:10px 14px;
+                    background:#fff; border-radius:6px; border:1px solid #fde68a;">
+            <div style="flex:1;">
+                <a href="{{ url_for('directory.organisation', org_id=rel.org.id) }}"
+                   style="font-weight:600; color:#005a8f; text-decoration:none; font-size:14.5px;">
+                    {{ rel.org.canonical_name }}
+                </a>
+            </div>
+            {% if rel.similarity %}
+            <div style="font-size:12px; color:#888;">
+                {{ "%.0f"|format(rel.similarity * 100) }}% name similarity
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# ── Other flags ─────────────────────────────────────────────────────────── #}
+{% set other_flags = flags | selectattr('flag_type', 'ne', 'possible_duplicate') | list %}
+{% if other_flags %}
+<div class="box" style="border-left:4px solid #6b7280;">
+    <h3 style="margin-bottom:10px;">Flags</h3>
+    {% for flag in other_flags %}
+    <div style="padding:10px 12px; background:#f8fafc; border-radius:6px;
+                border:1px solid #e2e8f0; margin-bottom:6px; font-size:13.5px; color:#444;">
+        <span style="font-weight:600; text-transform:uppercase; font-size:11px;
+                     color:#6b7280; letter-spacing:0.05em;">{{ flag.flag_type.replace('_', ' ') }}</span>
+        <br>{{ flag.detail }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{# ── Engagement list ─────────────────────────────────────────────────────── #}
+<div class="box">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="margin-bottom:0;">
+            Engagement records
+            {% if total_engs > 25 %}
+            <span style="font-size:14px; font-weight:400; color:#888;">({{ total_engs }} total)</span>
+            {% endif %}
+        </h3>
+        {% if eng_pages > 1 %}
+        <span style="font-size:13px; color:#888;">Page {{ eng_page }} of {{ eng_pages }}</span>
+        {% endif %}
+    </div>
+
+    {% if engagements %}
+    <div style="display:flex; flex-direction:column; gap:8px;">
+        {% for eng in engagements %}
+        <div class="dir-engagement-row">
+            <div class="dir-engagement-date">
+                {{ eng.engagement_date.strftime('%d %b %Y') if eng.engagement_date else '—' }}
+            </div>
+            <div class="dir-engagement-body">
+                <span class="badge-st {{ source_color.get(eng.source_type, 'badge-st-grey') }}" style="font-size:12px;">
+                    {{ source_labels.get(eng.source_type, eng.source_type) }}
+                </span>
+                {% if eng.committee_name %}
+                <span class="dir-engagement-detail">{{ eng.committee_name }}</span>
+                {% endif %}
+                {% if eng.department %}
+                <span class="dir-engagement-detail">{{ eng.department.replace('_', ' ').title() }}</span>
+                {% endif %}
+                {% if eng.engagement_subject %}
+                <span class="dir-engagement-subject">
+                    —
+                    {% if eng.inquiry_id %}
+                    <a href="https://committees.parliament.uk/work/{{ eng.inquiry_id }}/"
+                       target="_blank" rel="noopener" class="dir-source-link"
+                       style="font-weight:400; font-size:12px;">{{ eng.engagement_subject }}</a>
+                    {% if eng.inquiry_status %}
+                    <span class="badge-inquiry badge-inquiry-{{ eng.inquiry_status }}">{{ eng.inquiry_status }}</span>
+                    {% endif %}
+                    {% else %}
+                    {{ eng.engagement_subject }}
+                    {% endif %}
+                </span>
+                {% endif %}
+                {% if eng.source_url %}
+                <a href="{{ eng.source_url }}" target="_blank" rel="noopener"
+                   class="dir-source-link"
+                   title="{{ eng.source_url }}">
+                    Source ↗
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {# Pagination #}
+    {% if eng_pages > 1 %}
+    <div class="dir-pagination" style="margin-top:16px;">
+        {% if eng_page > 1 %}
+        <a href="{{ url_for('directory.organisation', org_id=org.id, page=eng_page-1) }}"
+           class="btn btn-muted" style="font-size:13px; padding:8px 16px;">← Previous</a>
+        {% endif %}
+        <span style="font-size:13px; color:#555;">Page {{ eng_page }} / {{ eng_pages }}</span>
+        {% if eng_page < eng_pages %}
+        <a href="{{ url_for('directory.organisation', org_id=org.id, page=eng_page+1) }}"
+           class="btn btn-muted" style="font-size:13px; padding:8px 16px;">Next →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <p style="color:#888; font-style:italic;">This organisation has no recorded engagements.</p>
+    {% endif %}
+</div>
+
+{% endblock %}

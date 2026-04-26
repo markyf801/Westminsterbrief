@@ -11,3 +11,4 @@ source_types:
   consultation_response: 1.0
   written_evidence_committee: 1.0
   lobbying_register: 0.5
+  lobbying_register_client: 0.5

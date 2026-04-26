@@ -41,9 +41,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class IngestionResult:
     rows_processed: int = 0
-    rows_staged: int = 0       # records written to staging as 'pending'
-    rows_excluded: int = 0     # records dropped as internal-government
-    rows_flagged: int = 0      # subset of rows_staged with processing_notes set
+    rows_staged: int = 0            # records written to staging as 'pending'
+    rows_excluded: int = 0          # records dropped as internal-government
+    rows_flagged: int = 0           # subset of rows_staged with processing_notes set
+    skipped_nil_return: int = 0     # rows skipped because minister filed a nil return
     errors: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -52,6 +53,7 @@ class IngestionResult:
             f"staged={self.rows_staged}, "
             f"excluded={self.rows_excluded}, "
             f"flagged={self.rows_flagged}, "
+            f"skipped_nil_return={self.skipped_nil_return}, "
             f"errors={len(self.errors)})"
         )
 
@@ -217,6 +219,7 @@ def _write_to_staging(records: list[dict], source_url: str) -> int:
     ).filter(StagingMinisterialMeeting.source_url == source_url).all()
     existing_keys = {(r[0], r[1], r[2]) for r in existing_rows}
 
+    pending_written = 0
     written = 0
     for rec in records:
         status = rec.pop('_status')
@@ -230,11 +233,13 @@ def _write_to_staging(records: list[dict], source_url: str) -> int:
             processing_status=status,
         ))
         written += 1
+        if status == 'pending':
+            pending_written += 1
 
     if written:
         db.session.commit()
 
-    return written
+    return pending_written
 
 
 # ---------------------------------------------------------------------------
@@ -285,13 +290,20 @@ def ingest_ministerial_meetings(
         if not any((v or '').strip() for v in row.values()):
             continue
 
-        result.rows_processed += 1
-
         minister = (row.get(cols['minister']) or '').strip()
         raw_date = (row.get(cols['date']) or '').strip()
         raw_orgs = (row.get(cols['organisation']) or '').strip()
         purpose_col = cols.get('purpose')
         purpose = (row.get(purpose_col) or '').strip() if purpose_col else ''
+
+        # Skip nil-return rows: informational metadata, not actual meeting records
+        if (raw_date.lower() == 'nil return' or raw_orgs.lower() == 'nil return'
+                or (not raw_date and not raw_orgs)):
+            logger.debug('Row %d: nil return / fully blank — skipping', row_num)
+            result.skipped_nil_return += 1
+            continue
+
+        result.rows_processed += 1
 
         csv_row_json = json.dumps(dict(row))
 
@@ -356,6 +368,12 @@ def ingest_ministerial_meetings(
             notes_parts = []
             if date_flag:
                 notes_parts.append(date_flag)
+            # Flag likely multi-org rows (4+ commas in original org string)
+            if raw_orgs.count(',') >= 4:
+                notes_parts.append(
+                    f'Likely multi-org row ({raw_orgs.count(",") + 1} entries separated by commas): '
+                    'may need manual splitting'
+                )
             notes_str = '; '.join(notes_parts) if notes_parts else None
 
             if notes_str:
@@ -372,9 +390,11 @@ def ingest_ministerial_meetings(
                 'source_csv_row': csv_row_json,
                 'processing_notes': notes_str,
             })
-            result.rows_staged += 1
 
-    if not dry_run and all_records:
-        _write_to_staging(all_records, source_url)
+    # rows_staged reflects actual DB inserts (0 on re-runs; dry_run counts prepared records)
+    if dry_run:
+        result.rows_staged = sum(1 for r in all_records if r.get('_status') == 'pending')
+    elif all_records:
+        result.rows_staged = _write_to_staging(all_records, source_url)
 
     return result
