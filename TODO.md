@@ -1,5 +1,22 @@
 # Westminster Brief — Task List
 
+
+## 🔴 Active — Stakeholder Directory (auto-populated, internal)
+
+Auto-populated UK stakeholder directory built from government source data (consultations, committee evidence, ministerial meetings, APPG, lobbying register, parliamentary citations). Internal data layer for Westminster Brief — surfaces who has engaged with government on which topics, with full evidence trail. Distinct from "Personal Stakeholders" (user-curated tracked orgs).
+
+Full spec: `docs/stakeholder-directory-design.md`
+
+- [x] **Prompt 1** — Schema, vocabularies, migrations, URL validator stub (Apr 2026)
+- [x] **Prompt 2** — Scoring module + weights config + human-readable explanations (Apr 2026)
+- [x] **Prompt 3** — Ministerial meetings ingester (fixture data) + staging audit trail (Apr 2026)
+- [x] **Prompt 4** — Name normalisation + dedup tiers + alias resolution (Apr 2026)
+- [ ] **Real DfE data run** — ministerial meetings ingester against gov.uk transparency CSVs (in flight)
+- [ ] **Prompt 5** — Commit step verification + audit polish (after real-data run)
+- [ ] **Prompt 6+** — Second ingester (committee evidence or consultation responses)
+- [ ] **Policy area taxonomy** — populate `config/policy_areas.yaml` (cross-government, dict-of-dicts format) — separate from coding work
+- [ ] **Alias map curation** — `config/aliases.yaml` accumulates as Tier 3 flag review surfaces variants
+
 ## 🔴 Active — Stakeholder Research (Personal Stakeholders)
 
 - [x] **PR 1** — Schema + manual entry + research tab integration (Apr 2026)

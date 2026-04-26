@@ -301,6 +301,14 @@ input:focus, select:focus, textarea:focus {
 
 .result-card-link:hover { text-decoration: underline; }
 
+/* --- PAGE DESCRIPTION (purpose/usage line below page heading) --- */
+.page-desc {
+    color: #555;
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 6px 0 18px;
+}
+
 /* --- INFO BOX (tip/hint panels) --- */
 .info-box {
     background: #f0f7ff;
