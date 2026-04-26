@@ -56,6 +56,17 @@ TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
 
 
+# AI provider chain for Research Tool routes:
+#   1. Primary:  Gemini 2.5 Flash Lite — REST API via requests (generativelanguage.googleapis.com)
+#   2. Fallback: Claude Haiku 4.5 — Anthropic SDK, fires when Gemini returns non-200
+#
+# Both GEMINI_API_KEY and CLAUDE_API_KEY must be set on Railway.
+# CLAUDE_API_KEY confirmed deployed as of 2026-04-26.
+#
+# The fallback exists because the Research Tool routes are interactive and
+# user-facing — a Gemini outage would otherwise silently break briefing generation.
+# The tracker uses Gemini only (no Claude fallback): cost discipline matters more
+# there than redundancy, and tracker results are shared/cached.
 def _claude_fallback(prompt, max_tokens=2000):
     """Call Claude API with the same prompt Gemini received.
     Silent fallback — returns response text or None, never raises."""
