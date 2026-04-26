@@ -425,13 +425,11 @@ with app.app_context():
     _mig_log('app_context block complete')
 
 # Kick off background minister link seeding after app context is established
-# TEMPORARILY DISABLED — diagnosing WORKER TIMEOUT; re-enable once root cause confirmed
-# _mig_log('importing debate_scanner for seed_all_minister_links')
-# from debate_scanner import seed_all_minister_links
-# _mig_log('debate_scanner imported')
-# seed_all_minister_links(app)
-# _mig_log('seed_all_minister_links started')
-_mig_log('seed disabled for diagnosis')
+_mig_log('importing debate_scanner for seed_all_minister_links')
+from debate_scanner import seed_all_minister_links
+_mig_log('debate_scanner imported')
+seed_all_minister_links(app)
+_mig_log('seed_all_minister_links started')
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
@@ -846,6 +844,9 @@ def run_manual_scan():
 # ==========================================
 ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '').strip()
 
+# Background job status for long-running admin operations
+_committee_ingest_status = {'running': False, 'message': None, 'started_at': None}
+
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_panel():
     token = request.args.get('token', '') or request.form.get('token', '')
@@ -909,56 +910,69 @@ def admin_panel():
                 message = f'Error resetting failed links: {e}'
 
         elif action == 'ingest_committee_evidence':
-            from stakeholder_directory.ingesters.committee_evidence import ingest_committee_evidence
-            from stakeholder_directory.normalisation.normaliser import normalise_pending_staging
-            from stakeholder_directory.models import Organisation, Engagement
+            import threading, requests as _requests
             from datetime import date as _date
-            import time as _time
-            import requests as _requests
 
-            raw_ids = (request.form.get('committee_ids') or '').strip()
-            date_from_str = (request.form.get('date_from') or '').strip()
-            date_to_str = (request.form.get('date_to') or '').strip()
+            if _committee_ingest_status['running']:
+                message = 'Ingestion already running — check back in a few minutes.'
+            else:
+                raw_ids = (request.form.get('committee_ids') or '').strip()
+                date_from_str = (request.form.get('date_from') or '').strip()
+                date_to_str = (request.form.get('date_to') or '').strip()
 
-            try:
-                if raw_ids.lower() == 'all':
-                    resp = _requests.get(
-                        'https://committees-api.parliament.uk/api/Committees',
-                        params={'status': 'Current', 'take': 300}, timeout=15,
-                    )
-                    committee_ids = [item['id'] for item in resp.json().get('items', [])]
-                else:
-                    committee_ids = [int(x.strip()) for x in raw_ids.split(',') if x.strip()]
-            except Exception as e:
-                committee_ids = []
-                message = f'Error resolving committee IDs: {e}'
-
-            if committee_ids:
                 try:
+                    if raw_ids.lower() == 'all':
+                        resp = _requests.get(
+                            'https://committees-api.parliament.uk/api/Committees',
+                            params={'status': 'Current', 'take': 300}, timeout=15,
+                        )
+                        committee_ids = [item['id'] for item in resp.json().get('items', [])]
+                    else:
+                        committee_ids = [int(x.strip()) for x in raw_ids.split(',') if x.strip()]
+                except Exception as e:
+                    committee_ids = []
+                    message = f'Error resolving committee IDs: {e}'
+
+                if committee_ids:
                     start_date = _date.fromisoformat(date_from_str) if date_from_str else _date(2020, 1, 1)
                     end_date = _date.fromisoformat(date_to_str) if date_to_str else _date.today()
-                    orgs_before = Organisation.query.count()
-                    eng_before = Engagement.query.count()
-                    t0 = _time.monotonic()
-                    ing = ingest_committee_evidence(committee_ids, start_date, end_date)
-                    norm = normalise_pending_staging('staging_committee_evidence', batch_size=5000)
-                    duration = int(_time.monotonic() - t0)
-                    orgs_after = Organisation.query.count()
-                    eng_after = Engagement.query.count()
-                    message = (
-                        f'Done in {duration}s across {len(committee_ids)} committees. '
-                        f'Publications: {ing.publications_fetched}, witnesses: {ing.witnesses_processed}, '
-                        f'staged: {ing.rows_staged} (skipped {ing.rows_skipped_duplicate} dup, '
-                        f'{ing.rows_skipped_internal_govt} govt). '
-                        f'Normalised: {norm.staging_records_processed} rows — '
-                        f'new orgs: {orgs_after - orgs_before}, '
-                        f'new engagements: {eng_after - eng_before}. '
-                        f'Errors: {len(ing.errors) + len(norm.errors)}.'
-                        + (f' First error: {(ing.errors + norm.errors)[0]}' if ing.errors or norm.errors else '')
-                    )
-                except Exception as e:
-                    db.session.rollback()
-                    message = f'Committee evidence ingestion error: {e}'
+
+                    def _run_ingest(cids, sd, ed):
+                        from stakeholder_directory.ingesters.committee_evidence import ingest_committee_evidence
+                        from stakeholder_directory.normalisation.normaliser import normalise_pending_staging
+                        from stakeholder_directory.models import Organisation, Engagement
+                        import time as _t
+                        _committee_ingest_status['running'] = True
+                        _committee_ingest_status['message'] = f'Running… {len(cids)} committees, {sd} → {ed}'
+                        try:
+                            with app.app_context():
+                                orgs_before = Organisation.query.count()
+                                eng_before = Engagement.query.count()
+                                t0 = _t.monotonic()
+                                ing = ingest_committee_evidence(cids, sd, ed)
+                                norm = normalise_pending_staging('staging_committee_evidence', batch_size=5000)
+                                duration = int(_t.monotonic() - t0)
+                                orgs_after = Organisation.query.count()
+                                eng_after = Engagement.query.count()
+                                _committee_ingest_status['message'] = (
+                                    f'Done in {duration}s across {len(cids)} committees. '
+                                    f'Publications: {ing.publications_fetched}, witnesses: {ing.witnesses_processed}, '
+                                    f'staged: {ing.rows_staged} (skipped {ing.rows_skipped_duplicate} dup, '
+                                    f'{ing.rows_skipped_internal_govt} govt). '
+                                    f'Normalised: {norm.staging_records_processed} rows — '
+                                    f'new orgs: {orgs_after - orgs_before}, '
+                                    f'new engagements: {eng_after - eng_before}. '
+                                    f'Errors: {len(ing.errors) + len(norm.errors)}.'
+                                    + (f' First: {(ing.errors + norm.errors)[0]}' if ing.errors or norm.errors else '')
+                                )
+                        except Exception as e:
+                            db.session.rollback()
+                            _committee_ingest_status['message'] = f'Ingestion error: {e}'
+                        finally:
+                            _committee_ingest_status['running'] = False
+
+                    threading.Thread(target=_run_ingest, args=(committee_ids, start_date, end_date), daemon=True).start()
+                    message = f'Ingestion started for {len(committee_ids)} committees ({start_date} → {end_date}). Refresh this page in a few minutes to see results.'
 
         elif action == 'clear_directory_data':
             try:
@@ -1077,6 +1091,12 @@ def admin_panel():
         dir_stats['departments'] = {k: v['name'] for k, v in dept_yaml.get('departments', {}).items()}
     except Exception as e:
         dir_stats['error'] = (dir_stats.get('error') or '') + f' | YAML error: {e}'
+
+    # Show background ingestion status as the message if no other message and job ran/is running
+    if not message and _committee_ingest_status['message']:
+        message = _committee_ingest_status['message']
+        if _committee_ingest_status['running']:
+            message = '⏳ ' + message
 
     return render_template('admin.html',
                            message=message,
