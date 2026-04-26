@@ -204,6 +204,34 @@ with app.app_context():
                     conn.commit()
             except Exception as _e:
                 app.logger.warning('tracked_stakeholder migration failed for %s: %s', _col, _e)
+    # Refresh CHECK constraints on sd_ tables — constraints are baked in at CREATE TABLE time
+    # and go stale when config/*.yaml vocabs are updated. Drop and re-add using current values.
+    from stakeholder_directory.vocab import (
+        ORG_TYPE_VALUES, SCOPE_VALUES, STATUS_VALUES,
+        REGISTRATION_STATUS_VALUES, SOURCE_TYPE_VALUES, STAGING_STATUS_VALUES,
+    )
+    def _ck_in(col, vals):
+        quoted = ', '.join(f"'{v}'" for v in vals)
+        return f"({col} IN ({quoted}))"
+    _sd_constraints = [
+        ('sd_organisation', 'ck_sd_org_type',    _ck_in('type', ORG_TYPE_VALUES)),
+        ('sd_organisation', 'ck_sd_org_scope',   _ck_in('scope', SCOPE_VALUES)),
+        ('sd_organisation', 'ck_sd_org_status',  _ck_in('status', STATUS_VALUES)),
+        ('sd_organisation', 'ck_sd_org_reg_status',
+            f"(registration_status IS NULL OR {_ck_in('registration_status', REGISTRATION_STATUS_VALUES)})"),
+        ('sd_engagement',   'ck_sd_eng_source_type', _ck_in('source_type', SOURCE_TYPE_VALUES)),
+        ('sd_staging_ministerial_meeting', 'ck_sd_staging_min_status', _ck_in('processing_status', STAGING_STATUS_VALUES)),
+        ('sd_staging_committee_evidence',  'ck_sd_staging_ce_status',  _ck_in('processing_status', STAGING_STATUS_VALUES)),
+        ('sd_staging_lobbying_entry',      'ck_sd_staging_le_status',  _ck_in('processing_status', STAGING_STATUS_VALUES)),
+    ]
+    try:
+        with db.engine.connect() as conn:
+            for _tbl, _name, _expr in _sd_constraints:
+                conn.execute(text(f'ALTER TABLE {_tbl} DROP CONSTRAINT IF EXISTS {_name}'))
+                conn.execute(text(f'ALTER TABLE {_tbl} ADD CONSTRAINT {_name} CHECK {_expr}'))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning('sd_ CHECK constraint refresh failed: %s', _e)
     # Widen raw_organisation_name to TEXT in staging tables (was VARCHAR(300), too short for multi-org rows)
     for _tbl in ('sd_staging_ministerial_meeting', 'sd_staging_committee_evidence'):
         try:
