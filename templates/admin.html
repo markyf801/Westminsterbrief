@@ -140,6 +140,12 @@
     <table style="width:100%; font-size:0.85rem; border-collapse:collapse; margin-bottom:14px;">
       <tr><td style="padding:4px 0; color:#555;">Organisations</td><td style="font-weight:600;">{{ dir_stats.org_count }}</td></tr>
       <tr><td style="padding:4px 0; color:#555;">Engagements</td><td style="font-weight:600;">{{ dir_stats.eng_count }}</td></tr>
+      {% set ebt = dir_stats.get('eng_by_type', {}) %}
+      {% if ebt %}
+      <tr><td style="padding:2px 0 2px 14px; color:#888; font-size:0.8rem;">Ministerial meetings</td><td style="color:#555; font-size:0.8rem;">{{ ebt.get('ministerial_meeting', 0) }}</td></tr>
+      <tr><td style="padding:2px 0 2px 14px; color:#888; font-size:0.8rem;">Oral evidence</td><td style="color:#555; font-size:0.8rem;">{{ ebt.get('oral_evidence_committee', 0) }}</td></tr>
+      <tr><td style="padding:2px 0 6px 14px; color:#888; font-size:0.8rem;">Written evidence</td><td style="color:#555; font-size:0.8rem;">{{ ebt.get('written_evidence_committee', 0) }}</td></tr>
+      {% endif %}
       <tr><td style="padding:4px 0; color:#555;">Last run</td>
         <td style="font-weight:600;">
           {% if dir_stats.last_run %}

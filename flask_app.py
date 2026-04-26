@@ -1111,6 +1111,13 @@ def admin_panel():
         dir_stats['org_count'] = Organisation.query.count()
         dir_stats['eng_count'] = Engagement.query.count()
         dir_stats['last_run'] = IngestionRun.query.order_by(IngestionRun.run_at.desc()).first()
+        from sqlalchemy import func as _func
+        _type_rows = (
+            db.session.query(Engagement.source_type, _func.count(Engagement.id))
+            .group_by(Engagement.source_type)
+            .all()
+        )
+        dir_stats['eng_by_type'] = {st: n for st, n in _type_rows}
     except Exception as e:
         dir_stats['error'] = f'DB error: {e}'
     try:
