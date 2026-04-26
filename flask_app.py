@@ -441,10 +441,18 @@ DEPARTMENTS_FOR_PREFS = [
 # ==========================================
 # 5. ROUTES
 # ==========================================
+@app.route('/ping')
+def ping():
+    return 'ok', 200
+
 @app.route('/')
 @app.route('/home')
 def home():
-    return render_template('home.html')
+    try:
+        return render_template('home.html')
+    except Exception as _e:
+        print(f'[HOME ERROR] {_e}', flush=True)
+        raise
 
 @app.route('/health')
 def health():
