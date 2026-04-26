@@ -849,17 +849,16 @@ def admin_panel():
     # --- Directory stats ---
     dir_stats = {}
     try:
-        import yaml
         from stakeholder_directory.models import Organisation, Engagement, IngestionRun
+        from stakeholder_directory.vocab import _load_yaml
         dir_stats['org_count'] = Organisation.query.count()
         dir_stats['eng_count'] = Engagement.query.count()
         last_run = IngestionRun.query.order_by(IngestionRun.run_at.desc()).first()
         dir_stats['last_run'] = last_run
-        with open(os.path.join(os.path.dirname(__file__), 'config', 'departments.yaml')) as f:
-            dept_yaml = yaml.safe_load(f)
+        dept_yaml = _load_yaml('departments.yaml')
         dir_stats['departments'] = {k: v['name'] for k, v in dept_yaml.get('departments', {}).items()}
-    except Exception:
-        dir_stats = {'org_count': 0, 'eng_count': 0, 'last_run': None, 'departments': {}}
+    except Exception as e:
+        dir_stats = {'org_count': 0, 'eng_count': 0, 'last_run': None, 'departments': {}, 'error': str(e)}
 
     return render_template('admin.html',
                            message=message,
