@@ -113,7 +113,17 @@
 
       <div style="margin-bottom:12px;">
         <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Committee IDs <span style="font-weight:400; color:#888;">(comma-separated integers, or "all")</span></label>
-        <input type="text" name="committee_ids" value="all"
+        <div style="margin-bottom:6px; display:flex; gap:6px; flex-wrap:wrap;">
+          <button type="button" onclick="document.getElementById('ce-ids').value='135, 193'"
+                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #5c6bc0; border-radius:12px; background:#ede7f6; color:#311b92; cursor:pointer;">DSIT (135, 193)</button>
+          <button type="button" onclick="document.getElementById('ce-ids').value='365, 783, 517'"
+                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #00838f; border-radius:12px; background:#e0f7fa; color:#004d40; cursor:pointer;">DBT (365, 783, 517)</button>
+          <button type="button" onclick="document.getElementById('ce-ids').value='135, 193, 365, 783, 517'"
+                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #e65100; border-radius:12px; background:#fff3e0; color:#e65100; cursor:pointer;">DSIT + DBT</button>
+          <button type="button" onclick="document.getElementById('ce-ids').value='all'"
+                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #888; border-radius:12px; background:#f5f5f5; color:#444; cursor:pointer;">All committees</button>
+        </div>
+        <input type="text" id="ce-ids" name="committee_ids" value="all"
                style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
       </div>
 
