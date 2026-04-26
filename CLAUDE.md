@@ -535,6 +535,92 @@ The tracker should use server-side filtering, not the client-side workaround:
 
 ---
 
+## When to escalate to Opus / chat session
+
+Most prompts to Claude Code are implementation work where the design is already clear: build this feature, fix this bug, write this test, refactor this function. Code can and should proceed with these directly.
+
+But there's a category of situations where code should pause, surface findings to Mark, and recommend bringing the question to a chat session (Opus) for strategic input *before* implementing. The pattern: code is reliable at doing the work, less reliable at recognising when the work is the wrong work.
+
+### Trigger conditions for escalation
+
+Code should pause and recommend escalation when any of the following are true:
+
+**1. Architectural decisions with cross-cutting impact.**
+- A change would affect multiple subsystems (e.g. directory + tracker + WQ scanner all use the same API helper)
+- A new pattern is being introduced that other code might follow (e.g. caching strategy, retry logic, error handling shape)
+- A schema change would require migration across multiple tables or features
+- The right answer depends on product strategy, not just technical correctness
+
+**2. Surprising diagnostic findings.**
+- An external API isn't behaving as documented
+- A previously-working feature has regressed
+- A constraint document conflicts with observed behaviour
+- A code change is producing unexpected side effects in unrelated areas
+
+When code's diagnosis surfaces something surprising, the right next step is usually to verify the diagnosis with Opus rather than act on it. Today's WQ API parameter discovery (where the documented constraint was wrong because we'd been using wrong parameter names) is a paradigm case.
+
+**3. Product or scope questions.**
+- The user request is ambiguous between two materially different interpretations
+- Implementing what's literally asked would produce a worse outcome than implementing what's likely meant
+- The change touches user-facing behaviour where the right design depends on audience considerations
+- The work feels out of proportion to the value (much smaller, or much larger, than expected)
+
+**4. Civil service or operational considerations.**
+- Anything that materially shifts Westminster Brief from "private project" toward "public service"
+- Scheduled jobs, public-facing accounts, branded social media, paid integrations
+- Anything that would normally trigger a disclosure conversation
+
+**5. Resource implications.**
+- A change would meaningfully increase API costs (LLM calls in particular)
+- A change would require new paid services
+- A change would significantly increase storage, bandwidth, or compute usage
+
+### What escalation looks like in practice
+
+When a trigger fires, code should:
+
+1. **Stop before implementation.**
+2. **Report findings or context to Mark with specifics.** Not "this is complex, want help?" but "I've found X, the implications are Y, the options are A, B, or C."
+3. **Recommend bringing the question to Opus** if Mark wants strategic input before proceeding.
+4. **Wait for direction.** Don't proceed with a guess.
+
+### What is *not* a trigger
+
+Code should *not* escalate for:
+
+- Routine implementation work where the brief is clear
+- Bug fixes with obvious causes
+- Test additions
+- Documentation updates
+- Refactors within a single function or file
+- Anything where the right answer is clear from CLAUDE.md or the design docs
+
+The escalation pattern is for situations where strategic judgement adds value, not for every uncertain moment.
+
+### Examples from recent sessions
+
+- **Should escalate:** "The tracker fetches 500 questions and assumes the API returns UIN-descending. I've discovered the API actually has working date filters under different parameter names. Should we keep the workaround or switch?"
+- **Should not escalate:** "I've added the question type derivation logic and three tests. All pass."
+- **Should escalate:** "Mark asked for inquiry tracking. Implementing it would add a new schema, a new ingester, and ~15 hours of work. Worth confirming before starting."
+- **Should not escalate:** "Mark asked for badges on engagement rows. I've implemented them and the tests pass."
+
+---
+
+## Exploratory work and branches
+
+Mark generates ideas at high volume. Many are good and worth exploring; sketching them in service of evaluating them is valuable. The discipline isn't "don't have ideas" — it's "don't sketch them on top of in-flight work or on the main branch."
+
+When Mark proposes a substantial new feature or direction:
+1. Engage with the substance briefly to clarify the brief
+2. Suggest creating a feature branch for the sketch (e.g. `experiment/inquiry-tracking`)
+3. Build a v1 sketch on the branch, not on main
+4. After review, decide whether to merge, iterate, or shelve
+5. Main stays clean throughout
+
+This preserves Mark's generative working style while protecting the production branch from half-finished experiments.
+
+---
+
 ## Preserving documented architectural decisions
 
 When previous commits deliberately removed or avoided something with a stated reason, do not reintroduce it without engaging with that reason. This is the standard "Chesterton's fence" principle: there was a fence; before removing it, find out why it was put there.
