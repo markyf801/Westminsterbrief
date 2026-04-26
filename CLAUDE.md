@@ -32,6 +32,43 @@ Civil servants are the most demanding edge case for accuracy, evidence trails, a
 
 **Marketing language must be evidence-based.** Claims about adoption, trust, or external validation must be true and verifiable. "Built for" is fine; "trusted by" requires actual trust. Avoid "thousands of users", "industry-leading", "loved by professionals" and similar early-stage overclaim. The absence of overclaim is itself a positioning asset for a tool aimed at policy professionals — they have high BS-detection and respond well to honest framing.
 
+## Audience framing — broader than civil servants
+
+Westminster Brief serves a broader audience than civil servants. The project's primary users include:
+
+- Civil servants writing briefings and managing parliamentary engagement
+- Charity and trade body policy officers researching engagement
+- Public affairs professionals tracking parliamentary activity
+- Academic researchers studying policy and Parliament
+- Journalists and engaged citizens following specific topics
+
+When making design decisions, default to the broadest reasonable audience. Features and copy that assume civil-servant-specific context — internal departmental deadlines, departmental workflows, gov.uk-only access, civil-service jargon — are likely to be unhelpful or confusing for other users.
+
+### Examples of audience-specific framing to avoid
+
+- **"Internal deadline"** for parliamentary questions — civil servants know their department's internal deadlines; non-civil-servant users have no such concept and would find this confusing.
+- **"Your department"** language — assumes the user belongs to a department.
+- **Gov.uk-internal terminology** like "Parliamentary Branch," "Q&A team," "submission deadline" — meaningful to civil servants, opaque to others.
+- **Implicit civil service workflow assumptions** in the UI — e.g. assuming users will be drafting answers, when most users are tracking what's happening rather than responding.
+
+### What works for the broader audience
+
+- **Parliamentary-side facts** — what was tabled, what's due to be answered, who has engaged with whom. These work for everyone because they're objective rather than workflow-dependent.
+- **Neutral language** — "Question," "Answer due," "Department for Education" rather than internal acronyms.
+- **The "built by a civil servant" credibility line** — works as evidence-based context without assuming the reader is also a civil servant.
+
+### When civil-servant-specific features are appropriate
+
+Some features genuinely belong only to civil servants — for example, briefing pack generation tailored to specific internal templates. Those features should be clearly scoped to civil servants and not bleed into the general experience.
+
+### Working principle
+
+When in doubt about a design or copy decision, ask: "would this make sense to a charity policy officer or a journalist?" If the answer is "no, this only makes sense for civil servants," redesign or relocate the feature.
+
+This came up specifically when designing the WQ tracker's deadline display: the initial proposal showed an "internal departmental deadline" alongside the Parliamentary deadline. Civil servants already know their internal deadline; non-civil-servant users have no such concept. The right answer was to show only the Parliamentary deadline (which is meaningful for everyone) and leave the internal deadline implicit.
+
+---
+
 **Output rule: factual or extracted, never authored.** The tool finds and surfaces evidence — speeches, citations, engagements, statements. It does not draft positions, lines to take, recommended responses, or anything that implies authored content for which a civil servant would normally hold accountability. Where AI is used (summary, classification, extraction), it operates on factual material the tool has actually retrieved, with citations — not on training-data knowledge. Outputs that look or feel like authored civil service work product (minutes, submissions, drafted lines) are explicitly out of scope.
 
 This rules out, for example: AI-drafted PQ responses, suggested ministerial statements, auto-generated press lines, draft holding lines, recommended Q&A briefs. The reframed "Key ministerial statements" feature (verbatim extraction with citations, parser-rejection of unmatched quotes) is consistent with this principle and remains on the roadmap. Anything that requires the tool to author rather than extract does not.

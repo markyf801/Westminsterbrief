@@ -18,3 +18,15 @@ Complete ALL of the following before removing `noindex`/`nofollow` from `base.ht
 - [ ] **Remove noindex** — `<meta name="robots" content="noindex, nofollow">` in `base.html` needs removing or conditional logic
 - [ ] **Google Search Console** — verify site and submit sitemap
 - [ ] **sitemap.xml** — create and register with Google
+
+## Caching infrastructure
+
+- [ ] **Simple in-memory cache (stage 1)** — the tracker, WQ scanner, and any other Parliament-API-consuming features currently make a fresh API call per user request. At scale this would saturate Parliament's API and produce slow page loads. Add a 30-minute in-memory TTL cache to the tracker's API call before public beta launch. Roughly 30 minutes of code. Zero infrastructure change.
+
+- [ ] **Scheduled pre-fetching (stage 2)** — once user volumes warrant it (likely within a few weeks of launch if the tool gains traction). Railway cron job fetches WQ data every 30–60 minutes and writes to a `cached_wq_recent` table; user-facing pages read from the table rather than Parliament's API directly. Decouples user latency from Parliament API health entirely. Add a small "data may be stale" indicator if the last fetch is more than 90 minutes old. Approximately 2–3 hours of code.
+
+  Build stage 1 before launch; stage 2 post-launch once traffic warrants it.
+
+- [ ] **Shared cache layer** — implement as a shared infrastructure rather than per-feature. The directory's committee evidence ingester, the WQ scanner, the tracker, and any future Parliament-API-consuming feature should all benefit from the same layer.
+
+- [ ] **Smaller API efficiency wins** (can be done alongside either stage): confirm `Accept-Encoding: gzip` is being sent (most HTTP libraries do this by default); use `requests.Session()` for connection pooling on multi-call ingesters; check whether the Parliament API supports field selection to reduce payload size.
