@@ -212,6 +212,25 @@ with app.app_context():
                 conn.commit()
         except Exception:
             pass  # Table doesn't exist yet or already TEXT
+    # Add columns to sd_organisation added after initial Railway deployment
+    _sd_org_new_cols = [
+        ('last_verified',   'DATE'),
+        ('created_at',      'TIMESTAMP NOT NULL DEFAULT NOW()'),
+        ('updated_at',      'TIMESTAMP NOT NULL DEFAULT NOW()'),
+        ('canonical_url',   'VARCHAR(500)'),
+        ('description',     'TEXT'),
+        ('registration_status', 'VARCHAR(50)'),
+        ('registration_number', 'VARCHAR(50)'),
+    ]
+    try:
+        _org_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('sd_organisation')}
+        with db.engine.connect() as conn:
+            for _col, _defn in _sd_org_new_cols:
+                if _col not in _org_cols:
+                    conn.execute(text(f'ALTER TABLE sd_organisation ADD COLUMN {_col} {_defn}'))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning('sd_organisation migration failed: %s', _e)
     # Add columns to sd_engagement added after initial Railway deployment
     _sd_eng_new_cols = [
         ('committee_id',       'INTEGER'),
