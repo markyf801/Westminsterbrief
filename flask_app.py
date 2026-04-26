@@ -203,6 +203,26 @@ with app.app_context():
                     conn.commit()
             except Exception as _e:
                 app.logger.warning('tracked_stakeholder migration failed for %s: %s', _col, _e)
+    # Add columns to sd_engagement added after initial Railway deployment
+    _sd_eng_new_cols = [
+        ('committee_id',       'INTEGER'),
+        ('committee_name',     'VARCHAR(200)'),
+        ('cited_in_outcome',   'BOOLEAN NOT NULL DEFAULT FALSE'),
+        ('engagement_depth',   'VARCHAR(50)'),
+        ('engagement_subject', 'TEXT'),
+        ('inquiry_status',     'VARCHAR(20)'),
+        ('ingested_at',        'TIMESTAMP DEFAULT NOW()'),
+        ('ingester_source',    "VARCHAR(100) DEFAULT 'unknown'"),
+    ]
+    try:
+        _eng_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('sd_engagement')}
+        with db.engine.connect() as conn:
+            for _col, _defn in _sd_eng_new_cols:
+                if _col not in _eng_cols:
+                    conn.execute(text(f'ALTER TABLE sd_engagement ADD COLUMN {_col} {_defn}'))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning('sd_engagement migration failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
