@@ -73,7 +73,7 @@
     {% endif %}
 
     <p style="font-size:12.5px; color:#888; margin-top:12px; margin-bottom:0;">
-        Data coverage: Department for Education pilot — ministerial meetings 2025, select committee evidence 2024–2025, lobbying register Q4 2022.
+        Data coverage: Department for Education pilot{% if coverage.ministerial %} — ministerial meetings {{ coverage.ministerial }}{% endif %}{% if coverage.committee %}, select committee evidence {{ coverage.committee }}{% endif %}{% if coverage.lobbying %}, lobbying register {{ coverage.lobbying }}{% endif %}.
         Additional departments and quarters will be added progressively.
     </p>
 </div>

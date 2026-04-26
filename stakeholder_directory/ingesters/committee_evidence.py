@@ -37,6 +37,60 @@ _TIMEOUT = 30
 _HOUSE_MAP = {1: 'Commons', 2: 'Lords', 4: 'Joint'}
 
 
+_EVIDENCE_TYPES = ('oral_evidence_committee', 'written_evidence_committee')
+
+
+def get_incremental_start_dates(
+    committee_ids: list[int],
+    fallback_start: date,
+    buffer_days: int = 14,
+) -> dict[int, date]:
+    """Per-committee start dates for incremental runs.
+
+    High-water mark is computed per (committee_id, publication_type) so that
+    a committee with oral evidence up to 2026 but no written evidence still gets
+    written evidence fetched from fallback_start. If either evidence type is
+    missing for a committee, that committee falls back to fallback_start entirely.
+    """
+    from collections import defaultdict
+    from extensions import db
+    from stakeholder_directory.ingesters.staging import StagingCommitteeEvidence
+    from sqlalchemy import func
+    from datetime import timedelta
+
+    rows = (
+        db.session.query(
+            StagingCommitteeEvidence.committee_id,
+            StagingCommitteeEvidence.publication_type,
+            func.max(StagingCommitteeEvidence.publication_date),
+        )
+        .filter(StagingCommitteeEvidence.committee_id.in_(committee_ids))
+        .filter(StagingCommitteeEvidence.publication_type.in_(_EVIDENCE_TYPES))
+        .group_by(
+            StagingCommitteeEvidence.committee_id,
+            StagingCommitteeEvidence.publication_type,
+        )
+        .all()
+    )
+
+    # {committee_id: {publication_type: max_date}}
+    type_marks: dict[int, dict[str, date]] = defaultdict(dict)
+    for cid, pub_type, max_date in rows:
+        if max_date:
+            type_marks[cid][pub_type] = max_date
+
+    result = {}
+    for cid in committee_ids:
+        marks = type_marks.get(cid, {})
+        if len(marks) < len(_EVIDENCE_TYPES):
+            # At least one evidence type has no data — fetch from scratch
+            result[cid] = fallback_start
+        else:
+            # Both types present — start from the earlier high-water mark minus buffer
+            result[cid] = min(marks.values()) - timedelta(days=buffer_days)
+    return result
+
+
 @dataclass
 class IngestionResult:
     publications_fetched: int = 0
@@ -339,6 +393,7 @@ def ingest_committee_evidence(
     start_date: date,
     end_date: date,
     dry_run: bool = False,
+    per_committee_start_dates: dict[int, date] | None = None,
 ) -> IngestionResult:
     """Ingest oral and written committee evidence for the given committee IDs.
 
@@ -363,9 +418,13 @@ def ingest_committee_evidence(
     ]:
         for committee_id in committee_ids:
             committee_meta = committee_meta_map.get(committee_id, {})
+            cid_start = (
+                per_committee_start_dates.get(committee_id, start_date)
+                if per_committee_start_dates else start_date
+            )
             try:
                 publications = _fetch_all_publications(
-                    endpoint, committee_id, start_date, end_date,
+                    endpoint, committee_id, cid_start, end_date,
                 )
             except Exception as exc:
                 msg = f"Failed to fetch {pub_type} for committee {committee_id}: {exc}"

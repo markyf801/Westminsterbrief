@@ -18,19 +18,13 @@
     <div style="flex:1;">
         <h1 class="home-hero-title">Westminster Brief</h1>
         <p class="home-hero-subtitle">
-            AI-powered parliamentary research tools — built for UK civil servants and parliamentary staff.
+            AI-powered parliamentary research tools
         </p>
         <div style="display:flex; gap:20px; margin-top:14px; flex-wrap:wrap;">
             <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ Live parliamentary data</span>
             <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ AI-assisted research</span>
             <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ Free for gov.uk staff</span>
         </div>
-        {% if not current_user.is_authenticated %}
-        <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap;">
-            <a href="/register" style="background:white; color:#1c3e6e; font-weight:700; font-size:14px; padding:9px 22px; border-radius:5px; text-decoration:none;">Register free</a>
-            <a href="/login" style="background:rgba(255,255,255,0.15); color:white; font-weight:600; font-size:14px; padding:9px 22px; border-radius:5px; text-decoration:none; border:1px solid rgba(255,255,255,0.4);">Sign in</a>
-        </div>
-        {% endif %}
     </div>
 </div>
 

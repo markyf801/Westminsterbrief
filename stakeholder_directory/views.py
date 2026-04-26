@@ -8,7 +8,7 @@ Routes:
 """
 import re
 from flask import Blueprint, render_template, request, abort
-from sqlalchemy import func
+from sqlalchemy import func, case
 from extensions import db
 from stakeholder_directory.models import Organisation, Alias, Engagement, Flag
 
@@ -70,6 +70,34 @@ def index():
         .order_by(func.count(Engagement.id).desc())
         .all()
     )
+
+    _cov_rows = (
+        db.session.query(
+            func.min(Engagement.engagement_date).label('min_d'),
+            func.max(Engagement.engagement_date).label('max_d'),
+            case(
+                (Engagement.source_type == 'ministerial_meeting', 'ministerial'),
+                (Engagement.source_type.in_(
+                    ['oral_evidence_committee', 'written_evidence_committee']
+                ), 'committee'),
+                (Engagement.source_type.in_(
+                    ['lobbying_register', 'lobbying_register_client']
+                ), 'lobbying'),
+                else_='other',
+            ).label('grp'),
+        )
+        .group_by('grp')
+        .all()
+    )
+
+    def _year_range(min_d, max_d):
+        if not min_d:
+            return None
+        y1, y2 = min_d.year, max_d.year
+        return str(y1) if y1 == y2 else f'{y1}–{y2}'
+
+    coverage = {row.grp: _year_range(row.min_d, row.max_d) for row in _cov_rows}
+
     return render_template(
         'stakeholder_directory/index.html',
         total_orgs=total_orgs,
@@ -77,6 +105,7 @@ def index():
         source_counts=source_counts,
         source_labels=SOURCE_TYPE_LABELS,
         source_color=SOURCE_TYPE_COLOR,
+        coverage=coverage,
     )
 
 

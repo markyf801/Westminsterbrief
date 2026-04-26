@@ -175,6 +175,20 @@ python app.py
 
 Full instructions and known fragilities are in `C:\Users\marky\wb_tester\CLAUDE.md`.
 
+## Committee evidence ingestion — known behaviour and rules
+
+### Written evidence is likely missing — re-run needed
+The first full ingestion (Apr 2026) produced only 7 written evidence records vs 4,993 oral evidence records. Root cause: the ingester loops oral evidence for all 153 committees first (~2 hours), then written evidence. If Railway restarts the container mid-run the daemon thread dies silently and written evidence is never fetched.
+
+**To recover:** run a full re-ingestion from the admin panel (Fetch & Ingest, all committees, from 2024-01-01). The `UniqueConstraint(publication_id, raw_organisation_name)` means oral evidence is silently skipped as duplicates — only the missing written evidence gets staged.
+
+**To prevent:** the ingestion should ideally interleave oral and written evidence per committee (i.e., finish one committee completely before moving to the next), not do all oral first then all written. If refactoring the loop, change the order from `for pub_type: for committee` to `for committee: for pub_type`.
+
+### High-water mark must be per (committee_id, publication_type)
+`get_incremental_start_dates()` in `stakeholder_directory/ingesters/committee_evidence.py` computes the incremental start date per `(committee_id, publication_type)` — NOT just per committee. This is critical: a committee with oral evidence up to 2026 but no written evidence would otherwise get a high-water mark near 2026, silently skipping all its written evidence.
+
+**Rule:** if either evidence type is missing for a committee, that committee's incremental start date falls back to `fallback_start` (2024-01-01). Only use the MIN high-water mark minus buffer when BOTH types are present.
+
 ## Known issues / tech debt
 - Written Questions search can be slow — Parliament API latency, no caching yet
 - The `SECRET_KEY` in flask_app.py is a placeholder — must be overridden by env var on Railway

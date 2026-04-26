@@ -85,6 +85,21 @@
     <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — Committee Evidence Ingestion</h3>
     <p style="font-size:0.8rem; color:#888; margin:0 0 14px;">Pulls oral and written evidence witnesses from the Parliament committees API and stages them for normalisation. "all" fetches every current committee (~153). Specify IDs (e.g. <code>203, 135</code>) to limit scope. Takes several minutes for all committees.</p>
 
+    <div style="border:1px solid #c8e6c9; border-radius:6px; padding:12px 14px; margin-bottom:16px; background:#f1f8e9;">
+      <p style="font-size:0.85rem; font-weight:600; margin:0 0 4px;">Quick update (incremental)</p>
+      <p style="font-size:0.8rem; color:#666; margin:0 0 10px;">Fetches only publications newer than the last run for each committee (14-day overlap buffer). Safe to run repeatedly — duplicates are skipped automatically.</p>
+      <form method="post" action="?token={{ admin_token }}">
+        <input type="hidden" name="action" value="ingest_committee_evidence">
+        <input type="hidden" name="committee_ids" value="all">
+        <input type="hidden" name="incremental" value="1">
+        <button type="submit"
+                style="background:#2e7d32; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
+          Update since last run
+        </button>
+      </form>
+    </div>
+
+    <p style="font-size:0.85rem; font-weight:600; margin:0 0 8px; color:#555;">Full re-fetch (custom date range)</p>
     <form method="post" action="?token={{ admin_token }}">
       <input type="hidden" name="action" value="ingest_committee_evidence">
 

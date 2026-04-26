@@ -922,11 +922,19 @@ def admin_panel():
 
                 try:
                     if raw_ids.lower() == 'all':
-                        resp = _requests.get(
-                            'https://committees-api.parliament.uk/api/Committees',
-                            params={'status': 'Current', 'take': 300}, timeout=15,
-                        )
-                        committee_ids = [item['id'] for item in resp.json().get('items', [])]
+                        committee_ids = []
+                        for _attempt in range(3):
+                            try:
+                                resp = _requests.get(
+                                    'https://committees-api.parliament.uk/api/Committees',
+                                    params={'status': 'Current', 'take': 300}, timeout=30,
+                                )
+                                committee_ids = [item['id'] for item in resp.json().get('items', [])]
+                                break
+                            except Exception:
+                                if _attempt == 2:
+                                    raise
+                                import time as _time; _time.sleep(3)
                     else:
                         committee_ids = [int(x.strip()) for x in raw_ids.split(',') if x.strip()]
                 except Exception as e:
@@ -934,22 +942,35 @@ def admin_panel():
                     message = f'Error resolving committee IDs: {e}'
 
                 if committee_ids:
-                    start_date = _date.fromisoformat(date_from_str) if date_from_str else _date(2020, 1, 1)
+                    incremental = request.form.get('incremental') == '1'
+                    fallback_start = _date(2024, 1, 1)
                     end_date = _date.fromisoformat(date_to_str) if date_to_str else _date.today()
 
-                    def _run_ingest(cids, sd, ed):
+                    if incremental:
+                        from stakeholder_directory.ingesters.committee_evidence import get_incremental_start_dates
+                        per_start = get_incremental_start_dates(committee_ids, fallback_start=fallback_start)
+                        new_count = sum(1 for cid in committee_ids if per_start[cid] == fallback_start)
+                        incremental_count = len(committee_ids) - new_count
+                    else:
+                        per_start = None
+                        start_date = _date.fromisoformat(date_from_str) if date_from_str else fallback_start
+
+                    def _run_ingest(cids, sd, ed, psd):
                         from stakeholder_directory.ingesters.committee_evidence import ingest_committee_evidence
                         from stakeholder_directory.normalisation.normaliser import normalise_pending_staging
                         from stakeholder_directory.models import Organisation, Engagement
                         import time as _t
                         _committee_ingest_status['running'] = True
-                        _committee_ingest_status['message'] = f'Running… {len(cids)} committees, {sd} → {ed}'
+                        _committee_ingest_status['message'] = (
+                            f'Running incremental update for {len(cids)} committees → {ed}'
+                            if psd else f'Running… {len(cids)} committees, {sd} → {ed}'
+                        )
                         try:
                             with app.app_context():
                                 orgs_before = Organisation.query.count()
                                 eng_before = Engagement.query.count()
                                 t0 = _t.monotonic()
-                                ing = ingest_committee_evidence(cids, sd, ed)
+                                ing = ingest_committee_evidence(cids, sd, ed, per_committee_start_dates=psd)
                                 norm = normalise_pending_staging('staging_committee_evidence', batch_size=5000)
                                 duration = int(_t.monotonic() - t0)
                                 orgs_after = Organisation.query.count()
@@ -971,8 +992,15 @@ def admin_panel():
                         finally:
                             _committee_ingest_status['running'] = False
 
-                    threading.Thread(target=_run_ingest, args=(committee_ids, start_date, end_date), daemon=True).start()
-                    message = f'Ingestion started for {len(committee_ids)} committees ({start_date} → {end_date}). Refresh this page in a few minutes to see results.'
+                    threading.Thread(target=_run_ingest, args=(committee_ids, fallback_start if incremental else start_date, end_date, per_start), daemon=True).start()
+                    if incremental:
+                        message = (
+                            f'Incremental update started for {len(committee_ids)} committees '
+                            f'({incremental_count} updating since last run, {new_count} fetching from scratch). '
+                            'Refresh this page in a few minutes to see results.'
+                        )
+                    else:
+                        message = f'Ingestion started for {len(committee_ids)} committees ({start_date} → {end_date}). Refresh this page in a few minutes to see results.'
 
         elif action == 'clear_directory_data':
             try:
