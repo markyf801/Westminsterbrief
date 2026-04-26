@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Cache Admin{% endblock %}
 {% block content %}
-<div style="max-width:700px; margin:40px auto; padding:0 20px;">
+<div style="max-width:1100px; margin:40px auto; padding:0 20px;">
   <h2 style="font-size:1.3rem; margin-bottom:4px;">Cache Administration</h2>
   <p style="color:#666; font-size:0.85rem; margin-bottom:24px;">Visible only to admin account.</p>
 
@@ -11,8 +11,11 @@
   </div>
   {% endif %}
 
+  <!-- Row 1: cache cards -->
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:16px; align-items:start;">
+
   <!-- Minister Cache -->
-  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">Minister Cache (minister_cache.json)</h3>
     {% if minister_status.get('exists') %}
       <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
@@ -36,7 +39,7 @@
   </div>
 
   <!-- TWFY Search Cache -->
-  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">TWFY Search Cache (database)</h3>
     <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
       <tr><td style="padding:4px 0; color:#555;">Total entries</td><td style="font-weight:600;">{{ twfy_total }}</td></tr>
@@ -61,7 +64,7 @@
   </div>
 
   <!-- Member Link Cross-Reference DB -->
-  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">Member ID Cross-Reference (Parliament ↔ TWFY)</h3>
     <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
       <tr><td style="padding:4px 0; color:#555;">Total members</td><td style="font-weight:600;">{{ member_link_stats.total }}</td></tr>
@@ -80,8 +83,13 @@
     {% endif %}
   </div>
 
+  </div>{# end 3-col cache grid #}
+
+  <!-- Row 2: ingestion cards -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; align-items:start;">
+
   <!-- ── Committee Evidence Ingestion ─────────────────────────────── -->
-  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — Committee Evidence Ingestion</h3>
     <p style="font-size:0.8rem; color:#888; margin:0 0 14px;">Pulls oral and written evidence witnesses from the Parliament committees API and stages them for normalisation. "all" fetches every current committee (~153). Specify IDs (e.g. <code>203, 135</code>) to limit scope. Takes several minutes for all committees.</p>
 
@@ -130,7 +138,7 @@
   </div>
 
   <!-- ── Directory Ingestion ─────────────────────────────────────── -->
-  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — CSV Ingestion</h3>
 
     {% if dir_stats.error %}
@@ -188,8 +196,13 @@
     </form>
   </div>
 
+  </div>{# end 2-col ingestion grid #}
+
+  <!-- Row 3: destructive actions -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+
   <!-- Clear Directory Data -->
-  <div style="border:1px solid #ffe0b2; border-radius:8px; padding:20px; margin-bottom:16px; background:#fffde7;">
+  <div style="border:1px solid #ffe0b2; border-radius:8px; padding:20px; background:#fffde7;">
     <h3 style="font-size:1rem; margin:0 0 8px; color:#e65100;">Clear Directory Data</h3>
     <p style="font-size:0.85rem; color:#666; margin:0 0 12px;">Deletes all organisations, engagements, staging rows and ingestion logs. Use before re-uploading CSVs with correct source URLs. Does not affect any other part of the site.</p>
     <form method="post" action="?token={{ admin_token }}" onsubmit="return confirm('Delete all directory data? This cannot be undone.');">
@@ -201,7 +214,7 @@
   </div>
 
   <!-- Clear Everything -->
-  <div style="border:1px solid #ffcdd2; border-radius:8px; padding:20px; background:#fff9f9;">
+  <div style="border:1px solid #ffcdd2; border-radius:8px; padding:20px; background:#fff9f9; margin-bottom:0;">
     <h3 style="font-size:1rem; margin:0 0 8px; color:#c62828;">Clear Everything</h3>
     <p style="font-size:0.85rem; color:#666; margin:0 0 12px;">Deletes minister cache file + all TWFY database cache entries. Next search will rebuild from scratch (uses TWFY API quota).</p>
     <form method="post" action="?token={{ request.args.get('token', '') }}">
@@ -211,5 +224,7 @@
       </button>
     </form>
   </div>
+
+  </div>{# end destructive grid #}
 </div>
 {% endblock %}
