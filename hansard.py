@@ -170,10 +170,13 @@ def index():
         seen_uins = set()
 
         try:
-            # Build shared API params — house pushed to API to cut wasted fetches
+            # Build shared API params — house pushed to API to cut wasted fetches.
+            # Correct param names per OpenAPI spec (questions-statements-api.parliament.uk/index.html).
+            # tabledWhenFrom/tabledWhenTo work reliably; answeringBodies is safe when a
+            # searchTerm narrows the result set. See CLAUDE.md "WQ API constraints".
             base_params = {}
-            if start_date: base_params['tabledStartDate'] = start_date
-            if end_date: base_params['tabledEndDate'] = end_date
+            if start_date: base_params['tabledWhenFrom'] = start_date
+            if end_date: base_params['tabledWhenTo'] = end_date
             if selected_dept_id: base_params['answeringBodies'] = [int(selected_dept_id)]
             if selected_house == 'Commons': base_params['house'] = 'Commons'
             elif selected_house == 'Lords': base_params['house'] = 'Lords'

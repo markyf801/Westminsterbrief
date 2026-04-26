@@ -898,12 +898,13 @@ def _classify_group(grp):
 
 def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=800):
     """Fetch WQs matching topic from Parliament API. Returns (list_of_dicts, total_count).
-    Does NOT pass answeringBodies to the API — that filter causes severe timeouts (>30s).
-    Instead fetches without dept filter and filters client-side by answeringBodyName."""
+    Deliberately omits answeringBodies because this function supports multi-dept selection
+    and the research tool needs to apply its own relevance scoring across dept results.
+    Note: answeringBodies does work reliably when combined with a date anchor — the earlier
+    belief that it causes timeouts unconditionally was incorrect (see CLAUDE.md WQ API
+    constraints). The client-side filter here is intentional, not a workaround."""
     import logging
     try:
-        # No answeringBodies param — server-side dept filter causes 30s+ timeouts.
-        # Client-side filter is applied below instead.
         # expandMember=true returns full member objects including names.
         params = {'searchTerm': topic, 'take': limit, 'skip': 0,
                   'expandMember': 'true', 'orderBy': 'DateTabledDesc'}

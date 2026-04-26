@@ -87,7 +87,6 @@ def search_mp_pqs():
                     
                     if q_resp.status_code == 200:
                         data = q_resp.json().get('results') or []
-                        # Enforce department filter in Python — API parameter alone is unreliable
                         if selected_dept:
                             data = [item for item in data
                                     if str((item.get('value') or {}).get('answeringBodyId', '')) == selected_dept]
