@@ -836,7 +836,8 @@ def admin_panel():
                         f'Normalised: {norm.staging_records_processed} staging rows — '
                         f'new orgs: {orgs_after - orgs_before}, '
                         f'new engagements: {eng_after - eng_before}. '
-                        f'Errors: {len(ing.errors) + len(norm.errors)}.'
+                        f'Errors: {len(ing.errors) + len(norm.errors)}. '
+                        + (f'First error: {(ing.errors + norm.errors)[0]}' if ing.errors or norm.errors else '')
                     )
                 except Exception as e:
                     db.session.rollback()
