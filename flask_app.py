@@ -167,8 +167,16 @@ import stakeholder_directory.ingesters.staging  # noqa: F401
 # ==========================================
 # 4. AUTO-BUILD DATABASE
 # ==========================================
+import time as _mig_time
+_mig_t0 = _mig_time.monotonic()
+def _mig_log(phase):
+    print(f'[STARTUP] {phase} +{_mig_time.monotonic() - _mig_t0:.1f}s', flush=True)
+
+_mig_log('begin')
 with app.app_context():
+    _mig_log('app_context entered')
     db.create_all()
+    _mig_log('db.create_all done')
     # Add has_completed_onboarding to existing user tables that predate this column
     try:
         with db.engine.connect() as conn:
@@ -176,6 +184,7 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass  # Column already exists — nothing to do
+    _mig_log('onboarding col done')
     # Rename cached_twfy_search.query → search_query (query shadows SQLAlchemy's .query interface)
     try:
         with db.engine.connect() as conn:
@@ -183,9 +192,11 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass  # Already renamed or table doesn't exist yet
+    _mig_log('twfy rename done')
     # Add access_tier to user table; backfill gov.uk + owner email
     from sqlalchemy import inspect as _sa_inspect
     _user_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('user')}
+    _mig_log('inspect user done')
     if 'access_tier' not in _user_cols:
         try:
             with db.engine.connect() as conn:
@@ -196,6 +207,7 @@ with app.app_context():
             app.logger.warning('user access_tier migration failed: %s', _e)
     # Add new columns to tracked_stakeholder (website, rss_url, description)
     _ts_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('tracked_stakeholder')}
+    _mig_log('inspect tracked_stakeholder done')
     for _col, _defn in [('website', 'VARCHAR(300)'), ('rss_url', 'VARCHAR(500)'), ('description', 'TEXT')]:
         if _col not in _ts_cols:
             try:
@@ -232,15 +244,18 @@ with app.app_context():
         ('sd_staging_committee_evidence',  'raw_organisation_name'),
     ]
     _is_pg = 'postgresql' in app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    _mig_log('starting sd_ constraints block')
     try:
         with db.engine.connect() as conn:
             _run_migs = True
             if _is_pg:
                 _run_migs = conn.execute(text('SELECT pg_try_advisory_lock(9876543210)')).scalar()
+            _mig_log(f'advisory lock acquired={_run_migs}')
             if _run_migs:
                 for _tbl, _name, _expr in _sd_constraints:
                     conn.execute(text(f'ALTER TABLE {_tbl} DROP CONSTRAINT IF EXISTS {_name}'))
                     conn.execute(text(f'ALTER TABLE {_tbl} ADD CONSTRAINT {_name} CHECK {_expr}'))
+                _mig_log('sd_ CHECK constraints done')
                 # Only widen columns still typed as character varying
                 _varchar_cols = set(conn.execute(text("""
                     SELECT table_name || '.' || column_name
@@ -262,6 +277,7 @@ with app.app_context():
             conn.commit()
     except Exception as _e:
         app.logger.warning('sd_ constraint/widening migration failed: %s', _e)
+    _mig_log('sd_ constraints block done')
     # Add columns to sd_organisation added after initial Railway deployment
     _sd_org_new_cols = [
         ('last_verified',   'DATE'),
@@ -274,6 +290,7 @@ with app.app_context():
     ]
     try:
         _org_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('sd_organisation')}
+        _mig_log('inspect sd_organisation done')
         with db.engine.connect() as conn:
             for _col, _defn in _sd_org_new_cols:
                 if _col not in _org_cols:
@@ -281,6 +298,7 @@ with app.app_context():
             conn.commit()
     except Exception as _e:
         app.logger.warning('sd_organisation migration failed: %s', _e)
+    _mig_log('sd_organisation cols done')
     # Add columns to sd_engagement added after initial Railway deployment
     _sd_eng_new_cols = [
         ('committee_id',       'INTEGER'),
@@ -294,6 +312,7 @@ with app.app_context():
     ]
     try:
         _eng_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('sd_engagement')}
+        _mig_log('inspect sd_engagement done')
         with db.engine.connect() as conn:
             for _col, _defn in _sd_eng_new_cols:
                 if _col not in _eng_cols:
@@ -301,6 +320,7 @@ with app.app_context():
             conn.commit()
     except Exception as _e:
         app.logger.warning('sd_engagement migration failed: %s', _e)
+    _mig_log('sd_engagement cols done')
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
@@ -312,16 +332,20 @@ with app.app_context():
          'house': 'Commons', 'twfy_person_id': '26321',
          'twfy_name': 'Josh MacAlister', 'resolution_method': 'seeded'},
     ]
+    _mig_log('starting MemberLink seeds')
     for s in _SEEDS:
         if not MemberLink.get_by_parliament_id(s['parliament_id']):
             MemberLink.upsert(**s)
+    _mig_log('MemberLink seeds done')
     if not User.query.filter_by(email='joe@university.ac.uk').first():
         joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
         joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
         db.session.add(joe)
         db.session.commit()
+    _mig_log('user seed done')
 
     # Seed education stakeholder orgs (run once — skipped if any orgs already exist)
+    _mig_log('checking StakeholderOrg count')
     if StakeholderOrg.query.count() == 0:
         _STAKEHOLDER_SEEDS = [
             # Central Government & Regulators
@@ -397,10 +421,15 @@ with app.app_context():
             db.session.commit()
         except Exception:
             db.session.rollback()
+    _mig_log('StakeholderOrg seed done')
+    _mig_log('app_context block complete')
 
 # Kick off background minister link seeding after app context is established
+_mig_log('importing debate_scanner for seed_all_minister_links')
 from debate_scanner import seed_all_minister_links
+_mig_log('debate_scanner imported')
 seed_all_minister_links(app)
+_mig_log('seed_all_minister_links started')
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
