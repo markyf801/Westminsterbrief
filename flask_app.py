@@ -425,11 +425,13 @@ with app.app_context():
     _mig_log('app_context block complete')
 
 # Kick off background minister link seeding after app context is established
-_mig_log('importing debate_scanner for seed_all_minister_links')
-from debate_scanner import seed_all_minister_links
-_mig_log('debate_scanner imported')
-seed_all_minister_links(app)
-_mig_log('seed_all_minister_links started')
+# TEMPORARILY DISABLED — diagnosing WORKER TIMEOUT; re-enable once root cause confirmed
+# _mig_log('importing debate_scanner for seed_all_minister_links')
+# from debate_scanner import seed_all_minister_links
+# _mig_log('debate_scanner imported')
+# seed_all_minister_links(app)
+# _mig_log('seed_all_minister_links started')
+_mig_log('seed disabled for diagnosis')
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
@@ -521,6 +523,19 @@ _PAYWALL_EXEMPT = {
     '/paywall', '/health', '/terms', '/privacy',
     '/robots.txt', '/sitemap.xml',
 }
+
+@app.before_request
+def _log_request():
+    import time as _rt
+    _rt._req_start = _rt.monotonic()
+    print(f'[REQ] {request.method} {request.path}', flush=True)
+
+@app.after_request
+def _log_response(response):
+    import time as _rt
+    elapsed = _rt.monotonic() - getattr(_rt, '_req_start', _rt.monotonic())
+    print(f'[RES] {request.method} {request.path} → {response.status_code} ({elapsed:.2f}s)', flush=True)
+    return response
 
 @app.before_request
 def check_tier_access():
