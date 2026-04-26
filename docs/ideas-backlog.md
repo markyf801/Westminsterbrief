@@ -8,6 +8,15 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Government Consultations
+Add a parallel data layer to the directory covering government consultations. Three states (open / closed-awaiting-response / closed-responded), plus anticipated/forthcoming consultations. Data source: gov.uk consultations and department publications. Cross-references nicely with existing committee evidence — same organisations often engage with both. Probably 30–50 hours of work for v1. See `docs/consultations-design-note.md` for fuller thinking.
+
+**Revisit trigger:** Public beta running 4+ weeks with tester feedback; users ask about consultation tracking; capacity for substantial new feature work; any "directory expansion" conversation.
+
+*Captured 26 April 2026.*
+
+---
+
 ### MP Engagement Scoring
 Rank MPs by observable parliamentary engagement per topic — WQs tabled, debate contributions, EDM signatures, committee questions, adjournment debates — as a composite score. Output: "MPs most engaged with [topic X]." Useful for stakeholder mapping by charity policy officers, public affairs professionals, and researchers. Potentially a flagship paid-tier feature.
 
