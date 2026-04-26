@@ -80,6 +80,40 @@
     {% endif %}
   </div>
 
+  <!-- ── Committee Evidence Ingestion ─────────────────────────────── -->
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
+    <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — Committee Evidence Ingestion</h3>
+    <p style="font-size:0.8rem; color:#888; margin:0 0 14px;">Pulls oral and written evidence witnesses from the Parliament committees API and stages them for normalisation. "all" fetches every current committee (~153). Specify IDs (e.g. <code>203, 135</code>) to limit scope. Takes several minutes for all committees.</p>
+
+    <form method="post" action="?token={{ admin_token }}">
+      <input type="hidden" name="action" value="ingest_committee_evidence">
+
+      <div style="margin-bottom:12px;">
+        <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Committee IDs <span style="font-weight:400; color:#888;">(comma-separated integers, or "all")</span></label>
+        <input type="text" name="committee_ids" value="all"
+               style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
+      </div>
+
+      <div style="display:flex; gap:12px; margin-bottom:14px;">
+        <div style="flex:1;">
+          <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">From date</label>
+          <input type="date" name="date_from" value="2024-01-01"
+                 style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">To date <span style="font-weight:400; color:#888;">(blank = today)</span></label>
+          <input type="date" name="date_to"
+                 style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
+        </div>
+      </div>
+
+      <button type="submit"
+              style="background:#1c3e6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
+        Fetch &amp; Ingest
+      </button>
+    </form>
+  </div>
+
   <!-- ── Directory Ingestion ─────────────────────────────────────── -->
   <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — CSV Ingestion</h3>

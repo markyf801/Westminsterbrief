@@ -840,6 +840,58 @@ def admin_panel():
                 db.session.rollback()
                 message = f'Error resetting failed links: {e}'
 
+        elif action == 'ingest_committee_evidence':
+            from stakeholder_directory.ingesters.committee_evidence import ingest_committee_evidence
+            from stakeholder_directory.normalisation.normaliser import normalise_pending_staging
+            from stakeholder_directory.models import Organisation, Engagement
+            from datetime import date as _date
+            import time as _time
+            import requests as _requests
+
+            raw_ids = (request.form.get('committee_ids') or '').strip()
+            date_from_str = (request.form.get('date_from') or '').strip()
+            date_to_str = (request.form.get('date_to') or '').strip()
+
+            try:
+                if raw_ids.lower() == 'all':
+                    resp = _requests.get(
+                        'https://committees-api.parliament.uk/api/Committees',
+                        params={'status': 'Current', 'take': 300}, timeout=15,
+                    )
+                    committee_ids = [item['id'] for item in resp.json().get('items', [])]
+                else:
+                    committee_ids = [int(x.strip()) for x in raw_ids.split(',') if x.strip()]
+            except Exception as e:
+                committee_ids = []
+                message = f'Error resolving committee IDs: {e}'
+
+            if committee_ids:
+                try:
+                    start_date = _date.fromisoformat(date_from_str) if date_from_str else _date(2020, 1, 1)
+                    end_date = _date.fromisoformat(date_to_str) if date_to_str else _date.today()
+                    orgs_before = Organisation.query.count()
+                    eng_before = Engagement.query.count()
+                    t0 = _time.monotonic()
+                    ing = ingest_committee_evidence(committee_ids, start_date, end_date)
+                    norm = normalise_pending_staging('staging_committee_evidence', batch_size=5000)
+                    duration = int(_time.monotonic() - t0)
+                    orgs_after = Organisation.query.count()
+                    eng_after = Engagement.query.count()
+                    message = (
+                        f'Done in {duration}s across {len(committee_ids)} committees. '
+                        f'Publications: {ing.publications_fetched}, witnesses: {ing.witnesses_processed}, '
+                        f'staged: {ing.rows_staged} (skipped {ing.rows_skipped_duplicate} dup, '
+                        f'{ing.rows_skipped_internal_govt} govt). '
+                        f'Normalised: {norm.staging_records_processed} rows — '
+                        f'new orgs: {orgs_after - orgs_before}, '
+                        f'new engagements: {eng_after - eng_before}. '
+                        f'Errors: {len(ing.errors) + len(norm.errors)}.'
+                        + (f' First error: {(ing.errors + norm.errors)[0]}' if ing.errors or norm.errors else '')
+                    )
+                except Exception as e:
+                    db.session.rollback()
+                    message = f'Committee evidence ingestion error: {e}'
+
         elif action == 'clear_directory_data':
             try:
                 from stakeholder_directory.models import Organisation, Engagement, Alias, Flag, PolicyAreaTag, IngestionRun
