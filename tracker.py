@@ -45,6 +45,30 @@ def add_hyperlink(paragraph, url, text):
 
 _GEMINI_MODEL_CACHE = {}
 
+# Shared AI categorisation cache: key → (categories_dict, expires_at)
+# Keyed by dept_id + sitting_day so 100 concurrent users share one Gemini call.
+_AI_CATEGORY_CACHE: dict[str, tuple[dict, datetime]] = {}
+
+
+def _ai_cache_key(dept_id: str, date_str: str) -> str:
+    return f"tracker_ai_{dept_id}_{date_str}"
+
+
+def _get_cached_categories(dept_id: str, date_str: str) -> dict | None:
+    entry = _AI_CATEGORY_CACHE.get(_ai_cache_key(dept_id, date_str))
+    if entry is None:
+        return None
+    categories, expires_at = entry
+    if datetime.now() >= expires_at:
+        del _AI_CATEGORY_CACHE[_ai_cache_key(dept_id, date_str)]
+        return None
+    return categories
+
+
+def _set_cached_categories(dept_id: str, date_str: str, categories: dict) -> None:
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    _AI_CATEGORY_CACHE[_ai_cache_key(dept_id, date_str)] = (categories, midnight)
+
 
 def _gemini_generate(api_key, prompt):
     """Call Gemini REST API. Auto-detects a working model and endpoint version."""
@@ -88,6 +112,48 @@ def _gemini_generate(api_key, prompt):
             continue
 
     raise Exception(f"All endpoints failed for {model}")
+
+def _categorise_questions(questions: list[dict], dept_id: str, date_str: str, gemini_key: str | None = None) -> dict:
+    """Return {uin: theme} mapping. Returns cached result if available; calls Gemini on miss."""
+    cached = _get_cached_categories(dept_id, date_str)
+    if cached is not None:
+        return cached
+
+    categories: dict = {}
+    if not gemini_key:
+        return categories
+
+    try:
+        questions_data = [{"uin": r['uin'], "text": r['text'][:200]} for r in questions]
+        prompt = (
+            "Categorize these UK Parliamentary questions into broad team-level policy themes "
+            "that a single policy team would own (e.g., 'SEND', 'Early Years', 'Higher Education Finance', "
+            "'Disabled Children\\'s Social Care', 'School Standards'). "
+            "Use short, team-level labels — do NOT add sub-categories or qualifiers after a dash. "
+            "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
+            f"Data: {json.dumps(questions_data)}"
+        )
+        raw_text = _gemini_generate(gemini_key, prompt)
+        match = re.search(r'\{.*\}|\[.*\]', raw_text.replace('\n', ' '), re.DOTALL)
+        if match:
+            parsed = json.loads(match.group(0))
+            if isinstance(parsed, list):
+                for item in parsed:
+                    k = str(item.get('uin', item.get('id', '')))
+                    v = str(item.get('theme', 'Uncategorized'))
+                    if k:
+                        categories[k] = v
+            elif isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    categories[str(k)] = str(v)
+        else:
+            print("[tracker] categorisation issue: unexpected response format")
+        _set_cached_categories(dept_id, date_str, categories)
+    except Exception as e:
+        print(f"[tracker] categorisation issue: AI Error: {str(e)[:60]}")
+
+    return categories
+
 
 def get_member_name(member_id):
     if not member_id: return "Unknown Member"
@@ -227,39 +293,7 @@ def morning_tracker():
                     'status': 'UNANSWERED',
                 })
 
-            categories = {}
-            ai_status = ""
-
-            if results and api_key:
-                try:
-                    questions_data = [{"uin": r['uin'], "text": r['text'][:200]} for r in results]
-                    prompt = (
-                        "Categorize these UK Parliamentary questions into broad team-level policy themes "
-                        "that a single policy team would own (e.g., 'SEND', 'Early Years', 'Higher Education Finance', "
-                        "'Disabled Children\\'s Social Care', 'School Standards'). "
-                        "Use short, team-level labels — do NOT add sub-categories or qualifiers after a dash. "
-                        "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
-                        f"Data: {json.dumps(questions_data)}"
-                    )
-                    raw_text = _gemini_generate(api_key, prompt)
-                    match = re.search(r'\{.*\}|\[.*\]', raw_text.replace('\n', ' '), re.DOTALL)
-                    if match:
-                        parsed = json.loads(match.group(0))
-                        if isinstance(parsed, list):
-                            for item in parsed:
-                                k = str(item.get('uin', item.get('id', '')))
-                                v = str(item.get('theme', 'Uncategorized'))
-                                if k: categories[k] = v
-                        elif isinstance(parsed, dict):
-                            for k, v in parsed.items():
-                                categories[str(k)] = str(v)
-                    else:
-                        ai_status = "(AI: unexpected response format)"
-                except Exception as e:
-                    ai_status = f"(AI Error: {str(e)[:60]})"
-
-            if ai_status:
-                print(f"[tracker] categorisation issue: {ai_status}")
+            categories = _categorise_questions(results, selected_dept, sitting_day_used, api_key) if results else {}
 
             if results:
                 temp_group = {}
