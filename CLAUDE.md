@@ -411,44 +411,90 @@ return render_template('page.html', total_available=total_available)
 
 ## WQ API constraints — read before changing any tracker or WQ-related code
 
-The Parliament Written Questions API at `questions-statements-api.parliament.uk/api/writtenquestions/questions` has several non-obvious behaviours that have caused multiple regressions when ignored. These have been verified by experimentation and form the basis of how the tracker, WQ scanner, and any other WQ-consuming code works.
+The Parliament Written Questions API at `questions-statements-api.parliament.uk/api/writtenquestions/questions` is documented in its OpenAPI spec at `https://questions-statements-api.parliament.uk/index.html`. That spec is authoritative — refer to it when in doubt. The constraints below have been verified against it and by live testing in April 2026.
 
-### Confirmed API behaviours
+### Correction notice — previous constraints were wrong
 
-1. **`tabledStartDate` and `tabledEndDate` are silently ignored.** The API accepts them without error but does not filter results. `totalResults` returns the full ~661k result count whether you pass these parameters or not. Do not rely on them for date filtering.
+An earlier version of this section (present until April 2026) documented three constraints that turned out to be false:
 
-2. **`answeringBodies` parameter causes 30+ second timeouts.** Passing a department ID via this parameter results in the API hanging for half a minute or more before either responding slowly or failing. Confirmed across multiple departments. Do not pass `answeringBodies` — filter by `answeringBodyId` client-side instead.
+- *"tabledStartDate and tabledEndDate are silently ignored"* — **False.** The API does not have these parameters. The correct parameter names are `tabledWhenFrom` and `tabledWhenTo`. We were passing the wrong names; the API was correctly ignoring them.
+- *"answeringBodies causes 30s+ timeouts"* — **Conditionally false.** It causes timeouts when used without a date filter (full-table scan across 661k rows). Combined with `tabledWhenFrom`, it responds in ~2 seconds. The root cause was the missing date anchor, not the parameter itself.
+- *"isAnswered is silently ignored"* — **False.** The correct parameter name is `answered` (enum: `Any`, `Answered`, `Unanswered`).
 
-3. **`isAnswered` parameter is silently ignored.** Filter by the `is_answered` field on returned results client-side.
+The takeaway: the API behaved exactly as the OpenAPI spec describes. Our diagnostics were flawed because we were passing wrong parameter names and drawing causal inferences from the wrong evidence. The `take=500 / max(tabled_dates) / client-side everything` workaround was solving a self-inflicted problem.
 
-4. **Results are returned in UIN-descending order** (most recently tabled first). This is the basis of the tracker's "find the most recent sitting day" logic — fetch a moderate batch (`take=500`), take `max(tabled_dates)` over the results, and that's the most recent sitting day.
+### Confirmed working parameters (verified April 2026)
 
-### What works
+| Parameter | Type | Behaviour |
+|---|---|---|
+| `tabledWhenFrom` | date string `YYYY-MM-DD` | Filters to questions tabled on or after this date. **Works reliably.** |
+| `tabledWhenTo` | date string `YYYY-MM-DD` | Filters to questions tabled on or before this date. **Works reliably.** |
+| `answered` | enum: `Any` / `Answered` / `Unanswered` | Server-side answered filter. **Works reliably.** |
+| `answeringBodies` | integer (dept ID) | Filters by answering department. **Works reliably when combined with `tabledWhenFrom`.** Do not use without a date anchor — full-table scan will timeout. |
+| `house` | `Commons` / `Lords` | Works. |
+| `searchTerm` | string | Works (full-text search). |
+| `take` / `skip` | integer | Pagination, works. |
+| `questionStatus` | `NotAnswered` / `AnsweredOnly` / `AllQuestions` | Alternative to `answered`, also works. |
 
-- `searchTerm` works (reduces results from ~661k to relevant subset)
-- `take` and `skip` for pagination work
-- `house=Commons` / `house=Lords` parameter works
-- Returned items reliably carry `dateTabled`, `dateForAnswer`, `answeringBodyId`, `answeringBodyName`, `uin` — all suitable for client-side filtering
+### Working API call examples
 
-### Implementation pattern for "most recent sitting day" queries
+```python
+import requests
+from datetime import datetime, timedelta
 
-The tracker uses this pattern (working in commits `f3168f2`, `5a2f5d5`, broken in `833856b`, restored in the April 2026 regression fix):
+url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
 
-1. Fetch `take=500` with no department filter, no working date filter (the 14-day window is passed but ignored)
-2. Use `max(tabled_dates)` over the returned results to identify the most recent sitting day
-3. Filter to that date client-side
-4. Filter by `answeringBodyId == selected_dept` client-side
-5. Apply `is_answered` filter client-side if needed
+# Example 1: All unanswered questions tabled yesterday
+yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+resp = requests.get(url, params={
+    'tabledWhenFrom': yesterday,
+    'tabledWhenTo': yesterday,
+    'answered': 'Unanswered',
+    'take': 1000,
+}, timeout=30)
 
-This works *because of* the API's quirks, not despite them — the UIN-desc ordering means `take=500` reliably contains the most recent sitting day in full. Do not "improve" this by reintroducing date filters or `answeringBodies` — both have caused regressions before.
+# Example 2: All unanswered DfE questions tabled in the last 7 days (~2s response)
+week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+resp = requests.get(url, params={
+    'tabledWhenFrom': week_ago,
+    'answeringBodies': 60,   # DfE dept ID
+    'answered': 'Unanswered',
+    'take': 500,
+}, timeout=30)
+
+# Example 3: Paginated fetch for high-volume days
+all_results = []
+skip = 0
+while True:
+    resp = requests.get(url, params={
+        'tabledWhenFrom': yesterday,
+        'tabledWhenTo': yesterday,
+        'take': 500,
+        'skip': skip,
+    }, timeout=30)
+    batch = resp.json().get('results') or []
+    all_results.extend(batch)
+    if len(batch) < 500:
+        break
+    skip += 500
+```
+
+### Implementation pattern for the tracker
+
+The tracker should use server-side filtering, not the client-side workaround:
+
+1. Set `tabledWhenFrom` to yesterday (or walk back up to 7 days if yesterday returns 0 results — handles recess correctly)
+2. Set `answeringBodies` to the selected department ID
+3. Set `answered=Unanswered`
+4. Paginate with `skip` if needed (a busy post-recess day can exceed 1000 questions for a large department)
 
 ### Domain facts that constrain the design
 
-- **MPs and Lords cannot table written questions during recess.** The Table Office is closed for tabling. Each WQ has a real `dateTabled` reflecting an actual sitting day. There is no "post-recess backlog of mixed dates" — the first sitting day after recess sees a high volume of newly-tabled questions, but they're all genuinely tabled on that day.
+- **MPs and Lords cannot table written questions during recess.** The Table Office is closed for tabling. Each WQ has a real `dateTabled` reflecting an actual sitting day.
 
-- **A typical sitting day produces 200–500 WQs across all departments and houses.** Heavy days (post-recess return, end of session, major events) can reach 600–1200. Extreme cases (politically charged days after long recess) have hit 1500+. `take=500` covers normal days; if the most recent batch returns 500 results all carrying the same `dateTabled`, fetch additional pages with `skip` to capture the full day.
+- **A typical sitting day produces 200–500 WQs across all departments and houses.** Heavy days (post-recess return, end of session, major events) can reach 600–1200. Paginate rather than assuming a single `take=500` covers a full day.
 
-- **Recess detection is implicit.** If `max(tabled_dates)` in fresh results is more than a few days old, Parliament is currently not sitting. Surface a banner showing "Parliament not currently sitting — showing last sitting day, [date]" rather than presenting stale data without context.
+- **Recess detection:** If a lookback of 7 days returns 0 questions, Parliament is likely in recess. Surface a banner — "Parliament not currently sitting — no questions tabled in the last 7 days" — rather than showing a confusingly empty page.
 
 ---
 
@@ -475,6 +521,16 @@ When changing any code in this codebase that has a documented constraint or a de
 Begin the request with: "before making changes, read [the relevant constraint document] and confirm the constraints you'll be working within." This forces explicit acknowledgement of prior decisions and reduces accidental regression risk.
 
 If asked to "refactor" or "improve" code that's working, the right starting question is "what constraints does this code currently respect, and which (if any) is the refactor relaxing?" Refactors that quietly relax documented constraints are how regressions land.
+
+### Verification corollary — constraint documents are beliefs, not truth
+
+The Chesterton's fence principle applies to constraints too: before treating a documented constraint as a hard rule, verify that it is still correct. Constraint documents record what was believed at the time of writing — they can be wrong, stale, or based on a flawed diagnostic.
+
+**Working principle:** verify documented constraints against authoritative sources (OpenAPI specs, official documentation, primary API tests) when introducing them, and periodically thereafter. If a constraint was derived from experimentation rather than official documentation, say so — and note what the authoritative source actually says.
+
+**The April 2026 lesson:** three constraints in this file ("date params ignored", "answeringBodies times out", "isAnswered ignored") were all false. They were derived from experiments that used wrong parameter names. The API worked correctly all along. The constraints were our misreading, not the API's behaviour. We spent weeks building workarounds for a problem that didn't exist.
+
+When a constraint and an official spec disagree, trust the spec and test directly. Don't trust prior-Claude's documented belief over a live API response.
 
 ---
 
