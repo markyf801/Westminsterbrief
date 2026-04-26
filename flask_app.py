@@ -847,18 +847,20 @@ def admin_panel():
     member_link_stats = MemberLink.stats()
 
     # --- Directory stats ---
-    dir_stats = {}
+    dir_stats = {'org_count': 0, 'eng_count': 0, 'last_run': None, 'departments': {}, 'error': None}
     try:
         from stakeholder_directory.models import Organisation, Engagement, IngestionRun
-        from stakeholder_directory.vocab import _load_yaml
         dir_stats['org_count'] = Organisation.query.count()
         dir_stats['eng_count'] = Engagement.query.count()
-        last_run = IngestionRun.query.order_by(IngestionRun.run_at.desc()).first()
-        dir_stats['last_run'] = last_run
+        dir_stats['last_run'] = IngestionRun.query.order_by(IngestionRun.run_at.desc()).first()
+    except Exception as e:
+        dir_stats['error'] = f'DB error: {e}'
+    try:
+        from stakeholder_directory.vocab import _load_yaml
         dept_yaml = _load_yaml('departments.yaml')
         dir_stats['departments'] = {k: v['name'] for k, v in dept_yaml.get('departments', {}).items()}
     except Exception as e:
-        dir_stats = {'org_count': 0, 'eng_count': 0, 'last_run': None, 'departments': {}, 'error': str(e)}
+        dir_stats['error'] = (dir_stats.get('error') or '') + f' | YAML error: {e}'
 
     return render_template('admin.html',
                            message=message,

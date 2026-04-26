@@ -84,6 +84,10 @@
   <div style="border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:16px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — CSV Ingestion</h3>
 
+    {% if dir_stats.error %}
+    <p style="color:#c62828; font-size:0.8rem; margin:0 0 10px; font-family:monospace;">{{ dir_stats.error }}</p>
+    {% endif %}
+
     <table style="width:100%; font-size:0.85rem; border-collapse:collapse; margin-bottom:14px;">
       <tr><td style="padding:4px 0; color:#555;">Organisations</td><td style="font-weight:600;">{{ dir_stats.org_count }}</td></tr>
       <tr><td style="padding:4px 0; color:#555;">Engagements</td><td style="font-weight:600;">{{ dir_stats.eng_count }}</td></tr>
