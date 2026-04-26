@@ -606,6 +606,16 @@ The escalation pattern is for situations where strategic judgement adds value, n
 
 ---
 
+## Capture ideas in the backlog
+
+Mark generates ideas at high volume mid-session. When a new idea comes up that isn't being actioned immediately, Claude Code should capture it in `docs/ideas-backlog.md` — name, one-line description, revisit trigger — without being asked. This is Claude's job, not Mark's.
+
+The format is: add to the Active section, note what conditions would make it worth revisiting, and move on. Don't let ideas drift into conversation history where they'll be lost.
+
+When a revisit trigger condition applies in a later session, surface the idea to Mark for a decision. Don't act on it; surface it. If Mark explicitly kills an idea, move it to the Killed section with a one-line reason so it doesn't keep resurfacing.
+
+---
+
 ## Exploratory work and branches
 
 Mark generates ideas at high volume. Many are good and worth exploring; sketching them in service of evaluating them is valuable. The discipline isn't "don't have ideas" — it's "don't sketch them on top of in-flight work or on the main branch."
