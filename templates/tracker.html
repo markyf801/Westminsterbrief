@@ -65,9 +65,9 @@
                                  data-member="{{ r.member }}" data-member_id="{{ r.member_id }}"
                                  data-uin="{{ r.uin }}" data-text="{{ r.text }}"
                                  data-due="{{ r.due_date }}" data-status="{{ r.status }}"
-                                 style="border-left: 4px solid {% if r.is_answered %}#28a745{% else %}#d9534f{% endif %};">
+                                 style="border-left: 4px solid #d9534f;">
                                 <div class="result-card-header">
-                                    <span class="wq-status-badge wq-status-{% if r.is_answered %}answered{% else %}unanswered{% endif %}">
+                                    <span class="wq-status-badge wq-status-unanswered">
                                         {{ r.status }}
                                     </span>
                                     <span class="result-card-dept">{{ r.dept }}</span>
@@ -89,8 +89,16 @@
         </div>
     {% else %}
         <div class="box" style="margin-top: 25px; text-align: center; padding: 40px;">
-            <p style="color: #666; font-size: 16px; font-weight: bold;">No questions found for this department in the last 14 days.</p>
-            <p style="color: #888; font-size: 14px; margin-top: 8px;">Parliament may be in recess, or no questions were tabled for this department recently.</p>
+            {% if api_failed %}
+                <p style="color: #d9534f; font-size: 16px; font-weight: bold;">Parliament API did not respond.</p>
+                <p style="color: #888; font-size: 14px; margin-top: 8px;">This is a temporary issue with Parliament's servers. Try again in a few minutes.</p>
+            {% else %}
+                <p style="color: #666; font-size: 16px; font-weight: bold;">No unanswered questions found.</p>
+                <p style="color: #888; font-size: 14px; margin-top: 8px;">
+                    Checked the last 5 sitting days — no unanswered questions for this department were found.
+                    Parliament may be in recess, or all recent questions have already been answered.
+                </p>
+            {% endif %}
         </div>
     {% endif %}
 {% endif %}

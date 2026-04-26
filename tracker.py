@@ -116,107 +116,99 @@ def get_member_name(member_id):
     except: pass
     return "Unknown Member"
 
+WQ_URL = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+
+
+def _fetch_unanswered_wqs(dept_id: str, target_date: str) -> list:
+    """Fetch all unanswered WQs for dept_id on target_date (YYYY-MM-DD).
+
+    Uses correct API params verified against the OpenAPI spec April 2026.
+    See CLAUDE.md "WQ API constraints" for full parameter reference.
+    answeringBodies is safe with a date anchor (~2s response); without one it
+    causes full-table scans and timeouts.
+    """
+    params = {
+        'tabledWhenFrom': target_date,
+        'tabledWhenTo': target_date,
+        'answered': 'Unanswered',
+        'take': 1000,
+    }
+    if dept_id:
+        params['answeringBodies'] = int(dept_id)
+
+    resp = requests.get(WQ_URL, params=params, timeout=30)
+    if resp.status_code != 200:
+        return []
+
+    payload = resp.json()
+    results = payload.get('results') or []
+    total = payload.get('totalResults', 0)
+
+    # Paginate on heavy days (post-recess returns can exceed 1000 for large depts)
+    skip = 1000
+    while len(results) < total and skip < 5000:
+        page = requests.get(WQ_URL, params={**params, 'skip': skip}, timeout=30)
+        if page.status_code != 200:
+            break
+        batch = page.json().get('results') or []
+        if not batch:
+            break
+        results.extend(batch)
+        skip += 1000
+
+    return results
+
+
 @tracker_bp.route('/tracker', methods=['GET', 'POST'])
 def morning_tracker():
     sorted_grouped_results = {}
     error_message = None
     selected_dept = ""
+    sitting_day_used = None
+    api_failed = False
 
     if request.method == 'POST':
         selected_dept = request.form.get('department', '').strip()
         results = []
 
         try:
-            # WQ API quirks (verified by experiment, see commits 12851b6 → 5a2f5d5):
-            #
-            # 1. tabledStartDate / tabledEndDate are silently ignored — pass them but
-            #    don't rely on them. The API returns results regardless.
-            #
-            # 2. answeringBodies parameter causes 30s+ timeouts. Do not pass it.
-            #    Filter by department client-side instead.
-            #
-            # 3. Results are returned in UIN-descending order (most recently tabled
-            #    first). This lets us fetch take=500 and use max(tabled_dates) to
-            #    reliably identify the most recent sitting day.
-            #
-            # Do not reintroduce answeringBodies or shift to a date-filter-based
-            # approach without verifying these behaviours have changed on Parliament's
-            # end. Both have caused regressions in past changes.
-            wq_url = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
-            window_start = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-            params = {
-                'take': 500,
-                'tabledStartDate': window_start,
-                'tabledEndDate': yesterday,
-            }
-            resp = requests.get(wq_url, params=params, timeout=30)
-            data = resp.json().get('results') or [] if resp.status_code == 200 else []
+            # Walk back up to 5 days to find the most recent sitting day that has
+            # unanswered questions for this department. Handles weekends, bank
+            # holidays, and recess gracefully without arbitrary date-window hacks.
+            data = []
+            for days_back in range(1, 6):
+                target_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+                data = _fetch_unanswered_wqs(selected_dept, target_date)
+                if data:
+                    sitting_day_used = target_date
+                    break
 
-            # Deduplicate by UIN — API can return the same question more than once
-            seen_uins: set = set()
-            deduped = []
-            for item in data:
-                uin = str((item.get('value') or {}).get('uin', ''))
-                if uin and uin not in seen_uins:
-                    seen_uins.add(uin)
-                    deduped.append(item)
-            data = deduped
-
-            # Filter by department first, then find the most recent sitting day
-            # within that department's questions. This avoids the global-max problem
-            # where a day with questions from other departments (but not the selected
-            # one) becomes the anchor day and returns an empty result.
-            if selected_dept:
-                data = [item for item in data
-                        if str((item.get('value') or {}).get('answeringBodyId')) == selected_dept]
-
-            # Identify the most recent sitting day within the (dept-filtered) results.
-            tabled_dates = [
-                (item.get('value') or {}).get('dateTabled', '').split('T')[0]
-                for item in data
-                if (item.get('value') or {}).get('dateTabled')
-            ]
-            last_tabled_day = max(tabled_dates) if tabled_dates else ''
-            if last_tabled_day:
-                data = [item for item in data
-                        if (item.get('value') or {}).get('dateTabled', '').split('T')[0] == last_tabled_day]
-            else:
-                data = []
-
-            m_ids = {item.get('value', {}).get('askingMemberId') for item in data if item.get('value', {}).get('askingMemberId')}
+            m_ids = {(item.get('value') or {}).get('askingMemberId')
+                     for item in data if (item.get('value') or {}).get('askingMemberId')}
             with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
                 executor.map(get_member_name, m_ids)
 
             for item in data:
                 val = item.get('value') or {}
-
                 member_id = val.get('askingMemberId')
-                member_name = get_member_name(member_id)
-
                 tabled_date_str = (val.get('dateTabled') or '').split('T')[0]
-
                 try:
                     date_obj = datetime.fromisoformat(tabled_date_str)
                     f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
                 except Exception:
                     f_date = "N/A"
 
-                is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
-                if is_answered:
-                    continue
-
                 results.append({
                     'dept': val.get('answeringBodyName'),
                     'uin': str(val.get('uin')),
-                    'member': member_name,
+                    'member': get_member_name(member_id),
                     'member_id': member_id,
                     'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
                     'raw_date': tabled_date_str,
                     'date_asked': f_date,
                     'due_date': tabled_date_str or 'TBC',
-                    'is_answered': is_answered,
-                    'status': "ANSWERED" if is_answered else "UNANSWERED"
+                    'is_answered': False,
+                    'status': 'UNANSWERED',
                 })
 
             categories = {}
@@ -257,22 +249,34 @@ def morning_tracker():
                 temp_group = {}
                 for r in results:
                     r_date = r['raw_date']
-                    theme = categories.get(r['uin'])
-                    if not theme: theme = "Uncategorized"
-                    # Collapse "Parent - Sub-category" → "Parent" so one team = one group
+                    theme = categories.get(r['uin']) or "Uncategorized"
                     if ' - ' in theme:
                         theme = theme.split(' - ')[0].strip()
-                    if r_date not in temp_group: temp_group[r_date] = {'display_date': r['date_asked'], 'themes': {}}
-                    if theme not in temp_group[r_date]['themes']: temp_group[r_date]['themes'][theme] = []
+                    if r_date not in temp_group:
+                        temp_group[r_date] = {'display_date': r['date_asked'], 'themes': {}}
+                    if theme not in temp_group[r_date]['themes']:
+                        temp_group[r_date]['themes'][theme] = []
                     temp_group[r_date]['themes'][theme].append(r)
 
                 for date_key in sorted(temp_group.keys(), reverse=True):
                     sorted_grouped_results[date_key] = temp_group[date_key]
 
+        except requests.exceptions.Timeout:
+            error_message = "Parliament API timed out — try again in a moment."
+            api_failed = True
         except Exception as e:
             error_message = f"Search error: {str(e)}"
 
-    return render_template('tracker.html', sorted_grouped_results=sorted_grouped_results, error_message=error_message, departments=DEPARTMENTS, selected_dept=selected_dept, is_post=(request.method == 'POST'))
+    return render_template(
+        'tracker.html',
+        sorted_grouped_results=sorted_grouped_results,
+        error_message=error_message,
+        departments=DEPARTMENTS,
+        selected_dept=selected_dept,
+        is_post=(request.method == 'POST'),
+        sitting_day_used=sitting_day_used,
+        api_failed=api_failed,
+    )
 
 @tracker_bp.route('/download_tracker_word', methods=['POST'])
 def download_tracker_word():
