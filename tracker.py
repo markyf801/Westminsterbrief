@@ -163,9 +163,15 @@ def morning_tracker():
                     deduped.append(item)
             data = deduped
 
-            # Identify the most recent sitting day from the returned results.
-            # Because results are UIN-descending, max(tabled_dates) is the last
-            # day Parliament tabled questions — i.e. the previous sitting day.
+            # Filter by department first, then find the most recent sitting day
+            # within that department's questions. This avoids the global-max problem
+            # where a day with questions from other departments (but not the selected
+            # one) becomes the anchor day and returns an empty result.
+            if selected_dept:
+                data = [item for item in data
+                        if str((item.get('value') or {}).get('answeringBodyId')) == selected_dept]
+
+            # Identify the most recent sitting day within the (dept-filtered) results.
             tabled_dates = [
                 (item.get('value') or {}).get('dateTabled', '').split('T')[0]
                 for item in data
@@ -184,8 +190,6 @@ def morning_tracker():
 
             for item in data:
                 val = item.get('value') or {}
-                if selected_dept and str(val.get('answeringBodyId')) != selected_dept:
-                    continue
 
                 member_id = val.get('askingMemberId')
                 member_name = get_member_name(member_id)
@@ -199,8 +203,6 @@ def morning_tracker():
                     f_date = "N/A"
 
                 is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
-                if is_answered:
-                    continue
 
                 results.append({
                     'dept': val.get('answeringBodyName'),

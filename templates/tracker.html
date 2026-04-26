@@ -2,12 +2,12 @@
 
 {% block content %}
 <div class="box">
-    <h2>☀️ Today’s Unanswered PQs & MP Tracker</h2>
-    
+    <h2>☀️ Today’s PQs Tracker</h2>
+
     <div style="background-color: #f0f7ff; border-left: 4px solid #005a8f; padding: 15px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
         <p style="margin: 0; color: #1c3e6e; font-size: 14.5px; line-height: 1.6;">
-            Select a department to see all Written Questions due for answer today — or the most recent sitting day if Parliament is in recess.
-            AI groups them by policy theme automatically. Tick the themes you want, then click <strong>'Generate Word Briefing'</strong> to export with optional AI political context.
+            Select a department to see all Written Questions that were laid the previous sitting day — so you can give teams a heads-up on what questions are coming.
+            AI groups them by policy theme automatically. Tick the themes you want, then click <strong>’Generate Word Briefing’</strong> to export with optional AI political context.
         </p>
     </div>
     
@@ -89,7 +89,8 @@
         </div>
     {% else %}
         <div class="box" style="margin-top: 25px; text-align: center; padding: 40px;">
-            <p style="color: #28a745; font-size: 18px; font-weight: bold;">✅ No recent questions found for this search.</p>
+            <p style="color: #666; font-size: 16px; font-weight: bold;">No questions found for this department in the last 14 days.</p>
+            <p style="color: #888; font-size: 14px; margin-top: 8px;">Parliament may be in recess, or no questions were tabled for this department recently.</p>
         </div>
     {% endif %}
 {% endif %}
