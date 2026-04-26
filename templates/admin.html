@@ -90,61 +90,82 @@
 
   <!-- ── Committee Evidence Ingestion ─────────────────────────────── -->
   <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
-    <h3 style="font-size:1rem; margin:0 0 12px;">Stakeholder Directory — Committee Evidence Ingestion</h3>
-    <p style="font-size:0.8rem; color:#888; margin:0 0 14px;">Pulls oral and written evidence witnesses from the Parliament committees API and stages them for normalisation. "all" fetches every current committee (~153). Specify IDs (e.g. <code>203, 135</code>) to limit scope. Takes several minutes for all committees.</p>
+    <h3 style="font-size:1rem; margin:0 0 6px;">Stakeholder Directory — Committee Evidence Ingestion</h3>
+    <p style="font-size:0.8rem; color:#888; margin:0 0 14px;">Pulls oral and written evidence witnesses from the Parliament committees API and stages them for normalisation.</p>
 
-    <div style="border:1px solid #c8e6c9; border-radius:6px; padding:12px 14px; margin-bottom:16px; background:#f1f8e9;">
-      <p style="font-size:0.85rem; font-weight:600; margin:0 0 4px;">Quick update (incremental)</p>
-      <p style="font-size:0.8rem; color:#666; margin:0 0 10px;">Fetches only publications newer than the last run for each committee (14-day overlap buffer). Safe to run repeatedly — duplicates are skipped automatically.</p>
-      <form method="post" action="?token={{ admin_token }}">
+    <!-- Primary actions: one click each -->
+    <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+
+      <form method="post" action="?token={{ admin_token }}" style="flex:1; min-width:220px;">
+        <input type="hidden" name="action" value="ingest_committee_evidence">
+        <input type="hidden" name="committee_ids" value="203, 135, 193, 365, 783, 517, 81, 83, 519, 378, 170, 164, 664, 515, 52, 24, 360, 158, 175, 102, 153, 17, 518, 78, 327, 172">
+        <input type="hidden" name="date_from" value="2024-01-01">
+        <button type="submit"
+                style="width:100%; background:#b71c1c; color:#fff; border:none; border-radius:6px; padding:10px 16px; font-size:0.85rem; font-weight:600; cursor:pointer; text-align:left; line-height:1.4;">
+          ⬇ Download all main departments
+          <span style="display:block; font-size:0.75rem; font-weight:400; opacity:0.85;">DfE, DSIT, DBT, DHSC, Home Office, DCMS, DWP, DESNZ, DEFRA, MOD, Treasury, MOJ, DfT, MHCLG, FCDO, Cabinet Office — 2024 to today</span>
+        </button>
+      </form>
+
+      <form method="post" action="?token={{ admin_token }}" style="flex:1; min-width:220px;">
         <input type="hidden" name="action" value="ingest_committee_evidence">
         <input type="hidden" name="committee_ids" value="all">
         <input type="hidden" name="incremental" value="1">
         <button type="submit"
-                style="background:#2e7d32; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
-          Update since last run
+                style="width:100%; background:#2e7d32; color:#fff; border:none; border-radius:6px; padding:10px 16px; font-size:0.85rem; font-weight:600; cursor:pointer; text-align:left; line-height:1.4;">
+          🔄 Update since last run
+          <span style="display:block; font-size:0.75rem; font-weight:400; opacity:0.85;">Incremental — fetches only publications newer than the last run. Safe to run weekly.</span>
         </button>
       </form>
+
     </div>
 
-    <p style="font-size:0.85rem; font-weight:600; margin:0 0 8px; color:#555;">Full re-fetch (custom date range)</p>
-    <form method="post" action="?token={{ admin_token }}">
-      <input type="hidden" name="action" value="ingest_committee_evidence">
-
-      <div style="margin-bottom:12px;">
-        <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">Committee IDs <span style="font-weight:400; color:#888;">(comma-separated integers, or "all")</span></label>
-        <div style="margin-bottom:6px; display:flex; gap:6px; flex-wrap:wrap;">
-          <button type="button" onclick="document.getElementById('ce-ids').value='135, 193'"
-                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #5c6bc0; border-radius:12px; background:#ede7f6; color:#311b92; cursor:pointer;">DSIT (135, 193)</button>
-          <button type="button" onclick="document.getElementById('ce-ids').value='365, 783, 517'"
-                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #00838f; border-radius:12px; background:#e0f7fa; color:#004d40; cursor:pointer;">DBT (365, 783, 517)</button>
-          <button type="button" onclick="document.getElementById('ce-ids').value='135, 193, 365, 783, 517'"
-                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #e65100; border-radius:12px; background:#fff3e0; color:#e65100; cursor:pointer;">DSIT + DBT</button>
-          <button type="button" onclick="document.getElementById('ce-ids').value='all'"
-                  style="font-size:0.78rem; padding:3px 10px; border:1px solid #888; border-radius:12px; background:#f5f5f5; color:#444; cursor:pointer;">All committees</button>
-        </div>
-        <input type="text" id="ce-ids" name="committee_ids" value="all"
-               style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
-      </div>
-
-      <div style="display:flex; gap:12px; margin-bottom:14px;">
-        <div style="flex:1;">
-          <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">From date</label>
-          <input type="date" name="date_from" value="2024-01-01"
+    <!-- Advanced: custom run -->
+    <details style="font-size:0.85rem;">
+      <summary style="cursor:pointer; color:#555; font-weight:600; margin-bottom:10px;">Advanced — custom committee IDs or date range</summary>
+      <form method="post" action="?token={{ admin_token }}" style="margin-top:10px;">
+        <input type="hidden" name="action" value="ingest_committee_evidence">
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:0.82rem; font-weight:600; margin-bottom:4px;">Committee IDs <span style="font-weight:400; color:#888;">(comma-separated, or "all")</span></label>
+          <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+            <button type="button" onclick="document.getElementById('ce-ids').value='203'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DfE</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='135, 193'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DSIT</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='365, 783, 517'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DBT</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='81'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DHSC</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='83, 519'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">Home Office</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='378, 170'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DCMS</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='164'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DWP</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='664, 515'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DESNZ</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='52, 515'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DEFRA</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='24, 360'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">MOD</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='158, 175'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">Treasury</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='102'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">MOJ</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='153'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">DfT</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='17, 518'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">MHCLG</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='78'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">FCDO</button>
+            <button type="button" onclick="document.getElementById('ce-ids').value='327, 172'" style="font-size:0.72rem; padding:2px 7px; border:1px solid #aaa; border-radius:9px; background:#fafafa; cursor:pointer;">Cabinet Office</button>
+          </div>
+          <input type="text" id="ce-ids" name="committee_ids" value="all"
                  style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
         </div>
-        <div style="flex:1;">
-          <label style="display:block; font-size:0.85rem; font-weight:600; margin-bottom:4px;">To date <span style="font-weight:400; color:#888;">(blank = today)</span></label>
-          <input type="date" name="date_to"
-                 style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
+        <div style="display:flex; gap:10px; margin-bottom:12px;">
+          <div style="flex:1;">
+            <label style="display:block; font-size:0.82rem; font-weight:600; margin-bottom:4px;">From date</label>
+            <input type="date" name="date_from" value="2024-01-01"
+                   style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
+          </div>
+          <div style="flex:1;">
+            <label style="display:block; font-size:0.82rem; font-weight:600; margin-bottom:4px;">To date <span style="font-weight:400; color:#888;">(blank = today)</span></label>
+            <input type="date" name="date_to"
+                   style="font-size:0.85rem; border:1px solid #ccc; border-radius:4px; padding:6px; width:100%; box-sizing:border-box;">
+          </div>
         </div>
-      </div>
-
-      <button type="submit"
-              style="background:#1c3e6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
-        Fetch &amp; Ingest
-      </button>
-    </form>
+        <button type="submit"
+                style="background:#1c3e6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
+          Fetch &amp; Ingest
+        </button>
+      </form>
+    </details>
   </div>
 
   <!-- ── Directory Ingestion ─────────────────────────────────────── -->
