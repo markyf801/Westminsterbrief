@@ -133,6 +133,18 @@
     </form>
   </div>
 
+  <!-- Clear Directory Data -->
+  <div style="border:1px solid #ffe0b2; border-radius:8px; padding:20px; margin-bottom:16px; background:#fffde7;">
+    <h3 style="font-size:1rem; margin:0 0 8px; color:#e65100;">Clear Directory Data</h3>
+    <p style="font-size:0.85rem; color:#666; margin:0 0 12px;">Deletes all organisations, engagements, staging rows and ingestion logs. Use before re-uploading CSVs with correct source URLs. Does not affect any other part of the site.</p>
+    <form method="post" action="?token={{ admin_token }}" onsubmit="return confirm('Delete all directory data? This cannot be undone.');">
+      <button name="action" value="clear_directory_data"
+              style="background:#e65100; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
+        Clear directory data
+      </button>
+    </form>
+  </div>
+
   <!-- Clear Everything -->
   <div style="border:1px solid #ffcdd2; border-radius:8px; padding:20px; background:#fff9f9;">
     <h3 style="font-size:1rem; margin:0 0 8px; color:#c62828;">Clear Everything</h3>

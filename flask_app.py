@@ -840,6 +840,19 @@ def admin_panel():
                 db.session.rollback()
                 message = f'Error resetting failed links: {e}'
 
+        elif action == 'clear_directory_data':
+            try:
+                from stakeholder_directory.models import Organisation, Engagement, Alias, Flag, PolicyAreaTag, IngestionRun
+                from stakeholder_directory.ingesters.staging import StagingMinisterialMeeting, StagingCommitteeEvidence, StagingLobbyingEntry
+                for model in (StagingMinisterialMeeting, StagingCommitteeEvidence, StagingLobbyingEntry,
+                              Flag, PolicyAreaTag, Alias, Engagement, Organisation, IngestionRun):
+                    db.session.query(model).delete()
+                db.session.commit()
+                message = 'Directory data cleared — all orgs, engagements, staging rows and ingestion logs deleted.'
+            except Exception as e:
+                db.session.rollback()
+                message = f'Error clearing directory data: {e}'
+
         elif action == 'ingest_directory_csv':
             import tempfile
             csv_file = request.files.get('csv_file')
