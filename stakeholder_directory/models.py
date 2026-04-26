@@ -52,7 +52,7 @@ class Organisation(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    canonical_name = db.Column(db.String(300), nullable=False, index=True)
+    canonical_name = db.Column(db.Text, nullable=False, index=True)
     canonical_url = db.Column(db.String(500), nullable=True)
     description = db.Column(db.Text, nullable=True)
     type = db.Column(db.String(50), nullable=False)
@@ -82,7 +82,7 @@ class Alias(db.Model):
     organisation_id = db.Column(
         db.Integer, db.ForeignKey('sd_organisation.id'), nullable=False, index=True
     )
-    alias_name = db.Column(db.String(300), nullable=False)
+    alias_name = db.Column(db.Text, nullable=False)
     source = db.Column(db.String(100), nullable=False)
 
 

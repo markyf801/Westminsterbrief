@@ -232,14 +232,20 @@ with app.app_context():
             conn.commit()
     except Exception as _e:
         app.logger.warning('sd_ CHECK constraint refresh failed: %s', _e)
-    # Widen raw_organisation_name to TEXT in staging tables (was VARCHAR(300), too short for multi-org rows)
-    for _tbl in ('sd_staging_ministerial_meeting', 'sd_staging_committee_evidence'):
-        try:
-            with db.engine.connect() as conn:
-                conn.execute(text(f'ALTER TABLE {_tbl} ALTER COLUMN raw_organisation_name TYPE TEXT'))
-                conn.commit()
-        except Exception:
-            pass  # Table doesn't exist yet or already TEXT
+    # Widen VARCHAR(300) name columns to TEXT across sd_ tables
+    _sd_text_widenings = [
+        ('sd_organisation',              'canonical_name'),
+        ('sd_alias',                     'alias_name'),
+        ('sd_staging_ministerial_meeting', 'raw_organisation_name'),
+        ('sd_staging_committee_evidence',  'raw_organisation_name'),
+    ]
+    try:
+        with db.engine.connect() as conn:
+            for _tbl, _col in _sd_text_widenings:
+                conn.execute(text(f'ALTER TABLE {_tbl} ALTER COLUMN {_col} TYPE TEXT'))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning('sd_ TEXT widening failed: %s', _e)
     # Add columns to sd_organisation added after initial Railway deployment
     _sd_org_new_cols = [
         ('last_verified',   'DATE'),
