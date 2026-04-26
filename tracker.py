@@ -203,6 +203,8 @@ def morning_tracker():
                     f_date = "N/A"
 
                 is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
+                if is_answered:
+                    continue
 
                 results.append({
                     'dept': val.get('answeringBodyName'),
