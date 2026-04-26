@@ -204,8 +204,9 @@ with app.app_context():
                     conn.commit()
             except Exception as _e:
                 app.logger.warning('tracked_stakeholder migration failed for %s: %s', _col, _e)
-    # Refresh CHECK constraints on sd_ tables — constraints are baked in at CREATE TABLE time
-    # and go stale when config/*.yaml vocabs are updated. Drop and re-add using current values.
+    # Refresh CHECK constraints and widen TEXT columns on sd_ tables.
+    # Uses pg_try_advisory_lock so only one worker runs these on multi-worker startup.
+    # Second worker skips entirely — constraints are already correct after first worker.
     from stakeholder_directory.vocab import (
         ORG_TYPE_VALUES, SCOPE_VALUES, STATUS_VALUES,
         REGISTRATION_STATUS_VALUES, SOURCE_TYPE_VALUES, STAGING_STATUS_VALUES,
@@ -224,28 +225,43 @@ with app.app_context():
         ('sd_staging_committee_evidence',  'ck_sd_staging_ce_status',  _ck_in('processing_status', STAGING_STATUS_VALUES)),
         ('sd_staging_lobbying_entry',      'ck_sd_staging_le_status',  _ck_in('processing_status', STAGING_STATUS_VALUES)),
     ]
-    try:
-        with db.engine.connect() as conn:
-            for _tbl, _name, _expr in _sd_constraints:
-                conn.execute(text(f'ALTER TABLE {_tbl} DROP CONSTRAINT IF EXISTS {_name}'))
-                conn.execute(text(f'ALTER TABLE {_tbl} ADD CONSTRAINT {_name} CHECK {_expr}'))
-            conn.commit()
-    except Exception as _e:
-        app.logger.warning('sd_ CHECK constraint refresh failed: %s', _e)
-    # Widen VARCHAR(300) name columns to TEXT across sd_ tables
     _sd_text_widenings = [
         ('sd_organisation',              'canonical_name'),
         ('sd_alias',                     'alias_name'),
         ('sd_staging_ministerial_meeting', 'raw_organisation_name'),
         ('sd_staging_committee_evidence',  'raw_organisation_name'),
     ]
+    _is_pg = 'postgresql' in app.config.get('SQLALCHEMY_DATABASE_URI', '')
     try:
         with db.engine.connect() as conn:
-            for _tbl, _col in _sd_text_widenings:
-                conn.execute(text(f'ALTER TABLE {_tbl} ALTER COLUMN {_col} TYPE TEXT'))
+            _run_migs = True
+            if _is_pg:
+                _run_migs = conn.execute(text('SELECT pg_try_advisory_lock(9876543210)')).scalar()
+            if _run_migs:
+                for _tbl, _name, _expr in _sd_constraints:
+                    conn.execute(text(f'ALTER TABLE {_tbl} DROP CONSTRAINT IF EXISTS {_name}'))
+                    conn.execute(text(f'ALTER TABLE {_tbl} ADD CONSTRAINT {_name} CHECK {_expr}'))
+                # Only widen columns still typed as character varying
+                _varchar_cols = set(conn.execute(text("""
+                    SELECT table_name || '.' || column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND data_type = 'character varying'
+                      AND (table_name, column_name) IN (
+                        VALUES ('sd_organisation','canonical_name'),
+                               ('sd_alias','alias_name'),
+                               ('sd_staging_ministerial_meeting','raw_organisation_name'),
+                               ('sd_staging_committee_evidence','raw_organisation_name')
+                      )
+                """)).scalars()) if _is_pg else set()
+                for _tbl, _col in _sd_text_widenings:
+                    if not _is_pg or f'{_tbl}.{_col}' in _varchar_cols:
+                        conn.execute(text(f'ALTER TABLE {_tbl} ALTER COLUMN {_col} TYPE TEXT'))
+                if _is_pg:
+                    conn.execute(text('SELECT pg_advisory_unlock(9876543210)'))
             conn.commit()
     except Exception as _e:
-        app.logger.warning('sd_ TEXT widening failed: %s', _e)
+        app.logger.warning('sd_ constraint/widening migration failed: %s', _e)
     # Add columns to sd_organisation added after initial Railway deployment
     _sd_org_new_cols = [
         ('last_verified',   'DATE'),
