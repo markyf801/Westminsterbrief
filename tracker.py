@@ -198,15 +198,31 @@ def morning_tracker():
                 except Exception:
                     f_date = "N/A"
 
+                # Derive question type from API fields (verified against live data Apr 2026):
+                #   house == 'Lords' → LORDS (14 calendar day deadline)
+                #   isNamedDay == True → NAMED_DAY (deadline set by MP, min 2 sitting days)
+                #   otherwise → ORDINARY (conventional 7 sitting day deadline)
+                if val.get('house') == 'Lords':
+                    question_type = 'LORDS'
+                elif val.get('isNamedDay'):
+                    question_type = 'NAMED_DAY'
+                else:
+                    question_type = 'ORDINARY'
+
+                date_for_answer = (val.get('dateForAnswer') or '').split('T')[0]
+
                 results.append({
                     'dept': val.get('answeringBodyName'),
                     'uin': str(val.get('uin')),
                     'member': get_member_name(member_id),
                     'member_id': member_id,
+                    'house': val.get('house', 'Commons'),
                     'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
                     'raw_date': tabled_date_str,
                     'date_asked': f_date,
                     'due_date': tabled_date_str or 'TBC',
+                    'date_for_answer': date_for_answer,
+                    'question_type': question_type,
                     'is_answered': False,
                     'status': 'UNANSWERED',
                 })

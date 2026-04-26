@@ -67,8 +67,8 @@
                                  data-due="{{ r.due_date }}" data-status="{{ r.status }}"
                                  style="border-left: 4px solid #d9534f;">
                                 <div class="result-card-header">
-                                    <span class="wq-status-badge wq-status-unanswered">
-                                        {{ r.status }}
+                                    <span class="wq-type-badge wq-type-{{ r.question_type | lower }}">
+                                        {% if r.question_type == 'NAMED_DAY' %}NAMED DAY{% else %}{{ r.question_type }}{% endif %}
                                     </span>
                                     <span class="result-card-dept">{{ r.dept }}</span>
                                     <span style="font-size:11px; color:#888; font-family:monospace; margin-left:6px;">{{ r.uin }}</span>
@@ -77,7 +77,7 @@
                                     <p style="margin-bottom:8px;"><strong>{{ r.member }}</strong></p>
                                     <p class="result-card-quote">"{{ r.text }}"</p>
                                     <p style="font-size:13px; color:#555; margin-top:8px;">
-                                        <strong>Tabled:</strong> {{ r.due_date }}
+                                        <strong>Tabled:</strong> {{ r.due_date }}{% if r.date_for_answer %} &nbsp;·&nbsp; <strong>Due:</strong> {{ r.date_for_answer }}{% endif %}
                                     </p>
                                 </div>
                             </div>
@@ -142,6 +142,22 @@
     details > summary { list-style: none; }
     details > summary::-webkit-details-marker { display: none; }
     details[open] > summary { background-color: #e9ecef; border-bottom: 1px solid #ddd; }
+
+    /* Question type badges: NAMED DAY (amber), LORDS (muted blue), ORDINARY (light grey) */
+    .wq-type-badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 2px 7px;
+        border-radius: 3px;
+        text-transform: uppercase;
+        margin-right: 6px;
+        vertical-align: middle;
+    }
+    .wq-type-named_day  { background: #fff3cd; color: #7d4e00; border: 1px solid #f0c040; }
+    .wq-type-lords      { background: #e8eef6; color: #3a5a8c; border: 1px solid #b0c4de; }
+    .wq-type-ordinary   { background: #f0f0f0; color: #666;    border: 1px solid #d0d0d0; }
 </style>
 
 <script>
