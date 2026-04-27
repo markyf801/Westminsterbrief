@@ -2,6 +2,7 @@ import requests, os, json, re, concurrent.futures, io
 from flask import Blueprint, render_template, request, send_file
 from datetime import datetime, timedelta
 from cache_models import CachedMember
+from extensions import limiter
 
 try:
     import docx
@@ -226,6 +227,7 @@ def _fetch_unanswered_wqs(dept_id: str, target_date: str) -> list:
 
 
 @tracker_bp.route('/tracker', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 100 per day", methods=["POST"])
 def morning_tracker():
     sorted_grouped_results = {}
     error_message = None

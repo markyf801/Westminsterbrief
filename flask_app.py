@@ -6,10 +6,10 @@ import re
 import numpy as np
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from extensions import db
+from extensions import db, limiter
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
@@ -85,10 +85,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 
-# Rate limiter — protects admin login from brute force
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-limiter = Limiter(app=app, key_func=get_remote_address, default_limits=[])
+# Rate limiter — init with global defaults; stricter limits on LLM/auth endpoints
+limiter.init_app(app)
+limiter.default_limits = ["200 per hour", "30 per minute"]
 
 # ==========================================
 # 2. LOGIN MANAGER
@@ -561,7 +560,15 @@ def paywall():
     return render_template('paywall.html')
 
 
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html:
+        return jsonify(error="Too many requests. Please try again in a moment."), 429
+    return render_template('429.html'), 429
+
+
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute; 20 per hour")
 def login():
     if request.method == 'POST':
         email = request.form.get('email')

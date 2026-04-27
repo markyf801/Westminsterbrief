@@ -2,6 +2,7 @@ import os, requests, io, json, re, concurrent.futures, logging
 from flask import Blueprint, render_template, request, jsonify, send_file
 from datetime import datetime, timedelta
 from cache_models import CachedMember
+from extensions import limiter
 
 try:
     import wikipedia
@@ -321,6 +322,7 @@ def api_search_members():
 
 
 @biography_bp.route("/api/biography", methods=["POST"])
+@limiter.limit("10 per minute; 100 per day")
 def api_biography():
     data = request.get_json()
     bio = generate_mp_biography(data.get("mp_name"), data.get("member_id"))

@@ -3,6 +3,7 @@ from flask import Blueprint, render_template, request, send_file, copy_current_r
 from flask_login import current_user, login_required
 from datetime import datetime
 from cache_models import CachedTranscript, CachedTWFYSearch, StakeholderOrg
+from extensions import limiter
 try:
     import feedparser
 except ImportError:
@@ -2052,6 +2053,7 @@ def api_ministers_by_dept():
 # ROUTE 1: SCAN AND GROUP BY THEME (STEP 1)
 # ==========================================
 @debate_scanner_bp.route('/debates', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 100 per day", methods=["POST"])
 def scan_debates():
     grouped_debates = {}
     error_message = None
@@ -2799,6 +2801,7 @@ def debates_topic():
 # ROUTE 3: FETCH TRANSCRIPTS AND ANALYSE (DEPT SCAN)
 # ==========================================
 @debate_scanner_bp.route('/debates_analyze', methods=['POST'])
+@limiter.limit("10 per minute; 100 per day")
 def analyze_selected():
     selected = request.form.getlist('selected_debates')
     if not selected:
@@ -2933,6 +2936,7 @@ def debates_minister():
 # ROUTE 5: MINISTERIAL RECORD — ANALYSE SELECTED
 # ==========================================
 @debate_scanner_bp.route('/debates_minister_analyze', methods=['POST'])
+@limiter.limit("10 per minute; 100 per day")
 def debates_minister_analyze():
     selected = request.form.getlist('selected_debates')
     minister_name = request.form.get('minister_name', 'the Minister').strip()
