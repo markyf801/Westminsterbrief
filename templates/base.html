@@ -11,9 +11,12 @@
     <meta property="og:title" content="{% block og_title %}Westminster Brief — AI Parliamentary Research Tools{% endblock %}">
     <meta property="og:description" content="{% block og_description %}Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly. Free for gov.uk officials.{% endblock %}">
     <meta property="og:type" content="website">
-    <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Westminster Brief — AI Parliamentary Research Tools">
-    <meta name="twitter:description" content="Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly. Free for gov.uk officials.">
+    <meta property="og:url" content="https://westminsterbrief.co.uk{{ request.path }}">
+    {% block og_image %}{% endblock %}
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{% block twitter_title %}Westminster Brief — Parliamentary Research Tools{% endblock %}">
+    <meta name="twitter:description" content="{% block twitter_description %}Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly.{% endblock %}">
+    {% block twitter_image %}{% endblock %}
     <link rel="canonical" href="https://westminsterbrief.co.uk{{ request.path }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,6 +24,21 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     {% block extra_head %}{% endblock %}
+    {% block json_ld %}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Westminster Brief",
+      "url": "https://westminsterbrief.co.uk",
+      "description": "Parliamentary research and stakeholder intelligence tool for UK policy professionals.",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "GBP"},
+      "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+    }
+    </script>
+    {% endblock %}
 </head>
 <body class="{{ body_class | default('') }}">
 
