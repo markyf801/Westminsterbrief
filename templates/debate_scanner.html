@@ -24,10 +24,6 @@
                 Before the full search runs, you can <strong>review and amend the AI-generated search terms</strong> using the Preview button. Results may take a moment to load, but will include an AI summary, government and opposition speakers, key questions raised, and the full list of relevant parliamentary business — all downloadable as a Word briefing.
             </p>
         </div>
-        <div style="background:#fff8e1; border-left:4px solid #f0ad4e; padding:12px 16px; border-radius:0 4px 4px 0; margin-bottom:20px; font-size:13.5px; color:#7a5c00;">
-            ⚠️ <strong>This tool is in development</strong> — some features may not work correctly. If you encounter an issue, please <a href="mailto:mark@westminsterbrief.co.uk" style="color:#7a5c00;">email us</a> or use the Feedback link in the footer.
-        </div>
-
         {% set effective_depts = selected_depts if selected_depts else ([user_pref.department] if user_pref and user_pref.department and user_pref.department != 'All Departments' else []) %}
         <form method="POST" action="/debates_topic" onsubmit="showTopicLoading()">
             <div class="form-row">
@@ -604,9 +600,6 @@
                 Select the sessions you want, then generate a full Q&amp;A transcript with
                 communication style analysis — ideal for debate preparation.
             </p>
-        </div>
-        <div style="background:#fff8e1; border-left:4px solid #f0ad4e; padding:12px 16px; border-radius:0 4px 4px 0; margin-bottom:20px; font-size:13.5px; color:#7a5c00;">
-            ⚠️ <strong>This tool is in development</strong> — some functions may not work correctly for all ministers. If you spot an issue, please <a href="mailto:mark@westminsterbrief.co.uk" style="color:#7a5c00;">email us</a> or use the Feedback link in the footer.
         </div>
 
         <form method="POST" action="/debates_minister" onsubmit="showMinisterLoading()">
