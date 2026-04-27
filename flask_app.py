@@ -96,7 +96,7 @@ limiter.default_limits = ["200 per hour", "30 per minute"]
 from flask_talisman import Talisman
 Talisman(
     app,
-    force_https=True,
+    force_https=False,
     strict_transport_security=True,
     strict_transport_security_max_age=31536000,
     content_security_policy={
