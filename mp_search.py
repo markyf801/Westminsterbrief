@@ -4,7 +4,6 @@ from flask import Blueprint, render_template, request, send_file, jsonify, copy_
 from datetime import datetime, timedelta
 
 try:
-    import docx
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches
     from docx.oxml import OxmlElement
@@ -237,11 +236,23 @@ def _fetch_speeches(member_id: int, member_name: str, is_lord: bool) -> list:
     result = []
     for s in raw:
         url = s.get('listurl', '')
+        if url and url.startswith('/'):
+            url = f"https://www.theyworkforyou.com{url}"
+        elif url and url.startswith('?'):
+            url = f"https://www.theyworkforyou.com/debates/{url}"
         if not url:
             gid = s.get('gid', '')
-            url = f"https://www.theyworkforyou.com/debates/?id={gid}" if gid else ''
-        subject = (s.get('section_name') or s.get('subsection_name') or
-                   s.get('subject') or 'Untitled contribution')
+            if gid:
+                url = f"https://www.theyworkforyou.com/debates/?id={gid}"
+        # Debate title lives in parent.body (may contain HTML tags)
+        parent_body = (s.get('parent') or {}).get('body', '') or ''
+        subject = re.sub(r'<[^>]+>', '', parent_body).strip()
+        if not subject:
+            subject = re.sub(r'<[^>]+>', '', s.get('subsection_name', '') or '').strip()
+        if not subject:
+            subject = re.sub(r'<[^>]+>', '', s.get('section_name', '') or '').strip()
+        if not subject:
+            subject = 'Untitled contribution'
         result.append({
             'date': s.get('hdate', ''),
             'subject': subject,
@@ -465,7 +476,6 @@ def download_mp_word():
     party = header.get('party', '')
     role = header.get('role', '')
     photo_url = header.get('photo_url', '')
-    member_id = header.get('id', '')
 
     doc = Document()
 
