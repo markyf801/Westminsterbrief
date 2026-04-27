@@ -7,6 +7,7 @@ import numpy as np
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from extensions import db, limiter
@@ -57,6 +58,8 @@ from stakeholder_directory.views import directory_bp
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
+# Trust one proxy hop (Cloudflare → Railway) so rate limiting reads real client IPs
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # Build version string: short git hash (Railway sets RAILWAY_GIT_COMMIT_SHA; fallback to subprocess locally)
 def _get_app_version():
