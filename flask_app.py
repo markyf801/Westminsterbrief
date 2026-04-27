@@ -6,7 +6,7 @@ import re
 import numpy as np
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from extensions import db
@@ -76,6 +76,7 @@ APP_VERSION = _get_app_version()
 # 1. CONFIGURATION
 # ==========================================
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-this-later')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'intelligence.db'))
 if _db_url.startswith('postgres://'):
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
@@ -83,6 +84,11 @@ app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+# Rate limiter — protects admin login from brute force
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+limiter = Limiter(app=app, key_func=get_remote_address, default_limits=[])
 
 # ==========================================
 # 2. LOGIN MANAGER
@@ -848,25 +854,47 @@ TOTP_SECRET = os.environ.get('TOTP_SECRET', '').strip()
 # Background job status for long-running admin operations
 _committee_ingest_status = {'running': False, 'message': None, 'started_at': None}
 
+def _admin_log(action):
+    app.logger.info('ADMIN | ip=%s | %s', request.remote_addr, action)
+
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('admin_authenticated', None)
+    return redirect('/admin')
+
+
 @app.route('/admin', methods=['GET', 'POST'])
+@limiter.limit("15 per minute", error_message="Too many attempts — wait a minute and try again.")
 def admin_panel():
     import pyotp
-    token = request.args.get('token', '') or request.form.get('token', '')
-    totp_code = request.args.get('totp', '') or request.form.get('totp', '')
 
-    if not ADMIN_TOKEN:
-        return render_template('admin_login.html', error="ADMIN_TOKEN is not set in environment variables.")
-    if token != ADMIN_TOKEN:
-        return render_template('admin_login.html', error="Invalid token." if token else None)
+    # Session already authenticated and not expired
+    if session.get('admin_authenticated'):
+        pass  # fall through to admin page
+    else:
+        token = request.args.get('token', '') or request.form.get('token', '')
+        totp_code = request.form.get('totp', '')
 
-    # Token is correct — now check TOTP if a secret is configured
-    if TOTP_SECRET:
-        if not totp_code:
-            return render_template('admin_login.html', token=token, need_totp=True, error=None)
-        totp = pyotp.TOTP(TOTP_SECRET)
-        if not totp.verify(totp_code, valid_window=1):
-            return render_template('admin_login.html', token=token, need_totp=True,
-                                   error="Invalid authenticator code. Codes expire every 30 seconds — try again.")
+        if not ADMIN_TOKEN:
+            return render_template('admin_login.html', error="ADMIN_TOKEN is not set in environment variables.")
+        if token != ADMIN_TOKEN:
+            return render_template('admin_login.html', error="Invalid token." if token else None)
+
+        # Token correct — check TOTP second factor
+        if TOTP_SECRET:
+            if not totp_code:
+                return render_template('admin_login.html', token=token, need_totp=True, error=None)
+            totp = pyotp.TOTP(TOTP_SECRET)
+            if not totp.verify(totp_code, valid_window=1):
+                _admin_log('failed TOTP attempt')
+                return render_template('admin_login.html', token=token, need_totp=True,
+                                       error="Invalid authenticator code. Codes expire every 30 seconds — try again.")
+
+        # Both factors passed — create session
+        session.permanent = True
+        session['admin_authenticated'] = True
+        _admin_log('login successful')
 
     from debate_scanner import MINISTER_CACHE_FILE
     import json, time
@@ -880,6 +908,7 @@ def admin_panel():
                 if os.path.exists(MINISTER_CACHE_FILE):
                     os.remove(MINISTER_CACHE_FILE)
                 message = 'Minister cache cleared — will refresh from GOV.UK on next search.'
+                _admin_log('clear_minister')
             except Exception as e:
                 message = f'Error clearing minister cache: {e}'
         elif action == 'clear_twfy_search':
@@ -887,6 +916,7 @@ def admin_panel():
                 deleted = CachedTWFYSearch.query.delete()
                 db.session.commit()
                 message = f'TWFY search cache cleared ({deleted} entries removed).'
+                _admin_log(f'clear_twfy_search | {deleted} entries')
             except Exception as e:
                 db.session.rollback()
                 message = f'Error clearing TWFY search cache: {e}'
@@ -897,6 +927,7 @@ def admin_panel():
                 ).delete(synchronize_session=False)
                 db.session.commit()
                 message = f'Session expansion cache cleared ({deleted} entries removed).'
+                _admin_log(f'clear_sessions | {deleted} entries')
             except Exception as e:
                 db.session.rollback()
                 message = f'Error clearing session cache: {e}'
@@ -907,6 +938,7 @@ def admin_panel():
                 deleted = CachedTWFYSearch.query.delete()
                 db.session.commit()
                 message = f'All caches cleared ({deleted} TWFY entries removed, minister cache deleted).'
+                _admin_log(f'clear_all | {deleted} TWFY entries')
             except Exception as e:
                 db.session.rollback()
                 message = f'Error clearing caches: {e}'
@@ -918,6 +950,7 @@ def admin_panel():
                     row.resolution_method = None
                 db.session.commit()
                 message = f'{len(reset)} failed member link(s) reset — will retry on next search.'
+                _admin_log(f'retry_failed_links | {len(reset)} reset')
             except Exception as e:
                 db.session.rollback()
                 message = f'Error resetting failed links: {e}'
@@ -1012,8 +1045,10 @@ def admin_panel():
                             f'({incremental_count} updating since last run, {new_count} fetching from scratch). '
                             'Refresh this page in a few minutes to see results.'
                         )
+                        _admin_log(f'ingest_committee_evidence incremental | {len(committee_ids)} committees')
                     else:
                         message = f'Ingestion started for {len(committee_ids)} committees ({start_date} → {end_date}). Refresh this page in a few minutes to see results.'
+                        _admin_log(f'ingest_committee_evidence full | {len(committee_ids)} committees | {start_date} → {end_date}')
 
         elif action == 'clear_directory_data':
             try:
@@ -1024,6 +1059,7 @@ def admin_panel():
                     db.session.query(model).delete()
                 db.session.commit()
                 message = 'Directory data cleared — all orgs, engagements, staging rows and ingestion logs deleted.'
+                _admin_log('clear_directory_data')
             except Exception as e:
                 db.session.rollback()
                 message = f'Error clearing directory data: {e}'
@@ -1153,8 +1189,7 @@ def admin_panel():
                            twfy_session=twfy_session,
                            twfy_keyword=twfy_keyword,
                            member_link_stats=member_link_stats,
-                           dir_stats=dir_stats,
-                           admin_token=token)
+                           dir_stats=dir_stats)
 
 
 # ==========================================

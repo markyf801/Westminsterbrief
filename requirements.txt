@@ -17,3 +17,4 @@ anthropic>=0.25.0
 PyYAML>=6.0
 rapidfuzz>=3.0
 pyotp>=2.9.0
+flask-limiter>=3.5.0
