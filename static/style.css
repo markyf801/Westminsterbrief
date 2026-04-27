@@ -1130,3 +1130,285 @@ details[open] .wq-answer-summary::before { content: "▼"; }
 .stakeholder-pill-links a:hover {
     opacity: 1;
 }
+
+
+/* =============================================
+   HOMEPAGE DARK THEME (body.page-home only)
+   ============================================= */
+
+body.page-home {
+    background: #0d1117;
+}
+
+body.page-home .navbar {
+    background: #0d1117;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    box-shadow: none;
+}
+
+body.page-home .navbar a {
+    color: rgba(255,255,255,0.65);
+}
+
+body.page-home .navbar a:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.06);
+    border-bottom-color: #b8962e;
+}
+
+body.page-home .navbar a.nav-active {
+    color: #fff;
+    background: rgba(255,255,255,0.06);
+    border-bottom-color: #b8962e;
+}
+
+body.page-home .navbar .brand {
+    color: #fff;
+}
+
+body.page-home .navbar .nav-version {
+    color: rgba(255,255,255,0.3);
+    border-color: rgba(255,255,255,0.12);
+}
+
+body.page-home .navbar .nav-login {
+    background: rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.85) !important;
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.2);
+    padding: 6px 14px !important;
+    align-self: center;
+    height: auto;
+    font-weight: 600;
+}
+
+body.page-home .navbar .nav-login:hover {
+    background: rgba(255,255,255,0.18) !important;
+    border-bottom-color: transparent;
+}
+
+body.page-home .navbar .nav-register {
+    color: rgba(255,255,255,0.65) !important;
+    font-weight: 500;
+}
+
+/* Hero */
+.wb-hero {
+    position: relative;
+    padding: 52px 0 0;
+    margin-bottom: 0;
+    overflow: hidden;
+}
+
+.wb-hero-inner {
+    display: flex;
+    align-items: flex-start;
+    gap: 28px;
+    padding-bottom: 48px;
+}
+
+.wb-logo-mark {
+    background: #b8962e;
+    color: #0d1117;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 4px;
+}
+
+.wb-hero-text { flex: 1; }
+
+.wb-hero-title {
+    font-size: 38px;
+    font-weight: 800;
+    color: #ffffff;
+    margin: 0 0 10px;
+    letter-spacing: -0.8px;
+    line-height: 1.15;
+}
+
+.wb-hero-sub {
+    font-size: 17px;
+    color: rgba(255,255,255,0.65);
+    margin: 0 0 22px;
+    line-height: 1.5;
+    max-width: 520px;
+}
+
+.wb-hero-checks {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 28px;
+}
+
+.wb-check {
+    font-size: 13.5px;
+    color: rgba(255,255,255,0.75);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.wb-hero-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.wb-btn-primary {
+    background: #ffffff;
+    color: #0d1117;
+    text-decoration: none;
+    padding: 11px 22px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 14px;
+    transition: background 0.15s;
+}
+
+.wb-btn-primary:hover {
+    background: #e8e8e8;
+}
+
+.wb-btn-secondary {
+    background: transparent;
+    color: rgba(255,255,255,0.8);
+    text-decoration: none;
+    padding: 11px 22px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    border: 1px solid rgba(255,255,255,0.25);
+    transition: all 0.15s;
+}
+
+.wb-btn-secondary:hover {
+    border-color: rgba(255,255,255,0.5);
+    color: #fff;
+}
+
+.wb-gold-bar {
+    height: 3px;
+    background: linear-gradient(90deg, #b8962e 0%, #d4af4a 50%, #b8962e 100%);
+    margin: 0 -20px;
+}
+
+/* Why Westminster Brief section */
+.wb-why {
+    padding: 40px 0 32px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    margin-bottom: 32px;
+}
+
+.wb-why-heading {
+    font-size: 16px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.9);
+    margin: 0 0 24px;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+}
+
+.wb-why-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 32px;
+}
+
+.wb-why-item {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+}
+
+.wb-why-icon {
+    font-size: 22px;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.wb-why-title {
+    font-weight: 700;
+    color: rgba(255,255,255,0.9);
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.wb-why-body {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    line-height: 1.6;
+}
+
+/* Credibility line */
+.wb-cred-line {
+    font-size: 12px;
+    color: rgba(255,255,255,0.3);
+    text-align: center;
+    margin: 28px 0 0;
+    padding-bottom: 8px;
+    line-height: 1.5;
+}
+
+/* Homepage tool cards — dark theme */
+body.page-home .tool-card {
+    background: #161b24;
+    border: none;
+    border-top: 3px solid #b8962e;
+    box-shadow: none;
+}
+
+body.page-home .tool-card:hover {
+    box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+    transform: translateY(-3px);
+    border-top-color: #d4af4a;
+}
+
+body.page-home .tool-card-header {
+    background: #161b24;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+body.page-home .tool-card-title {
+    color: rgba(255,255,255,0.92);
+}
+
+body.page-home .tool-card-body {
+    background: #161b24;
+}
+
+body.page-home .tool-card-desc {
+    color: rgba(255,255,255,0.5);
+}
+
+body.page-home .tool-card-link {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.85);
+}
+
+body.page-home .tool-card-link:hover {
+    background: rgba(255,255,255,0.12);
+    box-shadow: none;
+    transform: none;
+    color: #fff;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .wb-hero-inner { flex-direction: column; gap: 16px; }
+    .wb-hero-title { font-size: 28px; }
+    .wb-why-grid { grid-template-columns: 1fr; gap: 20px; }
+    .wb-hero-checks { flex-direction: column; gap: 8px; }
+}
