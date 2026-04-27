@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Westminster Brief — AI Parliamentary Research Tools for Civil Servants{% endblock %}
+{% set body_class = 'page-home' %}
+{% block title %}Westminster Brief — Parliamentary Research Tools{% endblock %}
+{% block meta_description %}Parliamentary research tools for UK policy professionals. Search Hansard, track Written Questions, research stakeholders, and generate Word briefings.{% endblock %}
 
 {% block extra_head %}
-<meta name="description" content="Westminster Brief gives UK civil servants and parliamentary researchers AI-powered tools to search Hansard, track Written Questions, analyse debates, and generate professional briefings — all in one place.">
-<meta property="og:title" content="Westminster Brief — AI Parliamentary Research Tools">
-<meta property="og:description" content="Save hours of research. Search Hansard, track PQs, build member profiles, and generate Word briefings instantly. Free for gov.uk officials.">
+<meta property="og:title" content="Westminster Brief — Parliamentary Research Tools">
+<meta property="og:description" content="Parliamentary research tools for UK policy professionals. Search Hansard, track Written Questions, research stakeholders — all in one place.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://westminsterbrief.co.uk">
 <link rel="canonical" href="https://westminsterbrief.co.uk">
@@ -12,49 +13,56 @@
 
 {% block content %}
 
-<div class="home-hero" style="position:relative;">
-    <span style="position:absolute; top:10px; right:12px; font-size:10px; font-family:monospace; color:rgba(255,255,255,0.55); background:rgba(0,0,0,0.15); padding:2px 7px; border-radius:4px; letter-spacing:0.5px;">{{ app_version }}</span>
-    <div class="home-hero-icon">🏛️</div>
-    <div style="flex:1;">
-        <h1 class="home-hero-title">Westminster Brief</h1>
-        <p class="home-hero-subtitle">
-            AI-powered parliamentary research tools
-        </p>
-        <div style="display:flex; gap:20px; margin-top:14px; flex-wrap:wrap;">
-            <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ Live parliamentary data</span>
-            <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ AI-assisted research</span>
-            <span style="font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:6px;">✅ Free for gov.uk staff</span>
+{# ── Hero ── #}
+<div class="wb-hero">
+    <div class="wb-hero-inner">
+        <div class="wb-logo-mark">WB</div>
+        <div class="wb-hero-text">
+            <h1 class="wb-hero-title">Westminster Brief</h1>
+            <p class="wb-hero-sub">Parliamentary research tools for UK policy professionals.</p>
+            <div class="wb-hero-checks">
+                <span class="wb-check">&#10003; Live parliamentary data</span>
+                <span class="wb-check">&#10003; AI-assisted research</span>
+                <span class="wb-check">&#10003; Free during public beta</span>
+            </div>
+            <div class="wb-hero-actions">
+                <a href="/register" class="wb-btn-primary">Register free</a>
+                <a href="/login"    class="wb-btn-secondary">Sign in</a>
+            </div>
+        </div>
+    </div>
+    <div class="wb-gold-bar"></div>
+</div>
+
+{# ── Why Westminster Brief? ── #}
+<div class="wb-why">
+    <h2 class="wb-why-heading">Why Westminster Brief?</h2>
+    <div class="wb-why-grid">
+        <div class="wb-why-item">
+            <div class="wb-why-icon">&#9201;</div>
+            <div>
+                <div class="wb-why-title">May save research time</div>
+                <div class="wb-why-body">Searching Hansard, tracking PQs, and profiling members may be quicker with these tools — though results should always be verified against official sources.</div>
+            </div>
+        </div>
+        <div class="wb-why-item">
+            <div class="wb-why-icon">&#127963;</div>
+            <div>
+                <div class="wb-why-title">Live parliamentary data</div>
+                <div class="wb-why-body">Draws directly from Parliament's official APIs and Hansard. Intended to supplement, not replace, your own research and judgment.</div>
+            </div>
+        </div>
+        <div class="wb-why-item">
+            <div class="wb-why-icon">&#128196;</div>
+            <div>
+                <div class="wb-why-title">Briefing-support output</div>
+                <div class="wb-why-body">AI-generated summaries and Word exports that may assist with briefing preparation. All outputs should be reviewed and verified before use.</div>
+            </div>
         </div>
     </div>
 </div>
 
-<div class="box" style="margin-bottom: 28px; border-left: 4px solid #1c3e6e; background: #f8fafd;">
-    <h2 style="margin-top: 0; font-size: 18px; color: #1c3e6e;">Why Westminster Brief?</h2>
-    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; margin-bottom:20px;">
-        <div style="display:flex; gap:12px; align-items:flex-start;">
-            <span style="font-size:22px; line-height:1; flex-shrink:0;">⏱️</span>
-            <div>
-                <div style="font-weight:700; color:#1c3e6e; font-size:14px; margin-bottom:4px;">May save research time</div>
-                <div style="font-size:13px; color:#555; line-height:1.5;">Searching Hansard, tracking PQs, and profiling members may be quicker with these tools — though results should always be verified against official sources.</div>
-            </div>
-        </div>
-        <div style="display:flex; gap:12px; align-items:flex-start;">
-            <span style="font-size:22px; line-height:1; flex-shrink:0;">🏛️</span>
-            <div>
-                <div style="font-weight:700; color:#1c3e6e; font-size:14px; margin-bottom:4px;">Live parliamentary data</div>
-                <div style="font-size:13px; color:#555; line-height:1.5;">Draws directly from Parliament's official APIs and Hansard. Intended to supplement, not replace, your own research and judgment.</div>
-            </div>
-        </div>
-        <div style="display:flex; gap:12px; align-items:flex-start;">
-            <span style="font-size:22px; line-height:1; flex-shrink:0;">📄</span>
-            <div>
-                <div style="font-weight:700; color:#1c3e6e; font-size:14px; margin-bottom:4px;">Briefing-support output</div>
-                <div style="font-size:13px; color:#555; line-height:1.5;">AI-generated summaries and Word exports that may assist with briefing preparation. All outputs should be reviewed and verified before use.</div>
-            </div>
-        </div>
-    </div>
-</div>
-
+{# ── Tool cards ── #}
 <div class="tool-grid">
 
     <div class="tool-card">
@@ -69,7 +77,7 @@
                 and whether they have been answered. Export a clean list to CSV or a formatted Word document
                 ready for a briefing pack.
             </p>
-            <a href="/questions" class="tool-card-link">Open Scanner &rarr;</a>
+            <a href="/questions" class="tool-card-link">Open Written Questions Scanner &rarr;</a>
         </div>
     </div>
 
@@ -84,16 +92,16 @@
                 Your morning briefing tool. Automatically fetches all Written Questions due for answer today —
                 or the most recent sitting day if Parliament is in recess — and uses AI to group them by
                 policy theme. Filter by department, drill into an MP's question history, and download a
-                structured Word briefing in one click. Ideal for daily PQ handling teams.
+                structured Word briefing in one click.
             </p>
-            <a href="/tracker" class="tool-card-link">Open Tracker &rarr;</a>
+            <a href="/tracker" class="tool-card-link">Open Today's PQs Tracker &rarr;</a>
         </div>
     </div>
 
     <div class="tool-card">
         <div class="tool-card-header">
             <span class="tool-card-icon">🔍</span>
-            <h3 class="tool-card-title">MP PQ Research</h3>
+            <h3 class="tool-card-title">MP Research</h3>
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
@@ -116,9 +124,8 @@
             <p class="tool-card-desc">
                 Generate a comprehensive professional profile for any MP or Peer in seconds. Draws on Parliament's
                 official biography API, registered interests, committee memberships, recent Written Questions,
-                and Wikipedia to produce a structured briefing covering career before parliament, government and
-                opposition roles, policy interests, and key context for meetings. Exports as a formatted Word document
-                with photo.
+                and Wikipedia to produce a structured briefing covering career, roles, and policy interests.
+                Exports as a formatted Word document with photo.
             </p>
             <a href="/biography" class="tool-card-link">Open Member Profiles &rarr;</a>
         </div>
@@ -134,20 +141,19 @@
             <p class="tool-card-desc">
                 Search everything said in Parliament on any topic — Commons chamber, Westminster Hall, House of
                 Lords, and Written Answers — simultaneously. AI synthesises results into a structured briefing
-                covering the government position, opposition critique, key speakers, notable quotes, and suggested
-                areas for further research. Also includes Speech Research: analyse a specific minister's debate
-                record and communication style for parliamentary preparation.
+                covering the government position, opposition critique, key speakers, and notable quotes.
+                Also includes Speech Research: analyse a specific minister's debate record.
             </p>
             <a href="/debates" class="tool-card-link">Open Hansard Search &rarr;</a>
         </div>
     </div>
 
-
 </div>
 
-<div style="margin-top:1.5rem; padding:.7rem 1rem; background:#f8f9fa; border-radius:6px; border:1px solid #e0e0e0; font-size:.85rem; color:#666;">
-    <strong style="color:#444;">🚧 Coming soon:</strong>
-    Smart AI Radar — track policy topics across Hansard, news media, and stakeholder social accounts with AI semantic filtering.
-</div>
+{# ── Credibility / footer note ── #}
+<p class="wb-cred-line">
+    Built by a civil servant — independent project, not affiliated with any government department.
+    &nbsp;·&nbsp; {{ app_version }}
+</p>
 
 {% endblock %}
