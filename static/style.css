@@ -196,6 +196,10 @@ textarea {
     color: rgba(255,255,255,0.85);
 }
 
+input[type="date"] {
+    color-scheme: dark;
+}
+
 input:focus, select:focus, textarea:focus {
     outline: none;
     border-color: #5b9bd5;
@@ -713,6 +717,7 @@ input:focus, select:focus, textarea:focus {
     padding: 2px 8px;
     border-radius: 10px;
     margin-left: 4px;
+    vertical-align: middle;
 }
 
 .topic-card-title {

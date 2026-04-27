@@ -207,12 +207,15 @@
                     <ul class="topic-speakers-list">
                         {% for s in topic_briefing.non_government_speakers %}
                         <li>
-                            <strong>{{ s.name }}</strong> <span class="topic-party-badge">{{ s.role_or_party }}</span>
-                            <button onclick="togglePQs(this, '{{ s.name | e }}', '{{ topic | e }}', '{{ (effective_depts[0] if effective_depts else '') | e }}')" style="font-size:11px; color:#005a8f; background:none; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; cursor:pointer; margin-left:6px;">▶ View PQs</button>
-                            {% if opp_speaker_links and s.name in opp_speaker_links %}
-                            <a href="{{ opp_speaker_links[s.name] }}" target="_blank" rel="noopener" style="font-size:11px; color:#005a8f; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; margin-left:4px; text-decoration:none; white-space:nowrap;">↗ View Speech</a>
-                            {% endif %}
-                            <br><span style="font-size:12px; color:#555;">{{ s.stance }}</span>
+                            <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin-bottom:3px;">
+                                <strong style="color:#222;">{{ s.name }}</strong>
+                                <span class="topic-party-badge">{{ s.role_or_party }}</span>
+                                <button onclick="togglePQs(this, '{{ s.name | e }}', '{{ topic | e }}', '{{ (effective_depts[0] if effective_depts else '') | e }}')" style="font-size:11px; color:#005a8f; background:none; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; cursor:pointer;">▶ View PQs</button>
+                                {% if opp_speaker_links and s.name in opp_speaker_links %}
+                                <a href="{{ opp_speaker_links[s.name] }}" target="_blank" rel="noopener" style="font-size:11px; color:#005a8f; border:1px solid #005a8f; border-radius:4px; padding:1px 7px; text-decoration:none; white-space:nowrap;">↗ View Speech</a>
+                                {% endif %}
+                            </div>
+                            <span style="font-size:12px; color:#555;">{{ s.stance }}</span>
                             <div class="pq-expand" style="display:none; margin-top:8px;"></div>
                         </li>
                         {% endfor %}
@@ -228,8 +231,8 @@
                 <p style="font-size:12px; color:#666; margin:0 0 10px;">Questions raised by opposition and non-government speakers — likely lines of challenge in future debates.</p>
                 <ul style="margin:0; padding-left:18px;">
                 {% for q in topic_briefing.key_questions %}
-                <li style="margin-bottom:10px; font-size:13.5px;">
-                    <span style="font-weight:600;">{{ q.speaker }}</span>
+                <li style="margin-bottom:10px; font-size:13.5px; color:#222;">
+                    <span style="font-weight:600; color:#222;">{{ q.speaker }}</span>
                     {% if q.role_or_party %}<span class="topic-party-badge">{{ q.role_or_party }}</span>{% endif %}
                     {% if q.date %}<span style="font-size:11.5px; color:#888; margin-left:4px;">{{ q.date }}</span>{% endif %}
                     {% if q.listurl %}&nbsp;<a href="{{ q.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Source</a>{% endif %}
@@ -261,8 +264,8 @@
                 <p style="font-size:12px; color:#555; margin:0 0 10px;">On-record government positions extracted from Hansard — verbatim or close paraphrase with citation. Suitable for use in briefings and submissions.</p>
                 <ul style="margin:0; padding-left:18px;">
                 {% for s in topic_briefing.key_ministerial_statements %}
-                <li style="margin-bottom:12px; font-size:13.5px;">
-                    <span style="font-weight:600;">{{ s.speaker }}</span>
+                <li style="margin-bottom:12px; font-size:13.5px; color:#222;">
+                    <span style="font-weight:600; color:#222;">{{ s.speaker }}</span>
                     {% if s.role %}<span class="topic-party-badge">{{ s.role }}</span>{% endif %}
                     {% if s.date %}<span style="font-size:11.5px; color:#888; margin-left:4px;">{{ s.date }}</span>{% endif %}
                     {% if s.listurl %}&nbsp;<a href="{{ s.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#1c3e6e;">↗ Hansard</a>{% endif %}
@@ -683,7 +686,7 @@
                             </div>
                             <div style="font-size:12px; color:#777; margin-top:4px;">
                                 📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
-                                &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on TheyWorkForYou</a>
+                                &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on Hansard</a>
                             </div>
                         </div>
                     </div>
@@ -709,7 +712,7 @@
                                     </div>
                                     <div style="font-size:11px; color:#777; margin-top:2px;">
                                         📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
-                                        &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on TheyWorkForYou</a>
+                                        &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on Hansard</a>
                                     </div>
                                 </div>
                             </div>
@@ -1424,7 +1427,7 @@
         const btn = document.getElementById('btnMinister');
         const text = document.getElementById('btnMinisterText');
         if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; }
-        if (text) text.innerText = '⏳ Searching TheyWorkForYou...';
+        if (text) text.innerText = '⏳ Searching Hansard...';
     }
 
     function showMinisterAnalyzeLoading() {

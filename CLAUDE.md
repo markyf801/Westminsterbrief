@@ -82,6 +82,7 @@ This rules out, for example: AI-drafted PQ responses, suggested ministerial stat
 When working on a specific module, read its design doc first:
 
 - `stakeholder_directory/`: `docs/stakeholder-directory-design.md`
+- External APIs: `docs/api-reference.md` — confirmed working parameters, response schemas, gotchas, code examples for all Parliament/GOV.UK APIs
 - (others as added)
 
 Module design docs are authoritative for that module — they override general guidance in this file where they conflict. If a module-level doc and CLAUDE.md disagree, raise it rather than guessing.
@@ -741,6 +742,10 @@ These behaviours have been verified working and must continue to work. If any re
 - Minister-led search via Hansard backend works for canonical test case (DfE + student loan repayments)
 
 ---
+
+## Git and pushing
+
+**Never push automatically.** Always commit locally and show what changed, then wait for explicit instruction to push. The user will say "push" or "push it" when ready. This applies to small fixes and template changes as much as anything else.
 
 ## Pre-push checklist
 

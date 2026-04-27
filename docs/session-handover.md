@@ -29,7 +29,7 @@ This document captures current state of the project so a fresh Claude session ca
   - Searchable via `/directory` with subject context, inquiry status, clickable inquiry titles
   - Audit functions verifying data integrity
   - Idempotent re-ingestion
-- **Hansard migration** complete — TWFY relegated to fallback, all primary search runs through Parliament's official Hansard API
+- **Hansard migration** fully complete — TWFY no longer used for any user-facing feature. Primary search, WMS, session expansion, and MP speeches tab all run through Parliament's official Hansard API. TWFY fallback code paths remain in `debate_scanner.py` but are never reached when `SEARCH_BACKEND=hansard`.
 
 ### Pending decisions / not yet built
 
