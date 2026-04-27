@@ -294,14 +294,15 @@ input:focus, select:focus, textarea:focus {
 .btn:hover { filter: brightness(1.07); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
 .btn:active { transform: translateY(0); box-shadow: none; }
 
-.btn-primary { background: #1a4a6e; color: #fff; border: 1px solid rgba(91,155,213,0.35); }
-.btn-success { background: #1a4a2a; color: #fff; border: 1px solid rgba(40,167,69,0.35); }
-.btn-purple  { background: #2d1a5c; color: #fff; border: 1px solid rgba(111,66,193,0.35); }
-.btn-muted   { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.14); }
+.btn-primary,
+.btn-success,
+.btn-purple  { background: #1a4a6e; color: #fff; border: 1px solid rgba(91,155,213,0.35); }
+.btn-muted,
+.btn-secondary { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.14); }
 .btn-dark    { background: #161b24; color: #fff; border: 1px solid rgba(255,255,255,0.12); }
 .btn-full    { width: 100%; }
 
-/* Legacy alias */
+/* Legacy alias — same style as btn-primary */
 .btn-search { background: #1a4a6e; color: white; padding: 13px 20px; border: 1px solid rgba(91,155,213,0.35); border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: 600; transition: all 0.2s; }
 .btn-search:hover { filter: brightness(1.15); transform: translateY(-1px); }
 

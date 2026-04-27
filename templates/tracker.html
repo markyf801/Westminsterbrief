@@ -35,7 +35,7 @@
     {% if sorted_grouped_results %}
         
         <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
-            <button type="button" onclick="openExportModal()" class="btn-search" style="background-color: #28a745; border-radius: 6px; padding: 12px 24px;">
+            <button type="button" onclick="openExportModal()" class="btn-search" style="border-radius: 6px; padding: 12px 24px;">
                 ⚙️ Generate Word Briefing...
             </button>
         </div>
@@ -129,8 +129,8 @@
             </label>
             
             <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                <button type="button" onclick="closeExportModal()" style="padding: 10px 15px; background: #ccc; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
-                <button type="button" id="confirmDownloadBtn" onclick="submitDownload()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                <button type="button" onclick="closeExportModal()" class="btn btn-muted" style="padding: 10px 15px;">Cancel</button>
+                <button type="button" id="confirmDownloadBtn" onclick="submitDownload()" class="btn-search" style="padding: 10px 20px;">
                     Generate Document
                 </button>
             </div>
