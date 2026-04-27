@@ -546,7 +546,7 @@ input:focus, select:focus, textarea:focus {
 .scanner-tabs {
     display: flex;
     gap: 0;
-    border-bottom: 2px solid #ddd;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
     margin-bottom: 28px;
     overflow-x: auto;
 }
@@ -555,26 +555,27 @@ input:focus, select:focus, textarea:focus {
     background: none;
     border: none;
     border-bottom: 3px solid transparent;
-    margin-bottom: -2px;
+    margin-bottom: -1px;
     padding: 10px 22px;
     font-size: 15px;
     font-weight: 500;
-    color: #666;
+    color: rgba(255,255,255,0.45);
     cursor: pointer;
     white-space: nowrap;
     transition: color 0.15s, border-color 0.15s;
 }
 
-.scanner-tab:hover { color: #333; }
+.scanner-tab:hover { color: rgba(255,255,255,0.85); }
 
 .scanner-tab.active {
-    color: #4a154b;
-    border-bottom-color: #4a154b;
+    color: #fff;
+    border-bottom-color: #b8962e;
+    font-weight: 600;
 }
 
 .scanner-tab .badge-ai {
     display: inline-block;
-    background: #4a154b;
+    background: rgba(111,66,193,0.5);
     color: #fff;
     font-size: 10px;
     font-weight: 700;
