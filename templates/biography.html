@@ -10,10 +10,14 @@
     </p>
 
     <form method="POST" action="/biography">
-        <label style="display:block; margin-bottom: 8px; font-weight: 600; color: #444;">Member Name:</label>
-        <div style="display: flex; gap: 10px; align-items: center;">
-            <select name="member_id" id="member-search" style="flex-grow: 1;" required></select>
-            <button type="submit" class="btn-search">Find Member</button>
+        <div class="form-row">
+            <div class="form-group" style="flex:1;">
+                <label class="form-label">Member Name:</label>
+                <select name="member_id" id="member-search" style="width:100%;" required></select>
+            </div>
+            <div>
+                <button type="submit" class="btn-search">Find Member</button>
+            </div>
         </div>
     </form>
     

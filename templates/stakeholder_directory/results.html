@@ -10,10 +10,10 @@
 {# ── Search bar ─────────────────────────────────────────────────────────── #}
 <div class="box" style="padding:18px 24px;">
     <form action="{{ url_for('directory.search') }}" method="GET" id="dir-search-form">
-        <div class="form-row" style="align-items:flex-end; margin-bottom:10px;">
-            <div class="form-group" style="flex:1; margin-bottom:0;">
+        <div class="form-row" style="margin-bottom:10px;">
+            <div class="form-group" style="flex:1;">
                 <input type="text" name="q" value="{{ q }}" placeholder="Search organisations…"
-                       autocomplete="off" style="margin-bottom:0; font-size:15px;">
+                       autocomplete="off" style="font-size:15px;">
             </div>
             <div>
                 <button type="submit" class="btn btn-primary">Search</button>
@@ -25,8 +25,8 @@
 
         {# Filters (collapsed when no active filters) #}
         <details {% if source_types_filter or date_from or date_to %}open{% endif %}
-                 style="font-size:13.5px; color:#555;">
-            <summary style="cursor:pointer; font-weight:600; color:#1c3e6e;">Filters &amp; sort</summary>
+                 style="font-size:13.5px;">
+            <summary style="cursor:pointer; font-weight:600; color:rgba(255,255,255,0.75);">Filters &amp; sort</summary>
             <div style="padding-top:12px; display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start;">
                 <div>
                     <label class="form-label" style="font-size:12.5px;">Source type</label>

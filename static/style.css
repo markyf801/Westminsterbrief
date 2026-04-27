@@ -260,12 +260,22 @@ input:focus, select:focus, textarea:focus {
 
 .form-row {
     display: flex;
-    gap: 20px;
+    gap: 14px;
     margin-bottom: 5px;
+    align-items: flex-end;
+    flex-wrap: wrap;
 }
 
 .form-row > .form-group {
     flex: 1;
+    margin-bottom: 0;
+}
+
+/* Zero out bottom margin on inputs/selects inside a form-row so flex-end aligns correctly */
+.form-row input,
+.form-row select,
+.form-row textarea {
+    margin-bottom: 0;
 }
 
 .form-group {
