@@ -18,3 +18,4 @@ PyYAML>=6.0
 rapidfuzz>=3.0
 pyotp>=2.9.0
 flask-limiter>=3.5.0
+flask-talisman>=1.1.0

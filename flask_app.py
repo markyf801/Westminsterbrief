@@ -89,6 +89,42 @@ db.init_app(app)
 limiter.init_app(app)
 limiter.default_limits = ["200 per hour", "30 per minute"]
 
+# Security headers
+from flask_talisman import Talisman
+Talisman(
+    app,
+    force_https=True,
+    strict_transport_security=True,
+    strict_transport_security_max_age=31536000,
+    content_security_policy={
+        'default-src': "'self'",
+        'script-src': [
+            "'self'",
+            "'unsafe-inline'",
+            "https://cdn.jsdelivr.net",
+            "https://code.jquery.com",
+        ],
+        'style-src': [
+            "'self'",
+            "'unsafe-inline'",
+            "https://fonts.googleapis.com",
+            "https://cdn.jsdelivr.net",
+        ],
+        'font-src': [
+            "'self'",
+            "https://fonts.gstatic.com",
+        ],
+        'img-src': [
+            "'self'",
+            "data:",
+            "https:",
+        ],
+        'connect-src': "'self'",
+    },
+    referrer_policy='strict-origin-when-cross-origin',
+    frame_options='DENY',
+)
+
 # ==========================================
 # 2. LOGIN MANAGER
 # ==========================================
