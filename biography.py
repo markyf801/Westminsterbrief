@@ -128,21 +128,37 @@ def _fetch_registered_interests(member_id):
     return []
 
 
+_UK_PARLIAMENT_MARKERS = (
+    'member of parliament', 'house of commons', 'house of lords', 'constituency',
+    'parliament', 'labour party', 'conservative party', 'liberal democrat',
+    'privy council', 'secretary of state', 'shadow minister', 'baroness', 'lord ',
+    'mp for ', 'elected to', 'general election', 'parliament uk',
+)
+
+
+def _is_uk_parliament_page(content: str) -> bool:
+    lower = content[:3000].lower()
+    return sum(1 for m in _UK_PARLIAMENT_MARKERS if m in lower) >= 2
+
+
 def _fetch_wikipedia(mp_name):
     if not wikipedia:
         return ""
     try:
-        search = wikipedia.search(f"{mp_name} British politician")
-        if not search:
-            search = wikipedia.search(mp_name)
-        if search:
+        for query in [f"{mp_name} British politician MP", f"{mp_name} politician"]:
+            search = wikipedia.search(query)
+            if not search:
+                continue
             try:
                 page = wikipedia.page(search[0], auto_suggest=False)
             except wikipedia.DisambiguationError as e:
                 options = [o for o in e.options
                            if any(k in o.lower() for k in ('politician', ' mp', 'member of parliament', 'lord', 'baroness'))]
-                page = wikipedia.page(options[0] if options else e.options[0], auto_suggest=False)
-            return page.content[:4000]
+                if not options:
+                    continue
+                page = wikipedia.page(options[0], auto_suggest=False)
+            if _is_uk_parliament_page(page.content):
+                return page.content[:4000]
     except Exception:
         pass
     return ""
@@ -311,7 +327,7 @@ def api_search_members():
     try:
         items = requests.get(
             "https://members-api.parliament.uk/api/Members/Search",
-            params={'Name': term, 'take': 15},
+            params={'Name': term, 'IsCurrentMember': 'true', 'take': 15},
             timeout=5
         ).json().get('items') or []
         return jsonify({
