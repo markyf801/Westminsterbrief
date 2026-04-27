@@ -238,16 +238,16 @@ input:focus, select:focus, textarea:focus {
 .btn:hover { filter: brightness(1.07); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
 .btn:active { transform: translateY(0); box-shadow: none; }
 
-.btn-primary { background: linear-gradient(135deg, #005a8f 0%, #0072b5 100%); color: white; }
-.btn-success { background: linear-gradient(135deg, #1e8a3c 0%, #28a745 100%); color: white; }
-.btn-purple  { background: linear-gradient(135deg, #5a32a3 0%, #6f42c1 100%); color: white; }
-.btn-muted   { background: #6c757d; color: white; }
-.btn-dark    { background: linear-gradient(135deg, #152d52 0%, #1c3e6e 100%); color: white; }
+.btn-primary { background: #1a4a6e; color: #fff; border: 1px solid rgba(91,155,213,0.35); }
+.btn-success { background: #1a4a2a; color: #fff; border: 1px solid rgba(40,167,69,0.35); }
+.btn-purple  { background: #2d1a5c; color: #fff; border: 1px solid rgba(111,66,193,0.35); }
+.btn-muted   { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.14); }
+.btn-dark    { background: #161b24; color: #fff; border: 1px solid rgba(255,255,255,0.12); }
 .btn-full    { width: 100%; }
 
 /* Legacy alias */
-.btn-search { background: #005a8f; color: white; padding: 13px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: 600; transition: all 0.2s; }
-.btn-search:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-search { background: #1a4a6e; color: white; padding: 13px 20px; border: 1px solid rgba(91,155,213,0.35); border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: 600; transition: all 0.2s; }
+.btn-search:hover { filter: brightness(1.15); transform: translateY(-1px); }
 
 /* --- RESULTS / CARDS --- */
 .result-card {
