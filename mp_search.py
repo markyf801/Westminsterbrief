@@ -1,4 +1,4 @@
-import requests, os, json, io, time, re, logging
+import requests, json, io, time, re, logging
 from concurrent.futures import ThreadPoolExecutor
 from flask import Blueprint, render_template, request, send_file, jsonify, copy_current_request_context
 from datetime import datetime, timedelta
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 mp_search_bp = Blueprint('mp_search', __name__)
 
-TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
+HANSARD_API_BASE = "https://hansard-api.parliament.uk"
 
 DEPARTMENTS = {
     "All Departments": "",
@@ -40,11 +40,8 @@ DEPARTMENTS = {
 
 _profile_cache: dict = {}   # keyed on "header_{id}" or "profile_{id}"
 _speech_cache: dict = {}    # keyed on member_id (int)
-_twfy_id_cache: dict = {}   # keyed on member_id (int)
 
 _TTL_24H = 86400.0
-_TTL_30D = 86400.0 * 30
-_TWFY_NONE = '__none__'     # sentinel for "resolved but not found"
 
 
 def _cache_get(cache: dict, key, ttl: float):
@@ -172,96 +169,59 @@ def _fetch_profile_data(member_id: int) -> dict | None:
         return None
 
 
-def _resolve_twfy_id(member_id: int, member_name: str, is_lord: bool) -> str | None:
-    """Parliament member ID → TWFY person_id. Cached 30 days."""
-    cached = _cache_get(_twfy_id_cache, member_id, _TTL_30D)
-    if cached is not None:
-        return None if cached == _TWFY_NONE else cached
-    if not TWFY_API_KEY:
-        return None
-    endpoint = 'getLords' if is_lord else 'getMPs'
-    try:
-        resp = requests.get(
-            f"https://www.theyworkforyou.com/api/{endpoint}",
-            params={'key': TWFY_API_KEY, 'search': member_name, 'output': 'js'},
-            timeout=15
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            items = data if isinstance(data, list) else data.get('rows', [])
-            if items:
-                twfy_id = str(items[0].get('person_id', '')).strip()
-                if twfy_id:
-                    _cache_set(_twfy_id_cache, member_id, twfy_id)
-                    return twfy_id
-    except Exception as e:
-        logger.warning('[mp_research] TWFY ID resolution failed for %s: %s', member_name, e)
-    _cache_set(_twfy_id_cache, member_id, _TWFY_NONE)
-    return None
-
-
-def _fetch_speeches(member_id: int, member_name: str, is_lord: bool) -> list:
-    """Recent TWFY debate contributions, filtered to ≥50 words. Cached 24h."""
+def _fetch_speeches(member_id: int, is_lord: bool) -> list:
+    """Recent Hansard speech contributions, filtered to ≥50 words. Cached 24h."""
     cached = _cache_get(_speech_cache, member_id, _TTL_24H)
     if cached is not None:
         return cached
-    if not TWFY_API_KEY:
-        return []
-    twfy_id = _resolve_twfy_id(member_id, member_name, is_lord)
-    if not twfy_id:
-        return []
-    debate_types = ['lords'] if is_lord else ['commons', 'westminhall', 'debates']
+
+    house = 'Lords' if is_lord else 'Commons'
     raw = []
+    seen_ext_ids: set = set()
+
     try:
-        for dtype in debate_types:
-            resp = requests.get(
-                "https://www.theyworkforyou.com/api/getDebates",
-                params={'key': TWFY_API_KEY, 'person': twfy_id,
-                        'type': dtype, 'num': 50, 'output': 'js'},
-                timeout=15
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                rows = data if isinstance(data, list) else data.get('rows', [])
-                raw.extend(rows)
+        resp = requests.get(
+            f"{HANSARD_API_BASE}/search.json",
+            params={
+                'queryParameters.memberId': member_id,
+                'queryParameters.house': house,
+                'take': 50,
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            for c in resp.json().get('Contributions', []):
+                ext_id = c.get('DebateSectionExtId', '')
+                if ext_id and ext_id in seen_ext_ids:
+                    continue
+                if ext_id:
+                    seen_ext_ids.add(ext_id)
+
+                body = re.sub(r'<[^>]+>', '',
+                              c.get('ContributionTextFull') or c.get('ContributionText') or '')
+                if len(body.split()) < 50:
+                    continue
+
+                date_str = (c.get('SittingDate') or '')[:10]
+                debate_title = c.get('DebateSection') or 'Untitled contribution'
+
+                url = ''
+                if ext_id and date_str:
+                    slug = ''.join(w.capitalize() for w in
+                                   re.sub(r'[^a-zA-Z0-9\s]', '', debate_title).split())
+                    url = f"https://hansard.parliament.uk/{house}/{date_str}/debates/{ext_id}/{slug}"
+
+                raw.append({
+                    'date': date_str,
+                    'subject': debate_title,
+                    'chamber': house,
+                    'url': url,
+                })
     except Exception as e:
-        logger.warning('[mp_research] TWFY speech fetch failed for %s: %s', member_name, e)
+        logger.warning('[mp_research] Hansard speech fetch failed for %d: %s', member_id, e)
 
-    # Filter to substantive contributions (≥50 words) if body field is present
-    if raw and 'body' in raw[0]:
-        raw = [s for s in raw
-               if len(re.sub(r'<[^>]+>', '', s.get('body', '')).split()) >= 50]
-
-    # Normalise and sort
-    result = []
-    for s in raw:
-        url = s.get('listurl', '')
-        if url and url.startswith('/'):
-            url = f"https://www.theyworkforyou.com{url}"
-        elif url and url.startswith('?'):
-            url = f"https://www.theyworkforyou.com/debates/{url}"
-        if not url:
-            gid = s.get('gid', '')
-            if gid:
-                url = f"https://www.theyworkforyou.com/debates/?id={gid}"
-        # Debate title lives in parent.body (may contain HTML tags)
-        parent_body = (s.get('parent') or {}).get('body', '') or ''
-        subject = re.sub(r'<[^>]+>', '', parent_body).strip()
-        if not subject:
-            subject = re.sub(r'<[^>]+>', '', s.get('subsection_name', '') or '').strip()
-        if not subject:
-            subject = re.sub(r'<[^>]+>', '', s.get('section_name', '') or '').strip()
-        if not subject:
-            subject = 'Untitled contribution'
-        result.append({
-            'date': s.get('hdate', ''),
-            'subject': subject,
-            'chamber': 'Lords' if is_lord else 'Commons',
-            'url': url,
-        })
-
-    result.sort(key=lambda x: x['date'], reverse=True)
-    result = result[:25]
+    raw.sort(key=lambda x: x['date'], reverse=True)
+    result = raw[:25]
     _cache_set(_speech_cache, member_id, result)
     return result
 
@@ -348,7 +308,7 @@ def search_mp_pqs():
                             member_id, selected_dept, start_date, end_date)
                         f_speeches = ex.submit(
                             copy_current_request_context(_fetch_speeches),
-                            member_id, member_name, is_lord)
+                            member_id, is_lord)
 
                         try:
                             profile_data = f_profile.result(timeout=25)
@@ -615,8 +575,8 @@ def download_mp_word():
     # ── 5. Speeches section ───────────────────────────────────────────────────
     if speech_list:
         section_heading(f'Recent Speeches ({len(speech_list)})')
-        house_note = 'Lords' if header.get('is_lord') else 'Commons + Westminster Hall'
-        np2 = doc.add_paragraph(f'Source: {house_note} contributions via TheyWorkForYou')
+        house_note = 'Lords' if header.get('is_lord') else 'Commons'
+        np2 = doc.add_paragraph(f'Source: {house_note} contributions via Hansard (Parliament UK)')
         np2.runs[0].font.size = Pt(9)
         np2.runs[0].font.color.rgb = RGBColor(128, 128, 128)
         compact(np2, before=0, after=6)
@@ -640,7 +600,7 @@ def download_mp_word():
     # ── 6. Footer ─────────────────────────────────────────────────────────────
     doc.add_paragraph('─' * 80)
     fp = doc.add_paragraph()
-    fp.add_run('Data sources: Parliament Members API · Parliament Written Questions API · TheyWorkForYou\n')
+    fp.add_run('Data sources: Parliament Members API · Parliament Written Questions API · Hansard (Parliament UK)\n')
     fp.add_run(f'Generated {datetime.now().strftime("%d %B %Y %H:%M")} · Westminster Brief')
     fp.runs[0].font.size = Pt(8)
     fp.runs[0].font.color.rgb = RGBColor(150, 150, 150)
