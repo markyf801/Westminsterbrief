@@ -3,26 +3,39 @@
 {% block content %}
 <div style="max-width:420px; margin:80px auto; padding:0 20px;">
   <h2 style="font-size:1.3rem; margin-bottom:4px;">Cache Administration</h2>
-  <p style="color:#666; font-size:0.9rem; margin-bottom:24px;">Enter your admin token to continue.</p>
+  <p style="color:rgba(255,255,255,0.45); font-size:0.9rem; margin-bottom:24px;">
+    {% if need_totp %}Enter the 6-digit code from your authenticator app.
+    {% else %}Enter your admin token to continue.{% endif %}
+  </p>
 
   {% if error %}
-  <div style="background:#ffebee; border:1px solid #ef9a9a; border-radius:6px; padding:12px 16px; margin-bottom:16px; font-size:0.9rem; color:#c62828;">
+  <div style="background:rgba(220,53,69,0.15); border:1px solid rgba(220,53,69,0.4); border-radius:6px; padding:12px 16px; margin-bottom:16px; font-size:0.9rem; color:#f08090;">
     {{ error }}
   </div>
   {% endif %}
 
-  <form method="get" action="/admin" style="display:flex; flex-direction:column; gap:12px;">
-    <input type="password" name="token" placeholder="Admin token"
-           style="padding:10px 14px; border:1px solid #ccc; border-radius:6px; font-size:0.95rem; width:100%; box-sizing:border-box;">
-    <button type="submit"
-            style="background:#1c3e6e; color:#fff; border:none; border-radius:6px; padding:10px 16px; font-size:0.95rem; cursor:pointer; font-weight:600;">
-      Sign in
+  <form method="post" action="/admin" style="display:flex; flex-direction:column; gap:12px;">
+
+    {% if need_totp %}
+      {# Token already verified — pass it through as hidden, ask for TOTP #}
+      <input type="hidden" name="token" value="{{ token }}">
+      <input type="text" name="totp" placeholder="6-digit authenticator code"
+             inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autofocus autocomplete="one-time-code"
+             style="padding:10px 14px; border-radius:6px; font-size:1.1rem; letter-spacing:0.2em; text-align:center; width:100%; box-sizing:border-box;">
+    {% else %}
+      <input type="password" name="token" placeholder="Admin token"
+             style="padding:10px 14px; border-radius:6px; font-size:0.95rem; width:100%; box-sizing:border-box;">
+    {% endif %}
+
+    <button type="submit" class="btn-search" style="padding:10px 16px; font-size:0.95rem;">
+      {% if need_totp %}Verify code{% else %}Continue{% endif %}
     </button>
   </form>
 
-  <p style="font-size:0.8rem; color:#999; margin-top:20px; line-height:1.5;">
-    The admin token is set via the <code>ADMIN_TOKEN</code> environment variable in Railway.<br>
-    If you haven't set it yet, add it in your Railway service → Variables.
+  {% if not need_totp %}
+  <p style="font-size:0.8rem; color:rgba(255,255,255,0.3); margin-top:20px; line-height:1.5;">
+    Set <code>ADMIN_TOKEN</code> and <code>TOTP_SECRET</code> in Railway → Variables.
   </p>
+  {% endif %}
 </div>
 {% endblock %}

@@ -843,17 +843,30 @@ def run_manual_scan():
 # 6b. ADMIN PAGE
 # ==========================================
 ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '').strip()
+TOTP_SECRET = os.environ.get('TOTP_SECRET', '').strip()
 
 # Background job status for long-running admin operations
 _committee_ingest_status = {'running': False, 'message': None, 'started_at': None}
 
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_panel():
+    import pyotp
     token = request.args.get('token', '') or request.form.get('token', '')
+    totp_code = request.args.get('totp', '') or request.form.get('totp', '')
+
     if not ADMIN_TOKEN:
         return render_template('admin_login.html', error="ADMIN_TOKEN is not set in environment variables.")
     if token != ADMIN_TOKEN:
         return render_template('admin_login.html', error="Invalid token." if token else None)
+
+    # Token is correct — now check TOTP if a secret is configured
+    if TOTP_SECRET:
+        if not totp_code:
+            return render_template('admin_login.html', token=token, need_totp=True, error=None)
+        totp = pyotp.TOTP(TOTP_SECRET)
+        if not totp.verify(totp_code, valid_window=1):
+            return render_template('admin_login.html', token=token, need_totp=True,
+                                   error="Invalid authenticator code. Codes expire every 30 seconds — try again.")
 
     from debate_scanner import MINISTER_CACHE_FILE
     import json, time
