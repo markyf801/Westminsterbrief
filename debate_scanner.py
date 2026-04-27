@@ -917,17 +917,15 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=800):
     constraints). The client-side filter here is intentional, not a workaround."""
     import logging
     try:
-        # expandMember=true returns full member objects including names.
-        params = {'searchTerm': topic, 'take': limit, 'skip': 0,
-                  'expandMember': 'true', 'orderBy': 'DateTabledDesc'}
+        params = {'searchTerm': topic, 'take': limit, 'skip': 0}
         if start_date:
             params['tabledWhenFrom'] = start_date
         if end_date:
             params['tabledWhenTo'] = end_date
         resp = requests.get(PARLIAMENT_WQ_API, params=params, timeout=30)
         if resp.status_code != 200:
-            logging.warning(f"WQ fetch failed: {resp.status_code}")
-            return [], 0
+            logging.warning(f"WQ fetch failed: HTTP {resp.status_code} body={resp.text[:200]}")
+            return [], -1  # surface as wq_error so user sees a message
         data = resp.json()
         total = data.get('totalResults', 0)
         api_returned = len(data.get('results', []))

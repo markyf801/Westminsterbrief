@@ -521,7 +521,11 @@
             <!-- Written Questions & Answers -->
             {% if wq_error %}
             <div style="margin:8px 0;padding:8px 12px;background:rgba(184,150,46,0.15);border:1px solid rgba(184,150,46,0.4);border-radius:6px;font-size:0.85em;color:rgba(255,255,255,0.82);">
-                ⚠ Written Questions could not be loaded — the Parliament API timed out. Try running the search again.
+                ⚠ Written Questions could not be loaded — the Parliament API returned an error. Try running the search again.
+            </div>
+            {% elif is_post and not wq_rows %}
+            <div style="margin:8px 0;padding:8px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;font-size:0.85em;color:rgba(255,255,255,0.5);">
+                No written questions found matching this topic and date range.
             </div>
             {% endif %}
             {% if wq_rows %}
