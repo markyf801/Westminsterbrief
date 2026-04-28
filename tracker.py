@@ -403,6 +403,12 @@ def download_tracker_word():
             date_run.font.color.rgb = RGBColor(120, 120, 120)
             _set_indent(date_p, 0.2)
 
+            # Link to this question on Parliament.uk
+            q_link_p = doc.add_paragraph()
+            q_link = f"https://questions-statements.parliament.uk/written-questions?SearchTerm={q['uin']}"
+            add_hyperlink(q_link_p, q_link, "View question ->")
+            _set_indent(q_link_p, 0.2)
+
             if include_ai_context:
                 analysis = ai_context_dict.get(str(q['uin']))
                 if analysis:
