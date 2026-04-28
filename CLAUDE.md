@@ -9,7 +9,7 @@ Lets users search Hansard, track Written Questions, analyse debates, research st
 ## Stack
 - **Backend:** Flask 3.0 with blueprints, deployed on Railway
 - **Database:** SQLite locally → PostgreSQL on Railway (auto-switched via `DATABASE_URL` env var)
-- **AI:** Google Gemini API (`google-genai`, model: `gemini-1.5-flash` and `gemini-embedding-001`)
+- **AI:** Google Gemini API (`google-genai`, model: `gemini-1.5-flash` and `gemini-embedding-001`) for free toolkit features. Anthropic Claude (Opus, via anthropic SDK) for paid product outputs only — see "Output rules" section.
 - **Frontend:** Jinja2 templates + vanilla JS, static CSS at `static/style.css`
 - **Auth:** Flask-Login with werkzeug password hashing
 - **Exports:** python-docx for Word document generation
@@ -69,9 +69,80 @@ This came up specifically when designing the WQ tracker's deadline display: the 
 
 ---
 
-**Output rule: factual or extracted, never authored.** The tool finds and surfaces evidence — speeches, citations, engagements, statements. It does not draft positions, lines to take, recommended responses, or anything that implies authored content for which a civil servant would normally hold accountability. Where AI is used (summary, classification, extraction), it operates on factual material the tool has actually retrieved, with citations — not on training-data knowledge. Outputs that look or feel like authored civil service work product (minutes, submissions, drafted lines) are explicitly out of scope.
+## Output rules — different for free vs paid features
 
-This rules out, for example: AI-drafted PQ responses, suggested ministerial statements, auto-generated press lines, draft holding lines, recommended Q&A briefs. The reframed "Key ministerial statements" feature (verbatim extraction with citations, parser-rejection of unmatched quotes) is consistent with this principle and remains on the roadmap. Anything that requires the tool to author rather than extract does not.
+Westminster Brief has two distinct categories of feature, governed by different output rules. The category determines what the tool is allowed to author, what model tier it uses, and what safeguards apply.
+
+### Free toolkit (default rule): factual or extracted, never authored
+
+The free toolkit (Written Questions Scanner, Today's PQs Tracker, MP Research, Member Profiles, Hansard Search, Stakeholder Directory, and any future free features) finds and surfaces evidence — speeches, citations, engagements, statements. It does not draft positions, lines to take, recommended responses, or anything that implies authored content for which a civil servant would normally hold accountability.
+
+Where AI is used in free features (summary, classification, extraction), it operates on factual material the tool has actually retrieved, with citations — not on training-data knowledge. Outputs that look or feel like authored civil service work product (minutes, submissions, drafted lines) are explicitly out of scope for free features.
+
+Specifically out of scope for free features: AI-drafted PQ responses, suggested ministerial statements, auto-generated press lines, draft holding lines, recommended Q&A briefs, suggested approaches for engagement, or AI inference about any individual parliamentarian's likely position, sympathy, or behaviour.
+
+The reframed "Key ministerial statements" feature (verbatim extraction with citations, parser-rejection of unmatched quotes) is consistent with this principle and remains on the roadmap. Anything that requires the tool to author rather than extract does not.
+
+**Free features run on Gemini (Flash-Lite) only. Claude is never invoked from a free-feature code path.**
+
+### Paid products (separate rule): authored inference permitted with strict safeguards
+
+Paid products (the stakeholder briefing pack and any future paid deliverables) are commercial AI services that customers pay for, brand themselves, and are responsible for verifying before use. They are governed by separate, stricter output rules:
+
+**1. Source citation is mandatory on every claim.**
+
+Every authored inference (warmth assessment, suggested approach, themes raised) must be tied to specific cited evidence — Hansard URL, division ID, written question UIN, committee record, etc. Floating assertions ("MP X is sympathetic") without specific cited evidence are not allowed and must be rejected by the generation pipeline.
+
+**2. Confidence must be honest.**
+
+Every authored inference must include an explicit confidence indicator (high, medium, low) plus a one-sentence reasoning. If the underlying data is thin, the output must say "Insufficient parliamentary record to assess" — not produce a low-confidence guess. A briefing that downgrades 60% of stakeholders to "insufficient record" is the correct output for a thin-data issue, not a failure mode to engineer around.
+
+**3. AI disclosure is non-removable.**
+
+All paid outputs carry a per-page footer: "AI-generated analysis. Verify before publishing." This footer cannot be removed at the standard tier under any circumstances. Future agency tier (when built) will have separate rules including stronger ToS commitments around verification.
+
+**4. Language must be observational, not predictive.**
+
+Allowed: "MP X has voted in favour of similar measures on [dates]."
+Not allowed: "MP X is likely to support this bill."
+Allowed: "MP X has spoken publicly about constituent concerns on [issue]."
+Not allowed: "MP X will respond to constituent-led framing."
+The output describes what the parliamentary record shows. It does not predict future behaviour.
+
+**5. Suggested approaches must be neutral framing advice, not advocacy guidance.**
+
+Allowed: "MP X's contributions on this issue have emphasised academic evidence; framing around peer-reviewed research may resonate."
+Not allowed: "Lobby this MP via the academic angle."
+Allowed: "MP X is a member of [APPG]; engaging via [APPG] activity is consistent with their stated interests."
+Not allowed: "Use [APPG] to influence MP X's position."
+The tool describes patterns; it does not direct the user to take advocacy or lobbying actions.
+
+**6. No civil service voice.**
+
+Paid outputs must read as a research deliverable, not as a civil service submission, briefing, or line-to-take. No phrases like "the recommended approach is" or "it is suggested that" or "officials may wish to." The user is making advocacy decisions; the tool is providing structured intelligence.
+
+**Paid features run on Claude Opus only** (the best Anthropic model available; upgrade conversations triggered when newer models release). Claude Sonnet may be used for development testing only, never in production.
+
+### Hard cost ringfence
+
+Claude (Opus, or any future top-tier Anthropic model) is invoked ONLY for paid product runs. It is never invoked for any free-tier feature, regardless of user tier — including .gov.uk users.
+
+The .gov.uk free tier covers the toolkit only. Public-sector users pay the same as anyone else for stakeholder briefings, topic tracking, and deep research briefs. The tier column on users records eligibility (public_sector / standard), not entitlement.
+
+Tier-to-model binding must be enforced at the LLM abstraction layer with a code-level guard, not by convention.
+
+### Working principle
+
+For any AI generation in the codebase, ask: is this a free feature or a paid product feature?
+
+- Free → factual extraction only, Gemini only. Apply the toolkit rule.
+- Paid → authored inference permitted, but only with all six safeguards above; Opus only.
+
+If a feature blurs the line (e.g. a "preview" of a paid product visible to free users), default to the stricter free-toolkit rule until the boundary is explicit.
+
+### When in doubt, escalate
+
+If a proposed feature feels like it might cross from one category to the other — for example, a free tool that starts producing "summaries with implications" — stop and surface to Mark. Don't expand authored inference into free features without explicit decision.
 
 ## Design principles
 
@@ -115,7 +186,8 @@ Clear mapping to avoid confusion when discussing issues:
 ## External APIs used
 | API | Env var | Used for |
 |-----|---------|----------|
-| Google Gemini | `GEMINI_API_KEY` | AI summaries, embeddings, categorisation |
+| Google Gemini | `GEMINI_API_KEY` | AI summaries, embeddings, categorisation (free toolkit only) |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | Paid product outputs only (stakeholder briefing pack, future paid products) — never invoked from free features |
 | They Work For You | `TWFY_API_KEY` | Debate transcripts, Hansard search |
 | News API | `NEWS_API_KEY` | Media scan in Smart Alerts |
 | Bluesky | `BSKY_HANDLE` + `BSKY_PASSWORD` | Stakeholder social monitoring |
@@ -141,16 +213,38 @@ Clear mapping to avoid confusion when discussing issues:
 - Also set `SECRET_KEY` to a long random string in Railway env vars
 - GitHub repo: `markyf801/Westminsterbrief` — Railway auto-deploys on push to `master`
 
+## Deployment discipline — local-first for major Phase builds only
+
+This rule applies to major Phase builds specifically (currently: Phase 1 compliance/auth/Stripe foundation, and Phase 2 stakeholder briefing pack). It does NOT apply to general site development, bug fixes, content updates, or other unrelated work — Mark continues to work on those in the normal way and pushes when ready.
+
+During a Phase build:
+
+- Phase work stays local by default. Don't push Phase-in-progress changes to Railway.
+- Mark may explicitly request specific small unrelated changes be pushed during Phase work (typo fixes, minor copy edits, small bug fixes on existing live tools, content updates, anything not part of the Phase). Those pushes are fine — but only what Mark asks for goes; in-progress Phase work doesn't bundle in alongside.
+- When the Phase is complete and Mark has reviewed it, deployment to Railway happens as a deliberate single step.
+- Stripe stays in test mode throughout the Phase build.
+
+Outside a Phase build:
+
+- Normal development workflow. Test locally, push when ready, no special discipline required.
+- The "never push automatically" rule from the Git section still applies — Mark always says "push" or "push it" first.
+
+**Reason for the Phase-specific rule:** Phase builds touch foundations (compliance, auth, billing, AI integration) where half-built state on the live site damages trust with current users. Local-first during these specific builds keeps mistakes invisible. General site work doesn't carry the same risk.
+
 ## Environment variables needed on Railway
 ```
 SECRET_KEY=<long random string>
 GEMINI_API_KEY=
+ANTHROPIC_API_KEY=
 TWFY_API_KEY=
 NEWS_API_KEY=
 BSKY_HANDLE=
 BSKY_PASSWORD=
 DATABASE_URL=<set automatically by Railway PostgreSQL plugin>
 ADMIN_EMAIL=<your login email — grants access to /admin cache management page>
+STRIPE_SECRET_KEY=<paid products only — test keys during dev>
+STRIPE_PUBLISHABLE_KEY=
+STRIPE_WEBHOOK_SECRET=
 ```
 
 ## Local development
@@ -175,6 +269,17 @@ python app.py
 ```
 
 Full instructions and known fragilities are in `C:\Users\marky\wb_tester\CLAUDE.md`.
+
+## SEO conventions for archive pages
+
+These conventions are locked for any URL/slug work that builds public archive pages (debate, MP, theme, department, minister). Apply consistently — once Google indexes URLs, changing them costs ranking.
+
+- **URL date format:** `27-april-2025` — lowercase, full month name, no leading zero on day
+- **Trailing slashes:** none. Set Flask routing accordingly. 301 redirect any trailing-slash variant to the canonical no-slash URL
+- **MP slugs:** `firstname-lastname-constituency` (e.g. `keir-starmer-holborn-and-st-pancras`). Constituency is always included
+- **MP seat changes:** stable-first. Once an MP slug is assigned, it never changes even if they switch constituencies. Page content updates to reflect current role, but the URL is permanent
+- **Lord slugs:** `firstname-lastname-of-place` matching their official title where possible. Fallback: `firstname-lastname-baron`
+- **Constituency normalisation rules:** lowercase, hyphens for spaces, keep "and" (`holborn-and-st-pancras`), normalise "St" to lowercase `st`, strip apostrophes (`st-albans` not `st-alban's`), strip commas
 
 ## Committee evidence ingestion — known behaviour and rules
 
@@ -201,6 +306,10 @@ The first full ingestion (Apr 2026) produced only 7 written evidence records vs 
 **Stakeholder directory module** — see `docs/stakeholder-directory-design.md` for full spec. Foundation phase complete (schema, vocabularies, scoring module). Next: ingester for ministerial meetings (Prompt 3 in the build plan). Module is parallel to existing tables — does not modify `StakeholderOrg`, `TrackedStakeholder`, or any existing data layer.
 
 **Hansard migration** — substantively complete. The `SEARCH_BACKEND=hansard` flag is the production path for parliamentary search; TWFY is no longer the primary data source.
+
+**Phase 1 (compliance + auth + Stripe foundation)** — see `westminster-brief-phase-1-brief.md`. Local-only build, no Railway deployment until complete.
+
+**Phase 2 (paid product: stakeholder briefing pack)** — see `westminster-brief-phase-2-brief.md`. Offline build, no public surface during development. Paid product runs on Claude Opus, governed by the paid-product output rules above.
 
 ## Completed (recent)
 
@@ -242,7 +351,8 @@ Note: this section describes the user *of Claude Code* — i.e. Mark, the develo
 - UK civil servant working in higher education policy
 - Knows Parliament well from the inside — knows which ministers spoke, which debates happened, which questions were tabled
 - If Mark says the tool misses something he knows happened, trust his domain knowledge — investigate the tool, don't second-guess his memory
-- Builds Westminster Brief as a side project, not a venture-backed product. Solo developer with a day job and family. Time is genuinely constrained.
+- Builds Westminster Brief as a side project, not a venture-backed product. Solo developer with a day job. Time is constrained — sustainable working pace is around 24 hours per week.
+- Civil service propriety has been cleared for the project including paid products. Treat this as settled.
 
 ### How they communicate
 - Often types quickly with typos — interpret intent, don't get hung up on spelling
@@ -266,6 +376,7 @@ Go to plan mode (do not write code) if ANY of the following are true:
 4. The user mentions a new feature idea mid-session (capture it, don't build it)
 5. The same bug has been attempted twice without a confirmed fix — stop, plan, diagnose
 6. The change affects the minister search, session expansion, or grouping logic — these are the most interconnected parts of the codebase
+7. The work introduces or modifies AI generation in a paid product code path — paid product output rules must be respected and explicitly verified before code is written
 
 **Why this matters:** Several bugs in this project were introduced by fixes that looked small but shared data paths with other functions. The dept filter, oral classification, and minister search all interact. Fixing one without planning broke assumptions in another. Plan mode forces the interaction map to be drawn before code is written.
 
@@ -333,7 +444,7 @@ The site currently has `noindex, nofollow` and crawler-blocked robots.txt. Full 
 
 ## API error handling rules — prevent looping
 
-These apply whenever working with TWFY, Gemini, Parliament API, or any external service.
+These apply whenever working with TWFY, Gemini, Anthropic, Parliament API, or any external service.
 
 ### Three-strike rule
 If the same API call returns the same error or empty result more than twice in a row, **stop**. Do not retry with identical parameters. Report the exact error to the user and suggest manual intervention (e.g. check the API key, widen the date range, try a different endpoint).
@@ -404,9 +515,10 @@ Before concluding a key is invalid, verify it is actually set:
 # Check if the env var is set (local)
 echo $TWFY_API_KEY
 echo $GEMINI_API_KEY
+echo $ANTHROPIC_API_KEY
 
 # Check what the app sees at runtime
-python -c "import os; print('TWFY:', bool(os.environ.get('TWFY_API_KEY'))); print('GEMINI:', bool(os.environ.get('GEMINI_API_KEY')))"
+python -c "import os; print('TWFY:', bool(os.environ.get('TWFY_API_KEY'))); print('GEMINI:', bool(os.environ.get('GEMINI_API_KEY'))); print('ANTHROPIC:', bool(os.environ.get('ANTHROPIC_API_KEY')))"
 ```
 On Railway: check the Variables tab in the dashboard. The var must be set on the **service**, not just the project.
 
@@ -586,9 +698,14 @@ When code's diagnosis surfaces something surprising, the right next step is usua
 - Anything that would normally trigger a disclosure conversation
 
 **5. Resource implications.**
-- A change would meaningfully increase API costs (LLM calls in particular)
+- A change would meaningfully increase API costs (LLM calls in particular — Opus invocations are especially cost-sensitive)
 - A change would require new paid services
 - A change would significantly increase storage, bandwidth, or compute usage
+
+**6. Output rule boundary changes.**
+- A free feature being asked to produce authored inference (would breach the free-toolkit rule)
+- A paid product code path losing one of the six safeguards (citation, confidence, disclosure footer, observational language, neutral framing, no civil service voice)
+- A new feature that blurs the free/paid boundary
 
 ### What escalation looks like in practice
 
@@ -747,6 +864,8 @@ These behaviours have been verified working and must continue to work. If any re
 
 **Never push automatically.** Always commit locally and show what changed, then wait for explicit instruction to push. The user will say "push" or "push it" when ready. This applies to small fixes and template changes as much as anything else.
 
+When Mark requests a push of a small unrelated change while in the middle of a Phase build, push only the requested change — do not bundle in-progress Phase work alongside it.
+
 ## Pre-push checklist
 
 Before every `git push`, run:
@@ -764,3 +883,5 @@ After Railway deploys, verify at `/health` — all services should show `"ok"`.
 - Don't add a new `ThreadPoolExecutor` without `copy_current_request_context` on every `submit()` call
 - Don't name SQLAlchemy columns `query`, `metadata`, or `session`
 - Don't leave variables uninitialised before `render_template()` calls
+- Don't invoke Claude (Anthropic API) from any free-feature code path
+- Don't remove the AI-disclosure footer from paid product outputs at the standard tier

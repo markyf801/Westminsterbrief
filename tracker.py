@@ -405,7 +405,7 @@ def download_tracker_word():
 
             # Link to this question on Parliament.uk
             q_link_p = doc.add_paragraph()
-            q_link = f"https://questions-statements.parliament.uk/written-questions?SearchTerm={q['uin']}"
+            q_link = f"https://questions-statements.parliament.uk/written-questions/detail/{q['due_date']}/{q['uin']}"
             add_hyperlink(q_link_p, q_link, "View question ->")
             _set_indent(q_link_p, 0.2)
 
@@ -445,12 +445,12 @@ def download_tracker_word():
                             h_text = h_val.get('questionText', '').replace('<p>', '').replace('</p>', '')
                             if keywords and any(kw in h_text.lower() for kw in keywords):
                                 h_date = (h_val.get('dateTabled') or '').split('T')[0]
-                                h_link = f"https://questions-statements.parliament.uk/written-questions?SearchTerm={h_uin}"
+                                h_link = f"https://questions-statements.parliament.uk/written-questions/detail/{h_date}/{h_uin}"
                                 similar_questions_data.append({'uin': h_uin, 'date': h_date, 'text': h_text, 'link': h_link})
 
                         if similar_questions_data:
                             hp = doc.add_paragraph()
-                            hist_run = hp.add_run(f"↳ Previous questions by {q['member']} on this topic (last 3 months):")
+                            hist_run = hp.add_run(f"↳ See previous responses by {q['member']} on this topic (last 3 months):")
                             hist_run.bold = True
                             hist_run.font.size = Pt(10)
                             _set_indent(hp, 0.2)
