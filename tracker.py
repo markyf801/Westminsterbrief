@@ -7,7 +7,7 @@ from extensions import limiter
 try:
     import docx
     from docx import Document
-    from docx.shared import RGBColor
+    from docx.shared import RGBColor, Pt, Inches
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 except ImportError:
@@ -130,7 +130,7 @@ def _categorise_questions(questions: list[dict], dept_id: str, date_str: str, ge
             "Categorize these UK Parliamentary questions into broad team-level policy themes "
             "that a single policy team would own (e.g., 'SEND', 'Early Years', 'Higher Education Finance', "
             "'Disabled Children\\'s Social Care', 'School Standards'). "
-            "Use short, team-level labels — do NOT add sub-categories or qualifiers after a dash. "
+            "Use short, team-level labels -- do NOT add sub-categories or qualifiers after a dash. "
             "Return ONLY a valid JSON dictionary where keys are the UIN strings and values are the Themes. "
             f"Data: {json.dumps(questions_data)}"
         )
@@ -314,7 +314,7 @@ def morning_tracker():
                     sorted_grouped_results[date_key] = temp_group[date_key]
 
         except requests.exceptions.Timeout:
-            error_message = "Parliament API timed out — try again in a moment."
+            error_message = "Parliament API timed out -- try again in a moment."
             api_failed = True
         except Exception as e:
             error_message = f"Search error: {str(e)}"
@@ -365,62 +365,103 @@ def download_tracker_word():
         except Exception as e:
             print(f"AI Context Error: {e}")
 
+    def _fmt_date(iso_str: str) -> str:
+        try:
+            d = datetime.fromisoformat(iso_str)
+            month_year = d.strftime("%B %Y")
+            return f"{d.day} {month_year}"
+        except Exception:
+            return iso_str
+
+    def _set_indent(para, inches: float):
+        para.paragraph_format.left_indent = Inches(inches)
+
     doc = Document()
-    doc.add_heading('Today’s PQs (Enhanced Briefing)', 0)
-    three_months_ago = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
-    
-    ignore_words = {'school', 'schools', 'education', 'student', 'students', 'university', 'universities', 'college', 'health', 'nhs', 'funding', 'fund', 'policy', 'department', 'support', 'review', 'system', 'provision', 'england'}
+    doc.add_heading("Today's PQs (Enhanced Briefing)", 0)
+    three_months_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+
+    ignore_words = {"school", "schools", "education", "student", "students", "university", "universities", "college", "health", "nhs", "funding", "fund", "policy", "department", "support", "review", "system", "provision", "england"}
 
     for section in export_data:
         theme = section['theme']
-        doc.add_heading(f"📅 {section['date']} - 🏷️ {theme}", level=1)
-        
+        doc.add_heading(f"\U0001f4c5 {section['date']} -- {theme}", level=1)
+
         for q in section['questions']:
+            # Header: [STATUS] Member (UIN: xxx)
             p = doc.add_paragraph()
-            # NEW: Print dynamic status (Answered or Unanswered)
-            p.add_run(f"[{q.get('status', 'UNANSWERED')}] {q['member']} (UIN: {q['uin']})\n").bold = True
-            p.add_run(f"\"{q['text']}\"\n").italic = True
-            p.add_run(f"Due: {q['due_date']}")
-            
+            header_run = p.add_run(f"[{q.get('status', 'UNANSWERED')}] {q['member']} (UIN: {q['uin']})")
+            header_run.bold = True
+
+            # Question text -- plain, not italic, indented
+            q_p = doc.add_paragraph(f'"{q["text"]}"')
+            _set_indent(q_p, 0.2)
+
+            # Tabled date -- small, muted, human-readable
+            date_p = doc.add_paragraph()
+            date_run = date_p.add_run(f"Tabled: {_fmt_date(q['due_date'])}")
+            date_run.font.size = Pt(9)
+            date_run.font.color.rgb = RGBColor(120, 120, 120)
+            _set_indent(date_p, 0.2)
+
             if include_ai_context:
                 analysis = ai_context_dict.get(str(q['uin']))
                 if analysis:
                     ai_p = doc.add_paragraph()
-                    ai_run = ai_p.add_run(f"   🤖 AI Political Context: {analysis}")
+                    ai_run = ai_p.add_run(f"\U0001f916 AI Political Context: {analysis}")
                     ai_run.font.color.rgb = RGBColor(100, 100, 100)
-            
+                    ai_run.font.size = Pt(10)
+                    _set_indent(ai_p, 0.2)
+
             if include_history and q.get('member_id') and str(q['member_id']).isdigit():
                 try:
                     hist_params = {'askingMemberId': int(q['member_id']), 'tabledWhenFrom': three_months_ago, 'take': 50}
-                    if selected_dept: hist_params['answeringBodies'] = [int(selected_dept)]
+                    if selected_dept:
+                        hist_params['answeringBodies'] = int(selected_dept)
 
-                    hist_resp = requests.get("https://questions-statements-api.parliament.uk/api/writtenquestions/questions", params=hist_params, timeout=10)
-                    
+                    hist_resp = requests.get(
+                        "https://questions-statements-api.parliament.uk/api/writtenquestions/questions",
+                        params=hist_params, timeout=10
+                    )
+
                     if hist_resp.status_code == 200:
                         similar_questions_data = []
-                        keywords = [w.lower() for w in re.findall(r'\w+', theme) if len(w) > 3 and w.lower() not in ignore_words and w.lower() != 'uncategorized']
-                        if not keywords: keywords = [w.lower() for w in re.findall(r'\w+', q['text']) if len(w) > 4 and w.lower() not in ignore_words]
+                        keywords = [w.lower() for w in re.findall(r'\w+', theme)
+                                    if len(w) > 3 and w.lower() not in ignore_words and w.lower() != 'uncategorized']
+                        if not keywords:
+                            keywords = [w.lower() for w in re.findall(r'\w+', q['text'])
+                                        if len(w) > 4 and w.lower() not in ignore_words]
 
                         for h_item in hist_resp.json().get('results', []):
                             h_val = h_item.get('value', {})
                             h_uin = str(h_val.get('uin'))
-                            if h_uin == q['uin']: continue 
-                            h_text = h_val.get('questionText', '').replace('<p>','').replace('</p>','')
-                            
+                            if h_uin == q['uin']:
+                                continue
+                            h_text = h_val.get('questionText', '').replace('<p>', '').replace('</p>', '')
                             if keywords and any(kw in h_text.lower() for kw in keywords):
                                 h_date = (h_val.get('dateTabled') or '').split('T')[0]
                                 h_link = f"https://questions-statements.parliament.uk/written-questions?SearchTerm={h_uin}"
                                 similar_questions_data.append({'uin': h_uin, 'date': h_date, 'text': h_text, 'link': h_link})
-                        
+
                         if similar_questions_data:
                             hp = doc.add_paragraph()
-                            hp.add_run(f"   ↳ 🔍 Previous questions by {q['member']} on this topic (Last 3 Months):").bold = True
+                            hist_run = hp.add_run(f"↳ Previous questions by {q['member']} on this topic (last 3 months):")
+                            hist_run.bold = True
+                            hist_run.font.size = Pt(10)
+                            _set_indent(hp, 0.2)
+
                             for sq in similar_questions_data:
                                 sq_p = doc.add_paragraph()
-                                sq_p.add_run(f"      • [UIN: {sq['uin']} | {sq['date']}] \"{sq['text']}\"\n").italic = True
-                                sq_p.add_run(f"         Link: ").italic = True
-                                add_hyperlink(sq_p, sq['link'], sq['link'])
-                except Exception as e: print(f"History fetch error: {e}")
+                                sq_p.add_run(f'[UIN: {sq["uin"]} | {_fmt_date(sq["date"])}]  "{sq["text"]}"')
+                                sq_p.paragraph_format.left_indent = Inches(0.4)
+                                sq_p.paragraph_format.first_line_indent = Inches(-0.15)
+
+                                link_p = doc.add_paragraph()
+                                add_hyperlink(link_p, sq['link'], "View question →")
+                                link_p.paragraph_format.left_indent = Inches(0.4)
+                except Exception as e:
+                    print(f"History fetch error: {e}")
+
+            doc.add_paragraph()
             
     mem_doc = io.BytesIO()
     doc.save(mem_doc)
