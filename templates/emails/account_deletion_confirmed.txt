@@ -1,0 +1,17 @@
+Westminster Brief — Account deletion requested
+===============================================
+
+We have received a request to delete your Westminster Brief account ({{ recipient_email }}).
+
+Your account has been deactivated. All personal data will be permanently deleted
+on {{ deletion_date }} (30 days from now).
+
+CHANGED YOUR MIND?
+If this was a mistake, contact hello@westminsterbrief.co.uk before {{ deletion_date }}
+and we can restore your account.
+
+After {{ deletion_date }}, all data will be permanently removed and cannot be undone.
+
+---
+Westminster Brief
+https://westminsterbrief.co.uk

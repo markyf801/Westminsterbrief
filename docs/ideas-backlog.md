@@ -84,6 +84,20 @@ Current Debate Prep page accepts Lords peer names only. Add a Commons toggle for
 
 ---
 
+### Progressive Profiling — Richer User Context After First Value
+Non-government users are asked only for Sector at signup. Once they've experienced the tool, richer profiling can be collected organically:
+- After saving a search → "Want similar topics flagged when they come up in Parliament?"
+- After repeatedly using a tool on one topic → "Tell us more about your interest in [topic]"
+- On /my_preferences → an optional expandable "Tell us more about your work" section (policy area, subject, organisation name)
+
+This data is more useful when given voluntarily after experiencing value, not demanded at signup.
+
+**Revisit trigger:** Public beta has been running 4+ weeks with active non-government users; usage analytics show repeated searches by the same users; any session touching onboarding or /my_preferences; "what do we know about our users" conversation.
+
+*Captured 28 April 2026 — explicitly deferred from onboarding rework brief.*
+
+---
+
 ## Killed
 
 *(Nothing formally killed yet — this section is for ideas explicitly decided against, with reason recorded so they don't keep resurfacing.)*

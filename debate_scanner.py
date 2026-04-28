@@ -54,36 +54,14 @@ def _make_hansard_slug(title):
     return ''.join(w.capitalize() for w in clean.split())
 
 TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
-CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
-
-
-# AI provider chain for Research Tool routes:
-#   1. Primary:  Gemini 2.5 Flash Lite — REST API via requests (generativelanguage.googleapis.com)
-#   2. Fallback: Claude Haiku 4.5 — Anthropic SDK, fires when Gemini returns non-200
-#
-# Both GEMINI_API_KEY and CLAUDE_API_KEY must be set on Railway.
-# CLAUDE_API_KEY confirmed deployed as of 2026-04-26.
-#
-# The fallback exists because the Research Tool routes are interactive and
-# user-facing — a Gemini outage would otherwise silently break briefing generation.
-# The tracker uses Gemini only (no Claude fallback): cost discipline matters more
-# there than redundancy, and tracker results are shared/cached.
-def _claude_fallback(prompt, max_tokens=2000):
-    """Call Claude API with the same prompt Gemini received.
-    Silent fallback — returns response text or None, never raises."""
-    if not CLAUDE_API_KEY:
-        return None
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
-    except Exception:
-        return None
+# OUTPUT RULE COMPLIANCE
+# This is a free toolkit feature. Per CLAUDE.md output rules, AI calls in this
+# module must use Gemini only. Claude (Anthropic) must not be invoked from this
+# code path under any circumstances, including failure or fallback scenarios.
+# Phase 2 paid-product modules may call Claude — those will be in a separate
+# paid/ namespace with explicit model binding enforced at the abstraction layer.
+# When Gemini fails: retry once with backoff, then degrade gracefully.
+# Never swap to a different provider silently.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TWFY_API_URL = "https://www.theyworkforyou.com/api/getDebates"
 TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
@@ -644,7 +622,8 @@ def expand_search_query(topic, api_key):
         if resp.status_code == 200:
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            raw = _claude_fallback(prompt, max_tokens=300)
+            import logging as _eqlog
+            _eqlog.warning('[expand_search_query] Gemini returned %s — using original query', resp.status_code)
         if raw:
             terms = _parse_ai_json(raw)
             if isinstance(terms, list) and terms:
@@ -2631,12 +2610,13 @@ def debates_topic():
                     }
                     ai_resp = requests.post(ai_url, json=payload, timeout=90)
                     if ai_resp.status_code == 503:
-                        time.sleep(3)
+                        time.sleep(2)
                         ai_resp = requests.post(ai_url, json=payload, timeout=90)
                     if ai_resp.status_code == 200:
                         raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
                     else:
-                        raw_text = _claude_fallback(prompt, max_tokens=3000)
+                        _dlog.warning('[debates_topic] Gemini briefing failed (HTTP %s) — degrading gracefully', ai_resp.status_code)
+                        raw_text = None
                     _dlog.warning(f"[briefing_raw] non_govt_speakers snippet: {raw_text[raw_text.find('non_government'):raw_text.find('non_government')+300] if 'non_government' in (raw_text or '') else 'KEY NOT FOUND'}")
                     if raw_text:
                         topic_briefing = _parse_ai_json(raw_text)
@@ -2658,7 +2638,7 @@ def debates_topic():
 
                         topic_briefing_as_text = format_briefing_as_text(topic_briefing, topic)
                     else:
-                        debug_query += f" | AI HTTP {ai_resp.status_code} (Gemini+Claude both failed)"
+                        debug_query += f" | AI HTTP {ai_resp.status_code} (Gemini unavailable)"
                         topic_briefing = None
                 except Exception as e:
                     import logging
@@ -3335,11 +3315,14 @@ def generate_stakeholder_briefing(topic, org=None, hansard_rows=None, news=None,
         if resp.status_code == 200:
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            raw = _claude_fallback(prompt, max_tokens=800)
+            import logging as _sblog
+            _sblog.warning('[generate_stakeholder_briefing] Gemini returned %s', resp.status_code)
+            raw = None
         if raw:
             return _parse_ai_json(raw)
-    except Exception:
-        pass
+    except Exception as _sbe:
+        import logging as _sblog
+        _sblog.warning('[generate_stakeholder_briefing] Gemini exception: %s', _sbe)
     return None
 
 
@@ -4331,7 +4314,7 @@ def _prep_one_pager(question_text, topic, question_date='', house='lords'):
     """Generate an AI one-pager briefing for an oral question.
     Returns dict with why_now, sector_context, major_criticisms, opposition_position
     or None on failure."""
-    if not GEMINI_API_KEY and not CLAUDE_API_KEY:
+    if not GEMINI_API_KEY:
         return None
 
     house_label = 'Commons oral question' if house == 'commons' else 'Lords oral question'
@@ -4366,17 +4349,20 @@ def _prep_one_pager(question_text, topic, question_date='', house='lords'):
             body = {"contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1400}}
             resp = requests.post(url, json=body, timeout=30)
+            if resp.status_code == 503:
+                time.sleep(2)
+                resp = requests.post(url, json=body, timeout=30)
             if resp.status_code == 200:
                 raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
                 result = _parse_ai_json(raw)
                 if result:
                     return result
-        except Exception:
-            pass
-
-    raw = _claude_fallback(prompt, max_tokens=1000)
-    if raw:
-        return _parse_ai_json(raw)
+            else:
+                import logging as _oplog
+                _oplog.warning('[_prep_one_pager] Gemini returned %s', resp.status_code)
+        except Exception as _ope:
+            import logging as _oplog
+            _oplog.warning('[_prep_one_pager] Gemini exception: %s', _ope)
     return None
 
 

@@ -1,0 +1,21 @@
+Westminster Brief — Welcome
+===========================
+
+Your account has been created. You now have access to the full Westminster Brief toolkit:
+
+- Written Questions Scanner: search PQs by topic, department, and answer status
+- Today's PQs Tracker: all questions tabled each sitting day, grouped by theme
+- Member Research: written questions and parliamentary activity by MP or Peer
+- Member Profiles: career history, interests, and AI-generated profile
+- Hansard Search: debate transcripts and ministerial statements
+- Stakeholder Engagement: ministerial meetings and committee evidence directory
+{% if tier == 'public_sector' %}
+Your .gov.uk address has been recognised — all toolkit features are free for you.
+{% endif %}
+Get started at: https://westminsterbrief.co.uk/home
+
+If you have any questions, contact hello@westminsterbrief.co.uk
+
+---
+Westminster Brief
+https://westminsterbrief.co.uk

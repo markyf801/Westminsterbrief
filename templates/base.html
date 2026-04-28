@@ -12,11 +12,13 @@
     <meta property="og:description" content="{% block og_description %}Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly. Free for gov.uk officials.{% endblock %}">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://westminsterbrief.co.uk{{ request.path }}">
-    {% block og_image %}{% endblock %}
+    {% block og_image %}<meta property="og:image" content="https://westminsterbrief.co.uk/static/og_default.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">{% endblock %}
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="{% block twitter_title %}Westminster Brief — Parliamentary Research Tools{% endblock %}">
     <meta name="twitter:description" content="{% block twitter_description %}Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly.{% endblock %}">
-    {% block twitter_image %}{% endblock %}
+    {% block twitter_image %}<meta name="twitter:image" content="https://westminsterbrief.co.uk/static/og_default.png">{% endblock %}
     <link rel="canonical" href="https://westminsterbrief.co.uk{{ request.path }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -55,7 +57,17 @@
         {% if current_user.is_authenticated %}
             <a href="/my_alerts" class="nav-auth-alerts {% if request.path == '/my_alerts' %}nav-active{% endif %}">👤 My Alerts</a>
             <a href="/my_preferences" {% if request.path == '/my_preferences' %}class="nav-active"{% endif %}>⚙️ Preferences</a>
+            {% if feature_enabled('FEATURE_ACCOUNT', current_user) %}
+            <a href="/account" {% if request.path == '/account' %}class="nav-active"{% endif %}>Account</a>
+            {% endif %}
+            {% if feature_enabled('FEATURE_AUTH', current_user) %}
             <a href="/logout" class="nav-logout">Logout</a>
+            {% endif %}
+        {% else %}
+            {% if feature_enabled('FEATURE_AUTH', current_user) %}
+            <a href="/login" class="nav-login">Sign in</a>
+            <a href="/register" class="nav-register">Register</a>
+            {% endif %}
         {% endif %}
         <span class="nav-version">{{ app_version }}</span>
     </nav>

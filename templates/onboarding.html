@@ -5,43 +5,62 @@
 <div style="display:flex; justify-content:center; align-items:center; min-height:60vh;">
     <div class="box" style="width:100%; max-width:520px; border-top:5px solid #6f42c1;">
 
-        <h2 style="margin-bottom:6px;">Get better results, faster</h2>
+        <h2 style="margin-bottom:6px;">Tell us about your work</h2>
         <p style="color:#555; font-size:14px; line-height:1.6; margin-bottom:24px;">
-            Tell us about your work and Westminster Brief will pre-fill your searches every time you open the Parliamentary Research tool.
-            You can update or clear these at any time from your profile.
+            A quick question to help us understand who's using Westminster Brief.
+            This is optional and can be updated at any time from your profile.
         </p>
 
         <form method="POST" action="/onboarding/save">
 
             <div style="margin-bottom:18px;">
-                <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">Your Department</label>
-                <select name="department" style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px;">
-                    {% for dept in departments %}
-                    <option value="{{ dept }}">{{ dept }}</option>
+                <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">Sector</label>
+                <select name="sector" id="sector-select"
+                        style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px;"
+                        onchange="toggleGovtFields()">
+                    <option value="">— Select your sector —</option>
+                    {% for slug, label in sector_options %}
+                    <option value="{{ slug }}">{{ label }}</option>
                     {% endfor %}
                 </select>
             </div>
 
-            <div style="margin-bottom:18px;">
-                <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">
-                    Policy area
-                    <span style="font-weight:normal; color:#888; font-size:12px;">(e.g. Higher Education, SEND)</span>
-                </label>
-                <input type="text" name="policy_area" placeholder="e.g. Higher Education" maxlength="100"
-                       style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px; box-sizing:border-box;">
-            </div>
+            <div id="govt-fields" style="display:none;">
+                <p style="color:#3a5a8a; background:#eef4fb; border:1px solid #c3d8f0; border-radius:4px; padding:10px 12px; font-size:13px; margin-bottom:16px; line-height:1.5;">
+                    Setting your department, policy area, and subject lets the Parliamentary Research Tool pre-fill your searches.
+                    You can update these at any time from your profile.
+                </p>
 
-            <div style="margin-bottom:28px;">
-                <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">
-                    Specific subject
-                    <span style="font-weight:normal; color:#888; font-size:12px;">(e.g. free speech, funding)</span>
-                </label>
-                <input type="text" name="subject" placeholder="e.g. free speech" maxlength="100"
-                       style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px; box-sizing:border-box;">
+                <div style="margin-bottom:18px;">
+                    <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">Your Department</label>
+                    <select name="department" style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px;">
+                        {% for dept in departments %}
+                        <option value="{{ dept }}">{{ dept }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div style="margin-bottom:18px;">
+                    <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">
+                        Policy area
+                        <span style="font-weight:normal; color:#888; font-size:12px;">(e.g. Higher Education, SEND)</span>
+                    </label>
+                    <input type="text" name="policy_area" id="policy-area-input" placeholder="e.g. Higher Education" maxlength="100"
+                           style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px; box-sizing:border-box;">
+                </div>
+
+                <div style="margin-bottom:28px;">
+                    <label style="display:block; font-weight:600; margin-bottom:6px; color:#333;">
+                        Specific subject
+                        <span style="font-weight:normal; color:#888; font-size:12px;">(e.g. free speech, funding)</span>
+                    </label>
+                    <input type="text" name="subject" id="subject-input" placeholder="e.g. free speech" maxlength="100"
+                           style="width:100%; padding:10px; border-radius:4px; border:1px solid #ccc; font-size:14px; box-sizing:border-box;">
+                </div>
             </div>
 
             <button type="submit" class="btn-search" style="width:100%; padding:14px; font-size:15px;">
-                Save preferences
+                Save and continue
             </button>
         </form>
 
@@ -53,4 +72,19 @@
 
     </div>
 </div>
+
+<script>
+const GOVT_SECTORS = new Set(['civil_service_government', 'local_government']);
+
+function toggleGovtFields() {
+    const sector = document.getElementById('sector-select').value;
+    const block  = document.getElementById('govt-fields');
+    const show   = GOVT_SECTORS.has(sector);
+    block.style.display = show ? 'block' : 'none';
+    if (!show) {
+        document.getElementById('policy-area-input').value = '';
+        document.getElementById('subject-input').value = '';
+    }
+}
+</script>
 {% endblock %}

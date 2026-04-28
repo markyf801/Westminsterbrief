@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Account — Westminster Brief{% endblock %}
+
+{% block content %}
+<div style="max-width:580px; margin:0 auto;">
+
+    {% if deletion_due %}
+    <div style="background:#fff3cd; border:1px solid #ffc107; color:#856404; padding:14px 16px; border-radius:4px; margin-bottom:20px; font-size:14px; line-height:1.5;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;">
+            <div>
+                <strong>Account deletion pending.</strong>
+                Your data will be permanently deleted on <strong>{{ deletion_due }}</strong>.
+            </div>
+            <form method="POST" action="/account/cancel-deletion" style="margin:0; flex-shrink:0;">
+                <button type="submit"
+                        style="background:#856404; color:white; border:none; padding:7px 16px; border-radius:4px; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;">
+                    Cancel deletion
+                </button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Account details -->
+    <div class="box" style="border-top:5px solid #1c3e6e; margin-bottom:20px;">
+        <h2 style="margin:0 0 18px; color:#1c3e6e; font-size:18px;">Account details</h2>
+        <table style="width:100%; font-size:14px; border-collapse:collapse;">
+            <tr>
+                <td style="padding:8px 0; color:#666; width:140px; vertical-align:top;">Email</td>
+                <td style="padding:8px 0; font-weight:500;">{{ user.email }}</td>
+            </tr>
+            <tr>
+                <td style="padding:8px 0; color:#666; vertical-align:top; border-top:1px solid #f0f0f0;">Access tier</td>
+                <td style="padding:8px 0; border-top:1px solid #f0f0f0;">
+                    {% if user.access_tier == 'public_sector' %}
+                        <span style="background:#d1e7dd; color:#0a3622; padding:2px 8px; border-radius:3px; font-size:12px; font-weight:600;">Public sector</span>
+                        <span style="color:#666; font-size:13px; margin-left:8px;">Full toolkit, free</span>
+                    {% else %}
+                        <span style="background:#e9ecef; color:#495057; padding:2px 8px; border-radius:3px; font-size:12px; font-weight:600;">Standard</span>
+                        <span style="color:#666; font-size:13px; margin-left:8px;">Full toolkit access</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td style="padding:8px 0; color:#666; vertical-align:top; border-top:1px solid #f0f0f0;">Sector</td>
+                <td style="padding:8px 0; border-top:1px solid #f0f0f0;">
+                    <form method="POST" action="/account/sector" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <select name="sector" style="padding:6px 8px; border-radius:4px; border:1px solid #ccc; font-size:13px;">
+                            <option value="">— Not set —</option>
+                            {% for slug, label in sector_options %}
+                            <option value="{{ slug }}" {% if user.sector == slug %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit"
+                                style="background:#1c3e6e; color:white; border:none; padding:6px 14px; border-radius:4px; font-size:13px; font-weight:600; cursor:pointer;">
+                            Update
+                        </button>
+                    </form>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Change password -->
+    <div class="box" style="border-top:5px solid #6f42c1; margin-bottom:20px;">
+        <h2 style="margin:0 0 6px; color:#1c3e6e; font-size:18px;">Change password</h2>
+        <p style="margin:0 0 20px; color:#666; font-size:13px;">Must be at least 8 characters.</p>
+
+        <form method="POST" action="/account/change-password">
+            <div style="margin-bottom:14px;">
+                <label style="display:block; font-weight:600; color:#333; margin-bottom:6px; font-size:13px;">Current password</label>
+                <input type="password" name="current_password" required placeholder="••••••••"
+                       style="width:100%; border:1px solid #ccd0d5; padding:10px; border-radius:4px; font-size:14px; box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:14px;">
+                <label style="display:block; font-weight:600; color:#333; margin-bottom:6px; font-size:13px;">New password</label>
+                <input type="password" name="new_password" required minlength="8" placeholder="••••••••"
+                       style="width:100%; border:1px solid #ccd0d5; padding:10px; border-radius:4px; font-size:14px; box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:20px;">
+                <label style="display:block; font-weight:600; color:#333; margin-bottom:6px; font-size:13px;">Confirm new password</label>
+                <input type="password" name="confirm_password" required minlength="8" placeholder="••••••••"
+                       style="width:100%; border:1px solid #ccd0d5; padding:10px; border-radius:4px; font-size:14px; box-sizing:border-box;">
+            </div>
+            <button type="submit" class="btn-search" style="padding:10px 24px; font-size:14px;">
+                Update password
+            </button>
+        </form>
+    </div>
+
+    <!-- Data export -->
+    <div class="box" style="border-top:5px solid #0d6efd; margin-bottom:20px;">
+        <h2 style="margin:0 0 6px; color:#1c3e6e; font-size:18px;">Export your data</h2>
+        <p style="margin:0 0 16px; color:#666; font-size:13px; line-height:1.5;">
+            Download a JSON file containing all personal data we hold about you — your account details,
+            tracked topics, stakeholders, and preferences.
+            You will also receive a confirmation email.
+        </p>
+        <a href="/account/export" class="btn-search" style="display:inline-block; padding:10px 24px; font-size:14px; text-decoration:none;">
+            Download my data
+        </a>
+    </div>
+
+    <!-- Delete account -->
+    <div class="box" style="border-top:5px solid #dc3545; margin-bottom:40px;">
+        <h2 style="margin:0 0 6px; color:#dc3545; font-size:18px;">Delete account</h2>
+        <p style="margin:0 0 16px; color:#666; font-size:13px; line-height:1.5;">
+            Your account will be deactivated and all personal data permanently deleted after 30 days.
+            You can log back in at any time during those 30 days to cancel the request from this page.
+        </p>
+        <form method="POST" action="/account/delete"
+              onsubmit="return confirm('Are you sure? Your account will be deactivated and data deleted after 30 days. This cannot be undone.');">
+            <button type="submit"
+                    style="background:#dc3545; color:white; border:none; padding:10px 24px; border-radius:4px; font-size:14px; font-weight:600; cursor:pointer;">
+                Request account deletion
+            </button>
+        </form>
+    </div>
+
+</div>
+{% endblock %}

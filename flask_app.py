@@ -1,18 +1,21 @@
 import os
 import ipaddress
+import secrets
 import socket
 import requests
 import re
 import numpy as np
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, abort
 from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from extensions import db, limiter
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
+from email_service import send_template_email
+from feature_flags import feature_enabled
 
 # Force load environment variables so the API keys never get missed
 load_dotenv()
@@ -89,8 +92,14 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
 # Rate limiter — init with global defaults; stricter limits on LLM/auth endpoints
+# Set RATELIMIT_ENABLED=false in .env to disable locally without affecting production
+if os.environ.get('RATELIMIT_ENABLED', 'true').lower() == 'false':
+    app.config['RATELIMIT_ENABLED'] = False
 limiter.init_app(app)
 limiter.default_limits = ["200 per hour", "30 per minute"]
+
+# Feature flag helper available in all Jinja2 templates as feature_enabled(...)
+app.jinja_env.globals['feature_enabled'] = feature_enabled
 
 # Security headers
 from flask_talisman import Talisman
@@ -138,11 +147,9 @@ login_manager.login_view = 'login'
 # ==========================================
 # 3. DATABASE MODELS
 # ==========================================
-# Access control — all configurable via env vars, no hardcoding needed.
-# PAYWALL_ENABLED=false  → bypass all tier checks (useful in dev)
+# Access control — approved domains/emails determine public_sector tier at registration
 # APPROVED_DOMAINS=gov.uk,parliament.uk  → comma-separated; default gov.uk
-# APPROVED_EMAILS=you@gmail.com,colleague@gmail.com  → individual overrides
-_PAYWALL_ENABLED = os.environ.get('PAYWALL_ENABLED', 'true').lower() != 'false'
+# APPROVED_EMAILS=you@gmail.com  → individual overrides
 _APPROVED_DOMAINS = [d.strip().lower() for d in os.environ.get('APPROVED_DOMAINS', 'gov.uk').split(',') if d.strip()]
 _APPROVED_EMAILS  = {e.strip().lower() for e in os.environ.get('APPROVED_EMAILS', '').split(',') if e.strip()}
 
@@ -158,7 +165,13 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
     has_completed_onboarding = db.Column(db.Boolean, default=False, nullable=False)
-    access_tier = db.Column(db.String(20), nullable=False, default='restricted')
+    access_tier = db.Column(db.String(20), nullable=False, default='standard')
+    reset_token = db.Column(db.String(100), nullable=True)
+    reset_token_expiry = db.Column(db.DateTime, nullable=True)
+    deletion_requested_at = db.Column(db.DateTime, nullable=True)
+    stripe_customer_id = db.Column(db.String(64), nullable=True, index=True)
+    stripe_subscription_id = db.Column(db.String(64), nullable=True)
+    sector = db.Column(db.String(50), nullable=True)
     topics = db.relationship('TrackedTopic', backref='owner', lazy=True)
     stakeholders = db.relationship('TrackedStakeholder', backref='owner', lazy=True)
     preference = db.relationship('UserPreference', backref='user', uselist=False, lazy=True)
@@ -244,11 +257,37 @@ with app.app_context():
     if 'access_tier' not in _user_cols:
         try:
             with db.engine.connect() as conn:
-                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN access_tier VARCHAR(20) NOT NULL DEFAULT 'restricted'"))
-                conn.execute(text("UPDATE \"user\" SET access_tier = 'civil_servant' WHERE email LIKE '%.gov.uk' OR email = 'markjforde@gmail.com'"))
+                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN access_tier VARCHAR(20) NOT NULL DEFAULT 'standard'"))
+                conn.execute(text("UPDATE \"user\" SET access_tier = 'public_sector' WHERE email LIKE '%.gov.uk' OR email = 'markjforde@gmail.com'"))
                 conn.commit()
         except Exception as _e:
             app.logger.warning('user access_tier migration failed: %s', _e)
+    # Rename tier values for existing rows (civil_servant→public_sector, restricted→standard)
+    # Idempotent: subsequent runs update 0 rows
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text("UPDATE \"user\" SET access_tier = 'public_sector' WHERE access_tier = 'civil_servant'"))
+            conn.execute(text("UPDATE \"user\" SET access_tier = 'standard' WHERE access_tier = 'restricted'"))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning('tier rename migration failed: %s', _e)
+    # Add password reset and deletion columns to user table
+    _user_cols2 = {c['name'] for c in _sa_inspect(db.engine).get_columns('user')}
+    for _col, _defn in [
+        ('reset_token', 'VARCHAR(100)'),
+        ('reset_token_expiry', 'TIMESTAMP'),
+        ('deletion_requested_at', 'TIMESTAMP'),
+        ('stripe_customer_id', 'VARCHAR(64)'),
+        ('stripe_subscription_id', 'VARCHAR(64)'),
+        ('sector', 'VARCHAR(50)'),
+    ]:
+        if _col not in _user_cols2:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE "user" ADD COLUMN {_col} {_defn}'))
+                    conn.commit()
+            except Exception as _e:
+                app.logger.warning('reset token migration failed for %s: %s', _col, _e)
     # Add new columns to tracked_stakeholder (website, rss_url, description)
     _ts_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('tracked_stakeholder')}
     _mig_log('inspect tracked_stakeholder done')
@@ -482,6 +521,21 @@ DEPARTMENTS_FOR_PREFS = [
     "Department for Science, Innovation and Technology", "Cabinet Office",
 ]
 
+SECTOR_OPTIONS = [
+    ('civil_service_government',  'UK Civil Service / Government'),
+    ('local_government',          'Local government'),
+    ('public_sector',             'Public sector (NHS, university, etc.)'),
+    ('charity_ngo',               'Charity / NGO / Third sector'),
+    ('trade_body',                'Trade body / Membership organisation'),
+    ('public_affairs',            'Public affairs / Lobbying / PR consultancy'),
+    ('think_tank',                'Think tank / Research institute'),
+    ('academic_researcher',       'Academic / Researcher'),
+    ('journalist_media',          'Journalist / Media'),
+    ('student',                   'Student'),
+    ('engaged_citizen_other',     'Engaged citizen / Other'),
+]
+SECTOR_LABELS = dict(SECTOR_OPTIONS)
+
 # ==========================================
 # 5. ROUTES
 # ==========================================
@@ -560,12 +614,6 @@ def terms():
 def privacy():
     return render_template('privacy.html')
 
-_PAYWALL_EXEMPT = {
-    '/', '/home', '/login', '/register', '/logout',
-    '/paywall', '/health', '/terms', '/privacy',
-    '/robots.txt', '/sitemap.xml',
-}
-
 @app.before_request
 def _log_request():
     import time as _rt
@@ -576,28 +624,8 @@ def _log_request():
 def _log_response(response):
     import time as _rt
     elapsed = _rt.monotonic() - getattr(_rt, '_req_start', _rt.monotonic())
-    print(f'[RES] {request.method} {request.path} → {response.status_code} ({elapsed:.2f}s)', flush=True)
+    print(f'[RES] {request.method} {request.path} -> {response.status_code} ({elapsed:.2f}s)', flush=True)
     return response
-
-@app.before_request
-def check_tier_access():
-    if not _PAYWALL_ENABLED:
-        return None
-    if request.path.startswith('/static'):
-        return None
-    if request.path in _PAYWALL_EXEMPT:
-        return None
-    if not current_user.is_authenticated:
-        return None  # @login_required on the route handles unauthenticated users
-    if getattr(current_user, 'access_tier', 'civil_servant') == 'restricted':
-        return redirect(url_for('paywall'))
-    return None
-
-
-@app.route('/paywall')
-def paywall():
-    return render_template('paywall.html')
-
 
 @app.errorhandler(429)
 def ratelimit_handler(e):
@@ -606,9 +634,23 @@ def ratelimit_handler(e):
     return render_template('429.html'), 429
 
 
+@app.before_request
+def _enforce_feature_flags():
+    """Abort 404 for hidden feature routes before @login_required can redirect."""
+    auth_paths = {'/login', '/register', '/logout', '/forgot-password'}
+    if request.path in auth_paths or request.path.startswith('/reset-password/'):
+        if not feature_enabled('FEATURE_AUTH', current_user):
+            abort(404)
+    if request.path == '/account' or request.path.startswith('/account/'):
+        if not feature_enabled('FEATURE_ACCOUNT', current_user):
+            abort(404)
+
+
 @app.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per minute; 20 per hour")
+@limiter.limit("5 per minute; 20 per hour", methods=["POST"])
 def login():
+    if not feature_enabled('FEATURE_AUTH', current_user):
+        abort(404)
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
@@ -623,6 +665,8 @@ def login():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    if not feature_enabled('FEATURE_AUTH', current_user):
+        abort(404)
     if request.method == 'POST':
         email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
@@ -636,19 +680,268 @@ def register():
         elif User.query.filter_by(email=email).first():
             flash('An account with that email already exists.')
         else:
-            tier = 'civil_servant' if _is_approved_email(email) else 'restricted'
+            tier = 'public_sector' if _is_approved_email(email) else 'standard'
             user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'), access_tier=tier)
             db.session.add(user)
             db.session.commit()
             login_user(user)
-            if tier == 'restricted':
-                return redirect(url_for('paywall'))
             return redirect(url_for('onboarding'))
     return render_template('register.html')
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+@limiter.limit("5 per hour", methods=["POST"])
+def forgot_password():
+    if not feature_enabled('FEATURE_AUTH', current_user):
+        abort(404)
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        user = User.query.filter_by(email=email).first()
+        if user:
+            token = secrets.token_urlsafe(32)
+            user.reset_token = token
+            user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
+            db.session.commit()
+            reset_url = url_for('reset_password', token=token, _external=True)
+            send_template_email(
+                to=user.email,
+                subject='Reset your Westminster Brief password',
+                template_name='password_reset',
+                recipient_email=user.email,
+                reset_url=reset_url,
+            )
+        # Always show the same message — don't reveal whether the email exists
+        flash('If an account exists for that email, a password reset link has been sent.')
+        return redirect(url_for('login'))
+    return render_template('forgot_password.html')
+
+
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    if not feature_enabled('FEATURE_AUTH', current_user):
+        abort(404)
+    user = User.query.filter_by(reset_token=token).first()
+    if not user or not user.reset_token_expiry or user.reset_token_expiry < datetime.utcnow():
+        flash('This reset link has expired or is invalid. Please request a new one.')
+        return redirect(url_for('forgot_password'))
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        confirm  = request.form.get('confirm_password', '')
+        if len(password) < 8:
+            flash('Password must be at least 8 characters.')
+        elif password != confirm:
+            flash('Passwords do not match.')
+        else:
+            user.password_hash = generate_password_hash(password, method='pbkdf2:sha256')
+            user.reset_token = None
+            user.reset_token_expiry = None
+            db.session.commit()
+            flash('Password updated. Please sign in with your new password.')
+            return redirect(url_for('login'))
+    return render_template('reset_password.html', token=token)
+
+
+@app.route('/account')
+@login_required
+def account():
+    if not feature_enabled('FEATURE_ACCOUNT', current_user):
+        abort(404)
+    deletion_due = None
+    if current_user.deletion_requested_at:
+        deletion_due = (current_user.deletion_requested_at + timedelta(days=30)).strftime('%d %B %Y').lstrip('0')
+    sector_label = SECTOR_LABELS.get(current_user.sector, '') if current_user.sector else ''
+    return render_template('account.html', user=current_user, deletion_due=deletion_due,
+                           sector_label=sector_label, sector_options=SECTOR_OPTIONS)
+
+
+@app.route('/account/sector', methods=['POST'])
+@login_required
+def account_sector():
+    if not feature_enabled('FEATURE_ACCOUNT', current_user):
+        abort(404)
+    sector = request.form.get('sector', '').strip()
+    if sector in SECTOR_LABELS:
+        current_user.sector = sector
+        db.session.commit()
+        flash('Sector updated.')
+    return redirect(url_for('account'))
+
+
+@app.route('/account/change-password', methods=['POST'])
+@login_required
+@limiter.limit("10 per hour")
+def account_change_password():
+    if not feature_enabled('FEATURE_ACCOUNT', current_user):
+        abort(404)
+    current_pw = request.form.get('current_password', '')
+    new_pw     = request.form.get('new_password', '')
+    confirm_pw = request.form.get('confirm_password', '')
+    if not check_password_hash(current_user.password_hash, current_pw):
+        flash('Current password is incorrect.')
+    elif len(new_pw) < 8:
+        flash('New password must be at least 8 characters.')
+    elif new_pw != confirm_pw:
+        flash('New passwords do not match.')
+    else:
+        current_user.password_hash = generate_password_hash(new_pw, method='pbkdf2:sha256')
+        db.session.commit()
+        flash('Password updated successfully.')
+    return redirect(url_for('account'))
+
+
+@app.route('/account/export')
+@login_required
+def account_export():
+    if not feature_enabled('FEATURE_ACCOUNT', current_user):
+        abort(404)
+    import json
+    from flask import make_response
+    data = {
+        'email': current_user.email,
+        'access_tier': current_user.access_tier,
+        'sector': current_user.sector,
+        'topics': [{'keyword': t.keyword, 'department': t.department} for t in current_user.topics],
+        'stakeholders': [{'name': s.name, 'bsky_handle': s.bsky_handle} for s in current_user.stakeholders],
+    }
+    pref = current_user.preference
+    if pref:
+        data['preferences'] = {
+            'department': pref.department,
+            'policy_area': pref.policy_area,
+            'subject': pref.subject,
+        }
+    send_template_email(
+        to=current_user.email,
+        subject='Westminster Brief — Your data export',
+        template_name='data_export_ready',
+        recipient_email=current_user.email,
+        export_requested_at=datetime.utcnow().strftime('%d %B %Y at %H:%M UTC').lstrip('0'),
+    )
+    resp = make_response(json.dumps(data, indent=2))
+    resp.headers['Content-Type'] = 'application/json'
+    resp.headers['Content-Disposition'] = (
+        f'attachment; filename="westminsterbrief-data-{datetime.utcnow().strftime("%Y-%m-%d")}.json"'
+    )
+    return resp
+
+
+@app.route('/account/cancel-deletion', methods=['POST'])
+@login_required
+def account_cancel_deletion():
+    if not feature_enabled('FEATURE_ACCOUNT', current_user):
+        abort(404)
+    current_user.deletion_requested_at = None
+    db.session.commit()
+    flash('Account deletion cancelled. Your account is active.')
+    return redirect(url_for('account'))
+
+
+@app.route('/account/delete', methods=['POST'])
+@login_required
+def account_delete():
+    if not feature_enabled('FEATURE_ACCOUNT', current_user):
+        abort(404)
+    deletion_date = (datetime.utcnow() + timedelta(days=30)).strftime('%d %B %Y').lstrip('0')
+    send_template_email(
+        to=current_user.email,
+        subject='Westminster Brief — Account deletion requested',
+        template_name='account_deletion_confirmed',
+        recipient_email=current_user.email,
+        deletion_date=deletion_date,
+    )
+    current_user.deletion_requested_at = datetime.utcnow()
+    db.session.commit()
+    logout_user()
+    flash('Deletion request received. You will receive a confirmation email. Your data will be removed within 30 days.')
+    return redirect(url_for('login'))
+
+
+# ---------------------------------------------------------------------------
+# Stripe webhook
+# ---------------------------------------------------------------------------
+
+def _stripe_handle_checkout_completed(obj):
+    customer_id = obj.get('customer')
+    sub_id = obj.get('subscription')
+    details = obj.get('customer_details') or {}
+    email = details.get('email') or obj.get('customer_email', '')
+    if not (customer_id and email):
+        return
+    user = User.query.filter_by(email=email.lower()).first()
+    if user:
+        user.stripe_customer_id = customer_id
+        if sub_id:
+            user.stripe_subscription_id = sub_id
+        db.session.commit()
+        app.logger.info('[STRIPE] checkout completed → user %s', user.id)
+
+
+def _stripe_handle_subscription_updated(obj):
+    customer_id = obj.get('customer')
+    sub_id = obj.get('id')
+    if not customer_id:
+        return
+    user = User.query.filter_by(stripe_customer_id=customer_id).first()
+    if user:
+        user.stripe_subscription_id = sub_id
+        db.session.commit()
+        app.logger.info('[STRIPE] subscription updated → user %s status=%s', user.id, obj.get('status'))
+
+
+def _stripe_handle_subscription_deleted(obj):
+    customer_id = obj.get('customer')
+    if not customer_id:
+        return
+    user = User.query.filter_by(stripe_customer_id=customer_id).first()
+    if user:
+        user.stripe_subscription_id = None
+        db.session.commit()
+        app.logger.info('[STRIPE] subscription deleted → user %s', user.id)
+
+
+@app.route('/stripe/webhook', methods=['POST'])
+def stripe_webhook():
+    try:
+        import stripe as _stripe
+    except ImportError:
+        app.logger.error('[STRIPE] stripe package not installed')
+        return jsonify({'error': 'stripe not configured'}), 500
+
+    payload = request.data
+    sig_header = request.headers.get('Stripe-Signature', '')
+    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+
+    if not webhook_secret:
+        app.logger.warning('[STRIPE] STRIPE_WEBHOOK_SECRET not set — webhook ignored')
+        return jsonify({'status': 'ignored'}), 200
+
+    try:
+        event = _stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except _stripe.error.SignatureVerificationError:
+        app.logger.warning('[STRIPE] Signature verification failed')
+        return jsonify({'error': 'invalid signature'}), 400
+    except Exception as _e:
+        app.logger.warning('[STRIPE] Webhook parse error: %s', _e)
+        return jsonify({'error': 'invalid payload'}), 400
+
+    event_type = event['type']
+    obj = event['data']['object']
+    app.logger.info('[STRIPE] Event received: %s', event_type)
+
+    if event_type == 'checkout.session.completed':
+        _stripe_handle_checkout_completed(obj)
+    elif event_type in ('customer.subscription.created', 'customer.subscription.updated'):
+        _stripe_handle_subscription_updated(obj)
+    elif event_type == 'customer.subscription.deleted':
+        _stripe_handle_subscription_deleted(obj)
+
+    return jsonify({'status': 'ok'}), 200
+
 
 @app.route('/logout')
 @login_required
 def logout():
+    if not feature_enabled('FEATURE_AUTH', current_user):
+        abort(404)
     logout_user()
     return redirect(url_for('login'))
 
@@ -662,29 +955,36 @@ def my_alerts():
 @app.route('/onboarding')
 @login_required
 def onboarding():
-    return render_template('onboarding.html', departments=DEPARTMENTS_FOR_PREFS)
+    return render_template('onboarding.html', departments=DEPARTMENTS_FOR_PREFS, sector_options=SECTOR_OPTIONS)
+
+_GOVT_SECTORS = {'civil_service_government', 'local_government'}
 
 @app.route('/onboarding/save', methods=['POST'])
 @login_required
 def onboarding_save():
-    dept   = request.form.get('department', '').strip()
-    policy = request.form.get('policy_area', '').strip()
-    subject = request.form.get('subject', '').strip()
-    pref = UserPreference.query.filter_by(user_id=current_user.id).first()
-    if pref is None:
-        pref = UserPreference(user_id=current_user.id)
-        db.session.add(pref)
-    pref.department  = dept
-    pref.policy_area = policy
-    pref.subject     = subject
+    sector = request.form.get('sector', '').strip() or 'engaged_citizen_other'
+    current_user.sector = sector
+    if sector in _GOVT_SECTORS:
+        dept    = request.form.get('department', '').strip()
+        policy  = request.form.get('policy_area', '').strip()
+        subject = request.form.get('subject', '').strip()
+        pref = UserPreference.query.filter_by(user_id=current_user.id).first()
+        if pref is None:
+            pref = UserPreference(user_id=current_user.id)
+            db.session.add(pref)
+        pref.department  = dept
+        pref.policy_area = policy
+        pref.subject     = subject
     current_user.has_completed_onboarding = True
     db.session.commit()
-    flash('Preferences saved — your searches will now be pre-filled.')
+    if sector in _GOVT_SECTORS:
+        flash('Preferences saved — your searches will now be pre-filled.')
     return redirect(url_for('my_alerts'))
 
 @app.route('/onboarding/skip', methods=['POST'])
 @login_required
 def onboarding_skip():
+    current_user.sector = 'engaged_citizen_other'
     current_user.has_completed_onboarding = True
     db.session.commit()
     return redirect(url_for('my_alerts'))

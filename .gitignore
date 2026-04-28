@@ -30,3 +30,12 @@ instance/
 
 # Runtime caches
 minister_cache.json
+
+# Scratch / local-only files
+ClaudeAPI.txt
+response.json
+data/
+downloads/
+static/og_default_files/
+*.docx
+*.webp

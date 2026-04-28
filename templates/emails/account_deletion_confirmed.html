@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Account deletion requested</title>
+</head>
+<body style="margin:0; padding:0; background:#f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4; padding:32px 0;">
+  <tr>
+    <td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff; border-radius:6px; overflow:hidden; max-width:600px; width:100%;">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:#1c3e6e; padding:24px 32px;">
+            <p style="margin:0; color:#ffffff; font-size:18px; font-weight:bold; letter-spacing:0.02em;">
+              🏛️ Westminster Brief
+            </p>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:32px 32px 24px;">
+            <h1 style="margin:0 0 16px; font-size:22px; color:#1c3e6e; font-weight:700;">Account deletion requested</h1>
+            <p style="margin:0 0 16px; font-size:15px; color:#333333; line-height:1.6;">
+              We have received a request to delete your Westminster Brief account
+              (<strong>{{ recipient_email }}</strong>).
+            </p>
+            <p style="margin:0 0 16px; font-size:15px; color:#333333; line-height:1.6;">
+              Your account has been deactivated. All personal data will be permanently deleted
+              on <strong>{{ deletion_date }}</strong> (30 days from now).
+            </p>
+
+            <!-- Notice box -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
+              <tr>
+                <td style="background:#fff8e6; border-left:3px solid #f0a500; border-radius:4px; padding:14px 16px;">
+                  <p style="margin:0; font-size:14px; color:#7d5a00; line-height:1.6;">
+                    <strong>Changed your mind?</strong> If this was a mistake, contact us at
+                    <a href="mailto:hello@westminsterbrief.co.uk" style="color:#7d5a00;">hello@westminsterbrief.co.uk</a>
+                    before {{ deletion_date }} and we can restore your account.
+                  </p>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0; font-size:14px; color:#666666; line-height:1.6;">
+              After {{ deletion_date }}, all data will be permanently removed and this action cannot be undone.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Divider -->
+        <tr>
+          <td style="padding:0 32px;"><hr style="border:none; border-top:1px solid #eeeeee; margin:0;"></td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:20px 32px 28px;">
+            <p style="margin:0; font-size:12px; color:#999999; line-height:1.6;">
+              This email was sent to {{ recipient_email }} in response to a deletion request made from your account.<br>
+              Westminster Brief &mdash; <a href="https://westminsterbrief.co.uk" style="color:#999999;">westminsterbrief.co.uk</a>
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
