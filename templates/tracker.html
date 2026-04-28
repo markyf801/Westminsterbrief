@@ -44,11 +44,18 @@
             </button>
         </div>
 
-        <div class="info-box" style="margin-top: 16px;">
-            Questions tabled: <strong>{{ sorted_grouped_results.values()|list|first|attr('display_date') }}</strong>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-top:16px; flex-wrap:wrap; gap:8px;">
+            <div class="info-box" style="margin:0; flex:1;">
+                Questions tabled: <strong>{{ sorted_grouped_results.values()|list|first|attr('display_date') }}</strong>
+            </div>
+            <div style="display:flex; gap:6px;">
+                <button id="btn-theme-view" class="view-toggle active-toggle" onclick="setView('theme')">🏷️ By Theme</button>
+                <button id="btn-list-view" class="view-toggle" onclick="setView('list')">📋 Full List</button>
+            </div>
         </div>
 
-        <div style="margin-top: 16px;">
+        {# ── Theme-grouped view (default, also used for export selection) ── #}
+        <div id="grouped-view" style="margin-top: 16px;">
         {% for raw_date, date_data in sorted_grouped_results.items() %}
             {% for theme, questions in date_data.themes.items() %}
                 <details class="theme-block" data-date="{{ date_data.display_date }}" data-theme="{{ theme }}" style="margin-bottom: 12px;">
@@ -88,6 +95,33 @@
                         {% endfor %}
                     </div>
                 </details>
+            {% endfor %}
+        {% endfor %}
+        </div>
+
+        {# ── Flat list view (all questions, theme badge on each card) ── #}
+        <div id="list-view" style="display:none; margin-top:16px;">
+        {% for raw_date, date_data in sorted_grouped_results.items() %}
+            {% for theme, questions in date_data.themes.items() %}
+                {% for r in questions %}
+                    <div class="result-card" style="border-left: 4px solid #d9534f;">
+                        <div class="result-card-header">
+                            <span class="wq-type-badge wq-type-{{ r.question_type | lower }}">
+                                {% if r.question_type == 'NAMED_DAY' %}NAMED DAY{% else %}{{ r.question_type }}{% endif %}
+                            </span>
+                            <span class="result-card-dept">{{ r.dept }}</span>
+                            <span style="font-size:11px; background:rgba(255,255,255,0.08); color:#aaa; border:1px solid rgba(255,255,255,0.12); border-radius:3px; padding:1px 6px; margin-left:6px;">{{ theme }}</span>
+                            <span style="font-size:11px; color:#888; font-family:monospace; margin-left:6px;">{{ r.uin }}</span>
+                        </div>
+                        <div class="result-card-body">
+                            <p style="margin-bottom:8px;"><strong>{{ r.member }}</strong></p>
+                            <p class="result-card-quote">"{{ r.text }}"</p>
+                            <p style="font-size:13px; color:#555; margin-top:8px;">
+                                <strong>Tabled:</strong> {{ r.due_date }}{% if r.date_for_answer %} &nbsp;·&nbsp; <strong>Due:</strong> {{ r.date_for_answer }}{% endif %}
+                            </p>
+                        </div>
+                    </div>
+                {% endfor %}
             {% endfor %}
         {% endfor %}
         </div>
@@ -143,6 +177,21 @@
 </div>
 
 <style>
+    .view-toggle {
+        padding: 6px 14px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        background: transparent;
+        color: #aaa;
+        cursor: pointer;
+        font-size: 13px;
+        white-space: nowrap;
+    }
+    .view-toggle.active-toggle {
+        background: #1c3e6e;
+        color: #fff;
+        border-color: #1c3e6e;
+    }
     details > summary { list-style: none; }
     details > summary::-webkit-details-marker { display: none; }
     details[open] > summary { background-color: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.08); }
@@ -165,6 +214,24 @@
 </style>
 
 <script>
+    function setView(mode) {
+        const grouped = document.getElementById('grouped-view');
+        const list = document.getElementById('list-view');
+        const btnTheme = document.getElementById('btn-theme-view');
+        const btnList = document.getElementById('btn-list-view');
+        if (mode === 'list') {
+            grouped.style.display = 'none';
+            list.style.display = '';
+            btnList.classList.add('active-toggle');
+            btnTheme.classList.remove('active-toggle');
+        } else {
+            grouped.style.display = '';
+            list.style.display = 'none';
+            btnTheme.classList.add('active-toggle');
+            btnList.classList.remove('active-toggle');
+        }
+    }
+
     function showLoading() {
         const btn = document.getElementById('submitBtn');
         const text = document.getElementById('btnText');
