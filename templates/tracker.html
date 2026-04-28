@@ -99,19 +99,33 @@
         {% endfor %}
         </div>
 
-        {# ── Flat list view (all questions, theme badge on each card) ── #}
+        {# ── Flat list view (all questions, individual checkboxes) ── #}
         <div id="list-view" style="display:none; margin-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <span style="font-size:13px; color:#888;" id="list-select-count">0 selected</span>
+            <div style="display:flex; gap:8px;">
+                <button type="button" onclick="listSelectAll(true)" class="view-toggle" style="font-size:12px; padding:4px 10px;">Select all</button>
+                <button type="button" onclick="listSelectAll(false)" class="view-toggle" style="font-size:12px; padding:4px 10px;">Clear</button>
+            </div>
+        </div>
         {% for raw_date, date_data in sorted_grouped_results.items() %}
             {% for theme, questions in date_data.themes.items() %}
                 {% for r in questions %}
-                    <div class="result-card" style="border-left: 4px solid #d9534f;">
-                        <div class="result-card-header">
+                    <div class="result-card list-question-item" style="border-left: 4px solid #d9534f;"
+                         data-member="{{ r.member }}" data-member_id="{{ r.member_id }}"
+                         data-uin="{{ r.uin }}" data-text="{{ r.text }}"
+                         data-due="{{ r.due_date }}" data-status="{{ r.status }}"
+                         data-theme="{{ theme }}" data-date="{{ date_data.display_date }}">
+                        <div class="result-card-header" style="display:flex; align-items:center; gap:8px; cursor:pointer;" onclick="toggleListCard(this)">
+                            <input type="checkbox" class="list-checkbox"
+                                   onclick="event.stopPropagation(); updateListCount();"
+                                   style="cursor:pointer; width:15px; height:15px; flex-shrink:0;">
                             <span class="wq-type-badge wq-type-{{ r.question_type | lower }}">
                                 {% if r.question_type == 'NAMED_DAY' %}NAMED DAY{% else %}{{ r.question_type }}{% endif %}
                             </span>
                             <span class="result-card-dept">{{ r.dept }}</span>
-                            <span style="font-size:11px; background:rgba(255,255,255,0.08); color:#aaa; border:1px solid rgba(255,255,255,0.12); border-radius:3px; padding:1px 6px; margin-left:6px;">{{ theme }}</span>
-                            <span style="font-size:11px; color:#888; font-family:monospace; margin-left:6px;">{{ r.uin }}</span>
+                            <span style="font-size:11px; background:rgba(255,255,255,0.08); color:#aaa; border:1px solid rgba(255,255,255,0.12); border-radius:3px; padding:1px 6px;">{{ theme }}</span>
+                            <span style="font-size:11px; color:#888; font-family:monospace;">{{ r.uin }}</span>
                         </div>
                         <div class="result-card-body">
                             <p style="margin-bottom:8px;"><strong>{{ r.member }}</strong></p>
@@ -241,16 +255,40 @@
     }
 
     function openExportModal() {
+        const listViewActive = document.getElementById('list-view').style.display !== 'none';
         const selectedThemes = [];
-        const blocks = document.querySelectorAll('.theme-block');
-        
-        blocks.forEach(block => {
-            const checkbox = block.querySelector('.theme-checkbox');
-            if (checkbox && checkbox.checked) {
+
+        if (listViewActive) {
+            // Collect individually-checked cards from list view, group by theme
+            const byTheme = {};
+            document.querySelectorAll('.list-question-item').forEach(card => {
+                const cb = card.querySelector('.list-checkbox');
+                if (!cb || !cb.checked) return;
+                const theme = card.getAttribute('data-theme');
+                const date = card.getAttribute('data-date');
+                if (!byTheme[theme]) byTheme[theme] = { date: date, theme: theme, questions: [] };
+                byTheme[theme].questions.push({
+                    member: card.getAttribute('data-member'),
+                    member_id: card.getAttribute('data-member_id'),
+                    uin: card.getAttribute('data-uin'),
+                    text: card.getAttribute('data-text'),
+                    due_date: card.getAttribute('data-due'),
+                    status: card.getAttribute('data-status'),
+                });
+            });
+            Object.values(byTheme).forEach(g => selectedThemes.push(g));
+            if (selectedThemes.length === 0) {
+                alert("Please tick the box next to at least one question to download it.");
+                return;
+            }
+        } else {
+            // Theme view — collect by ticked theme blocks
+            document.querySelectorAll('.theme-block').forEach(block => {
+                const checkbox = block.querySelector('.theme-checkbox');
+                if (!checkbox || !checkbox.checked) return;
                 const date = block.getAttribute('data-date');
                 const theme = block.getAttribute('data-theme');
                 const questions = [];
-                
                 block.querySelectorAll('.question-item').forEach(q => {
                     questions.push({
                         member: q.getAttribute('data-member'),
@@ -258,20 +296,35 @@
                         uin: q.getAttribute('data-uin'),
                         text: q.getAttribute('data-text'),
                         due_date: q.getAttribute('data-due'),
-                        status: q.getAttribute('data-status') // Passes Answered vs Unanswered
+                        status: q.getAttribute('data-status'),
                     });
                 });
                 selectedThemes.push({ date: date, theme: theme, questions: questions });
+            });
+            if (selectedThemes.length === 0) {
+                alert("Please tick the box next to at least one theme to download it.");
+                return;
             }
-        });
-        
-        if (selectedThemes.length === 0) {
-            alert("Please tick the box next to at least one theme to download it.");
-            return;
         }
-        
+
         document.getElementById('export_data').value = JSON.stringify(selectedThemes);
         document.getElementById('exportModal').style.display = 'flex';
+    }
+
+    function toggleListCard(header) {
+        const cb = header.querySelector('.list-checkbox');
+        if (cb) { cb.checked = !cb.checked; updateListCount(); }
+    }
+
+    function updateListCount() {
+        const n = document.querySelectorAll('.list-checkbox:checked').length;
+        const el = document.getElementById('list-select-count');
+        if (el) el.textContent = n + ' selected';
+    }
+
+    function listSelectAll(state) {
+        document.querySelectorAll('.list-checkbox').forEach(cb => cb.checked = state);
+        updateListCount();
     }
 
     function closeExportModal() {
