@@ -74,10 +74,30 @@ If the original database still exists (e.g. you're restoring to fix data corrupt
 
 ### Step 3 — Set env vars for the restore script
 
+All parameters are passed via environment variables — there are no command-line arguments.
+
+> ⚠️ **`RESTORE_TARGET_DB_URL` must point to the NEW or throwaway Postgres, never the production database.** Restoring overwrites all data in the target. There is no undo.
+
+| Variable | Value |
+|---|---|
+| `RESTORE_BACKUP_KEY` | The R2 object key chosen in Step 1, e.g. `daily/2026-04-29.sql.gz.gpg` |
+| `RESTORE_TARGET_DB_URL` | **NON-PRODUCTION** Postgres connection string — the new database from Step 2 |
+| `BACKUP_ENCRYPTION_KEY` | From Mark's password manager |
+| `R2_ACCESS_KEY_ID` | From Cloudflare R2 token |
+| `R2_SECRET_ACCESS_KEY` | Same token |
+| `R2_ENDPOINT_URL` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_BUCKET_NAME` | `westminsterbrief-backups` |
+| `RESTORE_ALLOWED` | **`true` — required when running non-interactively (e.g. on Railway).** This is a deliberate safety gate: the script refuses to proceed without it when there is no interactive terminal. It forces the operator to make a conscious decision before anything is overwritten. If missing in a non-interactive environment, the script exits immediately with an error before touching any data. |
+
+If running locally (interactive terminal), `RESTORE_ALLOWED` is not required — the script will prompt for confirmation instead.
+
+For local execution, export the vars:
 ```bash
+export RESTORE_BACKUP_KEY="daily/2026-04-29.sql.gz.gpg"
+export RESTORE_TARGET_DB_URL="postgresql://user:pass@host:5432/railway"
 export BACKUP_ENCRYPTION_KEY="<passphrase from password manager>"
-export R2_ACCESS_KEY_ID="<from Railway or Mark's notes>"
-export R2_SECRET_ACCESS_KEY="<from Railway or Mark's notes>"
+export R2_ACCESS_KEY_ID="<from Mark's notes>"
+export R2_SECRET_ACCESS_KEY="<from Mark's notes>"
 export R2_ENDPOINT_URL="https://<account-id>.r2.cloudflarestorage.com"
 export R2_BUCKET_NAME="westminsterbrief-backups"
 ```
@@ -87,17 +107,16 @@ export R2_BUCKET_NAME="westminsterbrief-backups"
 ### Step 4 — Run the restore script
 
 ```bash
-python scripts/restore_from_backup.py daily/2026-04-29.sql.gz.gpg "postgresql://user:pass@host:5432/railway"
+python scripts/restore_from_backup.py
 ```
 
-Replace the backup key and the target DB URL with the actual values from Steps 1 and 2.
-
 The script will:
-1. Ask you to confirm before proceeding (Ctrl-C to abort)
-2. Download the backup from R2
-3. Decrypt it (GPG, AES-256)
-4. Decompress it
-5. Run `psql -f` to restore into the target database
+1. Validate all env vars are set
+2. In interactive mode: prompt for confirmation (Ctrl-C to abort). In non-interactive mode: check `RESTORE_ALLOWED=true`, then proceed.
+3. Download the backup from R2
+4. Decrypt it (GPG, AES-256)
+5. Decompress it
+6. Run `psql -f` to restore into the target database
 
 If any step fails, the script exits non-zero with a clear error message.
 
@@ -162,7 +181,10 @@ If the `westminsterbrief-backup` Railway cron service ever needs to be recreated
 | `R2_SECRET_ACCESS_KEY` | Same token |
 | `R2_ENDPOINT_URL` | `https://<account-id>.r2.cloudflarestorage.com` |
 | `R2_BUCKET_NAME` | `westminsterbrief-backups` |
-| `NIXPACKS_PKGS` | `postgresql` — **required**; installs `pg_dump` and `psql` in the container. Without this, the backup script fails with `FileNotFoundError: pg_dump not found`. Nixpacks auto-detects Python correctly; this var adds postgresql on top without interfering. |
+
+**Note — `pg_dump`, `psql`, and `gpg` are installed via `nixpacks.backup.toml`, not via `NIXPACKS_PKGS`.** The config file adds the official PostgreSQL PGDG apt repository and installs `postgresql-client-18` and `gnupg` during the container build. Do not set `NIXPACKS_PKGS` on this service — it was tried during initial setup and caused Nixpacks to resolve the wrong package output (`postgresql_16.dev`, headers only). The `nixpacks.backup.toml` approach is what's actually deployed.
+
+**Note — the restore script (`scripts/restore_from_backup.py`) is a separate manual tool, not run by the cron service.** Its env vars (`RESTORE_BACKUP_KEY`, `RESTORE_TARGET_DB_URL`, `RESTORE_ALLOWED`) are set on a dedicated short-lived restore service, not here. See Steps 3–4 above.
 
 ---
 

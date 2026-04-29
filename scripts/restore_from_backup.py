@@ -5,19 +5,20 @@ This is a manual disaster-recovery tool, not a cron job.
 See docs/recovery-runbook.md for full recovery procedure.
 
 Usage:
-  python scripts/restore_from_backup.py <backup_key> <target_db_url>
-
-Arguments:
-  backup_key     R2 object key, e.g. daily/2026-04-29.sql.gz.gpg
-  target_db_url  Postgres connection string for the target database
-                 e.g. postgresql://user:pass@host:5432/railway
+  python scripts/restore_from_backup.py
 
 Required env vars:
-  BACKUP_ENCRYPTION_KEY  — must match the passphrase used during backup
+  RESTORE_BACKUP_KEY     R2 object key, e.g. daily/2026-04-29.sql.gz.gpg
+  RESTORE_TARGET_DB_URL  Postgres connection string for the target database
+  BACKUP_ENCRYPTION_KEY  Must match the passphrase used during backup
   R2_ACCESS_KEY_ID
   R2_SECRET_ACCESS_KEY
   R2_ENDPOINT_URL
-  R2_BUCKET_NAME         — defaults to westminsterbrief-backups
+  R2_BUCKET_NAME         Defaults to westminsterbrief-backups
+
+Safety:
+  When running non-interactively (e.g. on Railway), also set:
+  RESTORE_ALLOWED=true   Explicit confirmation that target is not production
 """
 
 import gzip
@@ -49,13 +50,12 @@ def masked_url(url):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 1:
         print(__doc__)
         sys.exit(1)
 
-    backup_key    = sys.argv[1]
-    target_db_url = sys.argv[2]
-
+    backup_key    = os.environ.get("RESTORE_BACKUP_KEY")
+    target_db_url = os.environ.get("RESTORE_TARGET_DB_URL")
     encryption_key = os.environ.get("BACKUP_ENCRYPTION_KEY")
     r2_key_id      = os.environ.get("R2_ACCESS_KEY_ID")
     r2_secret      = os.environ.get("R2_SECRET_ACCESS_KEY")
@@ -63,18 +63,33 @@ def main():
     r2_bucket      = os.environ.get("R2_BUCKET_NAME", "westminsterbrief-backups")
 
     for name, val in [
-        ("BACKUP_ENCRYPTION_KEY", encryption_key),
-        ("R2_ACCESS_KEY_ID",      r2_key_id),
-        ("R2_SECRET_ACCESS_KEY",  r2_secret),
-        ("R2_ENDPOINT_URL",       r2_endpoint),
+        ("RESTORE_BACKUP_KEY",     backup_key),
+        ("RESTORE_TARGET_DB_URL",  target_db_url),
+        ("BACKUP_ENCRYPTION_KEY",  encryption_key),
+        ("R2_ACCESS_KEY_ID",       r2_key_id),
+        ("R2_SECRET_ACCESS_KEY",   r2_secret),
+        ("R2_ENDPOINT_URL",        r2_endpoint),
     ]:
         if not val:
             die(f"{name} is not set")
 
     log(f"Source:  s3://{r2_bucket}/{backup_key}")
     log(f"Target:  {masked_url(target_db_url)}")
-    log("WARNING: This will overwrite the target database. Ctrl-C now to abort.")
-    input("[restore] Press Enter to continue...")
+    log("=" * 60)
+    log("WARNING: This will OVERWRITE ALL DATA in the target database.")
+    log("=" * 60)
+
+    is_interactive = sys.stdin.isatty()
+    if is_interactive:
+        input("[restore] Press Enter to continue, or Ctrl-C to abort...")
+    else:
+        restore_allowed = os.environ.get("RESTORE_ALLOWED", "").strip().lower()
+        if restore_allowed != "true":
+            die(
+                "Running non-interactively (no tty). Set RESTORE_ALLOWED=true "
+                "in this service's env vars to confirm the target is not production."
+            )
+        log("Non-interactive mode — proceeding because RESTORE_ALLOWED=true is set.")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         enc_path = os.path.join(tmpdir, "backup.sql.gz.gpg")
