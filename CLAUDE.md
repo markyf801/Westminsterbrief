@@ -148,6 +148,10 @@ If a proposed feature feels like it might cross from one category to the other �
 
 `docs/design-principles.md` is the authoritative visual and copy guide for any redesign work. Read it before implementing any UI or landing page changes. Key summary: restrained, content-first, type-led; reference gov.uk, FT, Stripe docs; avoid gradients, glassmorphism, oversized hero text, generic SaaS copy.
 
+## Documents in /docs/ are live
+
+Documents in `docs/` are the canonical source of truth. They may be updated between Code's interactions with them. When the user references a doc, re-read it from disk rather than relying on what was read earlier in the session.
+
 ## Module-level design docs
 
 When working on a specific module, read its design doc first:
@@ -885,3 +889,116 @@ After Railway deploys, verify at `/health` — all services should show `"ok"`.
 - Don't leave variables uninitialised before `render_template()` calls
 - Don't invoke Claude (Anthropic API) from any free-feature code path
 - Don't remove the AI-disclosure footer from paid product outputs at the standard tier
+
+Destructive operations — absolutely forbidden
+
+Context for these rules: in April 2026, an AI coding agent on Railway infrastructure (same provider as Westminster Brief) deleted a startup's entire production database and backups in a single API call by autonomously "fixing" a credential mismatch. The agent scanned the codebase, found an unrelated API token, used it to delete a volume, and triggered a 30-hour outage. The pattern is "agent encounters problem → agent invents destructive resolution → agent executes."
+The rules below exist specifically to make that failure mode impossible for Westminster Brief.
+Things Claude Code must NEVER do
+These are absolute. Not "be careful with these" — never do them.
+Infrastructure operations:
+
+Never call the Railway API directly with destructive verbs (DELETE on volumes, services, environments, deployments, domains)
+Never run railway CLI commands that delete, destroy, remove, or detach resources
+Never call any cloud provider API (AWS, GCP, Cloudflare, Postmark, Stripe) with destructive operations
+Never use a CLI token, API token, or credential found anywhere in the codebase for a task unrelated to the documented purpose that token was created for. If a token's purpose is "manage custom domains," it must never be used for anything else, regardless of how convenient that would be.
+
+Database operations:
+
+Never run DROP TABLE, DROP DATABASE, DROP SCHEMA, or any other DDL drop statement
+Never run TRUNCATE against any table
+Never run DELETE FROM table without an explicit WHERE clause that targets specific rows
+Never run mass UPDATE against entire tables without explicit per-row scoping
+Never run raw SQL on production. Local SQLite is fine; production Postgres on Railway is not Claude Code's territory.
+
+Git operations:
+
+Never run git push --force or git push -f (use --force-with-lease if absolutely necessary, and only on explicit instruction)
+Never delete branches, tags, or remotes
+Never run git reset --hard against work that hasn't been committed
+Never run git clean with destructive flags
+
+File operations:
+
+Never run rm -rf on anything outside /tmp/ or local virtual environments without explicit instruction
+Never delete files from migrations/, docs/, templates/, static/, or any directory that contains canonical project state
+Never delete or modify .env, requirements.txt, CLAUDE.md, Procfile, railway.toml, or any other infrastructure config file without explicit instruction
+
+When something seems broken — STOP, don't fix
+The PocketOS incident happened because the agent encountered a credential mismatch and decided to autonomously "resolve it" by deleting infrastructure. The right response was to stop and ask the human.
+If Claude Code encounters any of the following, STOP and surface to Mark:
+
+Authentication or credential mismatch
+API token rejected or expired
+Database connection failure with unclear cause
+Production environment showing unexpected state (rows missing, schema drift, unexpected migrations)
+Any error suggesting the production system is in a state Claude doesn't understand
+
+The correct response is always: report what's happening, propose options, wait for direction. Never:
+
+Recreate the resource
+Delete and recreate
+"Reset" to a clean state
+Apply a fix you haven't been explicitly asked to apply
+Use a different credential found elsewhere in the codebase to work around the issue
+
+Token hygiene
+API tokens, credentials, and secrets are documented per-purpose. Their stated purpose IS their permitted use. There is no "well, I needed to do X and there was a token here, so I used it" — that's the exact failure mode that destroyed PocketOS's data.
+If Claude Code's task requires a credential that isn't already wired up through the documented mechanism (env vars, config files referenced in code), the task stops. Mark provisions credentials. Claude Code uses them as documented. No improvisation.
+
+NEW SECTION — to add after the destructive-operations section
+Recovery preparedness
+Westminster Brief stores user data on Railway Postgres. Railway's backup model stores snapshots in the same volume as the source data — meaning a volume deletion erases backups too. This is a real risk. We mitigate it with explicit external backup discipline.
+Backup inventory — what is and is NOT recoverable
+Recoverable from external systems even if Railway is wiped:
+
+DNS records: Cloudflare DNS dashboard (login retains record state)
+Stripe transactions: Stripe dashboard (full history of payments)
+Email logs: Postmark dashboard (last 45 days of sent emails)
+Code: GitHub repository (full git history)
+
+Recoverable only from Railway-side state:
+
+User accounts and authentication data
+User preferences (sector, department, policy area, etc.)
+Saved searches, alerts, briefing history (Phase 2)
+Any data created by the application that doesn't have an external mirror
+
+The second list is the at-risk surface. External backups must cover this.
+External backup requirement
+Before Phase 2 launches with real paying customers:
+
+Daily automated pg_dump of the Railway Postgres database to an external destination (S3, Backblaze B2, or similar)
+Backup files retained for at least 30 days
+Restoration tested at least once before launch (do it on a staging Railway service, verify the dump can actually be restored)
+Backup script itself stored in the repo so it survives local machine loss
+
+This is a launch-readiness blocker. Add to docs/launch-readiness.md.
+Recovery runbook
+docs/recovery-runbook.md documents:
+
+Where external backups live
+How to restore the database from a pg_dump file
+How to recreate Railway service from scratch if needed
+Which env vars to set in what order
+Which DNS records to verify
+Smoke test to run after recovery
+
+If Mark is unavailable, someone else with the runbook should be able to restore service. Write it for that person.
+
+ADDITIONS to existing "Things to avoid" section
+Add these to the existing list:
+
+Don't run any destructive Railway API call, CLI command, or destructive operation against any cloud provider
+Don't use API tokens or credentials found in files for tasks unrelated to their documented purpose
+Don't autonomously "fix" credential mismatches, auth failures, or unexpected production state — stop and surface to Mark
+Don't run raw SQL against production Postgres
+Don't run git push --force, git reset --hard, or other destructive git operations without explicit instruction
+
+
+ADDITIONS to existing "Escalate to Opus when stuck" section
+Add to the situations Opus is particularly valuable for:
+
+Any situation where Claude Code is considering a destructive operation as a "fix" — this is exactly when fresh judgment helps avoid disaster
+Credential / auth failures with unclear root cause — these are where reasoning loops can lead to dangerous resolution attempts
+Any production-environment anomaly where the right response is uncertain

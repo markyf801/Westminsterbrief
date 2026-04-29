@@ -1,6 +1,6 @@
 # Westminster Brief — Parliament API Reference
 
-Last updated: 2026-04-27
+Last updated: 2026-04-29
 
 This document records confirmed working parameters, response schemas, and known gotchas for every external API the app calls. Its purpose is to prevent re-investigating the same questions across sessions — the WQ API section in CLAUDE.md shows the cost of not having this.
 
@@ -27,6 +27,14 @@ This document records confirmed working parameters, response schemas, and known 
 ### `/search/debates.json` — Session title search
 
 Finds debate sessions whose **title** matches the search term. Returns session-level metadata (no speech text). Use this to discover `DebateSectionExtId` values for follow-up session fetches.
+
+**Hard cap of 25 results per call — pagination does not work on this endpoint.** The `skip`, `take`, and `orderBy` parameters are accepted but silently ignored; all calls return the same 25 items. `TotalResultCount` may exceed 25 (e.g. 41 for 2026-04-22).
+
+**Critical: Commons Chamber and Westminster Hall are on SEPARATE LINKED LISTS.** Each sitting day has multiple independent chains of sessions. The search endpoint may return sessions from only one chain (e.g. Commons Chamber), missing the Westminster Hall chain entirely. Verified 2026-04-22: search returned 25 sessions all from Commons Chamber; Westminster Hall's 6 sessions were on a separate chain not in the search results.
+
+**Solution: chain-walk via `NextDebateExtId` / `PreviousDebateExtId`.** The `Overview` of each full session response (see third endpoint below) contains links to adjacent sessions in the same chain. Starting from the search seeds and following these links in both directions gives complete coverage for the day. The Hansard Archive ingestion pipeline uses this approach — see `hansard_archive/ingestion.py`. Tested 2026-04-29: chain-walk found 30 sessions (24 Commons Chamber + 6 Westminster Hall) vs 25 from search alone.
+
+**No searchTerm required for date-range queries.** Omitting `queryParameters.searchTerm` returns all sessions for the date range (up to the 25-item cap). This is how the archive ingestion pipeline uses this endpoint. A searchTerm is only needed when doing keyword-based session discovery.
 
 **Confirmed working parameters:**
 
@@ -153,6 +161,20 @@ Fetches all speeches from a single debate section, identified by its `DebateSect
 | `ChildDebates` | array | Subsections — each has its own `Items` and `ChildDebates` |
 
 To get all speeches, you must flatten `Items` recursively through `ChildDebates`.
+
+**Overview fields (authoritative session metadata):**
+
+| Field | Notes |
+|-------|-------|
+| `Overview.Title` | Session title |
+| `Overview.Date` | ISO datetime |
+| `Overview.House` | `Commons` or `Lords` |
+| `Overview.Location` | **"Commons Chamber" or "Westminster Hall"** — authoritative location, more reliable than search results |
+| `Overview.HRSTag` | **Hansard classification tag** — use for accurate debate_type. Key values: `hs_8Question` (oral questions), `hs_2BillTitle` / `hs_2BillHd` (bill debates), `hs_8Petition` (petitions), `hs_2BusinessWODebate` (formal business). Verified 2026-04-29. |
+| `Overview.NextDebateExtId` | **ext_id of the next session in this day's chain** — NULL at end of chain or when crossing to the next day. Use for chain-walking. |
+| `Overview.PreviousDebateExtId` | **ext_id of the previous session in this day's chain** — NULL at start of chain. Use for chain-walking. |
+| `Overview.DebateTypeId` | Numeric type (1=Debate, others TBD) — less informative than HRSTag |
+| `Overview.SectionType` | Numeric section type — less informative than HRSTag |
 
 **Per-item fields:**
 
