@@ -110,8 +110,21 @@ class HansardContribution(db.Model):
         return f"<HansardContribution session={self.session_id} order={self.speech_order} {name!r}>"
 
 
+THEME_TYPE_POLICY_AREA = "policy_area"   # controlled vocab — GOV.UK taxonomy
+THEME_TYPE_SPECIFIC = "specific"         # free-text topic phrase
+
+
 class HansardSessionTheme(db.Model):
-    """AI-generated theme tags for a session. Schema created in Week 1; populated in Week 2."""
+    """
+    AI-generated theme tags for a session. Populated in Week 2 by tagger.py.
+
+    Two theme_type values per session (multiple rows):
+      policy_area — one of the 23 controlled GOV.UK policy taxonomy terms
+      specific    — free-text policy topic phrase (e.g. "student loan repayments")
+
+    Sessions may have 1-3 policy_area rows and 1-5 specific rows.
+    Container sessions (is_container=True) are excluded from tagging.
+    """
 
     __tablename__ = "ha_session_theme"
 
@@ -120,9 +133,10 @@ class HansardSessionTheme(db.Model):
         db.Integer, db.ForeignKey("ha_session.id"), nullable=False, index=True
     )
     theme = db.Column(db.String(200), nullable=False)
+    theme_type = db.Column(db.String(20), nullable=False, default=THEME_TYPE_SPECIFIC, index=True)
     confidence = db.Column(db.Float, nullable=True)
     tagged_at = db.Column(db.DateTime, default=datetime.utcnow)
     model_used = db.Column(db.String(100), nullable=True)
 
     def __repr__(self):
-        return f"<HansardSessionTheme session={self.session_id} {self.theme!r}>"
+        return f"<HansardSessionTheme session={self.session_id} [{self.theme_type}] {self.theme!r}>"

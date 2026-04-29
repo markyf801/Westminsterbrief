@@ -421,6 +421,18 @@ with app.app_context():
     except Exception as _e:
         app.logger.warning('ha_session migration failed: %s', _e)
     _mig_log('ha_session cols done')
+    # Add theme_type column to ha_session_theme added in Phase 2A Week 2
+    try:
+        _ha_theme_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('ha_session_theme')}
+        with db.engine.connect() as conn:
+            if 'theme_type' not in _ha_theme_cols:
+                conn.execute(text(
+                    "ALTER TABLE ha_session_theme ADD COLUMN theme_type VARCHAR(20) NOT NULL DEFAULT 'specific'"
+                ))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning('ha_session_theme migration failed: %s', _e)
+    _mig_log('ha_session_theme cols done')
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records

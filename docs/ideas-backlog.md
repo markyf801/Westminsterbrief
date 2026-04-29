@@ -98,6 +98,17 @@ This data is more useful when given voluntarily after experiencing value, not de
 
 ---
 
+### Hansard Archive — Triage the "other" Bucket (Week 3)
+Some sessions classified as `debate_type='other'` are substantive. The taxonomy survey flagged "Business of the House" (105 contributions), several `hs_2cGenericHdg` sessions (e.g. "School Minibus Safety" 14 contributions, "NHS Dentists" 19 contributions), and Supplementary Estimates debates. The initial theme-tagging run excludes all `other` sessions to avoid procedural noise, but the substantive ones should be tagged eventually.
+
+**What it involves:** Query `other` sessions with contribution count > threshold (suggest: 20+). Manually triage the list — identify which are genuine policy debates vs procedural interruptions (Points of Order, Call Lists). Add `reclassify_candidate = True` flag or directly reclassify the clear cases (e.g. "Business of the House" → `debate`, substantive emergency debates → `debate`). Then include in the tagging run.
+
+**Revisit trigger:** Phase 2A Week 3 page template work; any session asking "what's in the other bucket"; user reports missing a debate they know happened.
+
+*Captured 29 April 2026 — explicitly deferred from Week 2 tagging build per Mark's instruction.*
+
+---
+
 ### Backup Secrets — Runtime Injection vs Build-time ARG/ENV
 Railway's Nixpacks build passes env vars (including `BACKUP_ENCRYPTION_KEY`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) as Docker ARG/ENV during the image build. This means secrets could leak via Docker image layer inspection. Investigate whether Railway supports runtime-only env injection for the cron service so these credentials never appear in the build layer.
 
