@@ -220,6 +220,8 @@ from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedT
 # Register stakeholder directory models with SQLAlchemy metadata before db.create_all()
 import stakeholder_directory.models          # noqa: F401
 import stakeholder_directory.ingesters.staging  # noqa: F401
+# Register Hansard Archive models (Phase 2A)
+import hansard_archive.models                # noqa: F401
 
 # ==========================================
 # 4. AUTO-BUILD DATABASE
@@ -404,6 +406,17 @@ with app.app_context():
     except Exception as _e:
         app.logger.warning('sd_engagement migration failed: %s', _e)
     _mig_log('sd_engagement cols done')
+    # Add columns to ha_session added in Phase 2A build
+    try:
+        _ha_sess_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('ha_session')}
+        with db.engine.connect() as conn:
+            for _col, _defn in [('location', 'VARCHAR(100)'), ('hrs_tag', 'VARCHAR(100)')]:
+                if _col not in _ha_sess_cols:
+                    conn.execute(text(f'ALTER TABLE ha_session ADD COLUMN {_col} {_defn}'))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning('ha_session migration failed: %s', _e)
+    _mig_log('ha_session cols done')
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records

@@ -28,6 +28,10 @@ This document records confirmed working parameters, response schemas, and known 
 
 Finds debate sessions whose **title** matches the search term. Returns session-level metadata (no speech text). Use this to discover `DebateSectionExtId` values for follow-up session fetches.
 
+**Hard cap of 25 results per call — pagination does not work on this endpoint.** The `skip` parameter is accepted but silently ignored; both pages return the same 25 items. `TotalResultCount` may exceed 25 (e.g. 41 for a busy day). The 16+ unreturned items appear to be Deferred Divisions and low-priority procedural items. For the Hansard Archive rolling ingestion this is acceptable — the 25 returned items cover all main chamber and most Westminster Hall debates for a typical sitting day. Tested 2026-04-29.
+
+**No searchTerm required for date-range queries.** Omitting `queryParameters.searchTerm` returns all sessions for the date range (up to the 25-item cap). This is how the archive ingestion pipeline uses this endpoint. A searchTerm is only needed when doing keyword-based session discovery.
+
 **Confirmed working parameters:**
 
 | Parameter | Type | Notes |
@@ -153,6 +157,18 @@ Fetches all speeches from a single debate section, identified by its `DebateSect
 | `ChildDebates` | array | Subsections — each has its own `Items` and `ChildDebates` |
 
 To get all speeches, you must flatten `Items` recursively through `ChildDebates`.
+
+**Overview fields (authoritative session metadata):**
+
+| Field | Notes |
+|-------|-------|
+| `Overview.Title` | Session title |
+| `Overview.Date` | ISO datetime |
+| `Overview.House` | `Commons` or `Lords` |
+| `Overview.Location` | **"Commons Chamber" or "Westminster Hall"** — authoritative location, more reliable than search results |
+| `Overview.HRSTag` | **Hansard classification tag** — use for accurate debate_type. Key values: `hs_8Question` (oral questions), `hs_2BillTitle` / `hs_2BillHd` (bill debates), `hs_8Petition` (petitions), `hs_2BusinessWODebate` (formal business). Verified 2026-04-29. |
+| `Overview.DebateTypeId` | Numeric type (1=Debate, others TBD) — less informative than HRSTag |
+| `Overview.SectionType` | Numeric section type — less informative than HRSTag |
 
 **Per-item fields:**
 
