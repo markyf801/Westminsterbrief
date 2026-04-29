@@ -143,6 +143,29 @@ python scripts/restore_from_backup.py weekly/2026-W15.sql.gz.gpg "postgresql://.
 
 ---
 
+## Recreating the cron service
+
+If the `westminsterbrief-backup` Railway cron service ever needs to be recreated from scratch:
+
+- **Schedule:** `0 3 * * *` (03:00 UTC daily)
+- **Command:** `python scripts/backup_to_r2.py && python scripts/prune_old_backups.py`
+- **Config File Path** (in Railway service Settings → Build): `railway.backup.toml`
+- **Restart policy:** Never (set in `railway.backup.toml`)
+
+### Environment variables for the cron service
+
+| Variable | Notes |
+|---|---|
+| `DATABASE_URL` | Use Railway reference `${{Postgres.DATABASE_URL}}` — do not hardcode |
+| `BACKUP_ENCRYPTION_KEY` | From Mark's password manager |
+| `R2_ACCESS_KEY_ID` | From Cloudflare R2 API token (Object Read & Write on bucket only) |
+| `R2_SECRET_ACCESS_KEY` | Same token |
+| `R2_ENDPOINT_URL` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_BUCKET_NAME` | `westminsterbrief-backups` |
+| `NIXPACKS_PKGS` | `postgresql` — **required**; installs `pg_dump` and `psql` in the container. Without this, the backup script fails with `FileNotFoundError: pg_dump not found`. Nixpacks auto-detects Python correctly; this var adds postgresql on top without interfering. |
+
+---
+
 ## Contacts
 
 - **Mark Forde** — mark@westminsterbrief.co.uk — original developer
