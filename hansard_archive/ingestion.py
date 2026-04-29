@@ -39,10 +39,12 @@ import requests
 
 from extensions import db
 from hansard_archive.models import (
+    DEBATE_TYPE_COMMITTEE_STAGE,
     DEBATE_TYPE_DEBATE,
     DEBATE_TYPE_MINISTERIAL_STATEMENT,
     DEBATE_TYPE_ORAL_QUESTIONS,
     DEBATE_TYPE_OTHER,
+    DEBATE_TYPE_PETITION,
     DEBATE_TYPE_PMQS,
     DEBATE_TYPE_STATUTORY_INSTRUMENT,
     DEBATE_TYPE_WESTMINSTER_HALL,
@@ -71,33 +73,76 @@ def _clean_html(html: str) -> str:
 # Debate type classification
 # ---------------------------------------------------------------------------
 
-def _classify_debate_type(title: str, section: Optional[str] = None) -> str:
-    """
-    Map a Hansard session title to a controlled debate type vocabulary.
-    Used as a fallback when Overview fields are not available.
-    """
-    t = (title or "").lower()
-    s = (section or "").lower()
+# HRS tags that mark structural container sessions (not substantive debates).
+# These sessions recursively capture contributions from child sessions via
+# _flatten_items(), producing duplicate contribution counts.
+_CONTAINER_HRS_TAGS = {"hs_6bdepartment", "hs_3mainhdg"}
 
-    if "westminster hall" in s or "westminster hall" in t:
+
+def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
+    """
+    Classify debate type using Overview fields, with hrs_tag as primary source of truth.
+
+    Precedence: location (venue) → hrs_tag (structured) → title (fallback only).
+    Title matching is a last resort because blank or unusual titles produce
+    silent misclassification (e.g. hs_3cOppositionDay → statutory_instrument).
+    """
+    loc = (location or "").lower()
+    tag = (hrs_tag or "").lower()
+    t = (title or "").lower()
+
+    # --- Location is authoritative for venue-specific types ---
+    if "westminster hall" in loc:
         return DEBATE_TYPE_WESTMINSTER_HALL
 
-    if "prime minister" in t and "question" in t:
-        return DEBATE_TYPE_PMQS
+    if "public bill committee" in loc:
+        return DEBATE_TYPE_COMMITTEE_STAGE
 
-    if "oral answers" in t or "question time" in t or (
-        "questions" in t and "written" not in t and "urgent" not in t
-    ):
+    if "general committee" in loc:
+        return DEBATE_TYPE_STATUTORY_INSTRUMENT
+
+    # --- HRS tag hierarchy (structured field, not title-derived) ---
+    if tag in ("hs_8question", "hs_3oralanswers"):
+        # PMQs: canonical title is "Engagements" (traditional first-question formula)
+        if t == "engagements" or "prime minister" in t or "pmq" in t:
+            return DEBATE_TYPE_PMQS
         return DEBATE_TYPE_ORAL_QUESTIONS
 
-    if "written ministerial statement" in t or (
-        "statement" in t and "ministerial" in t
-    ):
+    if tag == "hs_2curgenquestion":
+        return DEBATE_TYPE_ORAL_QUESTIONS
+
+    if tag == "hs_2cstatement":
+        # "Lord Mandelson: Response to Humble Address" is a debate on an address motion
+        if "humble address" in t:
+            return DEBATE_TYPE_DEBATE
+        return DEBATE_TYPE_MINISTERIAL_STATEMENT
+
+    if tag in ("hs_2cbilltitle", "hs_2billtitle", "hs_2debbill"):
+        return DEBATE_TYPE_DEBATE
+
+    if tag in ("hs_2cdebatedmotion", "hs_2debatedmotion"):
+        return DEBATE_TYPE_DEBATE
+
+    if tag == "hs_2businesswodebate":
+        return DEBATE_TYPE_STATUTORY_INSTRUMENT
+
+    if tag in ("hs_8petition", "hs_6bpetitions"):
+        return DEBATE_TYPE_PETITION
+
+    # SO24 emergency debate applications are substantive debates
+    if tag == "hs_2cso24application":
+        return DEBATE_TYPE_DEBATE
+
+    # hs_3cOppositionDay and hs_3cMainHdg are structural/procedural headers
+    if tag in ("hs_3coppositionday", "hs_3cmainhdg"):
+        return DEBATE_TYPE_OTHER
+
+    # --- Title fallback (used when hrs_tag is null or unrecognised) ---
+    if "written ministerial statement" in t or ("statement" in t and "ministerial" in t):
         return DEBATE_TYPE_MINISTERIAL_STATEMENT
 
     if (
         "statutory instrument" in t
-        or "affirmative" in t
         or "delegated legislation" in t
         or ("draft" in t and ("regulation" in t or "order" in t))
     ):
@@ -110,37 +155,6 @@ def _classify_debate_type(title: str, section: Optional[str] = None) -> str:
         return DEBATE_TYPE_DEBATE
 
     return DEBATE_TYPE_OTHER
-
-
-def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
-    """
-    Classify debate type using authoritative Overview fields.
-
-    Location ("Westminster Hall") and HRSTag ("hs_8Question" etc.) are more
-    reliable than free-text title parsing.
-    """
-    loc = (location or "").lower()
-    tag = (hrs_tag or "").lower()
-    t = (title or "").lower()
-
-    if "westminster hall" in loc:
-        return DEBATE_TYPE_WESTMINSTER_HALL
-
-    if "question" in tag:
-        if "prime minister" in t or "pmq" in t:
-            return DEBATE_TYPE_PMQS
-        return DEBATE_TYPE_ORAL_QUESTIONS
-
-    if "billtitle" in tag or "billhd" in tag:
-        return DEBATE_TYPE_DEBATE
-
-    if "wms" in tag or "writtenstatement" in tag:
-        return DEBATE_TYPE_MINISTERIAL_STATEMENT
-
-    if "si" in tag or "statutoryinstrument" in tag:
-        return DEBATE_TYPE_STATUTORY_INSTRUMENT
-
-    return _classify_debate_type(title, location)
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +434,13 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
         debate_type = _classify_from_overview(title, location, hrs_tag)
         hansard_url = _build_hansard_url(house, sitting_date, ext_id, title)
 
+        # Container sessions are structural headers whose _flatten_items() recursion
+        # captures contributions from all child sessions, producing duplicate counts.
+        is_container = (
+            (hrs_tag or "").lower() in _CONTAINER_HRS_TAGS
+            or (not hrs_tag and title.lower() == "commons chamber")
+        )
+
         session = HansardSession(
             ext_id=ext_id,
             title=title,
@@ -430,6 +451,7 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             hrs_tag=hrs_tag or None,
             hansard_url=hansard_url,
             contributions_ingested=False,
+            is_container=is_container,
         )
         db.session.add(session)
         db.session.flush()

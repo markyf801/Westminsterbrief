@@ -20,6 +20,8 @@ DEBATE_TYPE_WESTMINSTER_HALL = "westminster_hall"
 DEBATE_TYPE_DEBATE = "debate"
 DEBATE_TYPE_MINISTERIAL_STATEMENT = "ministerial_statement"
 DEBATE_TYPE_STATUTORY_INSTRUMENT = "statutory_instrument"
+DEBATE_TYPE_COMMITTEE_STAGE = "committee_stage"
+DEBATE_TYPE_PETITION = "petition"
 DEBATE_TYPE_OTHER = "other"
 
 DEBATE_TYPES = [
@@ -29,6 +31,8 @@ DEBATE_TYPES = [
     DEBATE_TYPE_DEBATE,
     DEBATE_TYPE_MINISTERIAL_STATEMENT,
     DEBATE_TYPE_STATUTORY_INSTRUMENT,
+    DEBATE_TYPE_COMMITTEE_STAGE,
+    DEBATE_TYPE_PETITION,
     DEBATE_TYPE_OTHER,
 ]
 
@@ -48,6 +52,7 @@ class HansardSession(db.Model):
     hrs_tag = db.Column(db.String(100), nullable=True)     # Overview.HRSTag e.g. "hs_8Question"
     hansard_url = db.Column(db.String(500), nullable=True)
     contributions_ingested = db.Column(db.Boolean, nullable=False, default=False)
+    is_container = db.Column(db.Boolean, nullable=False, default=False)  # True for structural header sessions (hs_6bDepartment, hs_3MainHdg) that recursively duplicate child contributions
     ingested_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     contributions = db.relationship(

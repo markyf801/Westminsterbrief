@@ -410,7 +410,11 @@ with app.app_context():
     try:
         _ha_sess_cols = {c['name'] for c in _sa_inspect(db.engine).get_columns('ha_session')}
         with db.engine.connect() as conn:
-            for _col, _defn in [('location', 'VARCHAR(100)'), ('hrs_tag', 'VARCHAR(100)')]:
+            for _col, _defn in [
+                ('location', 'VARCHAR(100)'),
+                ('hrs_tag', 'VARCHAR(100)'),
+                ('is_container', 'BOOLEAN NOT NULL DEFAULT 0'),
+            ]:
                 if _col not in _ha_sess_cols:
                     conn.execute(text(f'ALTER TABLE ha_session ADD COLUMN {_col} {_defn}'))
             conn.commit()
