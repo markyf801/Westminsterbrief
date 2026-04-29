@@ -21,3 +21,4 @@ flask-limiter>=3.5.0
 flask-talisman>=1.1.0
 postmarker>=1.0
 stripe>=7.0
+boto3>=1.34

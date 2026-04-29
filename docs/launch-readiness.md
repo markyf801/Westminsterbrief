@@ -46,6 +46,7 @@ This document captures everything that must be true before flipping `FEATURE_AUT
 - [ ] Postmark sending domain `westminsterbrief.co.uk` verified (SPF, DKIM, Return-Path) — already done locally, confirm active on Railway
 - [ ] `/health` endpoint passing all checks on production (DB, Gemini API, TWFY API)
 - [ ] Smoke test passing on live Railway after deploy
+- [ ] External Postgres backup verified end-to-end — at least one successful backup in R2 and a test restoration confirmed by Mark
 
 ---
 
