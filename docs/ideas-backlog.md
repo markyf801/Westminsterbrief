@@ -98,6 +98,15 @@ This data is more useful when given voluntarily after experiencing value, not de
 
 ---
 
+### Backup Secrets — Runtime Injection vs Build-time ARG/ENV
+Railway's Nixpacks build passes env vars (including `BACKUP_ENCRYPTION_KEY`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) as Docker ARG/ENV during the image build. This means secrets could leak via Docker image layer inspection. Investigate whether Railway supports runtime-only env injection for the cron service so these credentials never appear in the build layer.
+
+**Revisit trigger:** Any security review; before making the backup service or R2 credentials more widely accessible; any session touching Railway infrastructure or the cron service config.
+
+*Captured 29 April 2026 — spotted in cron service build logs during backup pipeline setup.*
+
+---
+
 ## Killed
 
 *(Nothing formally killed yet — this section is for ideas explicitly decided against, with reason recorded so they don't keep resurfacing.)*

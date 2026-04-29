@@ -6,22 +6,28 @@ Two entry points:
   ingest_date_range(start, end, house="Commons") — iterate over a date range
 
 Session discovery uses /search/debates.json without a search term, filtered to
-one day. This endpoint returns up to 25 sessions per call. The TotalResultCount
-may exceed 25; the cap cannot be bypassed via pagination (skip is ignored by this
-endpoint). In practice the 25 sessions returned cover all main chamber and most
-Westminster Hall debates for a day. Deferred Divisions (procedural voting records
-with no speech content) are filtered out.
+one day. This endpoint returns up to 25 sessions (hard API cap — skip/take/orderBy
+are silently ignored). On a busy sitting day the search may return sessions from
+only ONE of the day's linked-list chains; the other chains are missed entirely.
 
-Known limitation: on very busy sitting days, some Westminster Hall sessions near
-the bottom of the relevance ranking may fall outside the 25-item cap. This is
-acceptable for Phase 2A's browsable archive. Noted in docs/api-reference.md.
+Hansard organises sessions into SEPARATE LINKED LISTS by venue. For Commons:
+  - Commons Chamber chain   (~22 sessions on a typical day)
+  - Westminster Hall chain  (~6 sessions, entirely separate linked list)
 
-Contributions are fetched via:
-  GET https://hansard-api.parliament.uk/debates/debate/{ext_id}.json
-and stored flat (responds_to_id NULL in all rows — Q&A pairing is Week 2 work).
+Each session's Overview contains NextDebateExtId / PreviousDebateExtId linking
+to its neighbours in the same chain. To ensure complete coverage, ingestion uses
+BFS chain-walking starting from the seeds returned by the search endpoint:
+  1. Fetch up to 25 seeds via /search/debates.json
+  2. BFS: fetch each seed's full JSON (/debates/debate/{ext_id}.json), follow
+     NextDebateExtId and PreviousDebateExtId to adjacent sessions
+  3. Stop traversal when the session date changes from the target date
+  4. Each session's full JSON is fetched exactly once (contributions + Overview)
 
-All functions are safe to re-run: sessions are skipped if ext_id already exists;
-contributions are skipped if contributions_ingested is already True on the session.
+Contributions are stored flat (responds_to_id NULL — Q&A pairing is Week 2 work).
+Deferred Divisions (procedural voting records) are excluded from stored sessions
+but their chain links are followed so traversal continues through them.
+
+All functions are safe to re-run: sessions are skipped if ext_id already exists.
 """
 
 import re
@@ -68,9 +74,7 @@ def _clean_html(html: str) -> str:
 def _classify_debate_type(title: str, section: Optional[str] = None) -> str:
     """
     Map a Hansard session title to a controlled debate type vocabulary.
-
-    The section field from the overview API (e.g. 'Westminster Hall') is used
-    as the first signal when available — it's more reliable than parsing the title.
+    Used as a fallback when Overview fields are not available.
     """
     t = (title or "").lower()
     s = (section or "").lower()
@@ -108,6 +112,37 @@ def _classify_debate_type(title: str, section: Optional[str] = None) -> str:
     return DEBATE_TYPE_OTHER
 
 
+def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
+    """
+    Classify debate type using authoritative Overview fields.
+
+    Location ("Westminster Hall") and HRSTag ("hs_8Question" etc.) are more
+    reliable than free-text title parsing.
+    """
+    loc = (location or "").lower()
+    tag = (hrs_tag or "").lower()
+    t = (title or "").lower()
+
+    if "westminster hall" in loc:
+        return DEBATE_TYPE_WESTMINSTER_HALL
+
+    if "question" in tag:
+        if "prime minister" in t or "pmq" in t:
+            return DEBATE_TYPE_PMQS
+        return DEBATE_TYPE_ORAL_QUESTIONS
+
+    if "billtitle" in tag or "billhd" in tag:
+        return DEBATE_TYPE_DEBATE
+
+    if "wms" in tag or "writtenstatement" in tag:
+        return DEBATE_TYPE_MINISTERIAL_STATEMENT
+
+    if "si" in tag or "statutoryinstrument" in tag:
+        return DEBATE_TYPE_STATUTORY_INSTRUMENT
+
+    return _classify_debate_type(title, location)
+
+
 # ---------------------------------------------------------------------------
 # Hansard URL construction
 # ---------------------------------------------------------------------------
@@ -122,74 +157,11 @@ def _build_hansard_url(house: str, sitting_date: date, ext_id: str, title: str) 
 
 
 # ---------------------------------------------------------------------------
-# Session discovery — overview endpoint
+# Contribution flattening
 # ---------------------------------------------------------------------------
 
 _SKIP_TITLES = {"deferred division", "deferred divisions"}
 
-
-def _fetch_session_metadata_for_date(
-    sitting_date: date, house: str = "Commons"
-) -> list[dict]:
-    """
-    Fetch session metadata for a single sitting day.
-
-    Uses /search/debates.json without a search term, filtered to one calendar day.
-    Returns up to 25 sessions (hard API cap; pagination is ignored by this endpoint).
-    Deferred Divisions are filtered out — they are procedural voting records with no
-    speech content.
-
-    Returns [] for non-sitting days.
-    Raises requests.RequestException on network failures.
-    """
-    url = f"{HANSARD_API_BASE}/search/debates.json"
-    date_str = sitting_date.isoformat()
-    resp = requests.get(
-        url,
-        params={
-            "queryParameters.house": house,
-            "queryParameters.startDate": date_str,
-            "queryParameters.endDate": date_str,
-        },
-        timeout=_REQUEST_TIMEOUT,
-    )
-    resp.raise_for_status()
-
-    data = resp.json()
-    raw_results = data.get("Results") or []
-
-    sessions = []
-    for item in raw_results:
-        ext_id = item.get("DebateSectionExtId") or ""
-        title = (item.get("Title") or "").strip()
-        section_hint = item.get("DebateSection") or ""
-
-        if not ext_id or not title:
-            continue
-
-        # Filter procedural Deferred Divisions — no speech content
-        if title.lower() in _SKIP_TITLES:
-            continue
-
-        debate_type = _classify_debate_type(title, section_hint)
-        hansard_url = _build_hansard_url(house, sitting_date, ext_id, title)
-
-        sessions.append(
-            {
-                "ext_id": ext_id,
-                "title": title,
-                "house": house,
-                "debate_type": debate_type,
-                "hansard_url": hansard_url,
-            }
-        )
-
-    return sessions
-
-
-# ---------------------------------------------------------------------------
-# Contribution fetch
-# ---------------------------------------------------------------------------
 
 def _flatten_items(node: dict, order_counter: list) -> list[dict]:
     """
@@ -221,7 +193,7 @@ def _flatten_items(node: dict, order_counter: list) -> list[dict]:
             {
                 "member_id": member_id,
                 "member_name": member_name,
-                "party": None,  # not always available in Items; can be resolved later
+                "party": None,  # not always in Items; can be resolved later
                 "speech_text": speech_text,
                 "speech_order": order_counter[0],
             }
@@ -234,87 +206,144 @@ def _flatten_items(node: dict, order_counter: list) -> list[dict]:
     return result
 
 
-def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
+# ---------------------------------------------------------------------------
+# Session discovery — chain-walking
+# ---------------------------------------------------------------------------
+
+def _search_debates(
+    sitting_date: date, house: str, search_term: Optional[str] = None
+) -> list[str]:
     """
-    Improve debate_type classification using Overview fields from the full session fetch.
-    More accurate than title-only classification because Location and HRSTag are
-    authoritative API signals rather than derived from free-text titles.
+    Single call to /search/debates.json. Returns up to 25 ext_ids.
+    Used by _get_seeds_for_date; not called directly.
     """
-    loc = (location or "").lower()
-    tag = (hrs_tag or "").lower()
-    t = (title or "").lower()
-
-    if "westminster hall" in loc:
-        return DEBATE_TYPE_WESTMINSTER_HALL
-
-    # HRSTag signals from Hansard's own taxonomy
-    if "question" in tag:
-        if "prime minister" in t or "pmq" in t:
-            return DEBATE_TYPE_PMQS
-        return DEBATE_TYPE_ORAL_QUESTIONS
-
-    if "billtitle" in tag or "billhd" in tag:
-        return DEBATE_TYPE_DEBATE
-
-    if "wms" in tag or "writtenstatement" in tag:
-        return DEBATE_TYPE_MINISTERIAL_STATEMENT
-
-    if "si" in tag or "statutoryinstrument" in tag:
-        return DEBATE_TYPE_STATUTORY_INSTRUMENT
-
-    # Fall back to title-based classification
-    return _classify_debate_type(title, location)
+    url = f"{HANSARD_API_BASE}/search/debates.json"
+    date_str = sitting_date.isoformat()
+    params: dict = {
+        "queryParameters.house": house,
+        "queryParameters.startDate": date_str,
+        "queryParameters.endDate": date_str,
+    }
+    if search_term:
+        params["queryParameters.searchTerm"] = search_term
+    resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    data = resp.json()
+    return [
+        item["DebateSectionExtId"]
+        for item in (data.get("Results") or [])
+        if item.get("DebateSectionExtId") and (item.get("Title") or "").strip()
+    ]
 
 
-def _fetch_contributions_for_session(ext_id: str) -> tuple[list[dict], dict]:
+def _get_seeds_for_date(sitting_date: date, house: str = "Commons") -> list[str]:
     """
-    Fetch and flatten all contributions from a Hansard session.
-    Also returns Overview metadata for classification improvement.
+    Fetch initial seed ext_ids for BFS chain-walking.
 
-    Returns (contributions_list, overview_dict).
-    On network error returns ([], {}).
+    Primary search returns up to 25 sessions but may cover only one chain.
+    For Commons sittings, a secondary search for "Westminster Hall" ensures the
+    WH chain is always seeded — every WH sitting day has a header session titled
+    exactly "Westminster Hall" which is the start of that chain (prev=NONE).
+    Without this, a day with 25+ Commons Chamber sessions would return zero WH
+    seeds and the BFS would miss the Westminster Hall chain entirely.
+
+    Returns [] for non-sitting days.
+    Raises requests.RequestException on network failures.
+    """
+    seeds = _search_debates(sitting_date, house)
+    if not seeds:
+        return []
+
+    # Anchor the Westminster Hall chain so BFS always reaches it even when
+    # 25+ CC sessions crowd all WH sessions out of the primary results.
+    if house == "Commons":
+        time.sleep(_INTER_REQUEST_DELAY)
+        wh_seeds = _search_debates(sitting_date, house, search_term="Westminster Hall")
+        existing = set(seeds)
+        seeds.extend(s for s in wh_seeds if s not in existing)
+
+    return seeds
+
+
+def _fetch_session_full(ext_id: str) -> tuple[dict, list[dict]]:
+    """
+    Fetch a session's full JSON. Returns (overview, contributions).
+
+    overview contains: Title, Date, Location, HRSTag, NextDebateExtId,
+    PreviousDebateExtId (and other fields not used here).
+    Returns ({}, []) on network error.
     """
     url = f"{HANSARD_API_BASE}/debates/debate/{ext_id}.json"
     try:
         resp = requests.get(url, timeout=_REQUEST_TIMEOUT)
         resp.raise_for_status()
     except requests.RequestException:
-        return [], {}
+        return {}, []
 
     data = resp.json()
     overview = data.get("Overview") or {}
-    order_counter = [0]
-    contributions = _flatten_items(data, order_counter)
-    return contributions, overview
+    contributions = _flatten_items(data, [0])
+    return overview, contributions
+
+
+def _collect_all_sessions_for_date(
+    seeds: list[str],
+    target_date: date,
+) -> dict[str, tuple[dict, list[dict]]]:
+    """
+    BFS walk of all Hansard session chains for a given date.
+
+    Commons Chamber and Westminster Hall debates are on separate linked lists.
+    Starting from seeds (which may cover only one chain), this function follows
+    NextDebateExtId / PreviousDebateExtId to discover all sessions on target_date
+    across all chains.
+
+    Each session's full JSON is fetched exactly once (contributions + Overview
+    in the same call). Traversal stops when a neighbour's date differs from
+    target_date. Deferred Divisions are excluded from results but their chain
+    links are followed so traversal continues past them.
+
+    Returns dict: ext_id -> (overview, contributions).
+    """
+    target_date_str = target_date.isoformat()
+    visited: set[str] = set()
+    queue: list[str] = list(seeds)
+    results: dict[str, tuple[dict, list[dict]]] = {}
+
+    while queue:
+        ext_id = queue.pop(0)
+        if ext_id in visited:
+            continue
+        visited.add(ext_id)
+
+        time.sleep(_INTER_REQUEST_DELAY)
+        overview, contributions = _fetch_session_full(ext_id)
+
+        if not overview:
+            continue
+
+        # Stop traversal when we cross into a different day
+        session_date_str = (overview.get("Date") or "")[:10]
+        if session_date_str != target_date_str:
+            continue
+
+        # Store non-procedural sessions; still follow links through procedural ones
+        title = (overview.get("Title") or "").strip()
+        if title.lower() not in _SKIP_TITLES:
+            results[ext_id] = (overview, contributions)
+
+        # Follow chain links to discover adjacent sessions in both directions
+        for link_key in ("NextDebateExtId", "PreviousDebateExtId"):
+            neighbour = overview.get(link_key)
+            if neighbour and neighbour not in visited:
+                queue.append(neighbour)
+
+    return results
 
 
 # ---------------------------------------------------------------------------
-# DB write helpers
+# DB write helper
 # ---------------------------------------------------------------------------
-
-def _upsert_session(session_data: dict, sitting_date: date) -> Optional[HansardSession]:
-    """
-    Insert a session row if it doesn't exist. Returns the row.
-    Returns None if the ext_id is already in the DB.
-    """
-    ext_id = session_data["ext_id"]
-    existing = HansardSession.query.filter_by(ext_id=ext_id).first()
-    if existing:
-        return None  # Already ingested
-
-    session = HansardSession(
-        ext_id=ext_id,
-        title=session_data["title"],
-        date=sitting_date,
-        house=session_data["house"],
-        debate_type=session_data["debate_type"],
-        hansard_url=session_data["hansard_url"],
-        contributions_ingested=False,
-    )
-    db.session.add(session)
-    db.session.flush()  # Get the id without committing
-    return session
-
 
 def _write_contributions(session: HansardSession, contributions: list[dict]) -> int:
     """Write contributions for a session. Returns count written."""
@@ -342,47 +371,68 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
     """
     Ingest all sessions for a single sitting day.
 
-    Returns the number of NEW sessions ingested (0 for non-sitting days or
-    if all sessions were already in the DB).
+    Uses chain-walking to capture ALL sessions on the day, including those in
+    separate venue chains (Westminster Hall) not reached by the search endpoint.
 
-    This function expects to run inside a Flask app context with an active DB session.
+    Returns the number of NEW sessions ingested (0 for non-sitting days or if
+    all sessions were already in the DB).
+
+    Expects to run inside a Flask app context with an active DB session.
     """
     if verbose:
-        print(f"[archive] {sitting_date} {house} — fetching sessions...", flush=True)
+        print(f"[archive] {sitting_date} {house} — fetching seeds...", flush=True)
 
     try:
-        sessions_meta = _fetch_session_metadata_for_date(sitting_date, house)
+        seeds = _get_seeds_for_date(sitting_date, house)
     except requests.RequestException as e:
-        print(f"[archive] ERROR fetching {sitting_date}: {e}", flush=True)
+        print(f"[archive] ERROR fetching seeds for {sitting_date}: {e}", flush=True)
         return 0
 
-    if not sessions_meta:
+    if not seeds:
         if verbose:
             print(f"[archive] {sitting_date} — no sessions (non-sitting day or empty)", flush=True)
         return 0
 
     if verbose:
-        print(f"[archive] {sitting_date} — {len(sessions_meta)} sessions found", flush=True)
+        print(f"[archive] {sitting_date} — {len(seeds)} seeds, walking chains...", flush=True)
+
+    all_sessions = _collect_all_sessions_for_date(seeds, sitting_date)
+
+    if not all_sessions:
+        if verbose:
+            print(f"[archive] {sitting_date} — no sessions after chain walk", flush=True)
+        return 0
+
+    if verbose:
+        print(f"[archive] {sitting_date} — {len(all_sessions)} sessions total", flush=True)
 
     new_sessions = 0
 
-    for meta in sessions_meta:
-        session = _upsert_session(meta, sitting_date)
-        if session is None:
+    for ext_id, (overview, contributions) in all_sessions.items():
+        if HansardSession.query.filter_by(ext_id=ext_id).first():
             if verbose:
-                print(f"[archive]   SKIP {meta['ext_id'][:20]}... (already ingested)", flush=True)
+                print(f"[archive]   SKIP {ext_id[:20]}... (already ingested)", flush=True)
             continue
 
-        # Fetch contributions + Overview metadata
-        time.sleep(_INTER_REQUEST_DELAY)
-        contributions, overview = _fetch_contributions_for_session(meta["ext_id"])
-
-        # Improve debate_type using authoritative Overview fields
+        title = (overview.get("Title") or "").strip()
         location = overview.get("Location") or ""
         hrs_tag = overview.get("HRSTag") or ""
-        session.location = location or None
-        session.hrs_tag = hrs_tag or None
-        session.debate_type = _classify_from_overview(meta["title"], location, hrs_tag)
+        debate_type = _classify_from_overview(title, location, hrs_tag)
+        hansard_url = _build_hansard_url(house, sitting_date, ext_id, title)
+
+        session = HansardSession(
+            ext_id=ext_id,
+            title=title,
+            date=sitting_date,
+            house=house,
+            debate_type=debate_type,
+            location=location or None,
+            hrs_tag=hrs_tag or None,
+            hansard_url=hansard_url,
+            contributions_ingested=False,
+        )
+        db.session.add(session)
+        db.session.flush()
 
         contrib_count = _write_contributions(session, contributions)
         session.contributions_ingested = True
@@ -392,12 +442,12 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             new_sessions += 1
             if verbose:
                 print(
-                    f"[archive]   + {meta['title'][:60]!r} — {contrib_count} contributions",
+                    f"[archive]   + {title[:60]!r} — {contrib_count} contributions",
                     flush=True,
                 )
         except Exception as e:
             db.session.rollback()
-            print(f"[archive]   ERROR committing {meta['ext_id']}: {e}", flush=True)
+            print(f"[archive]   ERROR committing {ext_id}: {e}", flush=True)
 
     return new_sessions
 
