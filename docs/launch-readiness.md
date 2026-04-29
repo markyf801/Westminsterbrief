@@ -46,7 +46,8 @@ This document captures everything that must be true before flipping `FEATURE_AUT
 - [ ] Postmark sending domain `westminsterbrief.co.uk` verified (SPF, DKIM, Return-Path) — already done locally, confirm active on Railway
 - [ ] `/health` endpoint passing all checks on production (DB, Gemini API, TWFY API)
 - [ ] Smoke test passing on live Railway after deploy
-- [ ] External Postgres backup verified end-to-end — at least one successful backup in R2 and a test restoration confirmed by Mark
+- [x] External Postgres backup pipeline built and first R2 upload verified — `daily/2026-04-29.sql.gz.gpg` confirmed in bucket (83MB dump, compressed to 5.5MB, encrypted)
+- [ ] **[HARD BLOCKER]** Restoration test verified end-to-end before public launch. Test must include: download from R2, decrypt, decompress, restore into clean Postgres, confirm tables and row counts match production. Script and runbook are ready (`scripts/restore_from_backup.py`, `docs/recovery-runbook.md`). **No feature flag may be flipped from `hidden` to `beta` or `live` until this test passes.**
 
 ---
 
