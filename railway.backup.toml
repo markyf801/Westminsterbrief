@@ -1,5 +1,6 @@
 [build]
 builder = "NIXPACKS"
+nixpacksConfigPath = "nixpacks.backup.toml"
 
 [deploy]
 startCommand = "python scripts/backup_to_r2.py && python scripts/prune_old_backups.py"
