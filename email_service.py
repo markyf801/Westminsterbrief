@@ -14,7 +14,7 @@ def send_email(to: str, subject: str, html_body: str, text_body: str) -> bool:
     token = os.environ.get('POSTMARK_SERVER_TOKEN', '')
     from_addr = os.environ.get('EMAIL_FROM_ADDRESS', 'hello@westminsterbrief.co.uk')
     from_name = os.environ.get('EMAIL_FROM_NAME', 'Westminster Brief')
-    test_mode = os.environ.get('EMAIL_TEST_MODE', 'true').lower() == 'true'
+    test_mode = os.environ.get('EMAIL_TEST_MODE', 'false').lower() == 'true'
 
     if test_mode or not token:
         print(f'[EMAIL TEST] To={to} | Subject={subject}', flush=True)
