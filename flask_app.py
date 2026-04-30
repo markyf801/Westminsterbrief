@@ -14,7 +14,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from extensions import db, limiter
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
-from email_service import send_template_email
+from email_service import send_template_email, send_email
 from feature_flags import feature_enabled
 
 # Force load environment variables so the API keys never get missed
@@ -414,9 +414,17 @@ with app.app_context():
                 ('location', 'VARCHAR(100)'),
                 ('hrs_tag', 'VARCHAR(100)'),
                 ('is_container', 'BOOLEAN NOT NULL DEFAULT 0'),
+                ('slug', 'VARCHAR(200)'),
+                ('department', 'VARCHAR(200)'),
             ]:
                 if _col not in _ha_sess_cols:
                     conn.execute(text(f'ALTER TABLE ha_session ADD COLUMN {_col} {_defn}'))
+            # Unique index on slug — separate from ADD COLUMN because SQLite does
+            # not support ADD COLUMN ... UNIQUE. CREATE UNIQUE INDEX works on both
+            # SQLite and PostgreSQL and tolerates multiple NULL values correctly.
+            conn.execute(text(
+                'CREATE UNIQUE INDEX IF NOT EXISTS uix_ha_session_slug ON ha_session (slug)'
+            ))
             conn.commit()
     except Exception as _e:
         app.logger.warning('ha_session migration failed: %s', _e)
@@ -642,6 +650,56 @@ def terms():
 @app.route('/privacy')
 def privacy():
     return render_template('privacy.html')
+
+_FEEDBACK_CATEGORIES = {
+    'bug':     'Bug report',
+    'feature': 'Feature request',
+    'general': 'General feedback',
+}
+_FEEDBACK_EMAIL = 'hello@westminsterbrief.co.uk'
+
+@app.route('/feedback', methods=['GET', 'POST'])
+@limiter.limit("10 per hour")
+def feedback():
+    submitted = False
+    error = None
+    if request.method == 'POST':
+        # Honeypot — bots fill this in, humans leave it blank
+        if request.form.get('website', ''):
+            return redirect(url_for('feedback'))
+
+        name     = request.form.get('name', '').strip()[:100]
+        email    = request.form.get('email', '').strip()[:200]
+        category = request.form.get('category', 'general')
+        message  = request.form.get('message', '').strip()[:4000]
+
+        if not message:
+            error = 'Please enter a message.'
+        else:
+            cat_label = _FEEDBACK_CATEGORIES.get(category, 'General feedback')
+            subject   = f'[Westminster Brief] {cat_label}'
+            if name:
+                subject += f' from {name}'
+
+            html_body  = f"""
+<p><strong>Category:</strong> {cat_label}</p>
+<p><strong>Name:</strong> {name or '(not provided)'}</p>
+<p><strong>Email:</strong> {email or '(not provided)'}</p>
+<hr>
+<p>{message.replace(chr(10), '<br>')}</p>
+"""
+            text_body = f"Category: {cat_label}\nName: {name or '(not provided)'}\nEmail: {email or '(not provided)'}\n\n{message}"
+
+            ok = send_email(_FEEDBACK_EMAIL, subject, html_body, text_body)
+            if ok:
+                submitted = True
+            else:
+                error = 'Sorry, there was a problem sending your message. Please try again or email hello@westminsterbrief.co.uk directly.'
+
+    return render_template('feedback.html',
+                           submitted=submitted,
+                           error=error,
+                           categories=_FEEDBACK_CATEGORIES)
 
 @app.before_request
 def _log_request():

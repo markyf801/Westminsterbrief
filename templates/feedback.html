@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Feedback — Westminster Brief{% endblock %}
+{% block meta_description %}Send feedback, report a bug, or request a feature for Westminster Brief.{% endblock %}
+
+{% block content %}
+<div class="box" style="max-width:680px; margin:0 auto;">
+    <h1 style="font-size:22px; font-weight:700; margin:0 0 8px;">Feedback &amp; Contact</h1>
+    <p style="color:#8a96a4; font-size:14px; margin:0 0 28px;">Found a bug? Have a feature idea? General thoughts? We read everything.</p>
+
+    {% if submitted %}
+    <div class="feedback-success">
+        <strong>Message sent — thank you.</strong><br>
+        We'll be in touch if a reply is needed.
+    </div>
+    {% else %}
+
+    {% if error %}
+    <div class="flash-error">{{ error }}</div>
+    {% endif %}
+
+    <form class="feedback-form" method="post" action="/feedback">
+
+        {# Honeypot — hidden from humans, bots fill it in #}
+        <div style="display:none" aria-hidden="true">
+            <label for="website">Website</label>
+            <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+        </div>
+
+        <div class="fb-field">
+            <label for="fb-category">Type of feedback</label>
+            <select id="fb-category" name="category" class="fb-select">
+                {% for key, label in categories.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="fb-field">
+            <label for="fb-message">Message <span class="fb-required">*</span></label>
+            <textarea id="fb-message" name="message" class="fb-textarea" rows="6"
+                      placeholder="Describe the bug, suggest a feature, or say hello…" required></textarea>
+        </div>
+
+        <div class="fb-field-row">
+            <div class="fb-field">
+                <label for="fb-name">Your name <span class="fb-optional">(optional)</span></label>
+                <input type="text" id="fb-name" name="name" class="fb-input"
+                       placeholder="e.g. Jane Smith" maxlength="100" autocomplete="name">
+            </div>
+            <div class="fb-field">
+                <label for="fb-email">Your email <span class="fb-optional">(optional, for replies)</span></label>
+                <input type="email" id="fb-email" name="email" class="fb-input"
+                       placeholder="e.g. jane@example.com" maxlength="200" autocomplete="email">
+            </div>
+        </div>
+
+        <button type="submit" class="fb-submit">Send feedback</button>
+    </form>
+
+    <p class="fb-direct">Or email directly: <a href="mailto:hello@westminsterbrief.co.uk">hello@westminsterbrief.co.uk</a></p>
+    {% endif %}
+</div>
+{% endblock %}
