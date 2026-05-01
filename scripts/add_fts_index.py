@@ -78,6 +78,19 @@ def main() -> None:
 
     if not args.execute:
         print("=== DRY RUN — pass --execute to apply ===\n")
+        # Still connect so we can show which database would be targeted
+        from flask_app import app as _app
+        from extensions import db as _db
+        with _app.app_context():
+            safe_url = _db.engine.url.render_as_string(hide_password=True)
+            print(f"[fts] Would target database: {safe_url}")
+            try:
+                row = _db.session.execute(
+                    text("SELECT inet_server_addr()::text, current_database()")
+                ).fetchone()
+                print(f"[fts] Server host: {row[0]}, database: {row[1]}\n")
+            except Exception as e:
+                print(f"[fts] Could not query server host: {e}\n")
         for label, sql in steps:
             print(f"-- {label}")
             print(sql.strip())
@@ -87,6 +100,17 @@ def main() -> None:
 
     print(f"[fts] Connecting to Postgres...", flush=True)
     with app.app_context():
+        # Log exactly which host/database we're targeting before touching anything
+        safe_url = db.engine.url.render_as_string(hide_password=True)
+        print(f"[fts] Engine URL (password hidden): {safe_url}", flush=True)
+        try:
+            row = db.session.execute(
+                text("SELECT inet_server_addr()::text, current_database()")
+            ).fetchone()
+            print(f"[fts] Server host: {row[0]}, database: {row[1]}", flush=True)
+        except Exception as e:
+            print(f"[fts] Could not query server host: {e}", flush=True)
+
         conn = db.engine.connect()
         try:
             for label, sql in steps:
