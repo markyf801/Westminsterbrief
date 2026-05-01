@@ -2,7 +2,10 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "gunicorn flask_app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120"
+# startCommand intentionally omitted — set per-service in Railway UI Settings.
+# Flask service (jubilant-intuition): gunicorn flask_app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+# Cron services: python scripts/archive_cron.py --days 3 --service-name <name>
+# Procfile is the fallback for the Flask service if no UI override is set.
 healthcheckPath = "/ping"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
