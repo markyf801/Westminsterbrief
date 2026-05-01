@@ -109,6 +109,15 @@ Some sessions classified as `debate_type='other'` are substantive. The taxonomy 
 
 ---
 
+### Bulk Migration — Chunked-Commit Mode
+For any future bulk data load into Railway Postgres (not needed for the 30–50 session incremental cron runs), add an optional `--chunked` flag to the migration script that commits in batches (e.g. 5,000 rows per commit) rather than a single transaction. Trades all-or-nothing atomicity for lower peak working space — avoids the ~1.5GB WAL peak that caused the disk-full error during the initial 203k-row migration. The script already has `ON CONFLICT DO NOTHING` so interrupted chunked runs are safely re-runnable.
+
+**Revisit trigger:** Any future bulk historical backfill (e.g. extending the archive back to 2020); any migration touching a volume nearing its disk allocation; any session adding data to the `ha_*` tables at scale.
+
+*Captured 1 May 2026 — from disk-full error during initial SQLite→Railway migration.*
+
+---
+
 ### Backup Secrets — Runtime Injection vs Build-time ARG/ENV
 Railway's Nixpacks build passes env vars (including `BACKUP_ENCRYPTION_KEY`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) as Docker ARG/ENV during the image build. This means secrets could leak via Docker image layer inspection. Investigate whether Railway supports runtime-only env injection for the cron service so these credentials never appear in the build layer.
 

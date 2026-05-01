@@ -31,7 +31,7 @@
         <nav class="sd-breadcrumb" aria-label="breadcrumb">
             <a href="/archive">Hansard Archive</a>
             <span class="sd-breadcrumb-sep">›</span>
-            <a href="/archive?from={{ session.date.isoformat() }}&to={{ session.date.isoformat() }}">{{ human_date }}</a>
+            <a href="/archive/date/{{ url_date }}">{{ human_date }}</a>
             <span class="sd-breadcrumb-sep">›</span>
             <span>{{ session.title|truncate(60, true, '…') }}</span>
         </nav>
@@ -41,7 +41,7 @@
         <div class="sd-meta">
             <span class="topic-source-badge topic-source-{{ session.house|lower }}">{{ session.house }}</span>
             <span class="archive-dtype-badge archive-dtype-{{ session.debate_type }}">{{ debate_type_label }}</span>
-            {% if department %}<a href="/archive?dept={{ department|urlencode }}&dtype=oral_questions" class="archive-dept-badge">{{ department }}</a>{% endif %}
+            {% if department %}<a href="/archive/department/{{ department|slugify }}" class="archive-dept-badge">{{ department }}</a>{% endif %}
             <span class="sd-date">{{ human_date }}</span>
             {% if session.hansard_url %}
             <a class="sd-hansard-link" href="{{ session.hansard_url }}" target="_blank" rel="noopener">View on Hansard ↗</a>
@@ -51,10 +51,10 @@
         {% if policy_areas or specific_topics %}
         <div class="sd-theme-row">
             {% for pa in policy_areas %}
-            <a href="/archive?policy={{ pa|urlencode }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
+            <a href="/archive/policy/{{ pa|slugify }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
             {% endfor %}
             {% for topic in specific_topics %}
-            <span class="archive-tag archive-tag-topic">{{ topic }}</span>
+            <a href="/archive/theme/{{ topic|slugify }}" class="archive-tag archive-tag-topic">{{ topic }}</a>
             {% endfor %}
         </div>
         {% endif %}
@@ -81,6 +81,9 @@
             {% if related_sessions['total'] > related_sessions['items']|length %}
             <span class="sd-related-overflow">+{{ related_sessions['total'] - related_sessions['items']|length }} more</span>
             {% endif %}
+            {% if 'Bill' in session.title or session.debate_type == 'committee_stage' %}
+            <p class="sd-related-note">Sessions sharing this bill's title from the last 12 months. For full bill progression and current stage, see <a href="https://bills.parliament.uk/bills" target="_blank" rel="noopener">bills.parliament.uk ↗</a>.</p>
+            {% endif %}
         </div>
     </div>
     {% endif %}
@@ -92,7 +95,11 @@
         <div class="sd-contrib" id="contrib-{{ item.id }}">
             <a class="sd-contrib-permalink" href="#contrib-{{ item.id }}" title="Link to this contribution">#</a>
             <div class="sd-contrib-speaker" style="border-left-color: {{ item.party_colour }}">
-                <a class="sd-speaker-name" href="/biography">{{ item.name }}</a>
+                {% if item.member_id %}
+                <a class="sd-speaker-name" href="/archive/mp/{{ item.member_id }}">{{ item.name }}</a>
+                {% else %}
+                <span class="sd-speaker-name">{{ item.name }}</span>
+                {% endif %}
                 {% if item.role or item.party %}
                 <span class="sd-speaker-secondary">
                     {%- if item.role -%}{{ item.role }}{% if item.party %} · {{ item.party }}{% endif %}

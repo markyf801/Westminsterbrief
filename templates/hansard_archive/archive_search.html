@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{# noindex enforced via X-Robots-Tag header in the route #}
+{% block title %}{% if q %}Search: {{ q }} — Hansard Archive{% else %}Search — Hansard Archive{% endif %} — Westminster Brief{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/archive/search{% if q %}?q={{ q|urlencode }}{% endif %}">{% endblock %}
+{% block json_ld %}{% endblock %}{# no JSON-LD on noindex pages #}
+
+{% block extra_head %}
+<style>body { background: #f0f2f5; }</style>
+<meta name="robots" content="noindex, nofollow">
+{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    {# --- Breadcrumb --- #}
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/archive">Hansard Archive</a>
+        <span class="ac-breadcrumb-sep">›</span>
+        <span>Search</span>
+    </nav>
+
+    {# --- Search box --- #}
+    <div class="ac-header">
+        <h1 class="ac-title">Search Hansard</h1>
+    </div>
+
+    <form class="as-form" method="get" action="/archive/search">
+        <div class="ah-search-row">
+            <label for="as-search-q" class="ah-visually-hidden">Search Hansard debates and speeches</label>
+            <input type="text" name="q" id="as-search-q" value="{{ q }}" placeholder="Search debates and speeches…"
+                   class="ah-search-input" autocomplete="off" spellcheck="false" autofocus>
+            <button type="submit" class="ah-search-btn">Search</button>
+            {% if q %}
+            <a href="/archive/search" class="ah-clear-link">Clear</a>
+            {% endif %}
+        </div>
+        <p class="as-hint">Tip: wrap a phrase in "quotes" for an exact phrase search.</p>
+    </form>
+
+    {% if error_msg %}
+    <div class="info-box info-box-warn">{{ error_msg }}</div>
+    {% endif %}
+
+    {# --- Results bar --- #}
+    {% if q %}
+    <div class="ah-results-bar">
+        {% if total > 0 %}
+        <span class="ah-results-count">{{ total }} result{{ 's' if total != 1 else '' }} for <strong>{{ q }}</strong></span>
+        {% if total_pages > 1 %}
+        <span class="ah-results-range">showing {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
+        {% endif %}
+        {% else %}
+        <span class="ah-results-count">No results for <strong>{{ q }}</strong></span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# --- Results --- #}
+    {% if results %}
+    <div class="ah-results-list">
+        {% for r in results %}
+        <div class="ah-card as-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-{{ r.house|lower }}">{{ r.house }}</span>
+                <span class="archive-dtype-badge archive-dtype-{{ r.debate_type }}">{{ r.debate_type_label }}</span>
+                {% if r.department %}<span class="archive-dept-badge">{{ r.department }}</span>{% endif %}
+                <span class="ah-card-date">{{ r.human_date }}</span>
+            </div>
+            <a class="ah-card-title" href="/archive/debate/{{ r.url_date }}/{{ r.slug }}">{{ r.title }}</a>
+            {% if r.snippet %}
+            <div class="as-snippet">{{ r.snippet }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    {# --- Pagination --- #}
+    {% if total_pages > 1 %}
+    <nav class="ah-pagination" aria-label="Results pages">
+        {% if page > 1 %}
+        <a href="/archive/search?q={{ q|urlencode }}&page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
+        {% endif %}
+        <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="/archive/search?q={{ q|urlencode }}&page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+    {% elif q and not error_msg %}
+    <div class="empty-state ac-empty">
+        <p>No results found for <strong>{{ q }}</strong>.</p>
+        <p style="margin-top:8px; font-size:13px; color:#8a96a4;">
+            Try fewer words, different keywords, or browse by
+            <a href="/archive">policy area, department, or date</a>.
+        </p>
+    </div>
+    {% endif %}
+
+    {# --- Source note --- #}
+    <p class="ah-source-note">
+        Parliamentary information from
+        <a href="https://hansard.parliament.uk" target="_blank" rel="noopener">Hansard</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+    </p>
+
+</div>{# /.ac-inner #}
+</div>{# /.ac-page #}
+{% endblock %}

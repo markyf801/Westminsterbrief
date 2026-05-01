@@ -8,5 +8,6 @@ Disallow: /logout
 Disallow: /my_alerts
 Disallow: /my_preferences
 Disallow: /onboarding
+Disallow: /archive/search
 
 Sitemap: https://westminsterbrief.co.uk/sitemap.xml

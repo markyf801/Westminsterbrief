@@ -1,10 +1,11 @@
 """
 Hansard Archive database models — Phase 2A.
 
-Three tables (all prefixed ha_):
+Four tables (all prefixed ha_):
   ha_session          — one row per Hansard debate section
   ha_contribution     — speeches within a session (flat; responds_to_id for Q&A pairing, Week 2)
   ha_session_theme    — AI theme tags (schema now; populated in Week 2)
+  ha_cron_run         — cron job run history for monitoring and incident diagnosis
 
 Table prefix ha_ keeps archive tables clearly namespaced from the existing
 application tables (user, tracked_topic, cached_*, sd_*, etc.).
@@ -142,3 +143,28 @@ class HansardSessionTheme(db.Model):
 
     def __repr__(self):
         return f"<HansardSessionTheme session={self.session_id} [{self.theme_type}] {self.theme!r}>"
+
+
+class HaCronRun(db.Model):
+    """
+    Persisted log of each scheduled cron run.
+
+    Retained for 90 days (pruned by the cron script itself on each run).
+    Queryable via /admin for incident diagnosis and pattern spotting.
+    """
+
+    __tablename__ = "ha_cron_run"
+
+    id = db.Column(db.Integer, primary_key=True)
+    service_name = db.Column(db.String(50), nullable=False, index=True)
+    started_at = db.Column(db.DateTime, nullable=False)
+    finished_at = db.Column(db.DateTime, nullable=True)
+    days_window = db.Column(db.Integer, nullable=False, default=3)
+    sessions_ingested = db.Column(db.Integer, nullable=False, default=0)
+    sessions_tagged = db.Column(db.Integer, nullable=False, default=0)
+    errors = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default="running")  # running / ok / failed
+    notes = db.Column(db.Text, nullable=True)
+
+    def __repr__(self):
+        return f"<HaCronRun {self.service_name} {self.started_at} {self.status}>"

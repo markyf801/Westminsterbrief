@@ -1656,6 +1656,14 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
     white-space: nowrap;
     margin-left: 4px;
 }
+.sd-related-note {
+    font-size: 11px;
+    color: #8a96a4;
+    margin: 6px 4px 0;
+    line-height: 1.4;
+}
+.sd-related-note a { color: #4a7fa5; text-decoration: none; }
+.sd-related-note a:hover { text-decoration: underline; }
 
 /* Transcript — constrained column */
 .sd-transcript {
@@ -1828,6 +1836,33 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
 }
 .ah-desc { font-size: 13px; color: #8a96a4; margin: 0; }
 .ah-currency { font-size: 12px; color: #8a96a4; margin: 5px 0 0; }
+
+/* Recently added feed */
+.ah-recent {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    background: #f0f6ff;
+    border: 1px solid #d0e0f0;
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin-bottom: 14px;
+    font-size: 12px;
+}
+.ah-recent-label {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: #1a4a6e;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.ah-recent-count { color: #2d3748; }
+.ah-recent-browse { color: #1a4a6e; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.ah-recent-browse:hover { text-decoration: underline; }
+.ah-recent-updated { color: #8a96a4; margin-left: auto; white-space: nowrap; }
+
 .ah-beta-badge {
     display: inline-block;
     font-size: 10px;
@@ -1890,6 +1925,15 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
     white-space: nowrap;
 }
 .ah-clear-link:hover { color: #4a7fa5; text-decoration: underline; }
+.ah-visually-hidden {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+}
 
 /* Filter row */
 .ah-filter-row {
@@ -2024,6 +2068,94 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
 }
 .ah-source-note a { color: #6a96b8; text-decoration: none; }
 .ah-source-note a:hover { text-decoration: underline; }
+
+/* --- ARCHIVE COLLECTION / MP / SEARCH PAGES --- */
+
+/* Page wrapper — matches .ah-page / .sd-page bleed pattern */
+.ac-page {
+    background: #f0f2f5;
+    min-height: 70vh;
+    padding: 0 0 40px;
+}
+.ac-inner {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+/* Breadcrumb */
+.ac-breadcrumb {
+    padding: 16px 0 8px;
+    font-size: 12px;
+    color: #8a96a4;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0;
+}
+.ac-breadcrumb a { color: #4a7fa5; text-decoration: none; }
+.ac-breadcrumb a:hover { text-decoration: underline; }
+.ac-breadcrumb-sep { margin: 0 6px; color: #c0c8d4; }
+
+/* Page header */
+.ac-header { padding: 8px 0 16px; }
+.ac-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a2332;
+    margin: 0 0 6px;
+    line-height: 1.25;
+}
+.ac-desc { font-size: 13px; color: #8a96a4; margin: 0; }
+.ac-tag-large {
+    display: inline-block;
+    margin-bottom: 8px;
+    font-size: 11px;
+}
+.ac-empty { padding: 24px 0; }
+
+/* MP page — contribution excerpts */
+.amp-card { flex-direction: column; align-items: flex-start; }
+.amp-excerpts { margin-top: 8px; width: 100%; }
+.amp-excerpt {
+    font-size: 12px;
+    color: #5a6878;
+    line-height: 1.5;
+    padding: 6px 10px;
+    background: #f8fafb;
+    border-left: 3px solid #d0dae5;
+    margin-bottom: 4px;
+}
+.amp-excerpt:last-of-type { margin-bottom: 0; }
+.amp-more-contribs {
+    font-size: 11px;
+    color: #9aa4b0;
+    margin-top: 4px;
+    font-style: italic;
+}
+
+/* Search page */
+.as-form { margin-bottom: 12px; }
+.as-hint { font-size: 12px; color: #9aa4b0; margin: 6px 0 0; }
+.as-card { flex-direction: column; align-items: flex-start; }
+.as-snippet {
+    font-size: 12px;
+    color: #5a6878;
+    line-height: 1.55;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: #f8fafb;
+    border-left: 3px solid #d0dae5;
+}
+/* Highlight for FTS match terms */
+.as-snippet mark {
+    background: #fff3b0;
+    color: #1a2332;
+    padding: 0 2px;
+    border-radius: 2px;
+    font-style: normal;
+    font-weight: 600;
+}
 
 /* --- FEEDBACK FORM --- */
 .feedback-success {

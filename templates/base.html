@@ -19,12 +19,12 @@
     <meta name="twitter:title" content="{% block twitter_title %}Westminster Brief — Parliamentary Research Tools{% endblock %}">
     <meta name="twitter:description" content="{% block twitter_description %}Search Hansard, track PQs, build member profiles, and generate parliamentary briefings instantly.{% endblock %}">
     {% block twitter_image %}<meta name="twitter:image" content="https://westminsterbrief.co.uk/static/og_default.png">{% endblock %}
-    <link rel="canonical" href="https://westminsterbrief.co.uk{{ request.path }}">
+    {% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ request.path }}">{% endblock %}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=12">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=15">
     {% block extra_head %}{% endblock %}
     {% block json_ld %}
     <script type="application/ld+json">

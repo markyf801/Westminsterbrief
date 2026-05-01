@@ -7,7 +7,7 @@ import re
 import numpy as np
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, abort, make_response
 from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -101,6 +101,17 @@ limiter.default_limits = ["200 per hour", "30 per minute"]
 
 # Feature flag helper available in all Jinja2 templates as feature_enabled(...)
 app.jinja_env.globals['feature_enabled'] = feature_enabled
+
+# slugify filter — used by archive templates to build /archive/policy/, /archive/theme/,
+# /archive/department/ URLs. Must match _slugify() in hansard_archive/views.py exactly.
+import re as _re
+def _jinja_slugify(s: str) -> str:
+    s = s.lower()
+    s = _re.sub(r"[^a-z0-9\s-]", "", s)
+    s = _re.sub(r"\s+", "-", s.strip())
+    s = _re.sub(r"-+", "-", s)
+    return s
+app.jinja_env.filters['slugify'] = _jinja_slugify
 
 # Security headers
 from flask_talisman import Talisman
@@ -640,9 +651,147 @@ def health():
 def robots():
     return app.send_static_file('robots.txt')
 
+_sitemap_cache: dict = {'xml': None, 'ts': 0.0}
+_SITEMAP_TTL = 3600  # 1 hour
+
+_SITEMAP_MONTHS = [
+    "", "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+]
+
+
+def _sitemap_url_date(d) -> str:
+    return f"{d.day}-{_SITEMAP_MONTHS[d.month]}-{d.year}"
+
+
+def _sitemap_slugify(s: str) -> str:
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9\s-]", "", s)
+    s = re.sub(r"\s+", "-", s.strip())
+    s = re.sub(r"-+", "-", s)
+    return s
+
+
+def _build_sitemap_xml() -> str:
+    from hansard_archive.models import (
+        HansardSession, HansardContribution, HansardSessionTheme,
+        THEME_TYPE_POLICY_AREA, THEME_TYPE_SPECIFIC,
+    )
+    from sqlalchemy import func as sqlfunc
+
+    BASE = "https://westminsterbrief.co.uk"
+    urls: list[tuple[str, str]] = []  # (loc, lastmod)
+
+    # Archive home lastmod = most recent session date across entire corpus
+    max_date = db.session.query(sqlfunc.max(HansardSession.date)).scalar()
+    archive_lastmod = max_date.isoformat() if max_date else ""
+
+    # Static tool pages (content changes via deployments, not DB; omit lastmod)
+    for path in ('/', '/questions', '/tracker', '/mp_search', '/biography',
+                 '/debates', '/archive', '/directory', '/terms', '/privacy'):
+        urls.append((f"{BASE}{path}", archive_lastmod if path == '/archive' else ""))
+
+    # Date browse — one URL per distinct date with sessions
+    for (d,) in (db.session.query(HansardSession.date)
+                 .filter(HansardSession.is_container == False)
+                 .distinct().order_by(HansardSession.date.desc()).all()):
+        urls.append((f"{BASE}/archive/date/{_sitemap_url_date(d)}", d.isoformat()))
+
+    # Policy area pages — one per distinct policy_area tag (all present in DB)
+    for (theme, max_d) in (db.session
+                           .query(HansardSessionTheme.theme,
+                                  sqlfunc.max(HansardSession.date))
+                           .join(HansardSession, HansardSession.id == HansardSessionTheme.session_id)
+                           .filter(HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA)
+                           .group_by(HansardSessionTheme.theme).all()):
+        urls.append((f"{BASE}/archive/policy/{_sitemap_slugify(theme)}",
+                     max_d.isoformat() if max_d else ""))
+
+    # Specific theme pages — only themes with 5+ sessions (per spec)
+    for (theme, _, max_d) in (db.session
+                              .query(HansardSessionTheme.theme,
+                                     sqlfunc.count(HansardSessionTheme.session_id),
+                                     sqlfunc.max(HansardSession.date))
+                              .join(HansardSession, HansardSession.id == HansardSessionTheme.session_id)
+                              .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
+                              .group_by(HansardSessionTheme.theme)
+                              .having(sqlfunc.count(HansardSessionTheme.session_id) >= 5)
+                              .all()):
+        urls.append((f"{BASE}/archive/theme/{_sitemap_slugify(theme)}",
+                     max_d.isoformat() if max_d else ""))
+
+    # Session detail pages — non-container sessions with a slug
+    for (d, slug) in (db.session.query(HansardSession.date, HansardSession.slug)
+                      .filter(HansardSession.is_container == False,
+                              HansardSession.slug.isnot(None))
+                      .order_by(HansardSession.date.desc()).all()):
+        urls.append((f"{BASE}/archive/debate/{_sitemap_url_date(d)}/{slug}", d.isoformat()))
+
+    # MP pages — one per distinct member_id with at least one contribution
+    # lastmod uses MAX(ingested_at) which clusters on backfill date for historical data.
+    # If Search Console shows unexpected re-crawl patterns, switch to:
+    #   MAX(ha_session.date) via join on session_id — semantically tighter lastmod.
+    for (member_id, last_ingested) in (db.session
+                                       .query(HansardContribution.member_id,
+                                              sqlfunc.max(HansardContribution.ingested_at))
+                                       .filter(HansardContribution.member_id.isnot(None))
+                                       .group_by(HansardContribution.member_id).all()):
+        lastmod = last_ingested.date().isoformat() if last_ingested else ""
+        urls.append((f"{BASE}/archive/mp/{member_id}", lastmod))
+
+    # Department pages — one per distinct non-null department
+    for (dept, max_d) in (db.session
+                          .query(HansardSession.department,
+                                 sqlfunc.max(HansardSession.date))
+                          .filter(HansardSession.department.isnot(None))
+                          .group_by(HansardSession.department).all()):
+        urls.append((f"{BASE}/archive/department/{_sitemap_slugify(dept)}",
+                     max_d.isoformat() if max_d else ""))
+
+    # Build XML
+    # Future: split into sitemap index + sub-sitemaps (by content type) when URL count
+    # approaches 50,000. Structure: /sitemap-index.xml → /sitemap-sessions.xml,
+    # /sitemap-mps.xml, /sitemap-themes.xml etc.
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for loc, lastmod in urls:
+        lines.append('  <url>')
+        lines.append(f'    <loc>{loc}</loc>')
+        if lastmod:
+            lines.append(f'    <lastmod>{lastmod}</lastmod>')
+        lines.append('  </url>')
+    lines.append('</urlset>')
+    return '\n'.join(lines)
+
+
 @app.route('/sitemap.xml')
 def sitemap():
-    return app.send_static_file('sitemap.xml')
+    import time as _t
+    global _sitemap_cache
+    now = _t.time()
+    if _sitemap_cache['xml'] and now - _sitemap_cache['ts'] < _SITEMAP_TTL:
+        resp = make_response(_sitemap_cache['xml'])
+        resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
+        return resp
+    try:
+        xml = _build_sitemap_xml()
+    except Exception as exc:
+        print(f'[SITEMAP] build error: {exc}', flush=True)
+        if _sitemap_cache['xml']:
+            resp = make_response(_sitemap_cache['xml'])
+            resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
+            return resp
+        return make_response(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>',
+            500, {'Content-Type': 'application/xml; charset=utf-8'}
+        )
+    _sitemap_cache = {'xml': xml, 'ts': now}
+    resp = make_response(xml)
+    resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
+    return resp
 
 @app.route('/terms')
 def terms():
@@ -701,6 +850,29 @@ def feedback():
                            submitted=submitted,
                            error=error,
                            categories=_FEEDBACK_CATEGORIES)
+
+@app.before_request
+def redirect_www():
+    """301: www.westminsterbrief.co.uk/* → westminsterbrief.co.uk/*"""
+    if request.host.startswith('www.'):
+        return redirect(request.url.replace('://www.', '://', 1), code=301)
+
+
+@app.before_request
+def enforce_canonical_url():
+    """301 non-canonical URL forms to their canonical equivalents."""
+    path = request.path
+    qs = ('?' + request.query_string.decode()) if request.query_string else ''
+    # /home → / (canonical home URL is /)
+    if path == '/home':
+        return redirect('/' + qs, code=301)
+    # Trailing slash (preserve root /)
+    if path != '/' and path.endswith('/'):
+        return redirect(path.rstrip('/') + qs, code=301)
+    # Uppercase characters in path
+    if path != path.lower():
+        return redirect(path.lower() + qs, code=301)
+
 
 @app.before_request
 def _log_request():

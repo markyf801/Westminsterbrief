@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}{{ heading }} — Hansard Archive — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "{{ json_ld_type }}",
+  "name": {{ heading|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    {# --- Breadcrumb --- #}
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        {% for label, url in breadcrumb %}
+            {% if url %}<a href="{{ url }}">{{ label }}</a><span class="ac-breadcrumb-sep">›</span>
+            {% else %}<span>{{ label }}</span>{% endif %}
+        {% endfor %}
+    </nav>
+
+    {# --- Page header --- #}
+    <div class="ac-header">
+        {% if page_type == 'date' %}
+        <h1 class="ac-title">{{ heading }}</h1>
+        <p class="ac-desc">All parliamentary sessions from this date</p>
+        {% elif page_type == 'department' %}
+        <h1 class="ac-title">{{ heading }}</h1>
+        <p class="ac-desc">Oral questions sessions answered by this department</p>
+        {% elif page_type == 'policy' %}
+        <span class="archive-tag archive-tag-policy ac-tag-large">Policy area</span>
+        <h1 class="ac-title">{{ heading }}</h1>
+        <p class="ac-desc">Parliamentary debates tagged with this GOV.UK policy area</p>
+        {% elif page_type == 'theme' %}
+        <span class="archive-tag archive-tag-topic ac-tag-large">Topic</span>
+        <h1 class="ac-title">{{ heading }}</h1>
+        <p class="ac-desc">Parliamentary debates tagged with this topic</p>
+        {% endif %}
+    </div>
+
+    {# --- Results bar --- #}
+    <div class="ah-results-bar">
+        <span class="ah-results-count">{{ subtitle }}</span>
+        {% if total_pages > 1 %}
+        <span class="ah-results-range">page {{ page }} of {{ total_pages }}</span>
+        {% endif %}
+    </div>
+
+    {# --- Session list --- #}
+    {% if items %}
+    <div class="ah-results-list">
+        {% for item in items %}
+        {% set s = item.session %}
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-{{ s.house|lower }}">{{ s.house }}</span>
+                <span class="archive-dtype-badge archive-dtype-{{ s.debate_type }}">{{ item.debate_type_label }}</span>
+                {% if item.department and page_type != 'department' %}
+                <span class="archive-dept-badge">{{ item.department }}</span>
+                {% endif %}
+                <span class="ah-card-date">{{ item.human_date }}</span>
+                {% if item.contrib_count %}
+                <span class="ah-card-contribs">{{ item.contrib_count }} contribution{{ 's' if item.contrib_count != 1 else '' }}</span>
+                {% endif %}
+            </div>
+            <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
+            {% set tags_shown = namespace(n=0) %}
+            {% if item.policy_areas or item.specific_topics %}
+            <div class="ah-card-tags">
+                {% for pa in item.policy_areas[:1] %}
+                {% if pa != heading or page_type != 'policy' %}
+                <a href="/archive/policy/{{ pa|slugify }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
+                {% set tags_shown.n = tags_shown.n + 1 %}
+                {% endif %}
+                {% endfor %}
+                {% for topic in item.specific_topics %}
+                {% if tags_shown.n < 3 and (topic != heading or page_type != 'theme') %}
+                <span class="archive-tag archive-tag-topic">{{ topic }}</span>
+                {% set tags_shown.n = tags_shown.n + 1 %}
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state ac-empty">
+        <p>No sessions found in the archive for this {% if page_type == 'date' %}date{% elif page_type == 'department' %}department{% else %}topic{% endif %}.</p>
+    </div>
+    {% endif %}
+
+    {# --- Pagination --- #}
+    {% if total_pages > 1 %}
+    <nav class="ah-pagination" aria-label="Results pages">
+        {% if page > 1 %}
+        <a href="{{ canonical_path }}?page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
+        {% endif %}
+        <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ canonical_path }}?page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+    {# --- Source note --- #}
+    <p class="ah-source-note">
+        Parliamentary information from
+        <a href="https://hansard.parliament.uk" target="_blank" rel="noopener">Hansard</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Theme tags generated by AI — verify before use in briefings.
+    </p>
+
+</div>{# /.ac-inner #}
+</div>{# /.ac-page #}
+{% endblock %}

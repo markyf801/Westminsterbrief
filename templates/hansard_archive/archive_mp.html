@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}{{ member_name }} — Hansard Archive — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/archive/mp/{{ member_id }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Person",
+  "name": {{ member_name|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk/archive/mp/{{ member_id }}"
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    {# --- Breadcrumb --- #}
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/archive">Hansard Archive</a>
+        <span class="ac-breadcrumb-sep">›</span>
+        <span>{{ member_name }}</span>
+    </nav>
+
+    {# --- Member header --- #}
+    <div class="ac-header">
+        <h1 class="ac-title" style="border-left: 4px solid {{ member_colour }}; padding-left: 12px;">
+            {{ member_name }}
+        </h1>
+        {% if member_party %}
+        <p class="ac-desc">{{ member_party }}</p>
+        {% endif %}
+        <p class="ac-desc" style="margin-top:4px;">
+            {{ total }} parliamentary session{{ 's' if total != 1 else '' }} on record in this archive
+        </p>
+    </div>
+
+    {# --- Results bar --- #}
+    <div class="ah-results-bar">
+        <span class="ah-results-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
+        {% if total_pages > 1 %}
+        <span class="ah-results-range">page {{ page }} of {{ total_pages }}</span>
+        {% endif %}
+    </div>
+
+    {# --- Session list --- #}
+    {% if items %}
+    <div class="ah-results-list">
+        {% for item in items %}
+        {% set s = item.session %}
+        <div class="ah-card amp-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-{{ s.house|lower }}">{{ s.house }}</span>
+                <span class="archive-dtype-badge archive-dtype-{{ s.debate_type }}">{{ item.debate_type_label }}</span>
+                {% if item.department %}<span class="archive-dept-badge">{{ item.department }}</span>{% endif %}
+                <span class="ah-card-date">{{ item.human_date }}</span>
+                {% if item.contrib_count > 1 %}
+                <span class="ah-card-contribs">{{ item.contrib_count }} contribution{{ 's' if item.contrib_count != 1 else '' }}</span>
+                {% endif %}
+            </div>
+            <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
+            {% if item.speech_texts %}
+            <div class="amp-excerpts">
+                {% for text in item.speech_texts[:2] %}
+                <div class="amp-excerpt">{{ text[:300] }}{% if text|length > 300 %}…{% endif %}</div>
+                {% endfor %}
+                {% if item.speech_texts|length > 2 %}
+                <div class="amp-more-contribs">+{{ item.speech_texts|length - 2 }} more contribution{{ 's' if item.speech_texts|length - 2 != 1 else '' }} in this session</div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state ac-empty">
+        <p>No contributions found for this member in the archive.</p>
+    </div>
+    {% endif %}
+
+    {# --- Pagination --- #}
+    {% if total_pages > 1 %}
+    <nav class="ah-pagination" aria-label="Results pages">
+        {% if page > 1 %}
+        <a href="/archive/mp/{{ member_id }}?page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
+        {% endif %}
+        <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="/archive/mp/{{ member_id }}?page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+    {# --- Source note --- #}
+    <p class="ah-source-note">
+        Parliamentary information from
+        <a href="https://hansard.parliament.uk" target="_blank" rel="noopener">Hansard</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+    </p>
+
+</div>{# /.ac-inner #}
+</div>{# /.ac-page #}
+{% endblock %}

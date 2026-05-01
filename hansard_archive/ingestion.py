@@ -57,8 +57,33 @@ from hansard_archive.models import (
 )
 
 HANSARD_API_BASE = "https://hansard-api.parliament.uk"
-_REQUEST_TIMEOUT = 15
+_REQUEST_TIMEOUT = 30       # increased from 15 — Commons API is genuinely slow
 _INTER_REQUEST_DELAY = 0.3  # seconds between API calls — be a good citizen
+
+
+def _api_get(url: str, params: dict | None = None) -> requests.Response:
+    """
+    GET with one retry on transient errors (Timeout / ConnectionError).
+    Non-2xx HTTP errors raise immediately — no retry.
+    A single transient timeout that succeeds on retry is logged but not an error.
+    Two consecutive failures re-raise the last exception so the caller can count it.
+    """
+    last_exc: requests.RequestException | None = None
+    for attempt in range(2):
+        try:
+            resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            return resp
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_exc = e
+            if attempt == 0:
+                _log.warning("[archive] transient error (attempt 1), retrying in 5s: %s", e)
+                print(f"[archive] transient error, retrying in 5s: {e}", flush=True)
+                time.sleep(5)
+        except requests.HTTPError:
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -423,8 +448,7 @@ def _search_debates(
     }
     if search_term:
         params["queryParameters.searchTerm"] = search_term
-    resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
-    resp.raise_for_status()
+    resp = _api_get(url, params=params)
     data = resp.json()
     return [
         item["DebateSectionExtId"]
@@ -477,7 +501,8 @@ def _fetch_session_full(ext_id: str) -> tuple[dict, list[dict], list[str]]:
     try:
         resp = requests.get(url, timeout=_REQUEST_TIMEOUT)
         resp.raise_for_status()
-    except requests.RequestException:
+    except requests.RequestException as e:
+        _log.warning("[archive] failed to fetch session %s: %s", ext_id, e)
         return {}, [], []
 
     data = resp.json()
@@ -623,7 +648,7 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
         seeds = _get_seeds_for_date(sitting_date, house)
     except requests.RequestException as e:
         print(f"[archive] ERROR fetching seeds for {sitting_date}: {e}", flush=True)
-        return 0
+        raise  # propagate to ingest_date_range() so it counts as an error
 
     if not seeds:
         if verbose:

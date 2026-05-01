@@ -46,6 +46,83 @@ The Hansard intelligence strategy section (originally framing a parallel product
 
 Phase 2A: Free archive build plan
 Detailed plan for the next ~4 weeks of focused build, ending with civil service launch.
+
+## Soft-launch framing (locked 1 May 2026 evening)
+
+Phase 2A is reframed from "discrete launch event" to "soft launch with
+ongoing iteration." The tool is publicly accessible at westminsterbrief.co.uk;
+features are added as they're built rather than gated to a launch day.
+
+Implications:
+
+1. Civil service share is still a one-shot moment. The 32-day approval
+   window remains time-fixed; the DD demo and 300-colleague Teams share
+   happen when approval lands, regardless of feature state. "Soft launch"
+   doesn't mean "share when ready" — it means "iterate after sharing."
+
+2. Must-haves for share are narrower than feature-complete. What needs
+   to be in place: search working, theme tagging quality acceptable, cron
+   services keeping archive current, SEO foundation, page templates
+   rendering, no obvious UX issues. Bill Journey, advanced filters, AI
+   summaries, etc. are all post-share additions.
+
+3. Visible gaps are part of the story. Where features are missing
+   (e.g. Bill Journey via Bills API), the tool acknowledges and links to
+   authoritative sources rather than hiding the gap. Iteration becomes
+   a public narrative of the tool improving.
+
+4. A "Recent additions" feed on the archive home auto-generates from
+   cron data, signalling freshness without editorial commitment. A heavier
+   "What's new" changelog is deferred — decide post-share whether the
+   public-building narrative is worth the ongoing time cost.
+
+Revised priority order:
+1. Cron services (load-bearing for "feels alive")
+2. Bill page polish (sort fix + explanatory line)
+3. Theme tagging quality validation
+4. Recent additions feed on archive home
+5. Sitemap submission to Search Console
+6. DD demo + civil service share when approval lands
+7. Phase 2A.5 starts post-share with Bill Journey via Bills API as first build
+
+### Bill Journey display — Phase 2A.5 candidate (deferred from Phase 2A)
+
+Bill stage progression display ("Commons First Reading → Commons Second
+Reading → Royal Assent") is appropriate Phase 2A scope per the architectural
+distinction (bill status is factual, not analytical). Build was not
+started before the Phase 2A scope was reframed to soft-launch. Bill-related
+sessions in v1 are linked via title-matching, which works for current
+Hansard data but doesn't surface stage labels or progression structure.
+
+Phase 2A v1 mitigation: bill-type session pages show "Other Stages of This
+Debate" via title-matching, with an explanatory line linking to
+bills.parliament.uk for full bill progression.
+
+Phase 2A.5 build (first post-share build):
+
+- Integrate Parliament Bills API (bills.parliament.uk)
+- Add bill_id and stage_type columns to ha_session schema
+- Backfill existing bill-related sessions with bill_id by matching against
+  the Bills API
+- Update bill-type session pages with full journey display: chronological
+  stage progression, contribution counts per stage, current stage indicator,
+  pending stages flagged
+- Replace title-match linkage with bill_id linkage on related-sessions
+  display
+
+Estimated effort: 5-7 days.
+
+Phase 2A vs Phase 2B — the governing principle (locked 30 April 2026)
+The line between Phase 2A (free archive) and Phase 2B (paid briefing pack) is not which data sources are used. It is what the feature does with the data.
+
+Phase 2A: factual context — states what is publicly known, unchanged from the source. Examples: "currently at Lords Committee Stage, next sitting 12 May"; "this bill was introduced on X, received Royal Assent on Y"; "27 April 2026 — Lords Oral Questions". No synthesis, no interpretation, no inference about intent or direction.
+
+Phase 2B: analytical synthesis — interprets patterns, traces evolution, produces authored narrative. Examples: "government position has shifted on Clauses 14-17"; "lexical drift: 'shortly' → 'in due course' signals internal delay"; "parliamentary activity on this topic has increased markedly since the budget". This is what Claude Opus earns its compute cost for.
+
+This means any data source — Bills API, Hansard, GOV.UK content API, ONS — can supply Phase 2A features, as long as the feature states facts rather than synthesises them. Phase 2B uses the same sources but adds analysis on top.
+
+This distinction also matters for the free toolkit rule in CLAUDE.md: free features (Phase 2A) retrieve and display factual data; they do not author interpretation. Both must hold.
+
 Locked scope for Phase 2A
 In scope:
 
@@ -58,6 +135,7 @@ SEO basics: proper title tags, structured data (JSON-LD), sitemap.xml, robots.tx
 Performance — pages must load fast enough for civil service systems
 Browser compatibility — Edge and Chrome at minimum (likely civil service browsers)
 Existing six tools continue to work (no regression)
+Bills API factual context — map sessions to bills they discuss (title matching), display current bill status on session detail pages (introduced / current stage / concluded / withdrawn), link to Parliament's official bill page. States facts only; no amendment tracking, vote analysis, or analytical synthesis (those are Phase 2B).
 
 Out of scope (deferred to Phase 2A.5):
 
@@ -69,20 +147,74 @@ User accounts (the archive is fully public, no login needed)
 Subscription tier infrastructure
 
 Build sequence (suggested)
-Week 1: Hansard ingestion and storage
+Week 1: Hansard ingestion and storage — COMPLETE (29 April 2026)
 
-Ingestion pipeline (rolling capture from Hansard publication)
-Database schema implementation
-Backfill last 3 months of debates as the launch corpus
+What was built:
+Chain-walking ingestion pipeline via NextDebateExtId/PreviousDebateExtId links (full BFS traversal — not just the Hansard search index, which misses up to 30% of sessions)
+Westminster Hall anchor fix: secondary "Westminster Hall" search guarantees WH chain seeding when Commons Chamber sessions crowd it out of the search results
+90-day backfill complete: 1,224 sessions, 39,598 contributions in the database
+9-type debate vocabulary locked: oral_questions, pmqs, westminster_hall, debate, ministerial_statement, statutory_instrument, committee_stage, petition, other
+hrs_tag-first classifier (full rewrite): location → hrs_tag → title fallback; eliminates silent SI misclassification and PMQs-as-oral_questions bugs from prior heuristic-only approach
+is_container flag: 175 structural header sessions flagged across 4 container types (hs_6bDepartment, hs_3MainHdg, hs_3OralAnswers, hs_6bPetitions + null-tag "Westminster Hall" aggregate sessions) and excluded from tagging and public pages. Full container sweep completed 29 April 2026 — see "Container handling" in decision points.
+Merged to master.
 
-Week 2: AI theme tagging
+Week 2: AI theme tagging — COMPLETE (29 April 2026)
 
-Gemini Flash-Lite prompt design with worked examples
-Run on backfilled debates
-Refine prompts based on output quality (sample 50 by hand, check quality, iterate)
-Schedule ongoing tagging as new debates ingest
+What was built:
+hansard_archive/tagger.py: two-level theme tagging using Gemini Flash-Lite with JSON schema enum enforcement (hard constraint on policy_area values)
+scripts/run_tagging.py: batch runner with --limit, --id, --include-other flags; safe to re-run (already-tagged sessions skipped)
+Two-level vocabulary: policy_area (23-term GOV.UK taxonomy, controlled via response schema enum) + specific (1–5 free-text topic phrases per session)
+50-session sample run result: 50/50 tagged, 405 theme rows, 0 failures, 0 off-list policy_area values, 0 JSON parse errors
 
-Week 3: Public-facing pages
+Status: full run COMPLETE (29 April 2026 evening).
+902/912 sessions tagged (98.9%) — 10 failures, all sessions with no speech text ("Backbench Business" and "Business without Debate" procedural sessions)
+7,397 total theme rows (387 pre-existing + 7,010 added in full run)
+0 off-list policy_area values, 0 JSON parse errors
+
+Corpus state as of 29 April 2026 (post-run, 90-day corpus):
+1,224 sessions ingested (39,598 contributions)
+175 is_container sessions excluded from tagging
+960 sessions tagged (7,397 theme rows)
+89 debate_type='other' sessions untagged at launch (full-text searchable; Week 3 backlog item to triage substantive ones)
+
+Year backfill ingestion complete (29 April 2026 evening):
+365 days checked (2025-04-29 to 2026-04-28), 130 sitting days found
+3,190 new sessions ingested, 0 errors
+DB total: 4,414 sessions (727 containers, 3,687 non-container)
+
+Backbench Business anchor fix (30 April 2026):
+53 zero-content structural anchor sessions patched to is_container=True
+ingestion.py updated to detect anchor pattern going forward (see Container handling decision point)
+Untagged taggable sessions after patch: 2,356
+
+Year backfill tagging (30 April 2026 — COMPLETE):
+Gov+PA diagnostic (spot-check gate): only 4 sessions tagged exclusively with Gov+PA, avg 3.11 policy_area tags per session including it — confirmed working correctly, not a fallback
+2,356 eligible sessions; 2,332 tagged (99.0%), 24 failures (no response), 0 errors; 18,172 theme rows added
+Full Commons corpus: 3,634 taggable sessions; 3,282 tagged (90.3%); avg 3.04 policy_area tags per tagged session; all 23 policy_area terms in use; no runaway catch-all, no dead terms
+
+Lords pipeline — COMPLETE (30 April 2026):
+Decision made: Lords in Phase 2A scope, building now (not deferred to Week 3).
+ingestion.py updated: hs_venue container, "lords chamber" and "grand committee" null-tag containers, Grand Committee classifier branch (location → committee_stage), ChildDebates BFS extraction (handles isolated GC sub-chain without secondary anchor search). Also: _PROCEDURAL_TITLE_STARTS override (AoB always → other regardless of venue) and _MADE_SI_RE check placed before "amendment" keyword (fixes Amendment SIs miscategorised as debate).
+backfill_hansard.py: --house Lords flag added; ingest_date_range() now accepts house= param.
+spec doc: docs/lords-ingestion-spec.md written (container/anchor patterns, taxonomy, GC chain design, time estimates). Updated with post-build findings and documented OQ/MS classification gap.
+
+1-day Lords test (2026-04-29): 6 sessions, 0 errors — passed.
+7-day Lords test (2026-04-23 to 2026-04-29): 68 sessions across 4 sitting days, 0 errors. Grand Committee confirmed on 2026-04-27 (25 sessions incl. GC). Classification distribution healthy. Passed.
+12-month Lords backfill (COMPLETE): 365 days, 164 sitting days, 2,332 new sessions, 0 errors.
+Lords taxonomy survey and reclassification pass (30 April 2026):
+  Fix 1: 67 other → statutory_instrument (made SIs correctly classified)
+  Fix 2: 75 debate → statutory_instrument (Amendment SIs misclassified due to keyword order — fixed in ingestion.py)
+  Fix 3: 74 committee_stage → other (AoB sessions inside Grand Committee)
+  Total: 216 sessions reclassified
+Lords theme tagging (2 passes, 30 April 2026 — COMPLETE):
+  Pass 1: 806/830 tagged (97.1%), 5,366 theme rows
+  Pass 2 (post-reclassification): 62/91 tagged, 819 theme rows (29 failures = SIs with no debate text, expected)
+  Coverage: 799/799 taggable Lords sessions (100%); 873 sessions with theme tags total
+
+Documented gap (Lords oral questions and ministerial statements):
+Not separately classifiable from current Hansard API signals. Lords HRSTag taxonomy is almost entirely NewDebate — no Lords equivalent of hs_8Question or hs_2cStatement. Sessions stored as other, remain full-text searchable and theme-tagged. Phase 2A.5 task. See docs/lords-ingestion-spec.md for full gap documentation.
+
+Week 3: Public-facing pages — UPCOMING
 
 Search/browse interface
 MP-level page templates (every Q from this MP, themed)
@@ -90,7 +222,7 @@ Department-level page templates
 Theme-level page templates (every Q on tuition fees, etc.)
 SEO basics applied across all templates
 
-Week 4: Polish and launch prep
+Week 4: Polish and launch prep — UPCOMING
 
 Performance optimisation (page load speed, database queries)
 Civil service system browser testing
@@ -100,19 +232,42 @@ DD demo prep
 
 Decision points already made for Phase 2A
 
-Model for theme tagging: Gemini Flash-Lite (cheap, batchable, sufficient quality for tagging)
-Ingestion approach: rolling Hansard publication (2-5 minutes behind real time, not full live video)
-Data model: sessions → questions → analysis (per 27 April strategy)
-No paywall in Phase 2A: everything is free and indexed
-No user accounts in Phase 2A: fully public access
+Model for theme tagging: Gemini Flash-Lite (cheap, batchable, sufficient quality for tagging). Confirmed correct after 50-session sample run; Gemini 2.5 Flash-Lite auto-detected and used if available.
+Ingestion approach: chain-walking via NextDebateExtId/PreviousDebateExtId rather than search-index-only; Westminster Hall anchor search guarantees WH chain seeding.
+Data model: sessions → contributions → themes (ha_session, ha_contribution, ha_session_theme tables). Implemented and in production.
+Backfill depth: 90 days at launch (1,224 sessions); year backfill complete 29 April 2026 (4,414 sessions total, 130 sitting days, 2025-04-29 to 2026-04-28). Full year corpus theme-tagged 30 April 2026. Same pipeline supports deeper historical backfill — just extend the date range.
+Debate type vocabulary: 9 types locked. The hrs_tag field is the authoritative classification signal, not title heuristics. Vocabulary will not change mid-build.
+Container handling: is_container boolean flag (not deletion). Excluded from tagging and public pages; raw contribution data preserved. Two structurally distinct patterns both use this flag:
+
+(1) Duplicate-content containers: structural headers whose _flatten_items() recursion captures contributions from all child sessions, producing duplicate counts. Four types: hs_6bDepartment (dept oral questions header), hs_3MainHdg (chain-head header), hs_3OralAnswers (full-day oral answers header), hs_6bPetitions (petitions header). Plus null-tag "Westminster Hall" and "Commons Chamber" aggregate sessions. Comprehensive sweep completed 29 April 2026 — all (hrs_tag, location) combinations verified by contribution-count pattern matching. Non-containers confirmed: hs_2BillTitle, hs_2GenericHdg/hs_2cGenericHdg, null-tag Public Bill Committee sittings.
+
+(2) Zero-content anchors: section-header sessions that announce a parliamentary slot but carry no speech text. The actual debates within the slot are ingested separately under their own titles. Always 0 contributions. "Backbench Business" identified as the confirmed anchor type (53 sessions, 30 April 2026 — patch applied to existing rows; ingestion.py updated via _ANCHOR_TITLES set to detect going forward).
+Theme vocabulary: two-level (policy_area controlled 23-term GOV.UK taxonomy + specific free-text 1–5 phrases). policy_area values are hard-constrained via Gemini JSON schema enum; no off-list values possible.
+Skip types for initial tagging: debate_type='other' excluded at launch (procedural/mixed sessions). other sessions remain full-text searchable; a Week 3 backlog item will triage substantive ones for reclassification.
+No paywall in Phase 2A: everything is free and indexed.
+No user accounts in Phase 2A: fully public access.
+
+Phase 2A.5 tasks (post-launch, before Phase 2B)
+
+Lords oral questions classifier — COMPLETE (30 April 2026).
+Resolved via constitutionally mandated opening-phrase signal: every Lords oral question begins "To ask His Majesty's Government..." — 100% precision, no false positives possible. 640 sessions reclassified from other/committee_stage/debate to oral_questions via backfill script. The combined classifier (word-count gates, contribution-count gates) considered and rejected: the phrase alone achieves ~100% precision, additional gates only create false negatives. Archive now correctly surfaces Lords OQs when filtering by dtype=oral_questions.
+
+Bills API integration (Phase 2A scope — factual context only).
+Map sessions to bills by title matching. Display current stage on session detail pages. Link to Parliament's official bill page. No analytical synthesis in Phase 2A — that is Phase 2B scope. Investigation first: endpoints, rate limits, title-match reliability, effort estimate, update frequency. Then build.
+
+Scoring / ranking for /archive search results.
+Approved formula (30 April 2026): 40% text relevance + 35% recency (45-day half-life) + 15% engagement (log-scaled contribution count) + 10% cross-cutting (policy area breadth). Additive. No-query browse stays pure date DESC. Short single-word queries that match as substrings of common words (e.g. "AI" matching "retail", "rail") need word-boundary fix before scoring is applied to them. Implementation pending.
+
+OQ grouping on /archive.
+When dtype=oral_questions or dtype=pmqs and no search query, group results by date/department rather than flat list. Commons OQs: group by department-on-date. Lords OQs: group by date only. PMQs: group by date. Implementation in progress (30 April 2026).
+
+---
 
 Decision points still open for Phase 2A
 
-How far back to backfill at launch (3 months? 6 months? whole 2024-26 Parliament?)
-Whether to include Lords debates at launch or only Commons (Mark's Lords slug structure already supports indexing)
-Specific URL structure for theme pages (slug conventions need locking — Mark already has SEO conventions for MP/constituency slugs but theme slugs are new)
-Search backend: Postgres full-text search (simple) vs dedicated search service (more capable, more setup)
-Hosting implications — does the archive fit on the current Railway plan?
+Lords debates at launch — DECIDED (30 April 2026). Lords included in Phase 2A. Pipeline code complete; 1-day Lords test pending. 12-month backfill and container sweep follow test. Week 3 page templates must support both houses (house field on ha_session already present). See docs/lords-ingestion-spec.md for full Lords pipeline spec.
+Specific URL structure for theme pages. Slug conventions need locking before Week 3 — Mark has SEO slug conventions for MP/constituency pages but theme slugs are new. Suggest locking alongside the Week 3 page template work.
+Search backend: Postgres full-text search (simple, no new dependencies) vs dedicated search service (more capable, more setup). Decide at start of Week 3 as it affects the search page architecture.
 
 Success metrics for Phase 2A
 Not revenue. The Phase 2A success criteria:
@@ -315,7 +470,7 @@ Stakeholder Directory (3,400+ orgs)
 
 Parliament APIs to integrate:
 
-Bills API — legislation in progress, stages, amendments, committee scrutiny, timelines
+Bills API — in Phase 2B this is used for analytical synthesis: amendment tracking, vote analysis, position evolution across bill stages, government majority/risk analysis, committee membership analysis. (Factual bill status display — current stage, next sitting, link to bill page — is Phase 2A scope. Phase 2B builds on that to add interpretation and narrative.)
 Early Day Motions (via Oral Questions & Motions API) — backbench opinion-tabling, signature patterns, cross-party support
 
 GOV.UK Content API to integrate:

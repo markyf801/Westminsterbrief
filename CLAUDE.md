@@ -217,6 +217,19 @@ Clear mapping to avoid confusion when discussing issues:
 - Also set `SECRET_KEY` to a long random string in Railway env vars
 - GitHub repo: `markyf801/Westminsterbrief` — Railway auto-deploys on push to `master`
 
+### Railway Postgres connections
+
+- **Local connections** (migration scripts, pg_dump, psql) need the **public URL** from Postgres service → Database → Config — looks like `postgresql://...@<region>.proxy.rlwy.net:PORT/railway`. The internal hostname (`postgres.railway.internal`) only resolves inside Railway's network.
+- **Production Flask service** uses `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a Variable Reference — not a hardcoded string. This resolves at deploy time.
+
+### Password rotation
+
+Variable References resolve at deploy time, not runtime. After clicking "Regenerate Password" on Postgres → Database → Config, consumer services (Flask app) keep the old password until manually redeployed. Always redeploy consumer services after a password rotation.
+
+### Bulk migrations and volume size
+
+Single-transaction bulk inserts use working space (WAL + indexes) of roughly 2–3× the final stored data size. For migrations of 200k+ rows, ensure the Postgres volume has sufficient headroom before running `--execute`. The Hobby tier default (500 MB) is insufficient for the Hansard archive; the Phase 2A migration required resizing to several GB. Live resize is supported on all paid tiers with zero downtime.
+
 ## Deployment discipline — local-first for major Phase builds only
 
 This rule applies to major Phase builds specifically (currently: Phase 1 compliance/auth/Stripe foundation, and Phase 2 stakeholder briefing pack). It does NOT apply to general site development, bug fixes, content updates, or other unrelated work — Mark continues to work on those in the normal way and pushes when ready.
@@ -284,6 +297,14 @@ These conventions are locked for any URL/slug work that builds public archive pa
 - **MP seat changes:** stable-first. Once an MP slug is assigned, it never changes even if they switch constituencies. Page content updates to reflect current role, but the URL is permanent
 - **Lord slugs:** `firstname-lastname-of-place` matching their official title where possible. Fallback: `firstname-lastname-baron`
 - **Constituency normalisation rules:** lowercase, hyphens for spaces, keep "and" (`holborn-and-st-pancras`), normalise "St" to lowercase `st`, strip apostrophes (`st-albans` not `st-alban's`), strip commas
+
+## Canonical domain and URLs (locked 1 May 2026)
+
+- **Canonical domain:** `westminsterbrief.co.uk` — naked domain, no www
+- **All canonical tags, `og:url`, internal links, and sitemap entries MUST use the canonical domain consistently.** No www, no http, no trailing slash on the domain itself.
+- **All non-canonical variants must 301 (or 308) redirect to the canonical HTTPS naked-domain URL.** This includes: `www.westminsterbrief.co.uk/*`, `http://westminsterbrief.co.uk/*`, `http://www.westminsterbrief.co.uk/*`. Never use 302 for these redirects.
+- The www→naked redirect is implemented as a Flask `before_request` hook. HTTP→HTTPS is handled by Railway.
+- When adding new pages or templates: check that any hardcoded domain references use `westminsterbrief.co.uk`, not `www.westminsterbrief.co.uk`.
 
 ## Committee evidence ingestion — known behaviour and rules
 
@@ -663,6 +684,25 @@ The tracker should use server-side filtering, not the client-side workaround:
 - **A typical sitting day produces 200–500 WQs across all departments and houses.** Heavy days (post-recess return, end of session, major events) can reach 600–1200. Paginate rather than assuming a single `take=500` covers a full day.
 
 - **Recess detection:** If a lookback of 7 days returns 0 questions, Parliament is likely in recess. Surface a banner — "Parliament not currently sitting — no questions tabled in the last 7 days" — rather than showing a confusingly empty page.
+
+---
+
+## Working principle: status-check before scoping
+
+When picking up a piece of work that may have been progressed in earlier sessions (with this Opus, a previous Opus, or via Code directly), do not assume the spec doc reflects current state. The spec captures locked decisions; it does not always capture what's been built since the last edit.
+
+Before drafting a brief or scoping next steps, ask Code (or Mark) for current state. Two questions usually sufficient:
+
+- "What's been built since [last touchpoint]?"
+- "What's actually left vs what the spec doc lists as pending?"
+
+Even when the spec doc has been updated recently, this check is cheap and catches drift. The cost of an unnecessary status check is small. The cost of drafting a brief against a stale spec is larger — it wastes Code's time, risks rebuilding things that exist, and can introduce regressions if Code starts on the redundant work.
+
+The 1 May 2026 session surfaced this twice:
+- Cron schedule was assumed daily-overnight per spec; had been agreed hourly in a separate conversation with previous Opus
+- Item 3 page templates and search were assumed unbuilt per running order; were largely complete
+
+Both were caught — once by Mark spotting the cron change, once by Mark pausing the item 3 brief. Both should have been caught by Opus first via status check.
 
 ---
 

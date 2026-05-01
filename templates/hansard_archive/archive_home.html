@@ -20,24 +20,45 @@
         {% endif %}
     </div>
 
-    {# --- Search form --- #}
-    <form class="ah-form" method="get" action="/archive">
+    {# --- Recently added feed (auto-generated, 15-min cache) --- #}
+    {% if recent_additions %}
+    {% set ra = recent_additions %}
+    <div class="ah-recent">
+        <span class="ah-recent-label">Recently added</span>
+        {% if ra.count_24h > 0 %}
+        <span class="ah-recent-count">{{ ra.count_24h }} session{{ 's' if ra.count_24h != 1 else '' }} added in the last 24 hours</span>
+        <a href="/archive" class="ah-recent-browse">Browse latest →</a>
+        {% else %}
+        <span class="ah-recent-count">No new sessions today — Parliament may not be sitting</span>
+        {% endif %}
+        {% if ra.last_ingested_at %}
+        <span class="ah-recent-updated">Last updated: {{ ra.last_ingested_at.strftime('%d %b %Y %H:%M') }} UTC</span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# --- Search box (goes to /archive/search, noindex) --- #}
+    <form class="ah-form" method="get" action="/archive/search">
         <div class="ah-search-row">
-            <input type="text" name="q" value="{{ q }}" placeholder="Search debates…"
+            <label for="ah-search-q" class="ah-visually-hidden">Search Hansard speeches and debates</label>
+            <input type="text" name="q" id="ah-search-q" placeholder="Search speeches and debates…"
                    class="ah-search-input" autocomplete="off" spellcheck="false">
             <button type="submit" class="ah-search-btn">Search</button>
-            {% if has_filters %}
-            <a href="/archive" class="ah-clear-link">Clear</a>
-            {% endif %}
         </div>
+    </form>
+
+    {# --- Browse / filter form --- #}
+    <form class="ah-form" method="get" action="/archive">
+        <div class="ah-filter-row" style="flex-wrap:wrap;">
+            {% if has_filters %}<a href="/archive" class="ah-clear-link" style="margin-bottom:0;">Clear filters</a>{% endif %}
         <div class="ah-filter-row">
-            <select name="house" class="ah-filter-select" id="ah-house-select">
+            <select name="house" class="ah-filter-select" id="ah-house-select" aria-label="Filter by house">
                 <option value="">All houses</option>
                 <option value="Commons" {% if house_filter == 'Commons' %}selected{% endif %}>Commons</option>
                 <option value="Lords"   {% if house_filter == 'Lords'   %}selected{% endif %}>Lords</option>
             </select>
 
-            <select name="dtype" class="ah-filter-select">
+            <select name="dtype" class="ah-filter-select" aria-label="Filter by debate type">
                 <option value="">All types</option>
                 {% for key, label in debate_type_labels.items() %}
                 <option value="{{ key }}" {% if dtype_filter == key %}selected{% endif %}>{{ label }}</option>
@@ -46,6 +67,7 @@
 
             {% if all_departments %}
             <select name="dept" class="ah-filter-select ah-filter-select-wide" id="ah-dept-select"
+                    aria-label="Filter by department"
                     {% if house_filter == 'Lords' %}style="display:none"{% endif %}>
                 <option value="">All departments</option>
                 {% for dept in all_departments %}
@@ -54,22 +76,23 @@
             </select>
             {% endif %}
 
-            <select name="policy" class="ah-filter-select ah-filter-select-wide">
+            <select name="policy" class="ah-filter-select ah-filter-select-wide" aria-label="Filter by policy area">
                 <option value="">All policy areas</option>
                 {% for pa in all_policy_areas %}
                 <option value="{{ pa }}" {% if policy_filter == pa %}selected{% endif %}>{{ pa }}</option>
                 {% endfor %}
             </select>
 
-            <span class="ah-filter-label">From</span>
-            <input type="date" name="from" value="{{ date_from }}" class="ah-filter-date">
-            <span class="ah-filter-label">To</span>
-            <input type="date" name="to"   value="{{ date_to }}"   class="ah-filter-date">
+            <label for="ah-date-from" class="ah-filter-label">From</label>
+            <input type="date" name="from" id="ah-date-from" value="{{ date_from }}" class="ah-filter-date">
+            <label for="ah-date-to" class="ah-filter-label">To</label>
+            <input type="date" name="to" id="ah-date-to" value="{{ date_to }}" class="ah-filter-date">
 
             <label class="ah-title-only-label">
                 <input type="checkbox" name="title_only" value="1" {% if title_only %}checked{% endif %}>
                 Title only
             </label>
+            <button type="submit" class="ah-search-btn" style="margin-left:auto;">Filter</button>
         </div>
     </form>
 
@@ -81,11 +104,7 @@
             <span class="ah-results-range">showing groups {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
             {% endif %}
         {% elif has_filters %}
-            {% if q %}
-                <span class="ah-results-count">{{ total }} result{{ 's' if total != 1 else '' }} for <strong>{{ q }}</strong></span>
-            {% else %}
-                <span class="ah-results-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
-            {% endif %}
+            <span class="ah-results-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
             {% if total > 0 %}
             <span class="ah-results-range">showing {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
             {% endif %}
