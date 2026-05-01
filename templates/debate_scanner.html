@@ -79,7 +79,7 @@
                 </div>
                 {% endif %}
                 <div class="form-group" style="align-self:flex-end;">
-                    <div style="font-size:11.5px; color:rgba(255,255,255,0.45); margin-bottom:6px;">
+                    <div style="font-size:11.5px; color:#8a96a4; margin-bottom:6px;">
                         Optionally preview &amp; edit the AI-generated search terms before running the full search.
                     </div>
                     <div style="display:flex; gap:8px;">
@@ -98,7 +98,7 @@
 
         <!-- Search terms preview/edit panel — sits below the form, hidden until Preview is clicked -->
         <div id="terms-preview-panel" style="display:none; margin-top:14px; background:#f0f4ff; border:1px solid #c7d2fe; border-radius:8px; padding:16px 18px;">
-            <p style="font-size:13px; font-weight:600; color:#1c3e6e; margin:0 0 4px;">✏️ AI-suggested search terms</p>
+            <p style="font-size:13px; font-weight:600; color:#1a4a6e; margin:0 0 4px;">✏️ AI-suggested search terms</p>
             <p style="font-size:12.5px; color:#555; margin:0 0 10px; line-height:1.5;">
                 These are the terms that will be sent to Hansard. <strong>Wait until all terms have loaded before editing.</strong>
                 Add, remove or amend terms — one per line. When you're happy, click <em>Use these terms</em> then run the search.
@@ -123,7 +123,7 @@
         {% endif %}
         {% if debug_query and mode == 'topic' %}
         <div style="margin-top:10px; font-size:11.5px; color:#888; background:#f8f9fa; border:1px solid #e9ecef; border-radius:5px; padding:7px 12px;">
-            <strong style="color:#555;">Search terms sent to Hansard:</strong> <code style="font-size:11px; color:#1c3e6e;">{{ debug_query }}</code>
+            <strong style="color:#555;">Search terms sent to Hansard:</strong> <code style="font-size:11px; color:#1a4a6e;">{{ debug_query }}</code>
         </div>
         {% endif %}
 
@@ -132,7 +132,7 @@
         {% set n_wq = result_counts.wq %}
         {% if n_sessions > 0 or n_wq > 0 %}
         <div style="margin-top:8px; font-size:12px; color:#555; background:#f0f4ff; border:1px solid #d0d9f0; border-radius:5px; padding:6px 12px;">
-            <strong style="color:#1c3e6e;">Results:</strong>
+            <strong style="color:#1a4a6e;">Results:</strong>
             {% if n_sessions > 0 %}
               {{ n_sessions }} debate session{{ 's' if n_sessions != 1 else '' }}
               {% set parts = [] %}
@@ -272,7 +272,7 @@
                     <span style="font-weight:600; color:#222;">{{ s.speaker }}</span>
                     {% if s.role %}<span class="topic-party-badge">{{ s.role }}</span>{% endif %}
                     {% if s.date %}<span style="font-size:11.5px; color:#888; margin-left:4px;">{{ s.date }}</span>{% endif %}
-                    {% if s.listurl %}&nbsp;<a href="{{ s.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#1c3e6e;">↗ Hansard</a>{% endif %}
+                    {% if s.listurl %}&nbsp;<a href="{{ s.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#1a4a6e;">↗ Hansard</a>{% endif %}
                     <br><span style="color:#1c1c1c; font-style:italic;">"{{ s.statement }}"</span>
                 </li>
                 {% endfor %}
@@ -524,11 +524,11 @@
 
             <!-- Written Questions & Answers -->
             {% if wq_error %}
-            <div style="margin:8px 0;padding:8px 12px;background:rgba(184,150,46,0.15);border:1px solid rgba(184,150,46,0.4);border-radius:6px;font-size:0.85em;color:rgba(255,255,255,0.82);">
+            <div style="margin:8px 0;padding:8px 12px;background:#fef9ec;border:1px solid #f6c76e;border-radius:6px;font-size:0.85em;color:#92400e;">
                 ⚠ Written Questions could not be loaded — the Parliament API returned an error. Try running the search again.
             </div>
             {% elif is_post and not wq_rows %}
-            <div style="margin:8px 0;padding:8px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;font-size:0.85em;color:rgba(255,255,255,0.5);">
+            <div style="margin:8px 0;padding:8px 12px;background:#f7f9fc;border:1px solid #e0e6ed;border-radius:6px;font-size:0.85em;color:#8a96a4;">
                 No written questions found matching this topic and date range.
             </div>
             {% endif %}
@@ -870,7 +870,7 @@
                         {% if item.org_name %}<span style="font-size:11.5px; color:#555; margin-left:6px;">re: {{ item.org_name }}</span>{% endif %}
                     </div>
                     <p class="result-card-title" style="margin:4px 0;">
-                        <a href="{{ item.link }}" target="_blank" style="color:#1c3e6e; font-weight:600;">{{ item.title }}</a>
+                        <a href="{{ item.link }}" target="_blank" style="color:#1a4a6e; font-weight:600;">{{ item.title }}</a>
                     </p>
                     {% if item.summary %}<p class="result-card-quote" style="margin:4px 0 0;">{{ item.summary }}</p>{% endif %}
                 </div>
@@ -893,7 +893,7 @@
                         {% if item.published %}<span style="font-size:11.5px; color:#888;">{{ item.published }}</span>{% endif %}
                     </div>
                     <p class="result-card-title" style="margin:4px 0;">
-                        <a href="{{ item.link }}" target="_blank" style="color:#1c3e6e; font-weight:600;">{{ item.title }}</a>
+                        <a href="{{ item.link }}" target="_blank" style="color:#1a4a6e; font-weight:600;">{{ item.title }}</a>
                     </p>
                     {% if item.summary %}<p class="result-card-quote" style="margin:4px 0 0;">{{ item.summary }}</p>{% endif %}
                 </div>
@@ -962,7 +962,7 @@
         <!-- ─── Org directory ─── -->
         <div style="margin-top:28px;">
             <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
-                <h3 style="margin:0; font-size:1rem; color:#1c3e6e;">📋 Tracked Organisations</h3>
+                <h3 style="margin:0; font-size:1rem; color:#1a4a6e;">📋 Tracked Organisations</h3>
                 {% if current_user.is_authenticated %}
                 <button onclick="toggleAddOrg()" class="btn btn-secondary" style="font-size:12.5px; padding:6px 14px;">+ Add organisation</button>
                 {% endif %}
@@ -971,7 +971,7 @@
             <!-- Add org form (hidden by default) -->
             {% if current_user.is_authenticated %}
             <div id="add-org-form" style="display:none; background:#f0f4ff; border:1px solid #c7d2fe; border-radius:8px; padding:16px 18px; margin-bottom:16px;">
-                <p style="font-size:13px; font-weight:600; color:#1c3e6e; margin:0 0 10px;">Add a stakeholder organisation</p>
+                <p style="font-size:13px; font-weight:600; color:#1a4a6e; margin:0 0 10px;">Add a stakeholder organisation</p>
                 <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
                     <div style="flex:1; min-width:160px;">
                         <label style="font-size:12px; color:#555; display:block; margin-bottom:4px;">Department</label>

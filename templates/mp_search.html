@@ -6,60 +6,60 @@
 <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
 <style>
 /* Tabs */
-.mp-tabs { display: flex; gap: 0; border-bottom: 2px solid rgba(255,255,255,0.08); margin-bottom: 20px; }
+.mp-tabs { display: flex; gap: 0; border-bottom: 2px solid #e0e6ed; margin-bottom: 20px; }
 .tab-btn {
-    padding: 10px 20px; border: none; background: transparent; color: rgba(255,255,255,0.45);
+    padding: 10px 20px; border: none; background: transparent; color: #8a96a4;
     font-size: 13px; font-weight: 500; cursor: pointer; border-bottom: 3px solid transparent;
     margin-bottom: -2px; transition: color 0.15s;
 }
-.tab-btn.active { color: #fff; font-weight: 700; border-bottom-color: #b8962e; }
-.tab-btn:hover:not(.active) { color: rgba(255,255,255,0.75); background: rgba(255,255,255,0.04); }
+.tab-btn.active { color: #1a2332; font-weight: 700; border-bottom-color: #1a4a6e; }
+.tab-btn:hover:not(.active) { color: #2d3748; background: #f7f9fc; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
 /* Member header */
 .mp-header-box {
     display: flex; gap: 16px; align-items: flex-start;
-    padding: 16px 20px; background: #1a2030; border-left: 4px solid #b8962e;
+    padding: 16px 20px; background: #f7f9fc; border-left: 4px solid #1a4a6e;
     border-radius: 0 6px 6px 0; margin-bottom: 4px;
 }
 .mp-header-photo { width: 72px; height: 90px; object-fit: cover; border-radius: 3px; flex-shrink: 0; }
 .mp-header-meta { flex: 1; }
-.mp-header-name { font-size: 18px; font-weight: 700; color: rgba(255,255,255,0.92); margin-bottom: 4px; }
-.mp-header-sub { font-size: 13px; color: rgba(255,255,255,0.55); }
+.mp-header-name { font-size: 18px; font-weight: 700; color: #1a2332; margin-bottom: 4px; }
+.mp-header-sub { font-size: 13px; color: #5a6878; }
 
 /* Speeches table */
 .speeches-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.speeches-table th { background: #1a2d45; color: rgba(255,255,255,0.85); padding: 8px 12px; text-align: left; font-weight: 600; }
-.speeches-table td { padding: 7px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
-.speeches-table tr:hover td { background: rgba(255,255,255,0.03); }
+.speeches-table th { background: #eef3f8; color: #1a2332; padding: 8px 12px; text-align: left; font-weight: 600; }
+.speeches-table td { padding: 7px 12px; border-bottom: 1px solid #f0f2f5; vertical-align: top; color: #2d3748; }
+.speeches-table tr:hover td { background: #f7f9fc; }
 
 /* Career tables */
 .career-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
-.career-table th { background: #1a2d45; padding: 7px 10px; text-align: left; font-weight: 600; color: rgba(255,255,255,0.85); border-bottom: 1px solid rgba(255,255,255,0.08); }
-.career-table td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; color: rgba(255,255,255,0.82); }
+.career-table th { background: #eef3f8; padding: 7px 10px; text-align: left; font-weight: 600; color: #1a2332; border-bottom: 1px solid #e0e6ed; }
+.career-table td { padding: 6px 10px; border-bottom: 1px solid #f0f2f5; vertical-align: top; color: #2d3748; }
 
 /* PQ card (compact) */
 .pq-card {
-    border-left: 3px solid #c0392b; background: #1a2030; border-radius: 0 6px 6px 0;
-    padding: 12px 14px; margin-bottom: 10px;
+    border-left: 3px solid #e05252; background: #fff; border-radius: 0 6px 6px 0;
+    padding: 12px 14px; margin-bottom: 10px; border: 1px solid #e0e6ed;
 }
-.pq-card.answered { border-left-color: #27ae60; }
-.pq-card-meta { font-size: 11.5px; color: rgba(255,255,255,0.45); margin-bottom: 4px; }
-.pq-card-dept { font-weight: 600; color: #7eb3e0; font-size: 12px; }
-.pq-card-text { font-style: italic; color: rgba(255,255,255,0.75); margin: 4px 0 6px; font-size: 13px; line-height: 1.5; }
-.pq-card-link { font-size: 12px; color: #7eb3e0; text-decoration: none; }
+.pq-card.answered { border-left-color: #16a34a; }
+.pq-card-meta { font-size: 11.5px; color: #8a96a4; margin-bottom: 4px; }
+.pq-card-dept { font-weight: 600; color: #1a4a6e; font-size: 12px; }
+.pq-card-text { font-style: italic; color: #5a6878; margin: 4px 0 6px; font-size: 13px; line-height: 1.5; }
+.pq-card-link { font-size: 12px; color: #4a7fa5; text-decoration: none; }
 .pq-status { font-size: 11px; font-weight: 700; text-transform: uppercase; margin-right: 8px; }
-.pq-status.answered { color: #27ae60; }
-.pq-status.unanswered { color: #e74c3c; }
+.pq-status.answered { color: #16a34a; }
+.pq-status.unanswered { color: #dc2626; }
 
 /* AI profile area */
-#ai-profile-output { background: #1a2030; border-left: 3px solid rgba(255,255,255,0.2); padding: 14px 16px; border-radius: 0 6px 6px 0; font-size: 13px; line-height: 1.7; margin-top: 16px; color: rgba(255,255,255,0.82); }
-#ai-profile-output h3 { font-size: 14px; color: rgba(255,255,255,0.92); margin: 12px 0 4px; }
+#ai-profile-output { background: #f7f9fc; border-left: 3px solid #4a7fa5; padding: 14px 16px; border-radius: 0 6px 6px 0; font-size: 13px; line-height: 1.7; margin-top: 16px; color: #2d3748; }
+#ai-profile-output h3 { font-size: 14px; color: #1a2332; margin: 12px 0 4px; }
 #ai-profile-output ul { margin: 4px 0 8px 18px; }
 
 /* Tab count badges */
-.tab-count { background: rgba(184,150,46,0.2); color: #b8962e; font-size: 11px; font-weight: 600; border-radius: 10px; padding: 1px 7px; margin-left: 5px; }
+.tab-count { background: #e8edf4; color: #1a4a6e; font-size: 11px; font-weight: 600; border-radius: 10px; padding: 1px 7px; margin-left: 5px; }
 </style>
 {% endblock %}
 
@@ -162,7 +162,7 @@
             {% elif profile_data %}
 
                 {% if profile_data.govt_posts %}
-                <h3 style="font-size:14px; color:rgba(255,255,255,0.85); margin:0 0 8px;">Government Roles</h3>
+                <h3 style="font-size:14px; color:#1a2332; margin:0 0 8px;">Government Roles</h3>
                 <table class="career-table">
                     <thead><tr><th>Post</th><th style="width:90px;">From</th><th style="width:90px;">To</th></tr></thead>
                     <tbody>
@@ -178,7 +178,7 @@
                 {% endif %}
 
                 {% if profile_data.opp_posts %}
-                <h3 style="font-size:14px; color:rgba(255,255,255,0.85); margin:16px 0 8px;">Opposition Roles</h3>
+                <h3 style="font-size:14px; color:#1a2332; margin:16px 0 8px;">Opposition Roles</h3>
                 <table class="career-table">
                     <thead><tr><th>Post</th><th style="width:90px;">From</th><th style="width:90px;">To</th></tr></thead>
                     <tbody>
@@ -194,7 +194,7 @@
                 {% endif %}
 
                 {% if profile_data.committees %}
-                <h3 style="font-size:14px; color:rgba(255,255,255,0.85); margin:16px 0 8px;">Committee Memberships</h3>
+                <h3 style="font-size:14px; color:#1a2332; margin:16px 0 8px;">Committee Memberships</h3>
                 <table class="career-table">
                     <thead><tr><th>Committee</th><th style="width:90px;">From</th><th style="width:90px;">To</th></tr></thead>
                     <tbody>
@@ -210,22 +210,22 @@
                 {% endif %}
 
                 {% if not profile_data.govt_posts and not profile_data.opp_posts and not profile_data.committees %}
-                <p style="color:rgba(255,255,255,0.45); font-size:13px; margin-bottom:12px;">No government, opposition, or committee roles recorded.</p>
+                <p style="color:#8a96a4; font-size:13px; margin-bottom:12px;">No government, opposition, or committee roles recorded.</p>
                 {% endif %}
 
                 {% if profile_data.interests %}
-                <h3 style="font-size:14px; color:rgba(255,255,255,0.85); margin:16px 0 8px;">Registered Interests</h3>
+                <h3 style="font-size:14px; color:#1a2332; margin:16px 0 8px;">Registered Interests</h3>
                 <table class="career-table">
                     <thead><tr><th style="width:180px;">Category</th><th>Interest</th></tr></thead>
                     <tbody>
                     {% for interest in profile_data.interests[:40] %}
                     <tr>
-                        <td style="color:rgba(255,255,255,0.55);">{{ interest.category }}</td>
+                        <td style="color:#5a6878;">{{ interest.category }}</td>
                         <td>{{ interest.description }}</td>
                     </tr>
                     {% endfor %}
                     {% if profile_data.interests|length > 40 %}
-                    <tr><td colspan="2" style="color:rgba(255,255,255,0.45); font-size:12px; font-style:italic;">
+                    <tr><td colspan="2" style="color:#8a96a4; font-size:12px; font-style:italic;">
                         … and {{ profile_data.interests|length - 40 }} more. See Parliament website for full register.
                     </td></tr>
                     {% endif %}
@@ -234,16 +234,16 @@
                 {% endif %}
 
             {% else %}
-            <p style="color:rgba(255,255,255,0.45); font-size:13px;">No profile data available.</p>
+            <p style="color:#8a96a4; font-size:13px;">No profile data available.</p>
             {% endif %}
 
             {# AI Profile button #}
-            <div style="margin-top:20px; margin-bottom:16px; border-top:1px solid rgba(255,255,255,0.08); padding-top:16px;">
+            <div style="margin-top:20px; margin-bottom:16px; border-top:1px solid #e0e6ed; padding-top:16px;">
                 <button type="button" onclick="generateAiProfile()" id="ai-btn"
                         class="btn btn-muted" style="font-size:13px;">
                     <span class="badge-ai" style="margin-right:5px;">AI</span> Generate AI Profile
                 </button>
-                <span style="font-size:12px; color:rgba(255,255,255,0.45); margin-left:10px;">
+                <span style="font-size:12px; color:#8a96a4; margin-left:10px;">
                     Calls Gemini — summarises career history and parliamentary activity.
                 </span>
                 <div id="ai-profile-output" style="display:none;"></div>
@@ -253,11 +253,11 @@
         {# ── Tab 2: Written Questions ── #}
         <div class="tab-panel" id="panel-pqs">
             {% if pq_error %}
-            <div class="info-box" style="border-left-color:#d9534f; background:rgba(220,53,69,0.1);">
+            <div class="info-box" style="border-left-color:#d9534f; background:#fdf0f0;">
                 Could not load written questions — {{ pq_error }}.
             </div>
             {% elif pq_results %}
-            <p style="font-size:12.5px; color:rgba(255,255,255,0.45); margin-bottom:12px;">
+            <p style="font-size:12.5px; color:#8a96a4; margin-bottom:12px;">
                 {{ pq_results|length }} question{{ 's' if pq_results|length != 1 else '' }} found
                 {% if selected_dept %} for {{ departments.keys()|list|selectattr('__eq__', 'ne', 'All Departments') and '' or '' }}
                 {% for dname, did in departments.items() %}{% if did == selected_dept %} · filtered to {{ dname }}{% endif %}{% endfor %}{% endif %}
@@ -270,14 +270,14 @@
                 <div class="pq-card-meta">
                     <span class="pq-status {{ 'answered' if r.status == 'ANSWERED' else 'unanswered' }}">{{ r.status }}</span>
                     <span class="pq-card-dept">{{ r.dept }}</span>
-                    <span style="float:right; color:rgba(255,255,255,0.4);">{{ r.date }}{% if r.uin %} · {{ r.uin }}{% endif %}</span>
+                    <span style="float:right; color:#8a96a4;">{{ r.date }}{% if r.uin %} · {{ r.uin }}{% endif %}</span>
                 </div>
                 <p class="pq-card-text">"{{ r.text }}"</p>
                 <a href="{{ r.link }}" target="_blank" class="pq-card-link">View on Parliament.uk &rarr;</a>
             </div>
             {% endfor %}
             {% elif is_post %}
-            <p style="color:rgba(255,255,255,0.45); font-size:13px; padding:8px 0;">
+            <p style="color:#8a96a4; font-size:13px; padding:8px 0;">
                 No written questions found.
                 {% if selected_dept %} Try removing the department filter.{% endif %}
                 {% if start_date or end_date %} Try widening the date range.{% endif %}
@@ -288,11 +288,11 @@
         {# ── Tab 3: Speeches ── #}
         <div class="tab-panel" id="panel-speeches">
             {% if speeches_error %}
-            <div class="info-box" style="border-left-color:#d9534f; background:rgba(220,53,69,0.1);">
+            <div class="info-box" style="border-left-color:#d9534f; background:#fdf0f0;">
                 Could not load speeches — {{ speeches_error }}.
             </div>
             {% elif speeches %}
-            <p style="font-size:12px; color:rgba(255,255,255,0.45); margin-bottom:12px;">
+            <p style="font-size:12px; color:#8a96a4; margin-bottom:12px;">
                 {% if member_header.is_lord %}Lords contributions{% else %}Commons and Westminster Hall contributions{% endif %}
                 via Hansard (Parliament UK) · {{ speeches|length }} most recent (≥50 words)
             </p>
@@ -310,7 +310,7 @@
                     <td>{{ s.date }}</td>
                     <td>
                         {% if s.url %}
-                        <a href="{{ s.url }}" target="_blank" style="color:#7eb3e0; text-decoration:none;">{{ s.subject }}</a>
+                        <a href="{{ s.url }}" target="_blank" style="color:#4a7fa5; text-decoration:none;">{{ s.subject }}</a>
                         {% else %}
                         {{ s.subject }}
                         {% endif %}
@@ -321,7 +321,7 @@
                 </tbody>
             </table>
             {% elif is_post %}
-            <p style="color:rgba(255,255,255,0.45); font-size:13px; padding:8px 0;">
+            <p style="color:#8a96a4; font-size:13px; padding:8px 0;">
                 No recent speeches found in Hansard for this member.
             </p>
             {% endif %}
@@ -396,7 +396,7 @@ function generateAiProfile() {
     btn.disabled = true;
     btn.textContent = 'Generating…';
     out.style.display = 'block';
-    out.innerHTML = '<em style="color:rgba(255,255,255,0.45);">Calling AI — this may take a few seconds…</em>';
+    out.innerHTML = '<em style="color:#8a96a4;">Calling AI — this may take a few seconds…</em>';
 
     fetch('/api/biography', {
         method: 'POST',

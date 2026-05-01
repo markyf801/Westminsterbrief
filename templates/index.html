@@ -123,7 +123,7 @@
     {% endif %}
     {% if selected_dept %}
     <span style="margin-left: 6px;">|</span>
-    <a href="#" onclick="searchAllDepts(); return false;" style="color: #1c3e6e; font-weight: 600; font-size: 13px; margin-left: 6px;">Search all departments for this topic →</a>
+    <a href="#" onclick="searchAllDepts(); return false;" style="color: #1a4a6e; font-weight: 600; font-size: 13px; margin-left: 6px;">Search all departments for this topic →</a>
     {% endif %}
 </div>
 {% endif %}
@@ -138,7 +138,7 @@
             Flat list
         </button>
         <button onclick="showView('grouped')" id="btn-grouped"
-                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #1c3e6e; background: #1c3e6e; color: white; font-size: 12px; cursor: pointer; font-weight: 600;">
+                style="padding: 5px 14px; border-radius: 4px; border: 1px solid #1a4a6e; background: #1a4a6e; color: white; font-size: 12px; cursor: pointer; font-weight: 600;">
             By topic ({{ grouped_results|length }} categories)
         </button>
     </div>
@@ -152,7 +152,7 @@
     <div id="view-grouped" style="margin-top: 16px;">
         {% for heading, group in grouped_results %}
         <details style="margin-bottom: 12px;">
-            <summary style="cursor: pointer; padding: 10px 16px; background: #1c3e6e; color: white; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none;">
+            <summary style="cursor: pointer; padding: 10px 16px; background: #1a4a6e; color: white; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none;">
                 <span style="display:flex; align-items:center; gap:10px;">
                     <input type="checkbox" class="section-select-all"
                            onclick="event.stopPropagation()"
@@ -177,9 +177,9 @@
 {% endif %}
 
 {# ── Selection bar — fixed to bottom, shown when checkboxes are ticked ── #}
-<div id="wq-sel-bar" style="display:none; position:fixed; bottom:0; left:0; right:0; background:#1c3e6e; color:white; padding:12px 20px; z-index:1000; align-items:center; gap:12px; justify-content:center; box-shadow:0 -2px 8px rgba(0,0,0,0.3);">
+<div id="wq-sel-bar" style="display:none; position:fixed; bottom:0; left:0; right:0; background:#1a4a6e; color:white; padding:12px 20px; z-index:1000; align-items:center; gap:12px; justify-content:center; box-shadow:0 -2px 8px rgba(0,0,0,0.3);">
     <span id="wq-sel-count" style="font-weight:600; font-size:14px;"></span>
-    <button onclick="downloadSelected('word')" style="padding:6px 16px; background:#fff; color:#1c3e6e; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:13px;">Download Word</button>
+    <button onclick="downloadSelected('word')" style="padding:6px 16px; background:#fff; color:#1a4a6e; border:none; border-radius:4px; cursor:pointer; font-weight:600; font-size:13px;">Download Word</button>
     <button onclick="downloadSelected('csv')"  style="padding:6px 16px; background:rgba(255,255,255,0.15); color:white; border:1px solid rgba(255,255,255,0.5); border-radius:4px; cursor:pointer; font-weight:600; font-size:13px;">Download CSV</button>
     <button onclick="clearSelection()"         style="padding:6px 12px; background:transparent; color:rgba(255,255,255,0.7); border:1px solid rgba(255,255,255,0.3); border-radius:4px; cursor:pointer; font-size:13px;">Clear</button>
 </div>
@@ -191,10 +191,10 @@ function showView(mode) {
     var btnFlat    = document.getElementById('btn-flat');
     var btnGrouped = document.getElementById('btn-grouped');
     if (mode === 'flat') {
-        btnFlat.style.background    = '#1c3e6e'; btnFlat.style.color    = 'white'; btnFlat.style.borderColor    = '#1c3e6e'; btnFlat.style.fontWeight = '600';
+        btnFlat.style.background    = '#1a4a6e'; btnFlat.style.color    = 'white'; btnFlat.style.borderColor    = '#1a4a6e'; btnFlat.style.fontWeight = '600';
         btnGrouped.style.background = 'white';   btnGrouped.style.color = '#555';  btnGrouped.style.borderColor = '#ccc';   btnGrouped.style.fontWeight = '';
     } else {
-        btnGrouped.style.background = '#1c3e6e'; btnGrouped.style.color = 'white'; btnGrouped.style.borderColor = '#1c3e6e'; btnGrouped.style.fontWeight = '600';
+        btnGrouped.style.background = '#1a4a6e'; btnGrouped.style.color = 'white'; btnGrouped.style.borderColor = '#1a4a6e'; btnGrouped.style.fontWeight = '600';
         btnFlat.style.background    = 'white';   btnFlat.style.color    = '#555';  btnFlat.style.borderColor    = '#ccc';    btnFlat.style.fontWeight = '';
     }
 }

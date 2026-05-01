@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Archive Home — Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+    font-family: 'Inter', 'Segoe UI', Roboto, sans-serif;
+    background: #0d1117;
+    margin: 0; padding: 0;
+    color: rgba(255,255,255,0.82);
+}
+
+/* ── Fake navbar (for visual context only) ── */
+.navbar {
+    background: #0d1117;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    height: 58px;
+    display: flex;
+    align-items: center;
+    padding: 0 30px;
+    gap: 2px;
+    position: sticky; top: 0; z-index: 100;
+}
+.navbar .brand { font-size: 17px; font-weight: 800; color: #fff; margin-right: 16px; letter-spacing: -0.5px; }
+.nav-link { font-size: 13px; color: rgba(255,255,255,0.55); padding: 0 14px; height: 58px; display:flex; align-items:center; text-decoration:none; border-bottom: 3px solid transparent; }
+.nav-link.active { color: #fff; font-weight: 700; border-bottom-color: #b8962e; }
+.nav-link:hover { color: #fff; }
+
+/* ── Outer wrapper — matches main content container from base.html ── */
+.main-container {
+    padding: 36px 30px;
+}
+
+/* ══════════════════════════════════════════════════
+   ARCHIVE HOME PAGE — LIGHT LAYER
+   Same pattern as .sd-page: bleeds to container edges
+   ══════════════════════════════════════════════════ */
+
+.ah-page {
+    background: #f0f2f5;
+    margin: -36px -30px 0;
+    padding-bottom: 60px;
+    min-height: 100vh;
+}
+
+/* Constrained inner column — wider than transcript (900px) since this is a browse page */
+.ah-inner {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 30px;
+}
+
+/* ── Page header ── */
+.ah-header {
+    padding: 28px 0 20px;
+}
+.ah-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a2332;
+    margin: 0 0 4px;
+    letter-spacing: -0.3px;
+}
+.ah-desc {
+    font-size: 13px;
+    color: #8a96a4;
+    margin: 0;
+}
+
+/* ── Search form — white card ── */
+.ah-form {
+    background: #fff;
+    border: 1px solid #e0e6ed;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+.ah-search-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.ah-search-input {
+    flex: 1;
+    padding: 9px 13px;
+    background: #f7f9fb;
+    border: 1px solid #d0d8e4;
+    border-radius: 6px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    color: #1a2332;
+    min-width: 0;
+}
+.ah-search-input::placeholder { color: #aab4c0; }
+.ah-search-input:focus {
+    outline: none;
+    border-color: #4a7fa5;
+    background: #fff;
+}
+.ah-search-btn {
+    padding: 9px 20px;
+    background: #1a4a6e;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.ah-search-btn:hover { background: #1e5580; }
+.ah-clear-link {
+    font-size: 13px;
+    color: #8a96a4;
+    text-decoration: none;
+    align-self: center;
+    white-space: nowrap;
+}
+.ah-clear-link:hover { color: #4a7fa5; text-decoration: underline; }
+
+/* Filter row */
+.ah-filter-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.ah-filter-select {
+    padding: 6px 10px;
+    background: #fff;
+    border: 1px solid #d0d8e4;
+    border-radius: 5px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    color: #2d3748;
+    cursor: pointer;
+    min-width: 0;
+}
+.ah-filter-select:focus { outline: none; border-color: #4a7fa5; }
+.ah-filter-date {
+    padding: 6px 10px;
+    background: #fff;
+    border: 1px solid #d0d8e4;
+    border-radius: 5px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    color: #2d3748;
+    width: 140px;
+}
+.ah-filter-date:focus { outline: none; border-color: #4a7fa5; }
+.ah-title-only-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    color: #5a6878;
+    cursor: pointer;
+    white-space: nowrap;
+    margin-left: 4px;
+}
+.ah-title-only-label input { cursor: pointer; }
+
+/* ── Results bar ── */
+.ah-results-bar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding: 0 2px;
+}
+.ah-results-count {
+    font-size: 13px;
+    color: #5a6878;
+}
+.ah-results-count strong { color: #1a2332; }
+.ah-results-range {
+    font-size: 12px;
+    color: #9aa4b0;
+}
+
+/* ── Result cards ── */
+.ah-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 20px;
+}
+.ah-card {
+    background: #fff;
+    border: 1px solid #e0e6ed;
+    border-radius: 6px;
+    padding: 12px 16px 11px;
+    transition: border-color 0.15s, background 0.15s;
+}
+.ah-card:hover {
+    border-color: #4a7fa5;
+    background: #f7fafe;
+}
+.ah-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 5px;
+    flex-wrap: wrap;
+}
+.ah-card-date {
+    font-size: 12px;
+    color: #5a6878;
+}
+.ah-card-contribs {
+    font-size: 12px;
+    color: #9aa4b0;
+    margin-left: auto;
+}
+.ah-card-title {
+    display: block;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a2332;
+    text-decoration: none;
+    line-height: 1.4;
+    margin-bottom: 8px;
+}
+.ah-card-title:hover { color: #1a4a6e; text-decoration: underline; }
+
+/* Tag strip — policy (blue-ish pill) + specific (greyer pill) */
+.ah-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+/* ── Badges (reuse from existing codebase) ── */
+.topic-source-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+.topic-source-commons { background: #dbeafe; color: #1e40af; }
+.topic-source-lords   { background: #ede9fe; color: #5b21b6; }
+
+.archive-dtype-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+}
+.archive-dtype-debate               { background: #dcfce7; color: #166534; }
+.archive-dtype-oral_questions       { background: #fef9c3; color: #854d0e; }
+.archive-dtype-westminster_hall     { background: #dbeafe; color: #1e3a8a; }
+.archive-dtype-ministerial_statement{ background: #fce7f3; color: #9d174d; }
+.archive-dtype-statutory_instrument { background: #f3f4f6; color: #374151; }
+.archive-dtype-committee_stage      { background: #fffbeb; color: #92400e; }
+.archive-dtype-pmqs                 { background: #fee2e2; color: #991b1b; }
+.archive-dtype-other                { background: #f1f5f9; color: #475569; }
+.archive-dtype-petition             { background: #f0fdf4; color: #14532d; }
+
+.archive-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    text-decoration: none;
+}
+.archive-tag-policy  { background: #dbeafe; color: #1e40af; }
+.archive-tag-topic   { background: #f1f5f9; color: #475569; }
+
+/* ── Pagination ── */
+.ah-pagination {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 0;
+}
+.ah-page-btn {
+    padding: 6px 14px;
+    background: #fff;
+    border: 1px solid #e0e6ed;
+    border-radius: 5px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    color: #4a7fa5;
+    text-decoration: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+.ah-page-btn:hover { border-color: #4a7fa5; background: #f4f8fc; }
+.ah-page-disabled {
+    color: #c0c8d4;
+    cursor: default;
+    pointer-events: none;
+}
+.ah-page-disabled:hover { background: #fff; border-color: #e0e6ed; }
+.ah-page-info {
+    font-size: 13px;
+    color: #8a96a4;
+    margin: 0 4px;
+}
+
+/* ── Source note ── */
+.ah-source-note {
+    font-size: 12px;
+    color: #9aa4b0;
+    margin: 20px 0 0;
+    padding-top: 14px;
+    border-top: 1px solid #e0e6ed;
+}
+.ah-source-note a { color: #6a96b8; text-decoration: none; }
+.ah-source-note a:hover { text-decoration: underline; }
+
+</style>
+</head>
+<body>
+
+<!-- Fake navbar for context -->
+<nav class="navbar">
+    <span class="brand">Westminster Brief</span>
+    <a class="nav-link" href="#">Questions</a>
+    <a class="nav-link" href="#">PQ Tracker</a>
+    <a class="nav-link" href="#">MP Research</a>
+    <a class="nav-link" href="#">Debates</a>
+    <a class="nav-link active" href="#">Hansard Archive</a>
+</nav>
+
+<div class="main-container">
+<div class="ah-page">
+<div class="ah-inner">
+
+    <!-- Page header -->
+    <div class="ah-header">
+        <h1 class="ah-title">Hansard Archive</h1>
+        <p class="ah-desc">UK parliamentary debates — Commons and Lords</p>
+    </div>
+
+    <!-- Search form -->
+    <form class="ah-form">
+        <div class="ah-search-row">
+            <input type="text" class="ah-search-input" value="Lifelong Learning" placeholder="Search debates…">
+            <button type="submit" class="ah-search-btn">Search</button>
+            <a href="#" class="ah-clear-link">Clear</a>
+        </div>
+        <div class="ah-filter-row">
+            <select class="ah-filter-select">
+                <option>All houses</option>
+                <option>Commons</option>
+                <option>Lords</option>
+            </select>
+            <select class="ah-filter-select">
+                <option>All types</option>
+                <option>Oral Questions</option>
+                <option>Westminster Hall</option>
+                <option>Debate</option>
+                <option>Ministerial Statement</option>
+            </select>
+            <select class="ah-filter-select" style="min-width:200px">
+                <option>All policy areas</option>
+                <option selected>Education, training and skills</option>
+                <option>Health and social care</option>
+            </select>
+            <input type="date" class="ah-filter-date" placeholder="From">
+            <input type="date" class="ah-filter-date" placeholder="To">
+            <label class="ah-title-only-label">
+                <input type="checkbox"> Title only
+            </label>
+        </div>
+    </form>
+
+    <!-- Results bar -->
+    <div class="ah-results-bar">
+        <span class="ah-results-count">24 results for <strong>Lifelong Learning</strong></span>
+        <span class="ah-results-range">showing 1–25</span>
+    </div>
+
+    <!-- Result cards -->
+    <div class="ah-results-list">
+
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-lords">Lords</span>
+                <span class="archive-dtype-badge archive-dtype-other">Proceedings</span>
+                <span class="ah-card-date">24 February 2026</span>
+                <span class="ah-card-contribs">18 contributions</span>
+            </div>
+            <a class="ah-card-title" href="#">Post-16 Education and Skills White Paper</a>
+            <div class="ah-card-tags">
+                <a href="#" class="archive-tag archive-tag-policy">Education, training and skills</a>
+                <span class="archive-tag archive-tag-topic">skills white paper</span>
+                <span class="archive-tag archive-tag-topic">post-16 education strategy</span>
+            </div>
+        </div>
+
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-commons">Commons</span>
+                <span class="archive-dtype-badge archive-dtype-westminster_hall">Westminster Hall</span>
+                <span class="ah-card-date">25 February 2026</span>
+                <span class="ah-card-contribs">12 contributions</span>
+            </div>
+            <a class="ah-card-title" href="#">Student Loan Repayment Plans</a>
+            <div class="ah-card-tags">
+                <a href="#" class="archive-tag archive-tag-policy">Education, training and skills</a>
+                <span class="archive-tag archive-tag-topic">student loan reform</span>
+                <span class="archive-tag archive-tag-topic">graduate debt</span>
+            </div>
+        </div>
+
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-lords">Lords</span>
+                <span class="archive-dtype-badge archive-dtype-committee_stage">Committee Stage</span>
+                <span class="ah-card-date">17 March 2026</span>
+                <span class="ah-card-contribs">31 contributions</span>
+            </div>
+            <a class="ah-card-title" href="#">Higher Education (Fee Limits and Fee Limit Condition) (England) (Amendment) Regulations 2026</a>
+            <div class="ah-card-tags">
+                <a href="#" class="archive-tag archive-tag-policy">Education, training and skills</a>
+                <span class="archive-tag archive-tag-topic">tuition fee limits</span>
+                <span class="archive-tag archive-tag-topic">higher education funding</span>
+            </div>
+        </div>
+
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-commons">Commons</span>
+                <span class="archive-dtype-badge archive-dtype-other">Proceedings</span>
+                <span class="ah-card-date">18 March 2026</span>
+                <span class="ah-card-contribs">8 contributions</span>
+            </div>
+            <a class="ah-card-title" href="#">Student Loans</a>
+            <div class="ah-card-tags">
+                <a href="#" class="archive-tag archive-tag-policy">Education, training and skills</a>
+                <span class="archive-tag archive-tag-topic">student loan repayments</span>
+            </div>
+        </div>
+
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-commons">Commons</span>
+                <span class="archive-dtype-badge archive-dtype-westminster_hall">Westminster Hall</span>
+                <span class="ah-card-date">22 January 2026</span>
+                <span class="ah-card-contribs">9 contributions</span>
+            </div>
+            <a class="ah-card-title" href="#">International Day of Education</a>
+            <div class="ah-card-tags">
+                <a href="#" class="archive-tag archive-tag-policy">Education, training and skills</a>
+                <span class="archive-tag archive-tag-topic">basic education</span>
+                <span class="archive-tag archive-tag-topic">global education funding</span>
+            </div>
+        </div>
+
+        <!-- Thin session — shows gracefully with 1 contribution and no tags -->
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-lords">Lords</span>
+                <span class="archive-dtype-badge archive-dtype-other">Proceedings</span>
+                <span class="ah-card-date">8 January 2026</span>
+                <span class="ah-card-contribs">1 contribution</span>
+            </div>
+            <a class="ah-card-title" href="#">Schools and Universities: Language Learning</a>
+        </div>
+
+    </div>
+
+    <!-- Pagination -->
+    <nav class="ah-pagination">
+        <span class="ah-page-btn ah-page-disabled">‹ Previous</span>
+        <span class="ah-page-info">Page 1 of 1</span>
+        <span class="ah-page-btn ah-page-disabled">Next ›</span>
+    </nav>
+
+    <!-- Source note -->
+    <p class="ah-source-note">
+        Parliamentary information from
+        <a href="https://hansard.parliament.uk" target="_blank" rel="noopener">Hansard</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Theme tags generated by AI — verify before use in briefings.
+    </p>
+
+</div><!-- /.ah-inner -->
+</div><!-- /.ah-page -->
+</div><!-- /.main-container -->
+
+</body>
+</html>

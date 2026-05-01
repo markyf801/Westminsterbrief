@@ -56,7 +56,7 @@
 .dir-stat-number {
     font-size: 32px;
     font-weight: 800;
-    color: #1c3e6e;
+    color: #1a4a6e;
     line-height: 1.1;
 }
 
@@ -168,7 +168,7 @@
 .dir-source-summary-count {
     font-size: 18px;
     font-weight: 700;
-    color: #1c3e6e;
+    color: #1a4a6e;
 }
 
 /* --- Org result card (search results) --- */
@@ -183,7 +183,7 @@
 .dir-org-name {
     font-weight: 700;
     font-size: 15px;
-    color: #1c3e6e;
+    color: #1a4a6e;
     text-decoration: none;
 }
 

@@ -59,7 +59,7 @@
         {% for raw_date, date_data in sorted_grouped_results.items() %}
             {% for theme, questions in date_data.themes.items() %}
                 <details class="theme-block" data-date="{{ date_data.display_date }}" data-theme="{{ theme }}" style="margin-bottom: 12px;">
-                    <summary style="cursor: pointer; padding: 10px 16px; background: #1c3e6e; color: white; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none;">
+                    <summary style="cursor: pointer; padding: 10px 16px; background: #1a4a6e; color: white; border-radius: 6px; font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none;">
                         <span style="display:flex; align-items:center; gap:10px;">
                             <input type="checkbox" class="theme-checkbox"
                                    onclick="event.stopPropagation()"
@@ -124,7 +124,7 @@
                                 {% if r.question_type == 'NAMED_DAY' %}NAMED DAY{% else %}{{ r.question_type }}{% endif %}
                             </span>
                             <span class="result-card-dept">{{ r.dept }}</span>
-                            <span style="font-size:11px; background:rgba(255,255,255,0.08); color:#aaa; border:1px solid rgba(255,255,255,0.12); border-radius:3px; padding:1px 6px;">{{ theme }}</span>
+                            <span style="font-size:11px; background:#eef3f8; color:#5a6878; border:1px solid #d1d9e0; border-radius:3px; padding:1px 6px;">{{ theme }}</span>
                             <span style="font-size:11px; color:#888; font-family:monospace;">{{ r.uin }}</span>
                         </div>
                         <div class="result-card-body">
@@ -157,7 +157,7 @@
 
 <div id="exportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: white; padding: 30px; border-radius: 8px; width: 500px; max-width: 90%; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-        <h3 style="margin-top: 0; color: #1c3e6e; border-bottom: 2px solid #eee; padding-bottom: 10px;">Enhance Word Briefing</h3>
+        <h3 style="margin-top: 0; color: #1a4a6e; border-bottom: 2px solid #eee; padding-bottom: 10px;">Enhance Word Briefing</h3>
         <p style="color: #555; font-size: 14px; margin-bottom: 20px;">Select how you want to enhance the downloaded document. <em>Note: Adding AI or History options will cause the download to take 10-15 seconds.</em></p>
         
         <form id="downloadForm" action="/download_tracker_word" method="POST">
@@ -194,21 +194,21 @@
     .view-toggle {
         padding: 6px 14px;
         border-radius: 4px;
-        border: 1px solid #444;
-        background: transparent;
-        color: #aaa;
+        border: 1px solid #d1d9e0;
+        background: #f0f2f5;
+        color: #5a6878;
         cursor: pointer;
         font-size: 13px;
         white-space: nowrap;
     }
     .view-toggle.active-toggle {
-        background: #1c3e6e;
+        background: #1a4a6e;
         color: #fff;
-        border-color: #1c3e6e;
+        border-color: #1a4a6e;
     }
     details > summary { list-style: none; }
     details > summary::-webkit-details-marker { display: none; }
-    details[open] > summary { background-color: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.08); }
+    details[open] > summary { background-color: #1a4a6e; border-bottom: 1px solid #155080; }
 
     /* Question type badges: NAMED DAY (amber), LORDS (muted blue), ORDINARY (muted grey) */
     .wq-type-badge {
@@ -222,9 +222,9 @@
         margin-right: 6px;
         vertical-align: middle;
     }
-    .wq-type-named_day  { background: rgba(184,150,46,0.2); color: #c8a84b; border: 1px solid rgba(184,150,46,0.35); }
-    .wq-type-lords      { background: rgba(91,155,213,0.15); color: #7eb3e0; border: 1px solid rgba(91,155,213,0.3); }
-    .wq-type-ordinary   { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.1); }
+    .wq-type-named_day  { background: #fef9ec; color: #92710d; border: 1px solid #e8c96a; }
+    .wq-type-lords      { background: #eef5fb; color: #2e6fa3; border: 1px solid #b3d1e8; }
+    .wq-type-ordinary   { background: #f0f2f5; color: #5a6878; border: 1px solid #d1d9e0; }
 </style>
 
 <script>

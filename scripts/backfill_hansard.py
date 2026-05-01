@@ -1,14 +1,17 @@
 """
 Hansard Archive backfill script — Phase 2A Week 1.
 
-Ingests Hansard sessions for the last N days (Commons only by default).
+Ingests Hansard sessions for the last N days. Defaults to Commons; use --house Lords
+for the Lords pipeline.
 Safe to re-run: sessions already in the DB are skipped.
 
 Usage:
-  python scripts/backfill_hansard.py              # last 90 days (default)
-  python scripts/backfill_hansard.py --days 30    # last 30 days
-  python scripts/backfill_hansard.py --days 1     # yesterday only (useful for testing)
-  python scripts/backfill_hansard.py --probe      # test overview endpoint on one recent date
+  python scripts/backfill_hansard.py                         # Commons, last 90 days
+  python scripts/backfill_hansard.py --days 30               # Commons, last 30 days
+  python scripts/backfill_hansard.py --days 1                # Commons, yesterday only (test)
+  python scripts/backfill_hansard.py --house Lords --days 1  # Lords, yesterday only (test)
+  python scripts/backfill_hansard.py --house Lords           # Lords, last 90 days
+  python scripts/backfill_hansard.py --probe                 # test overview endpoint and exit
 
 Environment:
   DATABASE_URL — if not set, defaults to local SQLite (intelligence.db)
@@ -72,6 +75,12 @@ def main() -> None:
         help="Number of days to backfill (default: 90)",
     )
     parser.add_argument(
+        "--house",
+        default="Commons",
+        choices=["Commons", "Lords"],
+        help="Which house to backfill (default: Commons)",
+    )
+    parser.add_argument(
         "--probe",
         action="store_true",
         help="Test the overview API endpoint on a recent known sitting day and exit",
@@ -92,13 +101,13 @@ def main() -> None:
     end_date = date.today() - timedelta(days=1)    # yesterday
     start_date = end_date - timedelta(days=args.days - 1)
 
-    print(f"[backfill] Commons sessions from {start_date} to {end_date} ({args.days} days)")
+    print(f"[backfill] {args.house} sessions from {start_date} to {end_date} ({args.days} days)")
     print(f"[backfill] Sessions already in DB will be skipped")
     print()
 
     with app.app_context():
         before_count = HansardSession.query.count()
-        summary = ingest_date_range(start_date, end_date, house="Commons", verbose=True)
+        summary = ingest_date_range(start_date, end_date, house=args.house, verbose=True)
         after_count = HansardSession.query.count()
 
     print()

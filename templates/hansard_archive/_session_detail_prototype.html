@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Detail — Light Theme Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+
+/*
+  PARTY COLOUR REFERENCE — maps corpus party abbreviations to accent bar colours.
+  Used in .contrib-speaker-row border-left via inline style="border-left-color: ..."
+
+  Lab          Labour                  #E4003B
+  Lab/Co-op    Labour Co-operative     #E4003B  (same; spelling variants normalised)
+  Con          Conservative            #0087DC
+  LD           Liberal Democrats       #FAA61A
+  SNP          Scottish National Party #FDF38E  too light → use #c9a800
+  PC           Plaid Cymru             #005B54
+  Green        Green Party             #02A95B
+  Reform       Reform UK               #12B6CF
+  DUP          Dem. Unionist Party     #CF1F25
+  SDLP         Soc. Dem. & Labour      #2AA82C
+  UUP          Ulster Unionist         #48A5EE
+  Alliance     Alliance (NI)           #F6CB2F  amber → darken to #c9960a
+  TUV          Trad. Unionist Voice    #0C3A6A
+  CB           Crossbench (Lords)      #7a8a9a
+  Ind          Independent             #7a8a9a
+  Non-Afl      Non-affiliated (Lords)  #7a8a9a
+  default      (unknown/no party)      #1a4a6e
+*/
+
+/* ---- Reset / base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    /* Inter for all UI chrome; Source Serif 4 applied to speech text specifically */
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f0f2f5;
+    color: #1a2332;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* ---- Prototype navbar ---- */
+.proto-shell {
+    background: #1a2332;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+.proto-brand { color: #fff; font-weight: 700; font-size: 14px; }
+.proto-nav a { color: rgba(255,255,255,0.6); text-decoration: none; margin-right: 16px; font-size: 13px; }
+.proto-nav a:hover { color: #fff; }
+
+/* ---- Page layout ---- */
+.page-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px 48px;
+}
+
+/* ---- Session header ---- */
+.session-header {
+    padding: 24px 0 20px;
+    border-bottom: 2px solid #e0e6ed;
+    margin-bottom: 0;
+}
+
+.breadcrumb {
+    font-size: 12px;
+    color: #8a96a4;
+    margin-bottom: 12px;
+}
+.breadcrumb a { color: #4a7fa5; text-decoration: none; }
+.breadcrumb a:hover { text-decoration: underline; }
+.breadcrumb-sep { margin: 0 6px; color: #c0c8d4; }
+
+.session-title {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 24px;
+    font-weight: 600;
+    color: #1a2332;
+    line-height: 1.3;
+    margin-bottom: 12px;
+}
+
+.session-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+/* House badges */
+.badge-commons { background: #1a4a6e; color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; }
+.badge-lords   { background: #6d1a1a; color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; }
+.badge-dtype   { background: #e8eef4; color: #3a5068; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 3px; }
+
+.session-date {
+    font-size: 13px;
+    color: #5a6878;
+}
+.session-hansard-link {
+    font-size: 12px;
+    color: #4a7fa5;
+    text-decoration: none;
+    margin-left: auto;
+}
+.session-hansard-link:hover { text-decoration: underline; }
+
+/* Theme tags */
+.theme-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.tag-policy {
+    font-size: 12px;
+    background: #e8f0f8;
+    color: #2a5a8a;
+    padding: 3px 9px;
+    border-radius: 3px;
+    text-decoration: none;
+    border: 1px solid #c8dcea;
+}
+.tag-policy:hover { background: #d4e5f5; }
+.tag-topic {
+    font-size: 12px;
+    background: #f0f4f0;
+    color: #3a6040;
+    padding: 3px 9px;
+    border-radius: 3px;
+    border: 1px solid #c8dcc8;
+}
+
+/* Actions bar */
+.session-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.btn-export {
+    font-size: 13px;
+    background: #1a4a6e;
+    color: #fff;
+    padding: 7px 14px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 500;
+}
+.btn-export:hover { background: #1e5580; }
+.contrib-count {
+    font-size: 12px;
+    color: #8a96a4;
+}
+
+/* ---- Transcript ---- */
+.transcript-wrapper {
+    /* Constrained line length — the key readability fix */
+    max-width: 720px;
+    padding-top: 4px;
+}
+
+.transcript-contrib {
+    padding: 20px 0 18px;
+    border-bottom: 1px solid #e8edf2;
+    position: relative;
+}
+.transcript-contrib:last-child { border-bottom: none; }
+
+/* Permalink anchor — appears on hover, sits at top-right of contribution */
+.contrib-permalink {
+    position: absolute;
+    right: 4px;
+    top: 22px;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    color: #b0bac6;
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    user-select: none;
+}
+.transcript-contrib:hover .contrib-permalink { opacity: 1; }
+.contrib-permalink:hover { color: #4a7fa5; }
+
+/* Speaker row — name bold, role+party secondary on same line */
+.contrib-speaker-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0;
+    margin-bottom: 10px;
+    padding-left: 12px;
+    border-left: 3px solid #1a4a6e; /* overridden per-contrib via data-party JS */
+}
+.contrib-speaker-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #1a2332;
+    text-decoration: none;
+    margin-right: 7px;
+    line-height: 1.4;
+}
+.contrib-speaker-name:hover { color: #1a4a6e; text-decoration: underline; }
+.contrib-speaker-secondary {
+    font-size: 13px;
+    color: #6a7888;
+    font-weight: 400;
+    line-height: 1.4;
+}
+
+/* Speech text — serif for document feel */
+.contrib-text {
+    font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    font-size: 15px;
+    line-height: 1.8;
+    color: #2d3748;
+    padding-left: 15px;   /* slight indent under speaker accent bar */
+    white-space: pre-line; /* preserves \n paragraph breaks */
+}
+
+/* Source note */
+.source-note {
+    max-width: 720px;
+    font-size: 12px;
+    color: #9aa4b0;
+    margin-top: 28px;
+    padding-top: 14px;
+    border-top: 1px solid #e0e6ed;
+}
+.source-note a { color: #6a96b8; text-decoration: none; }
+.source-note a:hover { text-decoration: underline; }
+
+</style>
+</head>
+<body>
+
+<!-- Simulated navbar -->
+<div class="proto-shell">
+    <span class="proto-brand">🏛️ Westminster Brief</span>
+    <div class="proto-nav">
+        <a href="#">Written Questions</a>
+        <a href="#">Today's PQs</a>
+        <a href="#">Member Research</a>
+        <a href="#" style="color:#fff;font-weight:600;">Hansard Archive</a>
+        <a href="#">Stakeholder Engagement</a>
+    </div>
+</div>
+
+<div class="page-container">
+
+    <!-- Session header -->
+    <div class="session-header">
+        <nav class="breadcrumb">
+            <a href="#">Hansard Archive</a>
+            <span class="breadcrumb-sep">›</span>
+            <a href="#">5 March 2025</a>
+            <span class="breadcrumb-sep">›</span>
+            <span>Student Loans (Repayment)</span>
+        </nav>
+
+        <h1 class="session-title">Student Loans (Repayment)</h1>
+
+        <div class="session-meta">
+            <span class="badge-commons">Commons</span>
+            <span class="badge-dtype">Oral Questions</span>
+            <span class="session-date">5 March 2025</span>
+            <a class="session-hansard-link" href="#">View on Hansard ↗</a>
+        </div>
+
+        <div class="theme-row">
+            <a class="tag-policy" href="#">Higher Education</a>
+            <a class="tag-policy" href="#">Student Finance</a>
+            <span class="tag-topic">Repayment Thresholds</span>
+            <span class="tag-topic">Graduate Outcomes</span>
+            <span class="tag-topic">Plan 2 Loans</span>
+        </div>
+
+        <div class="session-actions">
+            <a class="btn-export" href="#">↓ Download transcript (Word)</a>
+            <span class="contrib-count">47 contributions</span>
+        </div>
+    </div>
+
+    <!-- Transcript -->
+    <div class="transcript-wrapper">
+
+        <!-- Contribution 1 — Minister (Labour) -->
+        <div class="transcript-contrib" id="contrib-1">
+            <a class="contrib-permalink" href="#contrib-1" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="Lab">
+                <a class="contrib-speaker-name" href="/biography?name=Josh+MacAlister">Josh MacAlister</a>
+                <span class="contrib-speaker-secondary">Parliamentary Under-Secretary of State · Lab</span>
+            </div>
+            <div class="contrib-text">The repayment threshold for Plan 2 loans is currently set at £25,000. The Government keeps all aspects of student finance under review, and our priority is ensuring that the system is fair for both graduates and the taxpayer.
+
+We are committed to building a higher education system that delivers real value — for students, for employers, and for the wider economy. We will continue to work with the sector to ensure that graduates are not burdened with unsustainable debt.</div>
+        </div>
+
+        <!-- Contribution 2 — Questioner (Conservative) -->
+        <div class="transcript-contrib" id="contrib-2">
+            <a class="contrib-permalink" href="#contrib-2" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="Con">
+                <a class="contrib-speaker-name" href="/biography?name=Helen+Whately">Helen Whately</a>
+                <span class="contrib-speaker-secondary">Con</span>
+            </div>
+            <div class="contrib-text">The Minister talks about fairness, but can he explain to graduates who took out loans under Plan 2 why they are paying back at 9% above £25,000 — a threshold that was frozen for years — while the interest rate continues to compound? Many of my constituents are seeing their loan balance rise despite making consistent payments. That is not what they were promised when they signed up.</div>
+        </div>
+
+        <!-- Contribution 3 — Minister follow-up (Labour) -->
+        <div class="transcript-contrib" id="contrib-3">
+            <a class="contrib-permalink" href="#contrib-3" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="Lab">
+                <a class="contrib-speaker-name" href="/biography?name=Josh+MacAlister">Josh MacAlister</a>
+                <span class="contrib-speaker-secondary">Parliamentary Under-Secretary of State · Lab</span>
+            </div>
+            <div class="contrib-text">I understand the hon. Member's concern, and it is one that many graduates share. The previous Government froze the repayment threshold for several years, which did increase the burden on lower and middle earners. This Government inherited that situation.
+
+We are actively examining the threshold structure as part of our broader review of student finance sustainability. I am not in a position to make announcements today, but I can assure the House that fairness for graduates is central to our approach.
+
+I would also point the hon. Member to the write-off provisions at 30 years — a significant proportion of Plan 2 borrowers will not repay in full, which is an intentional feature of the system's design.</div>
+        </div>
+
+        <!-- Contribution 4 — Lib Dem -->
+        <div class="transcript-contrib" id="contrib-4">
+            <a class="contrib-permalink" href="#contrib-4" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="LD">
+                <a class="contrib-speaker-name" href="/biography?name=Munira+Wilson">Munira Wilson</a>
+                <span class="contrib-speaker-secondary">LD</span>
+            </div>
+            <div class="contrib-text">The Minister references a "review" — but graduates cannot wait indefinitely for a review. Would he commit today to uprating the repayment threshold at least in line with earnings, so that the real value of the threshold does not continue to erode?</div>
+        </div>
+
+        <!-- Contribution 5 — SNP -->
+        <div class="transcript-contrib" id="contrib-5">
+            <a class="contrib-permalink" href="#contrib-5" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="SNP">
+                <a class="contrib-speaker-name" href="/biography?name=Carol+Monaghan">Carol Monaghan</a>
+                <span class="contrib-speaker-secondary">SNP</span>
+            </div>
+            <div class="contrib-text">In Scotland, we do not have tuition fees. Students in England are taking on tens of thousands of pounds of debt for degrees. Could the Minister tell the House what assessment the Government have made of the chilling effect this debt burden has on graduates' decisions to buy homes, start families, or set up businesses?</div>
+        </div>
+
+        <!-- Contribution 6 — Conservative -->
+        <div class="transcript-contrib" id="contrib-6">
+            <a class="contrib-permalink" href="#contrib-6" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="Con">
+                <a class="contrib-speaker-name" href="/biography?name=Sir+Edward+Leigh">Sir Edward Leigh</a>
+                <span class="contrib-speaker-secondary">Con</span>
+            </div>
+            <div class="contrib-text">Given the extraordinary cost of the student loan book to the public finances — written off sums that run into the tens of billions — would the Minister consider whether a graduate tax model, as proposed by several economists, would better align incentives and remove the fiction that most graduates will ever repay in full?</div>
+        </div>
+
+        <!-- Contribution 7 — Green -->
+        <div class="transcript-contrib" id="contrib-7">
+            <a class="contrib-permalink" href="#contrib-7" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="Green">
+                <a class="contrib-speaker-name" href="/biography?name=Carla+Denyer">Carla Denyer</a>
+                <span class="contrib-speaker-secondary">Green</span>
+            </div>
+            <div class="contrib-text">Does the Minister accept that the current system functions less like a loan and more like a graduate tax in all but name — but with none of the transparency, fairness, or public understanding that an explicit graduate tax would carry? If so, why not make it one?</div>
+        </div>
+
+        <!-- Contribution 8 — Reform -->
+        <div class="transcript-contrib" id="contrib-8">
+            <a class="contrib-permalink" href="#contrib-8" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="Reform">
+                <a class="contrib-speaker-name" href="/biography?name=Lee+Anderson">Lee Anderson</a>
+                <span class="contrib-speaker-secondary">Reform</span>
+            </div>
+            <div class="contrib-text">The real problem is too many people going to university in the first place. Would the Minister consider redirecting student loan funding toward apprenticeships and vocational training, which deliver better outcomes for working people than many of the degrees currently being subsidised?</div>
+        </div>
+
+        <!-- Contribution 9 — Crossbench (Lords) -->
+        <div class="transcript-contrib" id="contrib-9">
+            <a class="contrib-permalink" href="#contrib-9" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="CB">
+                <a class="contrib-speaker-name" href="/biography?name=Lord+Willetts">Lord Willetts</a>
+                <span class="contrib-speaker-secondary">CB · Crossbench</span>
+            </div>
+            <div class="contrib-text">My Lords, as the minister who introduced the current system, I would urge caution about wholesale reform. The income-contingent model was designed specifically to protect graduates during periods of low earnings — that insurance function is its greatest virtue, and it would be lost in a move to a conventional graduate tax.</div>
+        </div>
+
+        <!-- Contribution 10 — Independent -->
+        <div class="transcript-contrib" id="contrib-10">
+            <a class="contrib-permalink" href="#contrib-10" title="Link to this contribution">#</a>
+            <div class="contrib-speaker-row" data-party="Ind">
+                <a class="contrib-speaker-name" href="/biography?name=Lady+Hermon">Lady Hermon</a>
+                <span class="contrib-speaker-secondary">Ind</span>
+            </div>
+            <div class="contrib-text">Will the Minister assure the House that any changes to the repayment system will apply equally to students from Northern Ireland who hold Plan 2 loans and study at English universities?</div>
+        </div>
+
+    </div><!-- /transcript-wrapper -->
+
+    <p class="source-note">
+        Parliamentary information from
+        <a href="https://hansard.parliament.uk">Hansard</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/">Open Parliament Licence v3.0</a>.
+        Theme tags generated by AI — verify before use in briefings.
+    </p>
+
+</div><!-- /page-container -->
+<script>
+// Party → accent bar colour mapping (mirrors what views.py will expose to templates)
+const PARTY_COLOURS = {
+  'Lab':         '#E4003B',
+  'Lab/Co-op':   '#E4003B',
+  'Lab/ Co-op':  '#E4003B',
+  'Lab Co-op':   '#E4003B',
+  'Con':         '#0087DC',
+  'LD':          '#FAA61A',
+  'SNP':         '#c9a800',
+  'PC':          '#005B54',
+  'Green':       '#02A95B',
+  'Reform':      '#12B6CF',
+  'DUP':         '#CF1F25',
+  'SDLP':        '#2AA82C',
+  'UUP':         '#48A5EE',
+  'Alliance':    '#c9960a',
+  'TUV':         '#0C3A6A',
+  'CB':          '#7a8a9a',
+  'Ind':         '#7a8a9a',
+  'Non-Afl':     '#7a8a9a',
+};
+// Apply colours to all contrib-speaker-rows that have data-party attribute
+document.querySelectorAll('[data-party]').forEach(el => {
+  const colour = PARTY_COLOURS[el.dataset.party] || '#1a4a6e';
+  el.style.borderLeftColor = colour;
+});
+</script>
+</body>
+</html>

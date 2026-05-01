@@ -30,6 +30,7 @@ but their chain links are followed so traversal continues through them.
 All functions are safe to re-run: sessions are skipped if ext_id already exists.
 """
 
+import logging
 import re
 import time
 from datetime import date, timedelta
@@ -37,7 +38,10 @@ from typing import Optional
 
 import requests
 
+_log = logging.getLogger(__name__)
+
 from extensions import db
+from hansard_archive.slugs import make_slug
 from hansard_archive.models import (
     DEBATE_TYPE_COMMITTEE_STAGE,
     DEBATE_TYPE_DEBATE,
@@ -61,29 +65,119 @@ _INTER_REQUEST_DELAY = 0.3  # seconds between API calls — be a good citizen
 # HTML cleaning
 # ---------------------------------------------------------------------------
 
+_NOT_PARTY_LABELS = frozenset({
+    "Maiden Speech", "Valedictory Speech", "Urgent Question", "Maiden",
+    "Your Party", "Restore Britain",
+})
+
+
 def _clean_html(html: str) -> str:
-    """Strip HTML tags and normalise whitespace."""
+    """Strip HTML tags, preserving paragraph breaks as double newlines."""
     if not html:
         return ""
-    text = re.sub(r"<[^>]+>", " ", html)
-    return re.sub(r"\s+", " ", text).strip()
+    # Normalize Windows line endings so paragraph-break detection is consistent
+    text = html.replace("\r\n", "\n").replace("\r", "\n")
+    # HTML paragraph/line breaks → newlines
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</p>\s*<p[^>]*>", "\n\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    # Split on paragraph boundaries (double newline), clean each paragraph internally
+    paragraphs = re.split(r"\n{2,}", text)
+    clean_paras = []
+    for para in paragraphs:
+        lines = [re.sub(r" +", " ", ln).strip() for ln in para.split("\n")]
+        clean = " ".join(ln for ln in lines if ln)
+        if clean:
+            clean_paras.append(clean)
+    return "\n\n".join(clean_paras)
+
+
+def _extract_party(member_name: str | None) -> str | None:
+    """Extract party abbreviation from 'Name (Constituency) (Party)' format."""
+    if not member_name:
+        return None
+    groups = re.findall(r'\(([^)]+)\)', member_name)
+    if len(groups) >= 2:
+        candidate = groups[-1].strip()
+        if candidate not in _NOT_PARTY_LABELS:
+            return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Debate type classification
 # ---------------------------------------------------------------------------
 
-# HRS tags that mark structural container sessions (not substantive debates).
-# These sessions recursively capture contributions from child sessions via
-# _flatten_items(), producing duplicate contribution counts.
-_CONTAINER_HRS_TAGS = {"hs_6bdepartment", "hs_3mainhdg"}
+# is_container=True is used for two structurally different but functionally
+# equivalent session patterns. Both are excluded from tagging and public pages.
+#
+#   1. CONTAINERS (duplicate-content): structural headers whose _flatten_items()
+#      recursion captures contributions from all child sessions, producing
+#      duplicate counts if shown alongside their children.
+#      Detected via _CONTAINER_HRS_TAGS (hrs_tag match) or null-tag + known titles.
+#
+#   2. ANCHORS (zero-content): section-header sessions that announce a
+#      parliamentary slot but carry no speech text. The actual debates within
+#      the slot are ingested separately under their own titles — always 0
+#      contributions. Detected via _ANCHOR_TITLES (title match).
+
+# HRS tags for container pattern (duplicate-content):
+_CONTAINER_HRS_TAGS = {
+    "hs_6bdepartment",   # dept oral questions header — duplicates all child hs_8Question sessions
+    "hs_3mainhdg",       # chain-head header — duplicates all WH or CC child sessions
+    "hs_3oralanswers",   # full-day oral answers header — duplicates all hs_6bDepartment sessions
+    "hs_6bpetitions",    # petitions section header — duplicates all hs_8Petition sessions
+    "hs_venue",          # Lords opening ceremony (Prayers) — chain head, ceremonial content only
+}
+
+# Title patterns for anchor pattern (zero-content structural placeholders):
+# Sessions whose entire content is structural/procedural with no attributed debate text.
+# Matched against title.lower() == value (exact match after lowercasing).
+_ANCHOR_TITLES = {
+    "backbench business",        # announces backbench business slot; debates ingested separately
+    "business without debate",   # SI bundle motions — formal "agreed" only, no debate
+    "business before questions", # procedural slot announcement before Oral Questions
+    "business of the house",     # business announcement (also appears as "Business of the House")
+    "business of the house (today)",
+    "opposition day",            # announces opposition day; individual debates ingested separately
+    "delegated legislation",     # SI bundle section header
+    "bill presented",            # first-reading procedural notice
+    "bills presented",           # first-reading procedural notice (plural)
+    "ways and means",            # Ways and Means resolution header
+    "estimates day",             # Estimates Day header
+}
+
+# Procedural session titles — always 'other' regardless of venue/location.
+# Prevents e.g. 'Arrangement of Business' in Grand Committee from inheriting
+# committee_stage from the location check. Matched with startswith() so
+# "Retirement of a Member: Lord X" is caught by "retirement of a member".
+_PROCEDURAL_TITLE_STARTS = (
+    "arrangement of business",
+    "business of the house",
+    "oaths and affirmations",
+    "retirement of a member",
+    "retirements of members",
+    "lord speaker's statement",
+    "standing orders",
+    "clerk of the parliaments",
+    "leave of absence",
+    "deaths of members",
+    "message from the king",
+    "royal assent",
+)
+
+# Regex for made statutory instruments: "[Name] Regulations/Order(s)/Rules YYYY".
+# Requires a 4-digit year to avoid false positives on "Standing Orders (Public Business)".
+# Must fire before the "amendment" keyword check in the title fallback — many SIs
+# have "(Amendment)" in their formal title.
+_MADE_SI_RE = re.compile(r"\b(regulations|orders?|rules)\s+\d{4}\b", re.IGNORECASE)
 
 
 def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
     """
     Classify debate type using Overview fields, with hrs_tag as primary source of truth.
 
-    Precedence: location (venue) → hrs_tag (structured) → title (fallback only).
+    Precedence: procedural override → location (venue) → hrs_tag (structured) → title (fallback only).
     Title matching is a last resort because blank or unusual titles produce
     silent misclassification (e.g. hs_3cOppositionDay → statutory_instrument).
     """
@@ -91,9 +185,16 @@ def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
     tag = (hrs_tag or "").lower()
     t = (title or "").lower()
 
+    # --- Procedural title override — always 'other' regardless of venue ---
+    if any(t.startswith(p) for p in _PROCEDURAL_TITLE_STARTS):
+        return DEBATE_TYPE_OTHER
+
     # --- Location is authoritative for venue-specific types ---
     if "westminster hall" in loc:
         return DEBATE_TYPE_WESTMINSTER_HALL
+
+    if "grand committee" in loc:
+        return DEBATE_TYPE_COMMITTEE_STAGE
 
     if "public bill committee" in loc:
         return DEBATE_TYPE_COMMITTEE_STAGE
@@ -148,6 +249,11 @@ def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
     ):
         return DEBATE_TYPE_STATUTORY_INSTRUMENT
 
+    # Made SIs: "[Name] Regulations/Order(s)/Rules YYYY" — placed before the
+    # "amendment" check because many SIs have "(Amendment)" in their formal title.
+    if _MADE_SI_RE.search(t):
+        return DEBATE_TYPE_STATUTORY_INSTRUMENT
+
     if any(kw in t for kw in ("bill", "reading", "amendment", "committee stage")):
         return DEBATE_TYPE_DEBATE
 
@@ -176,14 +282,91 @@ def _build_hansard_url(house: str, sitting_date: date, ext_id: str, title: str) 
 
 _SKIP_TITLES = {"deferred division", "deferred divisions"}
 
+# ItemTypes that are never speech contributions.
+_SKIP_ITEM_TYPES = {"Timestamp", "Amendment"}
+
+# All ItemTypes observed in the wild — warn on anything new.
+_KNOWN_ITEM_TYPES = {"Contribution", "Timestamp", "Amendment"}
+
+# HRSTag values for structural/procedural items that are not speech contributions.
+# All lowercased for comparison.
+_SKIP_HRS_TAGS = {
+    "hs_columnumber",       # column/page reference markers (usually empty text; guard)
+    "hs_columnnumber",      # alternate capitalisation seen in API responses
+    "hs_clheading",         # committee membership roster header
+    "hs_clchairman",        # committee chair listing
+    "hs_clmember",          # committee member listing
+    "hs_clstaff",           # committee staff listing
+    "hs_debatetype",        # section-type labels ("Commons Amendment", etc.)
+    "hs_amendmentheading",  # amendment motion headers ("Motion A", etc.)
+    "hs_tabledby",          # procedural "Moved by" / "Asked by" annotations
+    "hs_procedure",         # procedural outcomes ("Motion agreed.", "House resumed.", etc.)
+    "hs_76fchair",          # committee chair annotation "[Name in the Chair]"
+    "hs_brev",              # bill/motion formal text blocks (not speech)
+    "hs_clclerks",          # committee clerk listing
+    "hs_amendmentlevel0",   # amendment formal text (root level)
+    "hs_amendmentlevel1",   # amendment formal text (sub-clause)
+    "hs_amendmentlevel2",   # amendment formal text (sub-sub-clause)
+    "hs_amendmentlevel3",   # amendment formal text (deepest level)
+    "err_tablewrapper",     # unattributed formal bill text blocks (same class as hs_brev)
+}
+
+# HRSTag values known to carry real speech text — used by the unknown-tag warning.
+_KNOWN_SPEECH_HRS_TAGS = {
+    "hs_para", "hs_2para",
+}
+
 
 def _flatten_items(node: dict, order_counter: list) -> list[dict]:
     """
     Recursively flatten Items from a Hansard session response.
     order_counter is a single-element list used as a mutable integer.
+
+    Filters applied:
+    - Skip ItemType in _SKIP_ITEM_TYPES (Timestamps, Amendment text)
+    - Skip HRSTag in _SKIP_HRS_TAGS (structural/procedural non-speech items)
+    - Skip items that produce empty text after HTML cleaning
+
+    Discovery hooks:
+    - Warn on ItemType values outside _KNOWN_ITEM_TYPES
+    - Warn on unattributed items with HRSTag outside both skip and speech sets
+      (may signal new structural patterns not yet classified)
     """
     result = []
     for item in node.get("Items", []):
+        item_type = item.get("ItemType")
+        hrs_raw = item.get("HRSTag") or ""
+        hrs = hrs_raw.lower()
+
+        # Warn on unknown ItemType — may signal a new API pattern needing classification
+        if item_type not in _KNOWN_ITEM_TYPES:
+            _log.warning(
+                "Unknown Hansard ItemType %r (HRSTag=%r) — check whether it needs filtering",
+                item_type, hrs_raw,
+            )
+
+        # Skip non-speech item types
+        if item_type in _SKIP_ITEM_TYPES:
+            continue
+
+        # Warn on unattributed items with HRS tags outside our known sets
+        # (neither in the skip set nor in the known-speech set)
+        is_attributed = bool(
+            item.get("MemberId") or item.get("memberId")
+            or item.get("AttributedTo") or item.get("attributedTo")
+            or item.get("MemberName") or item.get("memberName")
+        )
+        if not is_attributed and hrs and hrs not in _SKIP_HRS_TAGS and hrs not in _KNOWN_SPEECH_HRS_TAGS:
+            _log.warning(
+                "Unattributed item with unclassified HRSTag %r (ItemType=%r, text=%r) — "
+                "check if it belongs in _SKIP_HRS_TAGS",
+                hrs_raw, item_type, (item.get("Value") or "")[:60],
+            )
+
+        # Skip structural non-speech items
+        if hrs in _SKIP_HRS_TAGS:
+            continue
+
         speech_html = item.get("Value") or item.get("value") or ""
         speech_text = _clean_html(speech_html)
         if not speech_text:
@@ -207,7 +390,7 @@ def _flatten_items(node: dict, order_counter: list) -> list[dict]:
             {
                 "member_id": member_id,
                 "member_name": member_name,
-                "party": None,  # not always in Items; can be resolved later
+                "party": _extract_party(member_name),
                 "speech_text": speech_text,
                 "speech_order": order_counter[0],
             }
@@ -279,50 +462,76 @@ def _get_seeds_for_date(sitting_date: date, house: str = "Commons") -> list[str]
     return seeds
 
 
-def _fetch_session_full(ext_id: str) -> tuple[dict, list[dict]]:
+def _fetch_session_full(ext_id: str) -> tuple[dict, list[dict], list[str]]:
     """
-    Fetch a session's full JSON. Returns (overview, contributions).
+    Fetch a session's full JSON. Returns (overview, contributions, child_ext_ids).
 
     overview contains: Title, Date, Location, HRSTag, NextDebateExtId,
     PreviousDebateExtId (and other fields not used here).
-    Returns ({}, []) on network error.
+    child_ext_ids: ExtIds extracted from top-level ChildDebates entries. Used by
+    BFS to discover isolated sub-chains — the Lords Grand Committee wrapper has
+    empty chain links but its ChildDebates contains all GC session ExtIds.
+    Returns ({}, [], []) on network error.
     """
     url = f"{HANSARD_API_BASE}/debates/debate/{ext_id}.json"
     try:
         resp = requests.get(url, timeout=_REQUEST_TIMEOUT)
         resp.raise_for_status()
     except requests.RequestException:
-        return {}, []
+        return {}, [], []
 
     data = resp.json()
     overview = data.get("Overview") or {}
     contributions = _flatten_items(data, [0])
-    return overview, contributions
+
+    # Extract child ExtIds for BFS — handles Grand Committee wrapper pattern where
+    # chain links are empty but ChildDebates lists all sub-chain session ExtIds.
+    # The child's ExtId lives at ChildDebates[n]["Overview"]["ExtId"], not at the
+    # top level. Top-level "Id" is an internal numeric DB id, not the API ExtId.
+    child_ext_ids: list[str] = []
+    for child in data.get("ChildDebates", []):
+        child_overview = child.get("Overview") or {}
+        child_id = (
+            child_overview.get("ExtId")
+            or child.get("ExternalId")
+            or child.get("DebateSectionExtId")
+            or ""
+        )
+        if child_id:
+            child_ext_ids.append(str(child_id))
+
+    return overview, contributions, child_ext_ids
 
 
 def _collect_all_sessions_for_date(
     seeds: list[str],
     target_date: date,
-) -> dict[str, tuple[dict, list[dict]]]:
+) -> tuple[dict[str, tuple[dict, list[dict]]], dict[str, str]]:
     """
     BFS walk of all Hansard session chains for a given date.
 
     Commons Chamber and Westminster Hall debates are on separate linked lists.
-    Starting from seeds (which may cover only one chain), this function follows
-    NextDebateExtId / PreviousDebateExtId to discover all sessions on target_date
-    across all chains.
+    Lords Grand Committee sessions are on an isolated sub-chain: the Grand Committee
+    wrapper session has empty chain links but its ChildDebates contains all GC ExtIds.
+    Starting from seeds, this function follows NextDebateExtId / PreviousDebateExtId
+    AND ChildDebates ExtIds to discover all sessions on target_date across all chains.
 
     Each session's full JSON is fetched exactly once (contributions + Overview
     in the same call). Traversal stops when a neighbour's date differs from
     target_date. Deferred Divisions are excluded from results but their chain
     links are followed so traversal continues past them.
 
-    Returns dict: ext_id -> (overview, contributions).
+    Returns:
+      results  — dict: ext_id -> (overview, contributions)
+      dept_map — dict: child_ext_id -> department_name, built from hs_6bDepartment
+                 containers encountered during the walk. Used to set HansardSession.department
+                 on child oral-questions sessions at write time.
     """
     target_date_str = target_date.isoformat()
     visited: set[str] = set()
     queue: list[str] = list(seeds)
     results: dict[str, tuple[dict, list[dict]]] = {}
+    dept_map: dict[str, str] = {}  # child_ext_id -> dept name from hs_6bDepartment container
 
     while queue:
         ext_id = queue.pop(0)
@@ -331,7 +540,7 @@ def _collect_all_sessions_for_date(
         visited.add(ext_id)
 
         time.sleep(_INTER_REQUEST_DELAY)
-        overview, contributions = _fetch_session_full(ext_id)
+        overview, contributions, child_ext_ids = _fetch_session_full(ext_id)
 
         if not overview:
             continue
@@ -346,13 +555,27 @@ def _collect_all_sessions_for_date(
         if title.lower() not in _SKIP_TITLES:
             results[ext_id] = (overview, contributions)
 
+        # When we encounter a department oral-questions container, record the mapping
+        # from each child's ext_id to the department name (container title). This
+        # populates HansardSession.department on the child sessions without a second pass.
+        if (overview.get("HRSTag") or "").lower() == "hs_6bdepartment" and child_ext_ids:
+            for child_id in child_ext_ids:
+                dept_map[child_id] = title
+
         # Follow chain links to discover adjacent sessions in both directions
         for link_key in ("NextDebateExtId", "PreviousDebateExtId"):
             neighbour = overview.get(link_key)
             if neighbour and neighbour not in visited:
                 queue.append(neighbour)
 
-    return results
+        # Queue ChildDebates ExtIds — discovers isolated sub-chains (e.g. Lords
+        # Grand Committee wrapper whose chain links are empty but ChildDebates
+        # lists all substantive GC sessions for the day).
+        for child_id in child_ext_ids:
+            if child_id not in visited:
+                queue.append(child_id)
+
+    return results, dept_map
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +633,7 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
     if verbose:
         print(f"[archive] {sitting_date} — {len(seeds)} seeds, walking chains...", flush=True)
 
-    all_sessions = _collect_all_sessions_for_date(seeds, sitting_date)
+    all_sessions, dept_map = _collect_all_sessions_for_date(seeds, sitting_date)
 
     if not all_sessions:
         if verbose:
@@ -432,13 +655,24 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
         location = overview.get("Location") or ""
         hrs_tag = overview.get("HRSTag") or ""
         debate_type = _classify_from_overview(title, location, hrs_tag)
+
+        # Lords oral questions: the structural classifier has no reliable HRS signal
+        # for Lords OQs, so they land in 'other'. Override using the opening-phrase
+        # signal: every Lords OQ starts "To ask His Majesty's Government..." —
+        # this is constitutionally mandated phrasing, not a heuristic.
+        if house == "Lords" and contributions:
+            first_text = (contributions[0].get("speech_text") or "").strip().lower()
+            if first_text.startswith("to ask his majesty"):
+                debate_type = DEBATE_TYPE_ORAL_QUESTIONS
+
         hansard_url = _build_hansard_url(house, sitting_date, ext_id, title)
 
-        # Container sessions are structural headers whose _flatten_items() recursion
-        # captures contributions from all child sessions, producing duplicate counts.
+        # See module-level comments for the container vs anchor distinction.
         is_container = (
-            (hrs_tag or "").lower() in _CONTAINER_HRS_TAGS
-            or (not hrs_tag and title.lower() == "commons chamber")
+            (hrs_tag or "").lower() in _CONTAINER_HRS_TAGS                                        # duplicate-content containers + hs_venue
+            or (not hrs_tag and title.lower() in {"commons chamber", "westminster hall",
+                                                   "lords chamber", "grand committee"})            # null-tag containers
+            or title.lower() in _ANCHOR_TITLES                                                     # zero-content anchors
         )
 
         session = HansardSession(
@@ -452,6 +686,8 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             hansard_url=hansard_url,
             contributions_ingested=False,
             is_container=is_container,
+            slug=make_slug(title, ext_id),
+            department=dept_map.get(ext_id) or None,
         )
         db.session.add(session)
         db.session.flush()

@@ -30,6 +30,8 @@ Finds debate sessions whose **title** matches the search term. Returns session-l
 
 **Hard cap of 25 results per call — pagination does not work on this endpoint.** The `skip`, `take`, and `orderBy` parameters are accepted but silently ignored; all calls return the same 25 items. `TotalResultCount` may exceed 25 (e.g. 41 for 2026-04-22).
 
+**Lords confirmed:** `house=Lords` works on both `/search/debates.json` and `/debates/debate/{ext_id}.json`. Overview field names are identical to Commons. Chain-walking works identically. See `docs/lords-ingestion-spec.md` for Lords-specific patterns (hs_Venue, Grand Committee wrapper, Lords Chamber container).
+
 **Critical: Commons Chamber and Westminster Hall are on SEPARATE LINKED LISTS.** Each sitting day has multiple independent chains of sessions. The search endpoint may return sessions from only one chain (e.g. Commons Chamber), missing the Westminster Hall chain entirely. Verified 2026-04-22: search returned 25 sessions all from Commons Chamber; Westminster Hall's 6 sessions were on a separate chain not in the search results.
 
 **Solution: chain-walk via `NextDebateExtId` / `PreviousDebateExtId`.** The `Overview` of each full session response (see third endpoint below) contains links to adjacent sessions in the same chain. Starting from the search seeds and following these links in both directions gives complete coverage for the day. The Hansard Archive ingestion pipeline uses this approach — see `hansard_archive/ingestion.py`. Tested 2026-04-29: chain-walk found 30 sessions (24 Commons Chamber + 6 Westminster Hall) vs 25 from search alone.

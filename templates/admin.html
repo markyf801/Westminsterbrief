@@ -4,12 +4,12 @@
 <div style="max-width:1100px; margin:40px auto; padding:0 20px;">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
     <h2 style="font-size:1.3rem; margin:0;">Cache Administration</h2>
-    <a href="/admin/logout" style="font-size:0.8rem; color:rgba(255,255,255,0.4); text-decoration:none;">Sign out</a>
+    <a href="/admin/logout" style="font-size:0.8rem; color:#8a96a4; text-decoration:none;">Sign out</a>
   </div>
-  <p style="color:rgba(255,255,255,0.4); font-size:0.85rem; margin-bottom:24px;">Session expires after 2 hours of inactivity.</p>
+  <p style="color:#8a96a4; font-size:0.85rem; margin-bottom:24px;">Session expires after 2 hours of inactivity.</p>
 
   {% if message %}
-  <div style="background:rgba(40,167,69,0.15); border:1px solid rgba(40,167,69,0.35); border-radius:6px; padding:12px 16px; margin-bottom:20px; font-size:0.9rem; color:#6fcf87;">
+  <div style="background:#f0faf3; border:1px solid #86efac; border-radius:6px; padding:12px 16px; margin-bottom:20px; font-size:0.9rem; color:#166534;">
     {{ message }}
   </div>
   {% endif %}
@@ -35,7 +35,7 @@
     {% endif %}
     <form method="post" action="?token={{ request.args.get('token', '') }}" style="margin-top:14px;">
       <button name="action" value="clear_minister"
-              style="background:#1c3e6e; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
+              style="background:#1a4a6e; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
         Clear minister cache
       </button>
     </form>
@@ -164,7 +164,7 @@
           </div>
         </div>
         <button type="submit"
-                style="background:#1c3e6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
+                style="background:#1a4a6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
           Fetch &amp; Ingest
         </button>
       </form>
@@ -224,7 +224,7 @@
       </div>
 
       <button type="submit"
-              style="background:#1c3e6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
+              style="background:#1a4a6e; color:#fff; border:none; border-radius:5px; padding:8px 18px; font-size:0.85rem; cursor:pointer;">
         Upload &amp; Ingest
       </button>
     </form>

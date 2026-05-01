@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{# ---- SEO ---- #}
+{% block title %}{{ session.title }} — {{ human_date }} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ debate_type_label }} in the {{ session.house }} on {{ human_date }}{% if policy_areas %}, covering {{ policy_areas|join(', ') }}{% endif %}. Full Hansard transcript.{% endblock %}
+{% block og_title %}{{ session.title }} — {{ human_date }}{% endblock %}
+{% block og_description %}{{ debate_type_label }}, {{ session.house }}, {{ human_date }}{% if specific_topics %}: {{ specific_topics[:3]|join('; ') }}{% endif %}{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ session.title|tojson }},
+  "datePublished": "{{ session.date.isoformat() }}",
+  "description": "{{ debate_type_label }} in the {{ session.house }} on {{ human_date }}",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
+  "url": "https://westminsterbrief.co.uk/archive/debate/{{ url_date }}/{{ session.slug }}"{% if session.hansard_url %},
+  "sameAs": {{ session.hansard_url|tojson }}{% endif %}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+
+{% block content %}
+<div class="sd-page">
+
+    {# --- Session header --- #}
+    <div class="sd-header">
+        <nav class="sd-breadcrumb" aria-label="breadcrumb">
+            <a href="/archive">Hansard Archive</a>
+            <span class="sd-breadcrumb-sep">›</span>
+            <a href="/archive?from={{ session.date.isoformat() }}&to={{ session.date.isoformat() }}">{{ human_date }}</a>
+            <span class="sd-breadcrumb-sep">›</span>
+            <span>{{ session.title|truncate(60, true, '…') }}</span>
+        </nav>
+
+        <h1 class="sd-title">{{ session.title }}</h1>
+
+        <div class="sd-meta">
+            <span class="topic-source-badge topic-source-{{ session.house|lower }}">{{ session.house }}</span>
+            <span class="archive-dtype-badge archive-dtype-{{ session.debate_type }}">{{ debate_type_label }}</span>
+            {% if department %}<a href="/archive?dept={{ department|urlencode }}&dtype=oral_questions" class="archive-dept-badge">{{ department }}</a>{% endif %}
+            <span class="sd-date">{{ human_date }}</span>
+            {% if session.hansard_url %}
+            <a class="sd-hansard-link" href="{{ session.hansard_url }}" target="_blank" rel="noopener">View on Hansard ↗</a>
+            {% endif %}
+        </div>
+
+        {% if policy_areas or specific_topics %}
+        <div class="sd-theme-row">
+            {% for pa in policy_areas %}
+            <a href="/archive?policy={{ pa|urlencode }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
+            {% endfor %}
+            {% for topic in specific_topics %}
+            <span class="archive-tag archive-tag-topic">{{ topic }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="sd-actions">
+            <a href="/archive/debate/{{ url_date }}/{{ session.slug }}/word" class="btn-export">↓ Download transcript (Word)</a>
+            <span class="sd-contrib-count">{{ contributions|length }} contribution{{ 's' if contributions|length != 1 else '' }}</span>
+        </div>
+    </div>
+
+    {# --- Related sessions panel --- #}
+    {% if related_sessions['items'] %}
+    <div class="sd-related">
+        <div class="sd-related-inner">
+            <span class="sd-related-label">Other stages of this debate</span>
+            {% for rel in related_sessions['items'] %}
+            <a class="sd-related-item" href="/archive/debate/{{ rel.url_date }}/{{ rel.session.slug }}">
+                <span class="sd-related-date">{{ rel.human_date }}</span>
+                <span class="topic-source-badge topic-source-{{ rel.session.house|lower }}">{{ rel.session.house }}</span>
+                <span class="sd-related-dtype">{{ rel.debate_type_label }}</span>
+                <span class="sd-related-contribs">{{ rel.contrib_count }} contribution{{ 's' if rel.contrib_count != 1 else '' }}</span>
+            </a>
+            {% endfor %}
+            {% if related_sessions['total'] > related_sessions['items']|length %}
+            <span class="sd-related-overflow">+{{ related_sessions['total'] - related_sessions['items']|length }} more</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Transcript --- #}
+    {% if contributions %}
+    <div class="sd-transcript">
+        {% for item in contributions %}
+        <div class="sd-contrib" id="contrib-{{ item.id }}">
+            <a class="sd-contrib-permalink" href="#contrib-{{ item.id }}" title="Link to this contribution">#</a>
+            <div class="sd-contrib-speaker" style="border-left-color: {{ item.party_colour }}">
+                <a class="sd-speaker-name" href="/biography">{{ item.name }}</a>
+                {% if item.role or item.party %}
+                <span class="sd-speaker-secondary">
+                    {%- if item.role -%}{{ item.role }}{% if item.party %} · {{ item.party }}{% endif %}
+                    {%- elif item.party -%}{{ item.party }}
+                    {%- endif -%}
+                </span>
+                {% endif %}
+            </div>
+            <div class="sd-contrib-text">{{ item.speech_text }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No transcript available for this session.</p>
+    </div>
+    {% endif %}
+
+    {# --- Day navigation --- #}
+    {% if day_nav.prev or day_nav.next %}
+    <nav class="sd-day-nav" aria-label="Other sessions this day">
+        {% if day_nav.prev %}
+        <a class="sd-day-nav-item sd-day-nav-prev" href="{{ day_nav.prev.url }}">
+            <span class="sd-day-nav-dir">← Previous</span>
+            <span class="sd-day-nav-title">{{ day_nav.prev.title }}</span>
+            <span class="sd-day-nav-dtype">{{ day_nav.prev.dtype }}</span>
+        </a>
+        {% else %}
+        <span class="sd-day-nav-item sd-day-nav-empty"></span>
+        {% endif %}
+        {% if day_nav.next %}
+        <a class="sd-day-nav-item sd-day-nav-next" href="{{ day_nav.next.url }}">
+            <span class="sd-day-nav-dir">Next →</span>
+            <span class="sd-day-nav-title">{{ day_nav.next.title }}</span>
+            <span class="sd-day-nav-dtype">{{ day_nav.next.dtype }}</span>
+        </a>
+        {% else %}
+        <span class="sd-day-nav-item sd-day-nav-empty"></span>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+    {# --- Footer note --- #}
+    <p class="sd-source-note">
+        Parliamentary information from
+        <a href="{{ session.hansard_url or 'https://hansard.parliament.uk' }}" target="_blank" rel="noopener">Hansard</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Theme tags generated by AI — verify before use in briefings.
+    </p>
+
+</div>
+{% endblock %}

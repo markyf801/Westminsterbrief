@@ -21,11 +21,11 @@
         
         <form method="POST" action="/add_topic">
             <div style="margin-bottom: 10px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Semantic Prompt (Describe what you are looking for)</label>
+                <label style="font-size: 12px; font-weight: bold; color: #1a4a6e;">Semantic Prompt (Describe what you are looking for)</label>
                 <textarea name="keyword" placeholder="e.g., Are there any debates about capping international student visas to protect domestic numbers?" required style="width: 100%; height: 60px; margin-top: 5px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; resize: none;"></textarea>
             </div>
             <div style="margin-bottom: 15px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Broad API Category (For fetching data)</label>
+                <label style="font-size: 12px; font-weight: bold; color: #1a4a6e;">Broad API Category (For fetching data)</label>
                 <select name="department" style="margin-top: 5px; width: 100%; padding: 8px;">
                     <option value="Education">Education</option>
                     <option value="Treasury">Treasury</option>
@@ -61,27 +61,27 @@
 
         <form method="POST" action="/add_stakeholder">
             <div style="margin-bottom: 8px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Organisation Name</label>
+                <label style="font-size: 12px; font-weight: bold; color: #1a4a6e;">Organisation Name</label>
                 <input type="text" name="name" id="sh-name" placeholder="e.g., Universities UK" required
                        style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
             <div style="margin-bottom: 8px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Website <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <label style="font-size: 12px; font-weight: bold; color: #1a4a6e;">Website <span style="font-weight:normal; color:#888;">(optional)</span></label>
                 <input type="url" name="website" id="sh-website" placeholder="https://www.example.org"
                        style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
             <div style="margin-bottom: 8px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">RSS Feed URL <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <label style="font-size: 12px; font-weight: bold; color: #1a4a6e;">RSS Feed URL <span style="font-weight:normal; color:#888;">(optional)</span></label>
                 <input type="url" name="rss_url" id="sh-rss" placeholder="https://www.example.org/feed"
                        style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
             <div style="margin-bottom: 8px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Bluesky Handle <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <label style="font-size: 12px; font-weight: bold; color: #1a4a6e;">Bluesky Handle <span style="font-weight:normal; color:#888;">(optional)</span></label>
                 <input type="text" name="bsky_handle" id="sh-bsky" placeholder="@handle.bsky.social"
                        style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
             <div style="margin-bottom: 12px;">
-                <label style="font-size: 12px; font-weight: bold; color: #1c3e6e;">Description <span style="font-weight:normal; color:#888;">(optional)</span></label>
+                <label style="font-size: 12px; font-weight: bold; color: #1a4a6e;">Description <span style="font-weight:normal; color:#888;">(optional)</span></label>
                 <input type="text" name="description" id="sh-desc" placeholder="One sentence about this organisation"
                        style="margin-top: 5px; width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             </div>
@@ -92,7 +92,7 @@
 
 <div class="box" style="text-align: center; background: #fdfbff; border: 1px solid #dcdde1; padding: 20px;">
     <form method="POST" action="/run_manual_scan" onsubmit="this.querySelector('button').innerText = '🛰️ Running Semantic Analysis...'; this.querySelector('button').style.opacity='0.8';">
-        <button type="submit" style="background: #1c3e6e; color: white; border: none; padding: 15px 35px; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 15px rgba(28,62,110,0.2); transition: 0.3s;">
+        <button type="submit" style="background: #1a4a6e; color: white; border: none; padding: 15px 35px; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; box-shadow: 0 4px 15px rgba(28,62,110,0.2); transition: 0.3s;">
             🔄 Run Smart AI Scan (Last 72 Hours)
         </button>
     </form>
@@ -109,7 +109,7 @@
 </div>
 
 <div class="box">
-    <h3 style="margin-bottom: 20px; color: #1c3e6e; border-bottom: 2px solid #f0f2f5; padding-bottom: 10px;">
+    <h3 style="margin-bottom: 20px; color: #1a4a6e; border-bottom: 2px solid #f0f2f5; padding-bottom: 10px;">
         📂 AI Intelligence Feed
     </h3>
     
@@ -132,7 +132,7 @@
                     <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #f1f2f6;">
                         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
                             {% if alert.source == 'Hansard' %}
-                                <span style="background: #1c3e6e; color: white; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: bold;">🏛️ PARLIAMENT</span>
+                                <span style="background: #1a4a6e; color: white; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: bold;">🏛️ PARLIAMENT</span>
                             {% elif alert.source == 'Media' %}
                                 <span style="background: #00b4d8; color: white; font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: bold;">📰 MEDIA</span>
                             {% else %}
@@ -146,7 +146,7 @@
                             <h5 style="margin: 0 0 5px 0; font-size: 15px; line-height: 1.3;">{{ alert.title }}</h5>
                         </a>
                         <p style="font-size: 13px; color: #576574; margin: 5px 0; line-height: 1.5;">"{{ alert.snippet }}"</p>
-                        <small style="color: #1c3e6e; font-weight: 700;">— {{ alert.speaker }}</small>
+                        <small style="color: #1a4a6e; font-weight: 700;">— {{ alert.speaker }}</small>
                     </div>
                     {% endfor %}
                 {% else %}

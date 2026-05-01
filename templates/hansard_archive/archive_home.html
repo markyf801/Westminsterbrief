@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% block title %}Hansard Archive — Westminster Brief{% endblock %}
+{% block meta_description %}Search and browse Hansard debates from the UK Parliament. Full transcripts, AI theme tags, and policy area filters across Commons and Lords.{% endblock %}
+{% block og_title %}Hansard Archive — Westminster Brief{% endblock %}
+{% block og_description %}Search UK parliamentary debates by topic, house, date or policy area. Full Hansard transcripts with AI theme tagging.{% endblock %}
+
+{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+
+{% block content %}
+<div class="ah-page">
+<div class="ah-inner">
+
+    {# --- Page header --- #}
+    <div class="ah-header">
+        <h1 class="ah-title">Hansard Archive <span class="ah-beta-badge">BETA</span></h1>
+        <p class="ah-desc">UK parliamentary debates — Commons and Lords</p>
+        {% if last_ingested %}
+        <p class="ah-currency">Updated hourly during parliamentary sittings &nbsp;·&nbsp; Most recent session: <strong>{{ last_ingested }}</strong></p>
+        {% endif %}
+    </div>
+
+    {# --- Search form --- #}
+    <form class="ah-form" method="get" action="/archive">
+        <div class="ah-search-row">
+            <input type="text" name="q" value="{{ q }}" placeholder="Search debates…"
+                   class="ah-search-input" autocomplete="off" spellcheck="false">
+            <button type="submit" class="ah-search-btn">Search</button>
+            {% if has_filters %}
+            <a href="/archive" class="ah-clear-link">Clear</a>
+            {% endif %}
+        </div>
+        <div class="ah-filter-row">
+            <select name="house" class="ah-filter-select" id="ah-house-select">
+                <option value="">All houses</option>
+                <option value="Commons" {% if house_filter == 'Commons' %}selected{% endif %}>Commons</option>
+                <option value="Lords"   {% if house_filter == 'Lords'   %}selected{% endif %}>Lords</option>
+            </select>
+
+            <select name="dtype" class="ah-filter-select">
+                <option value="">All types</option>
+                {% for key, label in debate_type_labels.items() %}
+                <option value="{{ key }}" {% if dtype_filter == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+
+            {% if all_departments %}
+            <select name="dept" class="ah-filter-select ah-filter-select-wide" id="ah-dept-select"
+                    {% if house_filter == 'Lords' %}style="display:none"{% endif %}>
+                <option value="">All departments</option>
+                {% for dept in all_departments %}
+                <option value="{{ dept }}" {% if dept_filter == dept %}selected{% endif %}>{{ dept }}</option>
+                {% endfor %}
+            </select>
+            {% endif %}
+
+            <select name="policy" class="ah-filter-select ah-filter-select-wide">
+                <option value="">All policy areas</option>
+                {% for pa in all_policy_areas %}
+                <option value="{{ pa }}" {% if policy_filter == pa %}selected{% endif %}>{{ pa }}</option>
+                {% endfor %}
+            </select>
+
+            <span class="ah-filter-label">From</span>
+            <input type="date" name="from" value="{{ date_from }}" class="ah-filter-date">
+            <span class="ah-filter-label">To</span>
+            <input type="date" name="to"   value="{{ date_to }}"   class="ah-filter-date">
+
+            <label class="ah-title-only-label">
+                <input type="checkbox" name="title_only" value="1" {% if title_only %}checked{% endif %}>
+                Title only
+            </label>
+        </div>
+    </form>
+
+    {# --- Results bar --- #}
+    <div class="ah-results-bar">
+        {% if grouped %}
+            <span class="ah-results-count">{{ total_sessions }} question{{ 's' if total_sessions != 1 else '' }} in {{ total }} group{{ 's' if total != 1 else '' }}</span>
+            {% if total > 0 %}
+            <span class="ah-results-range">showing groups {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
+            {% endif %}
+        {% elif has_filters %}
+            {% if q %}
+                <span class="ah-results-count">{{ total }} result{{ 's' if total != 1 else '' }} for <strong>{{ q }}</strong></span>
+            {% else %}
+                <span class="ah-results-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
+            {% endif %}
+            {% if total > 0 %}
+            <span class="ah-results-range">showing {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
+            {% endif %}
+        {% else %}
+            <span class="ah-results-count">{{ total }} sessions</span>
+            {% if total > 0 %}
+            <span class="ah-results-range">showing {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
+            {% endif %}
+        {% endif %}
+    </div>
+
+    {# --- Grouped view (oral_questions / pmqs without search query) --- #}
+    {% if grouped %}
+        {% if group_items %}
+        <div class="ah-results-list">
+            {% for group in group_items %}
+            <div class="ah-group">
+                <div class="ah-group-header">
+                    <span class="ah-group-title">{{ group.header }}</span>
+                    <span class="ah-group-count">{{ group.session_count }} question{{ 's' if group.session_count != 1 else '' }}</span>
+                </div>
+                <div class="ah-group-sessions">
+                    {% for item in group.sessions %}
+                    {% set s = item.session %}
+                    <div class="ah-card ah-card-in-group">
+                        <div class="ah-card-meta">
+                            {% if not group.house or group.house == 'Commons' and not group.dept %}
+                            <span class="topic-source-badge topic-source-{{ s.house|lower }}">{{ s.house }}</span>
+                            {% endif %}
+                            {% if item.contrib_count %}
+                            <span class="ah-card-contribs">{{ item.contrib_count }} contribution{{ 's' if item.contrib_count != 1 else '' }}</span>
+                            {% endif %}
+                        </div>
+                        <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
+                        {% set tags_shown = namespace(n=0) %}
+                        {% if item.policy_areas or item.specific_topics %}
+                        <div class="ah-card-tags">
+                            {% for pa in item.policy_areas[:1] %}
+                            <a href="/archive?policy={{ pa|urlencode }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
+                            {% set tags_shown.n = tags_shown.n + 1 %}
+                            {% endfor %}
+                            {% for topic in item.specific_topics %}
+                            {% if tags_shown.n < 3 %}
+                            <span class="archive-tag archive-tag-topic">{{ topic }}</span>
+                            {% set tags_shown.n = tags_shown.n + 1 %}
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state ah-empty">
+            <p>No sessions found matching your filters.</p>
+        </div>
+        {% endif %}
+
+    {# --- Flat list (search results or unfiltered browse) --- #}
+    {% else %}
+        {% if session_items %}
+        <div class="ah-results-list">
+            {% for item in session_items %}
+            {% set s = item.session %}
+            <div class="ah-card">
+                <div class="ah-card-meta">
+                    <span class="topic-source-badge topic-source-{{ s.house|lower }}">{{ s.house }}</span>
+                    <span class="archive-dtype-badge archive-dtype-{{ s.debate_type }}">{{ item.debate_type_label }}</span>
+                    {% if item.department %}<span class="archive-dept-badge">{{ item.department }}</span>{% endif %}
+                    <span class="ah-card-date">{{ item.human_date }}</span>
+                    {% if item.contrib_count %}
+                    <span class="ah-card-contribs">{{ item.contrib_count }} contribution{{ 's' if item.contrib_count != 1 else '' }}</span>
+                    {% endif %}
+                </div>
+                <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
+                {% set tags_shown = namespace(n=0) %}
+                {% if item.policy_areas or item.specific_topics %}
+                <div class="ah-card-tags">
+                    {% for pa in item.policy_areas[:1] %}
+                    <a href="/archive?policy={{ pa|urlencode }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
+                    {% set tags_shown.n = tags_shown.n + 1 %}
+                    {% endfor %}
+                    {% for topic in item.specific_topics %}
+                    {% if tags_shown.n < 3 %}
+                    <span class="archive-tag archive-tag-topic">{{ topic }}</span>
+                    {% set tags_shown.n = tags_shown.n + 1 %}
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state ah-empty">
+            {% if date_from == today_str or date_to == today_str %}
+            <p>No results yet for today. The archive updates hourly during sittings — check back later.</p>
+            {% elif has_filters %}
+            <p>No debates found matching your search. Try broadening the filters or clearing the date range.</p>
+            {% else %}
+            <p>No sessions in the archive yet.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    {% endif %}
+
+    {# --- Pagination --- #}
+    {% if total_pages > 1 %}
+    <nav class="ah-pagination" aria-label="Results pages">
+        {% if page > 1 %}
+        <a href="/archive?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
+        {% endif %}
+
+        <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
+
+        {% if page < total_pages %}
+        <a href="/archive?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        {% else %}
+        <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+    {# --- Source note --- #}
+    <p class="ah-source-note">
+        Parliamentary information from
+        <a href="https://hansard.parliament.uk" target="_blank" rel="noopener">Hansard</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Theme tags generated by AI — verify before use in briefings.
+    </p>
+
+</div>{# /.ah-inner #}
+</div>{# /.ah-page #}
+<script>
+(function () {
+    var house = document.getElementById('ah-house-select');
+    var dept  = document.getElementById('ah-dept-select');
+    if (!house || !dept) return;
+    house.addEventListener('change', function () {
+        if (house.value === 'Lords') {
+            dept.style.display = 'none';
+            dept.value = '';          // clear selection so it doesn't filter
+        } else {
+            dept.style.display = '';
+        }
+    });
+}());
+</script>
+{% endblock %}

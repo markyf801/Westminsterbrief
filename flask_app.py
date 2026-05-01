@@ -54,6 +54,7 @@ def _validate_external_url(url: str) -> str:
 # Import existing blueprints
 from hansard import hansard_bp
 from biography import biography_bp
+from hansard_archive.views import archive_bp
 from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
 from mp_search import mp_search_bp
@@ -1634,6 +1635,7 @@ app.register_blueprint(tracker_bp)
 app.register_blueprint(debate_scanner_bp)
 app.register_blueprint(mp_search_bp)
 app.register_blueprint(directory_bp)
+app.register_blueprint(archive_bp)
 
 @app.context_processor
 def inject_version():

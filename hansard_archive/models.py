@@ -53,6 +53,8 @@ class HansardSession(db.Model):
     hansard_url = db.Column(db.String(500), nullable=True)
     contributions_ingested = db.Column(db.Boolean, nullable=False, default=False)
     is_container = db.Column(db.Boolean, nullable=False, default=False)  # True for structural header sessions (hs_6bDepartment, hs_3MainHdg) that recursively duplicate child contributions
+    slug = db.Column(db.String(200), nullable=True, unique=True, index=True)  # URL slug: {title-slug}-{short-id}, e.g. womens-pension-age-4069
+    department = db.Column(db.String(200), nullable=True, index=True)  # answering dept for oral_questions/pmqs; NULL for debates/WH/etc.
     ingested_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     contributions = db.relationship(
