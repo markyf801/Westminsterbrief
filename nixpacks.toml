@@ -1,2 +1,2 @@
-[phases.build]
-cmds = ["true"]
+[start]
+cmd = "true"
