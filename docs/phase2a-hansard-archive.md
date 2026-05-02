@@ -75,3 +75,10 @@ timeline (Commons First Reading → ... → Royal Assent).
   Phase 2A.5 scope. First build after civil service share lands.
 
 - **Recent additions feed** — see soft-launch framing above (item 4).
+
+- **MP slug URLs** — Currently MP archive pages use integer member IDs (`/archive/mp/4053`).
+  Works correctly and sitemap is consistent, but loses the SEO benefit of keyword-in-URL
+  for queries like "Keir Starmer parliament debates". Build: slug-based MP URLs
+  (`/archive/mp/keir-starmer`) with 301 redirect from integer to slug as canonical.
+  Slug generation logic, route registration, internal link updates, sitemap update,
+  redirect handling. Estimated effort: 0.5–1 day.
