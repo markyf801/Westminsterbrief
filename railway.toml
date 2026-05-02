@@ -5,7 +5,8 @@ builder = "NIXPACKS"
 # startCommand intentionally omitted — set per-service in Railway UI Settings.
 # Flask service (jubilant-intuition): gunicorn flask_app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
 # Cron services: python scripts/archive_cron.py --days 3 --service-name <name>
-# nixpacks.toml clears the build phase so Nixpacks doesn't auto-run gunicorn at build time.
+# Cron services use Dockerfile.cron (set in Railway UI → Service → Settings → Build → Dockerfile Path)
+# to avoid Nixpacks auto-running gunicorn at build time ($PORT is unset, causing build failure).
 healthcheckPath = "/ping"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
