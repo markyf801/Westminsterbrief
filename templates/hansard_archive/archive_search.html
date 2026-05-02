@@ -32,10 +32,21 @@
             <input type="text" name="q" id="as-search-q" value="{{ q }}" placeholder="Search debates and speeches…"
                    class="ah-search-input" autocomplete="off" spellcheck="false" autofocus>
             <button type="submit" class="ah-search-btn">Search</button>
-            {% if q %}
+            {% if q or policy_filter %}
             <a href="/archive/search" class="ah-clear-link">Clear</a>
             {% endif %}
         </div>
+        {% if all_policy_areas %}
+        <div class="ah-filter-row" style="margin-top:8px;">
+            <label for="as-policy-filter" style="font-size:13px; color:#576574; margin-right:6px;">Policy area:</label>
+            <select name="policy" id="as-policy-filter" class="ah-filter-select" onchange="this.form.submit()">
+                <option value="">All policy areas</option>
+                {% for area in all_policy_areas %}
+                <option value="{{ area }}" {% if area == policy_filter %}selected{% endif %}>{{ area }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
         <p class="as-hint">Tip: wrap a phrase in "quotes" for an exact phrase search.</p>
     </form>
 
@@ -78,15 +89,16 @@
 
     {# --- Pagination --- #}
     {% if total_pages > 1 %}
+    {% set policy_qs = ("&policy=" ~ policy_filter|urlencode) if policy_filter else "" %}
     <nav class="ah-pagination" aria-label="Results pages">
         {% if page > 1 %}
-        <a href="/archive/search?q={{ q|urlencode }}&page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        <a href="/archive/search?q={{ q|urlencode }}{{ policy_qs }}&page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
         {% endif %}
         <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="/archive/search?q={{ q|urlencode }}&page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        <a href="/archive/search?q={{ q|urlencode }}{{ policy_qs }}&page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
         {% endif %}

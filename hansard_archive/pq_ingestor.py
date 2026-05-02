@@ -26,10 +26,11 @@ from extensions import db
 from hansard_archive.models import HaPQ, HaPQTheme
 
 WQ_API_BASE = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
-_REQUEST_TIMEOUT = 30
+_REQUEST_TIMEOUT = 60        # Parliament API is slow; 30s was too tight
 _PAGE_SIZE = 500
 _COMMIT_BATCH = 200
 _INTER_REQUEST_DELAY = 0.3   # seconds between paginated requests
+_PAGE_RETRIES = 3            # retries on transient errors before skipping a page
 
 
 def _strip_html(html: str) -> str:
@@ -110,14 +111,29 @@ def ingest_pq_date_range(
 
     while True:
         params = {**params_base, "skip": skip}
-        try:
-            resp = requests.get(WQ_API_BASE, params=params, timeout=_REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception as exc:
-            _log.error("WQ API error at skip=%d: %s", skip, exc)
-            errors += 1
-            break
+        payload = None
+        for attempt in range(_PAGE_RETRIES):
+            try:
+                resp = requests.get(WQ_API_BASE, params=params, timeout=_REQUEST_TIMEOUT)
+                if resp.status_code in (401, 403, 400):
+                    _log.error("WQ API permanent error %d at skip=%d — aborting", resp.status_code, skip)
+                    errors += 1
+                    return {"inserted": inserted, "updated": updated, "errors": errors}
+                resp.raise_for_status()
+                payload = resp.json()
+                break
+            except Exception as exc:
+                _log.warning("WQ API error at skip=%d attempt %d/%d: %s", skip, attempt + 1, _PAGE_RETRIES, exc)
+                if attempt < _PAGE_RETRIES - 1:
+                    time.sleep(2 ** attempt)  # 1s, 2s
+                else:
+                    _log.error("WQ API failed after %d attempts at skip=%d — skipping page", _PAGE_RETRIES, skip)
+                    errors += 1
+
+        if payload is None:
+            # All retries exhausted for this page — advance and continue
+            skip += _PAGE_SIZE
+            continue
 
         results = payload.get("results") or []
         if not results:

@@ -40,8 +40,11 @@ from hansard_archive.models import (
 logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 30
-_INTER_REQUEST_DELAY = 0.4   # be a good citizen
+_INTER_REQUEST_DELAY = 0.4   # between single-PQ fallback calls
 _MAX_RETRIES = 2
+
+_PQ_BATCH_SIZE = 10
+_PQ_BATCH_DELAY = 0.5   # between batch calls — paid tier
 
 # ---------------------------------------------------------------------------
 # GOV.UK policy area taxonomy (verified April 2026 against gov.uk/search/policy-papers)
@@ -100,6 +103,41 @@ _RESPONSE_SCHEMA = {
     },
     "required": ["policy_areas", "themes"],
 }
+
+_BATCH_RESPONSE_SCHEMA = {
+    "type": "ARRAY",
+    "items": {
+        "type": "OBJECT",
+        "properties": {
+            "uin": {"type": "STRING"},
+            "policy_areas": {
+                "type": "ARRAY",
+                "items": {"type": "STRING", "enum": POLICY_AREAS},
+            },
+            "themes": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "maxItems": 5,
+            },
+        },
+        "required": ["uin", "policy_areas", "themes"],
+    },
+}
+
+_PQ_BATCH_PROMPT_TEMPLATE = """\
+You are tagging UK Written Parliamentary Questions for a parliamentary intelligence \
+archive. Tag EACH of the {n} questions below.
+
+For each question return:
+1. uin — the UIN exactly as provided
+2. policy_areas — 1+ terms from the allowed enum. Include only if SUBSTANTIVELY addressed.
+3. themes — 1 to 5 specific topic phrases (2-5 words, lowercase, e.g. \
+"student loan repayments", "nhs waiting times"). Do not repeat policy_area names.
+
+All {n} questions must appear in the response, identified by their UIN.
+
+{questions_block}"""
+
 
 _PROMPT_TEMPLATE = """\
 You are tagging UK parliamentary Hansard debate transcripts for a parliamentary \
@@ -191,6 +229,50 @@ def _gemini_tag(api_key: str, prompt: str) -> Optional[dict]:
                     return None
             except (requests.RequestException, json.JSONDecodeError, KeyError) as e:
                 logger.warning("Tagger: attempt %d/%d failed: %s", attempt + 1, _MAX_RETRIES + 1, e)
+        if attempt < _MAX_RETRIES:
+            time.sleep(2 ** attempt)
+
+    return None
+
+
+def _gemini_tag_batch(api_key: str, prompt: str) -> Optional[list]:
+    """
+    Call Gemini for a batch of PQs. Returns a list of dicts or None on total failure.
+    Each dict has keys: uin, policy_areas, themes (schema-enforced).
+    Caller is responsible for checking which UINs are present in the response.
+    """
+    model = _detect_model(api_key)
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": _BATCH_RESPONSE_SCHEMA,
+        },
+    }
+
+    for attempt in range(_MAX_RETRIES + 1):
+        for version in ("v1beta", "v1"):
+            url = (
+                f"https://generativelanguage.googleapis.com/{version}/models/"
+                f"{model}:generateContent?key={api_key}"
+            )
+            try:
+                r = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
+                if r.status_code == 200:
+                    raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return parsed
+                    return None
+                if r.status_code == 429:
+                    logger.warning("Tagger batch: rate limited (429), backing off")
+                    time.sleep(10 * (attempt + 1))
+                    break
+                if r.status_code in (401, 403):
+                    logger.error("Tagger batch: auth error %d — check GEMINI_API_KEY", r.status_code)
+                    return None
+            except (requests.RequestException, json.JSONDecodeError, KeyError) as e:
+                logger.warning("Tagger batch: attempt %d/%d failed: %s", attempt + 1, _MAX_RETRIES + 1, e)
         if attempt < _MAX_RETRIES:
             time.sleep(2 ** attempt)
 
@@ -394,6 +476,35 @@ Question:
 {answer_block}"""
 
 
+def _write_pq_tags(pq: "HaPQ", result: dict, model_name: str, now: "datetime") -> int:
+    """Write theme rows for a single PQ from a parsed Gemini result dict. Returns row count."""
+    valid_areas = set(POLICY_AREAS)
+    count = 0
+    for area in result.get("policy_areas", []):
+        if area and area in valid_areas:
+            db.session.merge(HaPQTheme(
+                pq_id=pq.id,
+                theme=area,
+                theme_type=THEME_TYPE_POLICY_AREA,
+                tagged_at=now,
+                model_used=model_name,
+            ))
+            count += 1
+    for theme in result.get("themes", [])[:5]:
+        if theme:
+            db.session.merge(HaPQTheme(
+                pq_id=pq.id,
+                theme=theme.lower().strip(),
+                theme_type=THEME_TYPE_SPECIFIC,
+                tagged_at=now,
+                model_used=model_name,
+            ))
+            count += 1
+    if count > 0:
+        db.session.commit()
+    return count
+
+
 def tag_pq(pq_id: int, api_key: Optional[str] = None) -> int:
     """
     Tag a single Written Question. Skips if already tagged.
@@ -500,39 +611,109 @@ def tag_pq_all_untagged(
     total_eligible = len(pqs)
 
     if verbose:
-        print(f"[pq-tagger] {total_eligible} PQs to tag (limit={limit})", flush=True)
+        print(
+            f"[pq-tagger] {total_eligible} PQs to tag in batches of {_PQ_BATCH_SIZE} "
+            f"(limit={limit}, batch_delay={_PQ_BATCH_DELAY}s)",
+            flush=True,
+        )
 
     tagged = 0
     failed = 0
     errors = 0
+    retried = 0
+    model_name = _MODEL_CACHE.get(api_key, "gemini-2.5-flash-lite")
 
-    for i, pq in enumerate(pqs):
-        try:
-            time.sleep(_INTER_REQUEST_DELAY)
-            count = tag_pq(pq.id, api_key=api_key)
-            if count > 0:
-                tagged += 1
-                if verbose:
-                    print(
-                        f"[pq-tagger] [{i+1}/{total_eligible}] + {pq.uin} {(pq.heading or '')[:55]!r} — {count} tags",
-                        flush=True,
-                    )
-            else:
-                failed += 1
-                if verbose:
-                    print(
-                        f"[pq-tagger] [{i+1}/{total_eligible}] FAIL {pq.uin}",
-                        flush=True,
-                    )
-        except Exception as e:
-            errors += 1
-            logger.error("Tagger: unexpected error on PQ %d: %s", pq.id, e)
+    # Process in batches
+    batches = [pqs[i:i + _PQ_BATCH_SIZE] for i in range(0, len(pqs), _PQ_BATCH_SIZE)]
+
+    for batch_num, batch in enumerate(batches):
+        time.sleep(_PQ_BATCH_DELAY)
+        now = datetime.utcnow()
+
+        # Build batch prompt — short excerpts to keep prompt size manageable
+        questions_block = ""
+        for j, pq in enumerate(batch):
+            q_text = (pq.question_text or "")[:300]
+            a_snippet = f"\nAnswer: {pq.answer_text[:150]}" if pq.answer_text else ""
+            questions_block += (
+                f"[{j+1}] UIN: {pq.uin}\n"
+                f"Heading: {pq.heading or '(none)'}\n"
+                f"Dept: {pq.answering_body or 'unknown'}\n"
+                f"Question: {q_text}{a_snippet}\n\n"
+            )
+
+        prompt = _PQ_BATCH_PROMPT_TEMPLATE.format(
+            n=len(batch), questions_block=questions_block
+        )
+
+        batch_result = _gemini_tag_batch(api_key, prompt)
+        processed = batch_num * _PQ_BATCH_SIZE
+
+        if batch_result is not None:
+            # Index by UIN — strip whitespace in case model adds spaces
+            result_by_uin = {r.get("uin", "").strip(): r for r in batch_result}
+
+            for pq in batch:
+                result = result_by_uin.get(pq.uin)
+                if result:
+                    try:
+                        count = _write_pq_tags(pq, result, model_name, now)
+                        if count > 0:
+                            tagged += 1
+                            if verbose:
+                                print(
+                                    f"[pq-tagger] [{processed + batch.index(pq) + 1}/{total_eligible}]"
+                                    f" + {pq.uin} {(pq.heading or '')[:50]!r} — {count} tags",
+                                    flush=True,
+                                )
+                        else:
+                            failed += 1
+                    except Exception as e:
+                        errors += 1
+                        logger.error("Tagger: write error on PQ %d: %s", pq.id, e)
+                else:
+                    # UIN missing from batch response — retry individually
+                    logger.warning("Tagger batch: UIN %s missing from response, retrying individually", pq.uin)
+                    retried += 1
+                    try:
+                        time.sleep(_INTER_REQUEST_DELAY)
+                        count = tag_pq(pq.id, api_key=api_key)
+                        if count > 0:
+                            tagged += 1
+                        else:
+                            failed += 1
+                    except Exception as e:
+                        errors += 1
+                        logger.error("Tagger: individual retry error on PQ %d: %s", pq.id, e)
+        else:
+            # Whole batch failed — fall back to individual calls for each PQ
+            logger.warning("Tagger batch %d failed entirely, falling back to individual calls", batch_num + 1)
             if verbose:
-                print(f"[pq-tagger] ERROR PQ {pq.id}: {e}", flush=True)
+                print(f"[pq-tagger] Batch {batch_num + 1} failed — retrying {len(batch)} PQs individually", flush=True)
+            for pq in batch:
+                try:
+                    time.sleep(_INTER_REQUEST_DELAY)
+                    count = tag_pq(pq.id, api_key=api_key)
+                    if count > 0:
+                        tagged += 1
+                        retried += 1
+                    else:
+                        failed += 1
+                except Exception as e:
+                    errors += 1
+                    logger.error("Tagger: individual fallback error on PQ %d: %s", pq.id, e)
+
+        if verbose and (batch_num + 1) % 10 == 0:
+            print(
+                f"[pq-tagger] Progress: {min(processed + _PQ_BATCH_SIZE, total_eligible)}/{total_eligible}"
+                f" — tagged={tagged} failed={failed} retried={retried}",
+                flush=True,
+            )
 
     return {
         "total_eligible": total_eligible,
         "tagged": tagged,
         "failed": failed,
+        "retried": retried,
         "errors": errors,
     }

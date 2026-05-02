@@ -587,7 +587,9 @@ def archive_home():
     q = request.args.get("q", "").strip()
     # Text search lives at /archive/search (noindex); browse stays at /archive (indexed).
     if q:
-        return redirect(f"/archive/search?q={q}", code=302)
+        policy = request.args.get("policy", "").strip()
+        qs = urlencode({"q": q, "policy": policy}) if policy else urlencode({"q": q})
+        return redirect(f"/archive/search?{qs}", code=302)
 
     house_filter  = request.args.get("house", "")
     dtype_filter  = request.args.get("dtype", "")
@@ -1226,7 +1228,7 @@ _FTS_HEADLINE_OPTS = (
 )
 
 
-def _fts_search(q_raw: str, page: int) -> tuple[list, int]:
+def _fts_search(q_raw: str, page: int, policy_filter: str = "") -> tuple[list, int]:
     """
     Full-text search using Postgres tsvectors. Returns (results, total_count).
 
@@ -1244,9 +1246,16 @@ def _fts_search(q_raw: str, page: int) -> tuple[list, int]:
 
     offset = (page - 1) * _PER_PAGE
 
+    policy_join = (
+        "JOIN ha_session_theme sth ON sth.session_id = s.id"
+        "  AND sth.theme = :policy AND sth.theme_type = 'policy_area'"
+        if policy_filter else ""
+    )
+
     count_sql = sqla_text(f"""
         SELECT COUNT(DISTINCT s.id)
         FROM ha_session s
+        {policy_join}
         LEFT JOIN ha_contribution c ON c.session_id = s.id
             AND c.speech_tsv @@ {ts_func}('english', :q)
         WHERE s.is_container = false
@@ -1280,6 +1289,7 @@ def _fts_search(q_raw: str, page: int) -> tuple[list, int]:
                 + COALESCE(bc.body_rank, 0.0)                       AS final_rank,
             bc.snippet
         FROM ha_session s
+        {policy_join}
         LEFT JOIN best_contrib bc ON bc.session_id = s.id
         LEFT JOIN title_match  tm ON tm.session_id = s.id
         WHERE s.is_container = false
@@ -1288,10 +1298,15 @@ def _fts_search(q_raw: str, page: int) -> tuple[list, int]:
         LIMIT :lim OFFSET :off
     """)
 
+    count_params = {"q": q_clean}
+    if policy_filter:
+        count_params["policy"] = policy_filter
     params = {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS,
               "lim": _PER_PAGE, "off": offset}
+    if policy_filter:
+        params["policy"] = policy_filter
 
-    total   = db.session.execute(count_sql, {"q": q_clean}).scalar() or 0
+    total   = db.session.execute(count_sql, count_params).scalar() or 0
     rows    = db.session.execute(rows_sql, params).fetchall()
 
     results = []
@@ -1313,7 +1328,7 @@ def _fts_search(q_raw: str, page: int) -> tuple[list, int]:
     return results, total
 
 
-def _pq_fts_search(q_raw: str, limit: int = 20) -> list:
+def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list:
     """
     Full-text search over ha_pq using question_tsv. Returns up to `limit` results.
 
@@ -1328,25 +1343,33 @@ def _pq_fts_search(q_raw: str, limit: int = 20) -> list:
         ts_func = "plainto_tsquery"
         q_clean = q_raw
 
+    policy_join = (
+        "JOIN ha_pq_theme pth ON pth.pq_id = p.id"
+        "  AND pth.theme = :policy AND pth.theme_type = 'policy_area'"
+        if policy_filter else ""
+    )
+
     sql = sqla_text(f"""
         SELECT
-            id, uin, heading, asking_member, answering_body,
-            tabled_date, is_answered,
-            ts_rank(question_tsv, {ts_func}('english', :q)) AS rank,
+            p.id, p.uin, p.heading, p.asking_member, p.answering_body,
+            p.tabled_date, p.is_answered,
+            ts_rank(p.question_tsv, {ts_func}('english', :q)) AS rank,
             ts_headline('english',
-                coalesce(heading, '') || ' ' || coalesce(question_text, ''),
+                coalesce(p.heading, '') || ' ' || coalesce(p.question_text, ''),
                 {ts_func}('english', :q),
                 :hl_opts) AS snippet
-        FROM ha_pq
-        WHERE question_tsv @@ {ts_func}('english', :q)
+        FROM ha_pq p
+        {policy_join}
+        WHERE p.question_tsv @@ {ts_func}('english', :q)
         ORDER BY rank DESC
         LIMIT :lim
     """)
 
-    rows = db.session.execute(
-        sql,
-        {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS, "lim": limit},
-    ).fetchall()
+    sql_params = {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS, "lim": limit}
+    if policy_filter:
+        sql_params["policy"] = policy_filter
+
+    rows = db.session.execute(sql, sql_params).fetchall()
 
     results = []
     for row in rows:
@@ -1397,7 +1420,8 @@ def _ilike_search(q_raw: str, page: int) -> tuple[list, int]:
 
 @archive_bp.route("/search")
 def archive_search():
-    q    = request.args.get("q", "").strip()
+    q             = request.args.get("q", "").strip()
+    policy_filter = request.args.get("policy", "").strip()
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
@@ -1410,8 +1434,8 @@ def archive_search():
     if q:
         try:
             if _is_postgres():
-                results, total = _fts_search(q, page)
-                pq_results = _pq_fts_search(q, limit=20)
+                results, total = _fts_search(q, page, policy_filter=policy_filter)
+                pq_results = _pq_fts_search(q, limit=20, policy_filter=policy_filter)
             else:
                 results, total = _ilike_search(q, page)
             total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
@@ -1419,20 +1443,27 @@ def archive_search():
             error_msg = "Search is temporarily unavailable."
             print(f"[archive_search] error: {exc}", flush=True)
 
-    base_qs = urlencode({"q": q, "page": page}) if page > 1 else urlencode({"q": q})
+    qs_parts: dict = {"q": q}
+    if policy_filter:
+        qs_parts["policy"] = policy_filter
+    if page > 1:
+        qs_parts["page"] = page
+    base_qs = urlencode(qs_parts)
 
     resp = make_response(render_template(
         "hansard_archive/archive_search.html",
-        q           = q,
-        results     = results,
-        pq_results  = pq_results,
-        total       = total,
-        total_pages = total_pages,
-        per_page    = _PER_PAGE,
-        page        = page,
-        base_qs     = base_qs,
-        error_msg   = error_msg,
-        is_postgres = _is_postgres(),
+        q                = q,
+        policy_filter    = policy_filter,
+        all_policy_areas = _all_policy_areas(),
+        results          = results,
+        pq_results       = pq_results,
+        total            = total,
+        total_pages      = total_pages,
+        per_page         = _PER_PAGE,
+        page             = page,
+        base_qs          = base_qs,
+        error_msg        = error_msg,
+        is_postgres      = _is_postgres(),
     ))
     resp.headers["X-Robots-Tag"] = "noindex, nofollow"
     return resp
