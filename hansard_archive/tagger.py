@@ -4,6 +4,7 @@ Hansard Archive — Phase 2A Week 2 theme tagging.
 Entry points:
   tag_session(session_id) -> int          tag one session, return rows written
   tag_all_untagged(limit=None) -> dict    batch tag all untagged non-container sessions
+  tag_pq_all_untagged(limit=None) -> dict batch tag all untagged Written Questions
 
 Tags each session with two theme types (separate ha_session_theme rows):
   policy_area  — 1+ terms from the 23-term GOV.UK policy taxonomy (controlled enum)
@@ -32,6 +33,8 @@ from hansard_archive.models import (
     THEME_TYPE_SPECIFIC,
     HansardSession,
     HansardSessionTheme,
+    HaPQ,
+    HaPQTheme,
 )
 
 logger = logging.getLogger(__name__)
@@ -356,6 +359,176 @@ def tag_all_untagged(
             logger.error("Tagger: unexpected error on session %d: %s", session.id, e)
             if verbose:
                 print(f"[tagger] ERROR session {session.id}: {e}", flush=True)
+
+    return {
+        "total_eligible": total_eligible,
+        "tagged": tagged,
+        "failed": failed,
+        "errors": errors,
+    }
+
+
+# ---------------------------------------------------------------------------
+# PQ tagging
+# ---------------------------------------------------------------------------
+
+_PQ_PROMPT_TEMPLATE = """\
+You are tagging UK Written Parliamentary Questions for a parliamentary intelligence \
+archive used by civil servants, policy professionals, and researchers.
+
+For the question below, return:
+1. policy_areas — choose from the allowed enum values only. Include a term only if \
+that policy area is SUBSTANTIVELY addressed. Minimum 1, no hard maximum.
+2. themes — 1 to 5 specific policy topic phrases (2-5 words each, lowercase). These \
+should describe what the question is concretely about (e.g. "student loan repayments", \
+"nhs waiting times", "asylum seeker housing"). Do not repeat the policy_area names as themes.
+
+Heading: {heading}
+Answering department: {answering_body}
+Chamber: {chamber}
+Date tabled: {tabled_date}
+
+Question:
+{question_text}
+
+{answer_block}"""
+
+
+def tag_pq(pq_id: int, api_key: Optional[str] = None) -> int:
+    """
+    Tag a single Written Question. Skips if already tagged.
+    Returns number of theme rows written (0 if skipped or failed).
+    Expects to run inside a Flask app context with an active DB session.
+    """
+    if api_key is None:
+        from flask import current_app
+        api_key = current_app.config.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("Tagger: GEMINI_API_KEY not set")
+        return 0
+
+    pq = db.session.get(HaPQ, pq_id)
+    if not pq:
+        return 0
+
+    existing = HaPQTheme.query.filter_by(pq_id=pq_id).first()
+    if existing:
+        return 0
+
+    question_text = (pq.question_text or "")[:800]
+    if not question_text.strip():
+        logger.warning("Tagger: PQ %d has no question text — skipping", pq_id)
+        return 0
+
+    answer_block = ""
+    if pq.answer_text:
+        answer_block = f"Answer:\n{pq.answer_text[:400]}"
+
+    prompt = _PQ_PROMPT_TEMPLATE.format(
+        heading=pq.heading or "(no heading)",
+        answering_body=pq.answering_body or "unknown",
+        chamber=pq.chamber or "Commons",
+        tabled_date=pq.tabled_date.isoformat() if pq.tabled_date else "unknown",
+        question_text=question_text,
+        answer_block=answer_block,
+    )
+
+    result = _gemini_tag(api_key, prompt)
+    if not result:
+        logger.warning("Tagger: PQ %d (%r) — Gemini returned None", pq_id, (pq.heading or pq.uin)[:50])
+        return 0
+
+    model_name = _MODEL_CACHE.get(api_key, "gemini-2.5-flash-lite")
+    now = datetime.utcnow()
+    count = 0
+
+    for area in result.get("policy_areas", []):
+        if area and area in set(POLICY_AREAS):
+            db.session.merge(HaPQTheme(
+                pq_id=pq_id,
+                theme=area,
+                theme_type=THEME_TYPE_POLICY_AREA,
+                tagged_at=now,
+                model_used=model_name,
+            ))
+            count += 1
+
+    for theme in result.get("themes", [])[:5]:
+        if theme:
+            db.session.merge(HaPQTheme(
+                pq_id=pq_id,
+                theme=theme.lower().strip(),
+                theme_type=THEME_TYPE_SPECIFIC,
+                tagged_at=now,
+                model_used=model_name,
+            ))
+            count += 1
+
+    if count > 0:
+        db.session.commit()
+
+    return count
+
+
+def tag_pq_all_untagged(
+    limit: Optional[int] = None,
+    api_key: Optional[str] = None,
+    verbose: bool = True,
+) -> dict:
+    """
+    Batch tag all untagged Written Questions.
+
+    Returns summary dict: {total_eligible, tagged, failed, errors}.
+    Expects to run inside a Flask app context.
+    """
+    if api_key is None:
+        from flask import current_app
+        api_key = current_app.config.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY not set")
+
+    already_tagged_subq = db.session.query(HaPQTheme.pq_id).distinct().subquery()
+    query = (
+        HaPQ.query
+        .filter(~HaPQ.id.in_(already_tagged_subq))
+        .order_by(HaPQ.tabled_date.desc())
+    )
+    if limit:
+        query = query.limit(limit)
+
+    pqs = query.all()
+    total_eligible = len(pqs)
+
+    if verbose:
+        print(f"[pq-tagger] {total_eligible} PQs to tag (limit={limit})", flush=True)
+
+    tagged = 0
+    failed = 0
+    errors = 0
+
+    for i, pq in enumerate(pqs):
+        try:
+            time.sleep(_INTER_REQUEST_DELAY)
+            count = tag_pq(pq.id, api_key=api_key)
+            if count > 0:
+                tagged += 1
+                if verbose:
+                    print(
+                        f"[pq-tagger] [{i+1}/{total_eligible}] + {pq.uin} {(pq.heading or '')[:55]!r} — {count} tags",
+                        flush=True,
+                    )
+            else:
+                failed += 1
+                if verbose:
+                    print(
+                        f"[pq-tagger] [{i+1}/{total_eligible}] FAIL {pq.uin}",
+                        flush=True,
+                    )
+        except Exception as e:
+            errors += 1
+            logger.error("Tagger: unexpected error on PQ %d: %s", pq.id, e)
+            if verbose:
+                print(f"[pq-tagger] ERROR PQ {pq.id}: {e}", flush=True)
 
     return {
         "total_eligible": total_eligible,

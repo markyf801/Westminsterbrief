@@ -1,11 +1,13 @@
 """
 Hansard Archive database models — Phase 2A.
 
-Four tables (all prefixed ha_):
+Six tables (all prefixed ha_):
   ha_session          — one row per Hansard debate section
   ha_contribution     — speeches within a session (flat; responds_to_id for Q&A pairing, Week 2)
-  ha_session_theme    — AI theme tags (schema now; populated in Week 2)
+  ha_session_theme    — AI theme tags for Hansard sessions
   ha_cron_run         — cron job run history for monitoring and incident diagnosis
+  ha_pq               — Written Questions ingested from Parliament WQ API
+  ha_pq_theme         — AI theme tags for Written Questions
 
 Table prefix ha_ keeps archive tables clearly namespaced from the existing
 application tables (user, tracked_topic, cached_*, sd_*, etc.).
@@ -168,3 +170,55 @@ class HaCronRun(db.Model):
 
     def __repr__(self):
         return f"<HaCronRun {self.service_name} {self.started_at} {self.status}>"
+
+
+class HaPQ(db.Model):
+    """A Written Question ingested from the Parliament WQ API."""
+
+    __tablename__ = "ha_pq"
+
+    id = db.Column(db.Integer, primary_key=True)
+    uin = db.Column(db.String(50), unique=True, nullable=False, index=True)
+
+    heading = db.Column(db.String(500))
+    question_text = db.Column(db.Text, nullable=False)
+    answer_text = db.Column(db.Text)
+
+    asking_member = db.Column(db.String(200))
+    asking_mnis_id = db.Column(db.Integer, index=True)
+    answering_member = db.Column(db.String(200))
+    answering_body = db.Column(db.String(200), index=True)
+    answering_body_id = db.Column(db.Integer, index=True)
+
+    tabled_date = db.Column(db.Date, nullable=False, index=True)
+    answer_date = db.Column(db.Date)
+    is_answered = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    chamber = db.Column(db.String(20), index=True)  # Commons | Lords
+
+    ingested_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    themes = db.relationship(
+        "HaPQTheme",
+        backref="pq",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self):
+        return f"<HaPQ {self.uin} {self.tabled_date} {(self.heading or '')[:60]!r}>"
+
+
+class HaPQTheme(db.Model):
+    """AI-generated theme tags for a Written Question."""
+
+    __tablename__ = "ha_pq_theme"
+
+    pq_id = db.Column(db.Integer, db.ForeignKey("ha_pq.id"), primary_key=True)
+    theme = db.Column(db.String(200), primary_key=True)
+    theme_type = db.Column(db.String(20), index=True, default=THEME_TYPE_SPECIFIC)
+    tagged_at = db.Column(db.DateTime, default=datetime.utcnow)
+    model_used = db.Column(db.String(100))
+
+    def __repr__(self):
+        return f"<HaPQTheme pq={self.pq_id} [{self.theme_type}] {self.theme!r}>"

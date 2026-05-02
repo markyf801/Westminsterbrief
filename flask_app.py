@@ -453,6 +453,11 @@ with app.app_context():
     except Exception as _e:
         app.logger.warning('ha_session_theme migration failed: %s', _e)
     _mig_log('ha_session_theme cols done')
+    try:
+        # ha_pq / ha_pq_theme created by db.create_all() — no extra columns yet
+        _mig_log('ha_pq cols done')
+    except Exception as _e:
+        app.logger.warning('ha_pq migration failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
