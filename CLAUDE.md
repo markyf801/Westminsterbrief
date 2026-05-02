@@ -224,7 +224,19 @@ Clear mapping to avoid confusion when discussing issues:
 
 ### Password rotation
 
-Variable References resolve at deploy time, not runtime. After clicking "Regenerate Password" on Postgres → Database → Config, consumer services (Flask app) keep the old password until manually redeployed. Always redeploy consumer services after a password rotation.
+Variable References resolve at deploy time, not runtime. The running container on each consumer service has the old password baked in from when it last started — it will fail to authenticate until redeployed.
+
+Sequence after regenerating the Postgres password:
+1. Regenerate password in Postgres → Database → Config
+2. Manually trigger a redeploy on **every** consumer service:
+   - `Westminsterbrief` (Flask app)
+   - `archive-cron-morning`
+   - `archive-cron-daytime-mth`
+   - `archive-cron-daytime-fri`
+   - `backup-cron-r2`
+3. Verify Flask picked up the new credential: hit `/health` and confirm `status=ok`
+
+Variable References are not "live" — they resolve at deploy time only.
 
 ### Bulk migrations and volume size
 
