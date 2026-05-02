@@ -1,6 +1,9 @@
 [build]
 builder = "NIXPACKS"
 nixpacksConfigPath = "nixpacks.backup.toml"
+# buildCommand must remain UNSET (blank in Railway UI Settings → Build → Custom Build Command).
+# If set to gunicorn here or in the UI, it runs as a Docker RUN step where $PORT is unset
+# at build time, causing "'' is not a valid port number" and build failure.
 
 [deploy]
 startCommand = "python scripts/backup_to_r2.py && python scripts/prune_old_backups.py"
