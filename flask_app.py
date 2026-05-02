@@ -680,6 +680,7 @@ def _sitemap_slugify(s: str) -> str:
 def _build_sitemap_xml() -> str:
     from hansard_archive.models import (
         HansardSession, HansardContribution, HansardSessionTheme,
+        HaPQ,
         THEME_TYPE_POLICY_AREA, THEME_TYPE_SPECIFIC,
     )
     from sqlalchemy import func as sqlfunc
@@ -752,6 +753,11 @@ def _build_sitemap_xml() -> str:
                           .group_by(HansardSession.department).all()):
         urls.append((f"{BASE}/archive/department/{_sitemap_slugify(dept)}",
                      max_d.isoformat() if max_d else ""))
+
+    # Written Question detail pages
+    for (uin, tabled) in (db.session.query(HaPQ.uin, HaPQ.tabled_date)
+                          .order_by(HaPQ.tabled_date.desc()).all()):
+        urls.append((f"{BASE}/archive/pq/{uin}", tabled.isoformat() if tabled else ""))
 
     # Build XML
     # Future: split into sitemap index + sub-sitemaps (by content type) when URL count

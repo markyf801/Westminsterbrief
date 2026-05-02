@@ -13,6 +13,7 @@ Routes:
   GET /archive/department/<slug>             sessions by answering department
   GET /archive/policy/<slug>                 sessions by GOV.UK policy area tag
   GET /archive/theme/<slug>                  sessions by specific theme tag
+  GET /archive/pq/<uin>                      Written Question detail page
 
 URL conventions (locked — do not change after indexing):
   date format: 22-july-2025  (day no leading zero, lowercase full month, 4-digit year)
@@ -38,6 +39,8 @@ from hansard_archive.models import (
     HansardContribution,
     HansardSession,
     HansardSessionTheme,
+    HaPQ,
+    HaPQTheme,
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
 )
@@ -1310,6 +1313,59 @@ def _fts_search(q_raw: str, page: int) -> tuple[list, int]:
     return results, total
 
 
+def _pq_fts_search(q_raw: str, limit: int = 20) -> list:
+    """
+    Full-text search over ha_pq using question_tsv. Returns up to `limit` results.
+
+    Each result dict:
+      result_type, uin, heading, asking_member, answering_body,
+      tabled_date, is_answered, url, human_date, snippet
+    """
+    if q_raw.startswith('"') and q_raw.endswith('"') and len(q_raw) > 2:
+        ts_func = "phraseto_tsquery"
+        q_clean = q_raw[1:-1]
+    else:
+        ts_func = "plainto_tsquery"
+        q_clean = q_raw
+
+    sql = sqla_text(f"""
+        SELECT
+            id, uin, heading, asking_member, answering_body,
+            tabled_date, is_answered,
+            ts_rank(question_tsv, {ts_func}('english', :q)) AS rank,
+            ts_headline('english',
+                coalesce(heading, '') || ' ' || coalesce(question_text, ''),
+                {ts_func}('english', :q),
+                :hl_opts) AS snippet
+        FROM ha_pq
+        WHERE question_tsv @@ {ts_func}('english', :q)
+        ORDER BY rank DESC
+        LIMIT :lim
+    """)
+
+    rows = db.session.execute(
+        sql,
+        {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS, "lim": limit},
+    ).fetchall()
+
+    results = []
+    for row in rows:
+        pq_id, uin, heading, asking, answering, tabled, is_answered, rank, snippet = row
+        results.append({
+            "result_type":   "pq",
+            "uin":           uin,
+            "heading":       heading or uin,
+            "asking_member": asking or "",
+            "answering_body":answering or "",
+            "tabled_date":   tabled,
+            "is_answered":   is_answered,
+            "url":           f"/archive/pq/{uin}",
+            "human_date":    _human_date(tabled) if tabled else "",
+            "snippet":       Markup(snippet) if snippet else None,
+        })
+    return results
+
+
 def _ilike_search(q_raw: str, page: int) -> tuple[list, int]:
     """ilike fallback for SQLite local development."""
     stmt = (
@@ -1348,12 +1404,14 @@ def archive_search():
         page = 1
 
     results, total, total_pages = [], 0, 1
+    pq_results = []
     error_msg = ""
 
     if q:
         try:
             if _is_postgres():
                 results, total = _fts_search(q, page)
+                pq_results = _pq_fts_search(q, limit=20)
             else:
                 results, total = _ilike_search(q, page)
             total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
@@ -1367,6 +1425,7 @@ def archive_search():
         "hansard_archive/archive_search.html",
         q           = q,
         results     = results,
+        pq_results  = pq_results,
         total       = total,
         total_pages = total_pages,
         per_page    = _PER_PAGE,
@@ -1377,3 +1436,39 @@ def archive_search():
     ))
     resp.headers["X-Robots-Tag"] = "noindex, nofollow"
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Written Question detail — /archive/pq/<uin>
+# ---------------------------------------------------------------------------
+
+@archive_bp.route("/pq/<string:uin>")
+def pq_detail(uin: str):
+    pq = HaPQ.query.filter_by(uin=uin.upper()).first()
+    if pq is None:
+        # Try as-is (some UIDs may not be uppercase)
+        pq = HaPQ.query.filter_by(uin=uin).first()
+    if pq is None:
+        abort(404)
+
+    themes = HaPQTheme.query.filter_by(pq_id=pq.id).all()
+    policy_areas = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA})
+    specific_topics = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_SPECIFIC})
+
+    seo_title = f"{pq.heading or pq.uin} — {pq.uin} — Westminster Brief"
+
+    return render_template(
+        "hansard_archive/archive_pq_detail.html",
+        pq              = pq,
+        policy_areas    = policy_areas,
+        specific_topics = specific_topics,
+        human_tabled    = _human_date(pq.tabled_date) if pq.tabled_date else "",
+        human_answered  = _human_date(pq.answer_date) if pq.answer_date else "",
+        human_updated   = _human_date(pq.updated_at.date()) if pq.updated_at else "",
+        seo_title       = seo_title,
+        meta_desc       = (
+            f"Written Question {pq.uin} — {pq.heading or 'Written Question'} "
+            f"tabled by {pq.asking_member or 'an MP'} to {pq.answering_body or 'a department'}."
+        ),
+        canonical_path  = f"/archive/pq/{pq.uin}",
+    )

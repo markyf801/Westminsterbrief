@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{# ---- SEO ---- #}
+{% block title %}{{ seo_title }}{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ pq.heading or pq.uin }} — {{ pq.uin }}{% endblock %}
+{% block og_description %}Written Question by {{ pq.asking_member or 'an MP' }} to {{ pq.answering_body or 'a department' }}{% if human_tabled %}, tabled {{ human_tabled }}{% endif %}{% endblock %}
+{% block canonical_path %}{{ canonical_path }}{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ (pq.heading or pq.uin)|tojson }},
+  "datePublished": "{{ pq.tabled_date.isoformat() if pq.tabled_date else '' }}",
+  "description": {{ meta_desc|tojson }},
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
+  "url": "https://westminsterbrief.co.uk/archive/pq/{{ pq.uin }}"
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+
+{% block content %}
+<div class="sd-page">
+
+    {# --- Header --- #}
+    <div class="sd-header">
+        <nav class="sd-breadcrumb" aria-label="breadcrumb">
+            <a href="/archive">Hansard Archive</a>
+            <span class="sd-breadcrumb-sep">›</span>
+            <span>Written Questions</span>
+            <span class="sd-breadcrumb-sep">›</span>
+            <span>{{ pq.uin }}</span>
+        </nav>
+
+        <h1 class="sd-title">{{ pq.heading or pq.uin }}</h1>
+
+        <div class="sd-meta">
+            <span class="topic-source-badge topic-source-{{ (pq.chamber or 'commons')|lower }}">{{ pq.chamber or 'Commons' }}</span>
+            <span class="archive-dtype-badge">Written Question</span>
+            {% if pq.answering_body %}<span class="archive-dept-badge">{{ pq.answering_body }}</span>{% endif %}
+            {% if human_tabled %}<span class="sd-date">Tabled {{ human_tabled }}</span>{% endif %}
+            <span class="archive-dtype-badge {% if pq.is_answered %}archive-dtype-debate{% else %}archive-dtype-other{% endif %}">
+                {% if pq.is_answered %}Answered{% else %}Awaiting answer{% endif %}
+            </span>
+        </div>
+
+        {% if policy_areas or specific_topics %}
+        <div class="sd-theme-row">
+            {% for pa in policy_areas %}
+            <a href="/archive/policy/{{ pa|slugify }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
+            {% endfor %}
+            {% for topic in specific_topics %}
+            <a href="/archive/theme/{{ topic|slugify }}" class="archive-tag archive-tag-topic">{{ topic }}</a>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    {# --- Question --- #}
+    <div class="sd-section">
+        <div class="sd-section-header">
+            <h2 class="sd-section-title">Question</h2>
+            <div class="sd-section-meta">
+                {% if pq.asking_member %}
+                Asked by <strong>{{ pq.asking_member }}</strong>
+                {% endif %}
+                {% if human_tabled %} · Tabled {{ human_tabled }}{% endif %}
+                {% if pq.uin %} · UIN {{ pq.uin }}{% endif %}
+            </div>
+        </div>
+        <div class="sd-speech-text">
+            {{ pq.question_text }}
+        </div>
+    </div>
+
+    {# --- Answer --- #}
+    <div class="sd-section">
+        <div class="sd-section-header">
+            <h2 class="sd-section-title">Answer</h2>
+            {% if pq.is_answered and pq.answering_member %}
+            <div class="sd-section-meta">
+                Answered by <strong>{{ pq.answering_member }}</strong>
+                {% if pq.answering_body %} ({{ pq.answering_body }}){% endif %}
+                {% if human_answered %} · {{ human_answered }}{% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% if pq.is_answered and pq.answer_text %}
+        <div class="sd-speech-text">
+            {{ pq.answer_text }}
+        </div>
+        {% else %}
+        <p class="sd-no-content">This question has not yet been answered.</p>
+        {% endif %}
+    </div>
+
+    {# --- Status caveat --- #}
+    <div class="sd-section">
+        <p class="sd-caveat">
+            Status as of {% if human_updated %}{{ human_updated }}{% else %}last update{% endif %}.
+            For the most current status, see the
+            <a href="https://questions-statements.parliament.uk/written-questions/detail/{{ pq.tabled_date.isoformat() if pq.tabled_date else '' }}/{{ pq.uin }}" target="_blank" rel="noopener">official Parliament record ↗</a>.
+        </p>
+    </div>
+
+</div>
+{% endblock %}

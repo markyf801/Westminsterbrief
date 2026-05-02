@@ -93,13 +93,41 @@
     </nav>
     {% endif %}
 
-    {% elif q and not error_msg %}
+    {% elif q and not error_msg and not pq_results %}
     <div class="empty-state ac-empty">
         <p>No results found for <strong>{{ q }}</strong>.</p>
         <p style="margin-top:8px; font-size:13px; color:#8a96a4;">
             Try fewer words, different keywords, or browse by
             <a href="/archive">policy area, department, or date</a>.
         </p>
+    </div>
+    {% endif %}
+
+    {# --- Written Questions results --- #}
+    {% if pq_results %}
+    <div class="ah-section-heading" style="margin-top:28px; margin-bottom:8px;">
+        <h2 style="font-size:15px; font-weight:600; color:#1a4a6e; margin:0;">
+            Written Questions ({{ pq_results|length }})
+        </h2>
+    </div>
+    <div class="ah-results-list">
+        {% for r in pq_results %}
+        <div class="ah-card as-card">
+            <div class="ah-card-meta">
+                <span class="topic-source-badge topic-source-{{ (r.asking_member and 'commons') or 'commons' }}">WQ</span>
+                {% if r.answering_body %}<span class="archive-dept-badge">{{ r.answering_body }}</span>{% endif %}
+                <span class="ah-card-date">{{ r.human_date }}</span>
+                <span class="archive-dtype-badge {% if r.is_answered %}archive-dtype-debate{% else %}archive-dtype-other{% endif %}">
+                    {% if r.is_answered %}Answered{% else %}Awaiting answer{% endif %}
+                </span>
+            </div>
+            <a class="ah-card-title" href="{{ r.url }}">{{ r.heading }}</a>
+            {% if r.snippet %}
+            <div class="as-snippet">{{ r.snippet }}</div>
+            {% endif %}
+            <div style="font-size:12px; color:#8a96a4; margin-top:4px;">{{ r.uin }}{% if r.asking_member %} · {{ r.asking_member }}{% endif %}</div>
+        </div>
+        {% endfor %}
     </div>
     {% endif %}
 
