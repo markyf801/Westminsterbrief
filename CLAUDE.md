@@ -930,7 +930,15 @@ python -c "from flask_app import app; print('OK')"
 ```
 If this fails, do not push. Fix the import error first.
 
-After Railway deploys, verify at `/health` — all services should show `"ok"`.
+After Railway deploys, verify with these full URLs:
+
+| Check | URL |
+|---|---|
+| Health (commit hash + API status) | `https://westminsterbrief.co.uk/health` |
+| PQ detail page (Phase 2) | `https://westminsterbrief.co.uk/archive/pq/111792` |
+| Archive search with filter | `https://westminsterbrief.co.uk/archive/search?q=franchising` |
+| Sitemap | `https://westminsterbrief.co.uk/sitemap.xml` |
+| Archive home | `https://westminsterbrief.co.uk/archive` |
 
 ## Things to avoid
 - Don't use port 5432 for Supabase if ever added — use the connection pooler on 6543
