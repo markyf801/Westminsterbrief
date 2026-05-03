@@ -127,6 +127,20 @@ Railway's Nixpacks build passes env vars (including `BACKUP_ENCRYPTION_KEY`, `R2
 
 ---
 
+### Sitemap Caching for PQ Archive Scale
+
+Phase 2A.5 candidate. PQ archive adds ~90k URLs to the sitemap; per-request generation would take ~25s and risk Google's fetcher timing out. PQ URLs stripped from sitemap before Phase 2 deploy as interim fix.
+
+**Plan:** `ha_sitemap_cache` table with `name`, `content` (text), `generated_at`. `_build_sitemap_xml()` serves from cache if `< 24h` old, regenerates synchronously on cache miss. Archive cron pre-warms nightly. Once stable, add PQ URLs back and resubmit to Search Console. Sitemap index pattern (`/sitemap-sessions.xml`, `/sitemap-pqs.xml`) as a follow-up if URL count grows past 100k.
+
+**Effort:** ~2–3h. No new infrastructure — DB-only.
+
+**Revisit trigger:** Immediately after Phase 2 deploy is stable; before submitting sitemap to Search Console.
+
+*Captured 3 May 2026.*
+
+---
+
 ## Killed
 
 *(Nothing formally killed yet — this section is for ideas explicitly decided against, with reason recorded so they don't keep resurfacing.)*
