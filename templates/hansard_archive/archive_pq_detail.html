@@ -66,7 +66,9 @@
         {# Question #}
         <div class="sd-contrib">
             <div class="sd-contrib-speaker" style="border-left-color: #4a7fa5;">
-                <span class="sd-speaker-name">{{ pq.asking_member or 'Member' }}</span>
+                {% if pq.asking_member %}
+                <span class="sd-speaker-name">{{ pq.asking_member }}</span>
+                {% endif %}
                 <span class="sd-speaker-secondary">Question · Tabled {{ human_tabled }}{% if pq.uin %} · {{ pq.uin }}{% endif %}</span>
             </div>
             <div class="sd-contrib-text">{{ pq.question_text }}</div>
@@ -76,8 +78,13 @@
         <div class="sd-contrib">
             {% if pq.is_answered %}
             <div class="sd-contrib-speaker" style="border-left-color: #2e7d32;">
-                <span class="sd-speaker-name">{{ pq.answering_member or pq.answering_body or 'Government' }}</span>
-                <span class="sd-speaker-secondary">Answer{% if pq.answering_body and pq.answering_member %} · {{ pq.answering_body }}{% endif %}{% if human_answered %} · {{ human_answered }}{% endif %}</span>
+                {% if pq.answering_member %}
+                <span class="sd-speaker-name">{{ pq.answering_member }}</span>
+                <span class="sd-speaker-secondary">Answer · {{ pq.answering_body }}{% if human_answered %} · {{ human_answered }}{% endif %}</span>
+                {% else %}
+                <span class="sd-speaker-name">{{ pq.answering_body or 'Government' }}</span>
+                <span class="sd-speaker-secondary">Answer{% if human_answered %} · {{ human_answered }}{% endif %}</span>
+                {% endif %}
             </div>
             <div class="sd-contrib-text">{{ pq.answer_text }}</div>
             {% else %}
