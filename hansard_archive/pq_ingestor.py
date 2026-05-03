@@ -31,6 +31,7 @@ _PAGE_SIZE = 500
 _COMMIT_BATCH = 200
 _INTER_REQUEST_DELAY = 0.3   # seconds between paginated requests
 _PAGE_RETRIES = 3            # retries on transient errors before skipping a page
+_ANSWER_TRUNC_THRESHOLD = 300  # bulk endpoint truncates answers at ~258 chars
 
 
 def _strip_html(html: str) -> str:
@@ -52,6 +53,21 @@ def _parse_date(val) -> date | None:
         return None
 
 
+def _fetch_full_answer(api_id: int) -> str | None:
+    """Fetch full answer text via the individual question endpoint."""
+    url = f"{WQ_API_BASE}/{api_id}"
+    try:
+        resp = requests.get(url, timeout=_REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return None
+        value = resp.json().get("value") or {}
+        raw = value.get("answerText") or ""
+        return _clean_whitespace(_strip_html(raw)) or None
+    except Exception as exc:
+        _log.warning("Full answer fetch failed for id=%s: %s", api_id, exc)
+        return None
+
+
 def _extract_pq_fields(value: dict) -> dict | None:
     """Extract and normalise fields from a WQ API value object."""
     uin = (value.get("uin") or "").strip()
@@ -66,12 +82,23 @@ def _extract_pq_fields(value: dict) -> dict | None:
     answer_raw = value.get("answerText") or ""
     answer_text = _clean_whitespace(_strip_html(answer_raw)) or None
 
+    # Bulk endpoint truncates answer text at ~258 chars. Detect truncation by
+    # checking if the stripped text is under threshold and ends mid-sentence.
+    api_id = value.get("id")
+    answer_truncated = bool(
+        answer_text
+        and len(answer_text) < _ANSWER_TRUNC_THRESHOLD
+        and api_id
+    )
+
     # askingMember / answeringMember are sometimes null in the API response;
     # member IDs and body name/id are returned as flat fields.
     asking = value.get("askingMember") or {}
     answering_member_obj = value.get("answeringMember") or {}
 
     return {
+        "_api_id": api_id,               # transient — used to fetch full answer
+        "_answer_truncated": answer_truncated,
         "uin": uin,
         "heading": (value.get("heading") or "").strip() or None,
         "question_text": question_text,
@@ -146,6 +173,16 @@ def ingest_pq_date_range(
             if fields is None or fields["tabled_date"] is None:
                 errors += 1
                 continue
+
+            # Fetch full answer text if bulk endpoint returned truncated version
+            if fields.pop("_answer_truncated", False):
+                api_id = fields.pop("_api_id", None)
+                full_text = _fetch_full_answer(api_id) if api_id else None
+                if full_text:
+                    fields["answer_text"] = full_text
+                time.sleep(_INTER_REQUEST_DELAY)
+            else:
+                fields.pop("_api_id", None)
 
             try:
                 existing = db.session.query(HaPQ).filter_by(uin=fields["uin"]).first()
