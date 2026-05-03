@@ -1951,6 +1951,8 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
     font-size: 13px;
     color: #2d3748;
     cursor: pointer;
+    width: auto;
+    margin-bottom: 0;
 }
 .ah-filter-select-wide { min-width: 200px; }
 .ah-filter-select:focus { outline: none; border-color: #4a7fa5; }
