@@ -32,21 +32,56 @@
             <input type="text" name="q" id="as-search-q" value="{{ q }}" placeholder="Search debates and speeches…"
                    class="ah-search-input" autocomplete="off" spellcheck="false" autofocus>
             <button type="submit" class="ah-search-btn">Search</button>
-            {% if q or policy_filter %}
+            {% if q or has_filters %}
             <a href="/archive/search" class="ah-clear-link">Clear</a>
             {% endif %}
         </div>
-        {% if all_policy_areas %}
-        <div class="ah-filter-row" style="margin-top:8px;">
-            <label for="as-policy-filter" style="font-size:13px; color:#576574; margin-right:6px;">Policy area:</label>
-            <select name="policy" id="as-policy-filter" class="ah-filter-select" onchange="this.form.submit()">
+        <div class="ah-filter-row" style="flex-wrap:wrap; margin-top:8px;">
+            <select name="house" class="ah-filter-select" id="as-house-select" aria-label="Filter by house">
+                <option value="">All houses</option>
+                <option value="Commons" {% if house_filter == 'Commons' %}selected{% endif %}>Commons</option>
+                <option value="Lords"   {% if house_filter == 'Lords'   %}selected{% endif %}>Lords</option>
+            </select>
+
+            {% if debate_type_labels %}
+            <select name="dtype" class="ah-filter-select" aria-label="Filter by debate type">
+                <option value="">All types</option>
+                {% for key, label in debate_type_labels.items() %}
+                <option value="{{ key }}" {% if dtype_filter == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            {% endif %}
+
+            {% if all_departments %}
+            <select name="dept" class="ah-filter-select ah-filter-select-wide" id="as-dept-select"
+                    aria-label="Filter by department"
+                    {% if house_filter == 'Lords' %}style="display:none"{% endif %}>
+                <option value="">All departments</option>
+                {% for dept in all_departments %}
+                <option value="{{ dept }}" {% if dept_filter == dept %}selected{% endif %}>{{ dept }}</option>
+                {% endfor %}
+            </select>
+            {% endif %}
+
+            {% if all_policy_areas %}
+            <select name="policy" class="ah-filter-select ah-filter-select-wide" aria-label="Filter by policy area">
                 <option value="">All policy areas</option>
                 {% for area in all_policy_areas %}
                 <option value="{{ area }}" {% if area == policy_filter %}selected{% endif %}>{{ area }}</option>
                 {% endfor %}
             </select>
+            {% endif %}
+
+            <label for="as-date-from" class="ah-filter-label">From</label>
+            <input type="date" name="from" id="as-date-from" value="{{ date_from }}" class="ah-filter-date">
+            <label for="as-date-to" class="ah-filter-label">To</label>
+            <input type="date" name="to" id="as-date-to" value="{{ date_to }}" class="ah-filter-date">
+
+            <label class="ah-title-only-label">
+                <input type="checkbox" name="title_only" value="1" {% if title_only %}checked{% endif %}>
+                Title only
+            </label>
         </div>
-        {% endif %}
         <p class="as-hint">Tip: wrap a phrase in "quotes" for an exact phrase search.</p>
     </form>
 
@@ -89,16 +124,15 @@
 
     {# --- Pagination --- #}
     {% if total_pages > 1 %}
-    {% set policy_qs = ("&policy=" ~ policy_filter|urlencode) if policy_filter else "" %}
     <nav class="ah-pagination" aria-label="Results pages">
         {% if page > 1 %}
-        <a href="/archive/search?q={{ q|urlencode }}{{ policy_qs }}&page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        <a href="/archive/search?{{ base_qs | replace('&page=' ~ page, '') }}&page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
         {% endif %}
         <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="/archive/search?q={{ q|urlencode }}{{ policy_qs }}&page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        <a href="/archive/search?{{ base_qs | replace('&page=' ~ page, '') }}&page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
         {% endif %}
@@ -153,4 +187,19 @@
 
 </div>{# /.ac-inner #}
 </div>{# /.ac-page #}
+<script>
+(function () {
+    var house = document.getElementById('as-house-select');
+    var dept  = document.getElementById('as-dept-select');
+    if (!house || !dept) return;
+    house.addEventListener('change', function () {
+        if (house.value === 'Lords') {
+            dept.style.display = 'none';
+            dept.value = '';
+        } else {
+            dept.style.display = '';
+        }
+    });
+}());
+</script>
 {% endblock %}

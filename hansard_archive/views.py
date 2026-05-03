@@ -587,9 +587,14 @@ def archive_home():
     q = request.args.get("q", "").strip()
     # Text search lives at /archive/search (noindex); browse stays at /archive (indexed).
     if q:
-        policy = request.args.get("policy", "").strip()
-        qs = urlencode({"q": q, "policy": policy}) if policy else urlencode({"q": q})
-        return redirect(f"/archive/search?{qs}", code=302)
+        fwd: dict = {"q": q}
+        for k in ("policy", "house", "dtype", "dept", "from", "to"):
+            v = request.args.get(k, "").strip()
+            if v:
+                fwd[k] = v
+        if request.args.get("title_only") == "1":
+            fwd["title_only"] = "1"
+        return redirect(f"/archive/search?{urlencode(fwd)}", code=302)
 
     house_filter  = request.args.get("house", "")
     dtype_filter  = request.args.get("dtype", "")
@@ -1228,7 +1233,17 @@ _FTS_HEADLINE_OPTS = (
 )
 
 
-def _fts_search(q_raw: str, page: int, policy_filter: str = "") -> tuple[list, int]:
+def _fts_search(
+    q_raw: str,
+    page: int,
+    policy_filter: str = "",
+    house_filter: str = "",
+    dtype_filter: str = "",
+    dept_filter: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    title_only: bool = False,
+) -> tuple[list, int]:
     """
     Full-text search using Postgres tsvectors. Returns (results, total_count).
 
@@ -1252,6 +1267,34 @@ def _fts_search(q_raw: str, page: int, policy_filter: str = "") -> tuple[list, i
         if policy_filter else ""
     )
 
+    # Build optional WHERE conditions for extra filters
+    extra_where_parts = []
+    extra_params: dict = {}
+
+    if house_filter in ("Commons", "Lords"):
+        extra_where_parts.append("AND s.house = :house")
+        extra_params["house"] = house_filter
+
+    if dtype_filter and dtype_filter in _DEBATE_TYPE_LABELS:
+        extra_where_parts.append("AND s.debate_type = :dtype")
+        extra_params["dtype"] = dtype_filter
+
+    if dept_filter:
+        extra_where_parts.append("AND s.department = :dept")
+        extra_params["dept"] = dept_filter
+
+    if date_from:
+        extra_where_parts.append("AND s.date >= :date_from")
+        extra_params["date_from"] = date_from
+
+    if date_to:
+        extra_where_parts.append("AND s.date <= :date_to")
+        extra_params["date_to"] = date_to
+
+    extra_where_sql = " ".join(extra_where_parts)
+
+    body_match_clause = "" if title_only else f"OR c.id IS NOT NULL"
+
     count_sql = sqla_text(f"""
         SELECT COUNT(DISTINCT s.id)
         FROM ha_session s
@@ -1261,8 +1304,9 @@ def _fts_search(q_raw: str, page: int, policy_filter: str = "") -> tuple[list, i
         WHERE s.is_container = false
           AND (
               s.title_tsv @@ {ts_func}('english', :q)
-              OR c.id IS NOT NULL
+              {body_match_clause}
           )
+          {extra_where_sql}
     """)
     rows_sql = sqla_text(f"""
         WITH best_contrib AS (
@@ -1293,7 +1337,8 @@ def _fts_search(q_raw: str, page: int, policy_filter: str = "") -> tuple[list, i
         LEFT JOIN best_contrib bc ON bc.session_id = s.id
         LEFT JOIN title_match  tm ON tm.session_id = s.id
         WHERE s.is_container = false
-          AND (bc.session_id IS NOT NULL OR tm.session_id IS NOT NULL)
+          AND ({f"tm.session_id IS NOT NULL" if title_only else "bc.session_id IS NOT NULL OR tm.session_id IS NOT NULL"})
+          {extra_where_sql}
         ORDER BY final_rank DESC
         LIMIT :lim OFFSET :off
     """)
@@ -1301,10 +1346,13 @@ def _fts_search(q_raw: str, page: int, policy_filter: str = "") -> tuple[list, i
     count_params = {"q": q_clean}
     if policy_filter:
         count_params["policy"] = policy_filter
+    count_params.update(extra_params)
+
     params = {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS,
               "lim": _PER_PAGE, "off": offset}
     if policy_filter:
         params["policy"] = policy_filter
+    params.update(extra_params)
 
     total   = db.session.execute(count_sql, count_params).scalar() or 0
     rows    = db.session.execute(rows_sql, params).fetchall()
@@ -1422,6 +1470,12 @@ def _ilike_search(q_raw: str, page: int) -> tuple[list, int]:
 def archive_search():
     q             = request.args.get("q", "").strip()
     policy_filter = request.args.get("policy", "").strip()
+    house_filter  = request.args.get("house", "").strip()
+    dtype_filter  = request.args.get("dtype", "").strip()
+    dept_filter   = "" if house_filter == "Lords" else request.args.get("dept", "").strip()
+    date_from     = request.args.get("from", "").strip()
+    date_to       = request.args.get("to", "").strip()
+    title_only    = request.args.get("title_only") == "1"
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
@@ -1434,7 +1488,16 @@ def archive_search():
     if q:
         try:
             if _is_postgres():
-                results, total = _fts_search(q, page, policy_filter=policy_filter)
+                results, total = _fts_search(
+                    q, page,
+                    policy_filter=policy_filter,
+                    house_filter=house_filter,
+                    dtype_filter=dtype_filter,
+                    dept_filter=dept_filter,
+                    date_from=date_from,
+                    date_to=date_to,
+                    title_only=title_only,
+                )
                 pq_results = _pq_fts_search(q, limit=20)
             else:
                 results, total = _ilike_search(q, page)
@@ -1444,26 +1507,43 @@ def archive_search():
             print(f"[archive_search] error: {exc}", flush=True)
 
     qs_parts: dict = {"q": q}
-    if policy_filter:
-        qs_parts["policy"] = policy_filter
+    for k, v in [("policy", policy_filter), ("house", house_filter),
+                 ("dtype", dtype_filter), ("dept", dept_filter),
+                 ("from", date_from), ("to", date_to)]:
+        if v:
+            qs_parts[k] = v
+    if title_only:
+        qs_parts["title_only"] = "1"
     if page > 1:
         qs_parts["page"] = page
     base_qs = urlencode(qs_parts)
 
+    has_filters = any([house_filter, dtype_filter, dept_filter,
+                       policy_filter, date_from, date_to, title_only])
+
     resp = make_response(render_template(
         "hansard_archive/archive_search.html",
-        q                = q,
-        policy_filter    = policy_filter,
-        all_policy_areas = _all_policy_areas(),
-        results          = results,
-        pq_results       = pq_results,
-        total            = total,
-        total_pages      = total_pages,
-        per_page         = _PER_PAGE,
-        page             = page,
-        base_qs          = base_qs,
-        error_msg        = error_msg,
-        is_postgres      = _is_postgres(),
+        q                   = q,
+        policy_filter       = policy_filter,
+        house_filter        = house_filter,
+        dtype_filter        = dtype_filter,
+        dept_filter         = dept_filter,
+        date_from           = date_from,
+        date_to             = date_to,
+        title_only          = title_only,
+        has_filters         = has_filters,
+        all_policy_areas    = _all_policy_areas(),
+        all_departments     = _all_departments(),
+        debate_type_labels  = _DEBATE_TYPE_LABELS,
+        results             = results,
+        pq_results          = pq_results,
+        total               = total,
+        total_pages         = total_pages,
+        per_page            = _PER_PAGE,
+        page                = page,
+        base_qs             = base_qs,
+        error_msg           = error_msg,
+        is_postgres         = _is_postgres(),
     ))
     resp.headers["X-Robots-Tag"] = "noindex, nofollow"
     return resp

@@ -37,21 +37,16 @@
     </div>
     {% endif %}
 
-    {# --- Search box (goes to /archive/search, noindex) --- #}
-    <form class="ah-form" method="get" action="/archive/search">
+    {# --- Unified search + filter form --- #}
+    <form class="ah-form" method="get" action="/archive">
         <div class="ah-search-row">
             <label for="ah-search-q" class="ah-visually-hidden">Search Hansard speeches and debates</label>
             <input type="text" name="q" id="ah-search-q" placeholder="Search speeches and debates…"
                    class="ah-search-input" autocomplete="off" spellcheck="false">
             <button type="submit" class="ah-search-btn">Search</button>
+            {% if has_filters %}<a href="/archive" class="ah-clear-link">Clear</a>{% endif %}
         </div>
-    </form>
-
-    {# --- Browse / filter form --- #}
-    <form class="ah-form" method="get" action="/archive">
-        <div class="ah-filter-row" style="flex-wrap:wrap;">
-            {% if has_filters %}<a href="/archive" class="ah-clear-link" style="margin-bottom:0;">Clear filters</a>{% endif %}
-        <div class="ah-filter-row">
+        <div class="ah-filter-row" style="flex-wrap:wrap; margin-top:8px;">
             <select name="house" class="ah-filter-select" id="ah-house-select" aria-label="Filter by house">
                 <option value="">All houses</option>
                 <option value="Commons" {% if house_filter == 'Commons' %}selected{% endif %}>Commons</option>
@@ -92,7 +87,6 @@
                 <input type="checkbox" name="title_only" value="1" {% if title_only %}checked{% endif %}>
                 Title only
             </label>
-            <button type="submit" class="ah-search-btn" style="margin-left:auto;">Filter</button>
         </div>
     </form>
 
