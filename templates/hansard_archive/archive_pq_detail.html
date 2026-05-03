@@ -47,19 +47,6 @@
                 {% if pq.is_answered %}Answered{% else %}Awaiting answer{% endif %}
             </span>
         </div>
-        <div class="sd-meta" style="margin-top:6px; font-size:13px; color:#576574;">
-            {% if pq.asking_member %}
-            <span>Asked by <strong>{{ pq.asking_member }}</strong></span>
-            {% endif %}
-            {% if pq.asking_member and (pq.answering_member or pq.answering_body) %}
-            <span style="margin:0 6px; color:#c0c8d4;">·</span>
-            {% endif %}
-            {% if pq.answering_member %}
-            <span>Answered by <strong>{{ pq.answering_member }}</strong>{% if pq.answering_body %}, {{ pq.answering_body }}{% endif %}</span>
-            {% elif pq.answering_body %}
-            <span>To <strong>{{ pq.answering_body }}</strong></span>
-            {% endif %}
-        </div>
 
         {% if policy_areas or specific_topics %}
         <div class="sd-theme-row">
@@ -73,52 +60,43 @@
         {% endif %}
     </div>
 
-    {# --- Question --- #}
-    <div class="sd-section">
-        <div class="sd-section-header">
-            <h2 class="sd-section-title">Question</h2>
-            <div class="sd-section-meta">
-                {% if pq.asking_member %}
-                Asked by <strong>{{ pq.asking_member }}</strong>
-                {% endif %}
-                {% if human_tabled %} · Tabled {{ human_tabled }}{% endif %}
-                {% if pq.uin %} · UIN {{ pq.uin }}{% endif %}
-            </div>
-        </div>
-        <div class="sd-speech-text">
-            {{ pq.question_text }}
-        </div>
-    </div>
+    {# --- Q&A as transcript-style blocks --- #}
+    <div class="sd-transcript">
 
-    {# --- Answer --- #}
-    <div class="sd-section">
-        <div class="sd-section-header">
-            <h2 class="sd-section-title">Answer</h2>
-            {% if pq.is_answered and pq.answering_member %}
-            <div class="sd-section-meta">
-                Answered by <strong>{{ pq.answering_member }}</strong>
-                {% if pq.answering_body %} ({{ pq.answering_body }}){% endif %}
-                {% if human_answered %} · {{ human_answered }}{% endif %}
+        {# Question #}
+        <div class="sd-contrib">
+            <div class="sd-contrib-speaker" style="border-left-color: #4a7fa5;">
+                <span class="sd-speaker-name">{{ pq.asking_member or 'Member' }}</span>
+                <span class="sd-speaker-secondary">Question · Tabled {{ human_tabled }}{% if pq.uin %} · {{ pq.uin }}{% endif %}</span>
             </div>
+            <div class="sd-contrib-text">{{ pq.question_text }}</div>
+        </div>
+
+        {# Answer #}
+        <div class="sd-contrib">
+            {% if pq.is_answered %}
+            <div class="sd-contrib-speaker" style="border-left-color: #2e7d32;">
+                <span class="sd-speaker-name">{{ pq.answering_member or pq.answering_body or 'Government' }}</span>
+                <span class="sd-speaker-secondary">Answer{% if pq.answering_body and pq.answering_member %} · {{ pq.answering_body }}{% endif %}{% if human_answered %} · {{ human_answered }}{% endif %}</span>
+            </div>
+            <div class="sd-contrib-text">{{ pq.answer_text }}</div>
+            {% else %}
+            <div class="sd-contrib-speaker" style="border-left-color: #c0c8d4;">
+                <span class="sd-speaker-name" style="color:#8a96a4;">Awaiting answer</span>
+                {% if pq.answering_body %}<span class="sd-speaker-secondary">From {{ pq.answering_body }}</span>{% endif %}
+            </div>
+            <div class="sd-contrib-text" style="color:#8a96a4; font-style:italic;">This question has not yet been answered.</div>
             {% endif %}
         </div>
-        {% if pq.is_answered and pq.answer_text %}
-        <div class="sd-speech-text">
-            {{ pq.answer_text }}
-        </div>
-        {% else %}
-        <p class="sd-no-content">This question has not yet been answered.</p>
-        {% endif %}
+
     </div>
 
     {# --- Status caveat --- #}
-    <div class="sd-section">
-        <p class="sd-caveat">
-            Status as of {% if human_updated %}{{ human_updated }}{% else %}last update{% endif %}.
-            For the most current status, see the
-            <a href="https://questions-statements.parliament.uk/written-questions/detail/{{ pq.tabled_date.isoformat() if pq.tabled_date else '' }}/{{ pq.uin }}" target="_blank" rel="noopener">official Parliament record ↗</a>.
-        </p>
-    </div>
+    <p class="sd-source-note">
+        Status as of {% if human_updated %}{{ human_updated }}{% else %}last update{% endif %}.
+        For the most current status, see the
+        <a href="https://questions-statements.parliament.uk/written-questions/detail/{{ pq.tabled_date.isoformat() if pq.tabled_date else '' }}/{{ pq.uin }}" target="_blank" rel="noopener">official Parliament record ↗</a>.
+    </p>
 
 </div>
 {% endblock %}

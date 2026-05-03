@@ -1435,7 +1435,7 @@ def archive_search():
         try:
             if _is_postgres():
                 results, total = _fts_search(q, page, policy_filter=policy_filter)
-                pq_results = _pq_fts_search(q, limit=20, policy_filter=policy_filter)
+                pq_results = _pq_fts_search(q, limit=20)
             else:
                 results, total = _ilike_search(q, page)
             total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
