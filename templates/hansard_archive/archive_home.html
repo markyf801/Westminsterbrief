@@ -46,7 +46,7 @@
             <button type="submit" class="ah-search-btn">Search</button>
             {% if has_filters %}<a href="/archive" class="ah-clear-link">Clear</a>{% endif %}
         </div>
-        <div class="ah-filter-row" style="flex-wrap:wrap; margin-top:8px;">
+        <div class="ah-filter-row">
             <select name="house" class="ah-filter-select" id="ah-house-select" aria-label="Filter by house">
                 <option value="">All houses</option>
                 <option value="Commons" {% if house_filter == 'Commons' %}selected{% endif %}>Commons</option>

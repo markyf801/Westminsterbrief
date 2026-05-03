@@ -26,17 +26,17 @@
         <h1 class="ac-title">Search Hansard</h1>
     </div>
 
-    <form class="as-form" method="get" action="/archive/search">
+    <form class="ah-form" method="get" action="/archive/search">
         <div class="ah-search-row">
             <label for="as-search-q" class="ah-visually-hidden">Search Hansard debates and speeches</label>
-            <input type="text" name="q" id="as-search-q" value="{{ q }}" placeholder="Search debates and speeches…"
+            <input type="text" name="q" id="as-search-q" value="{{ q }}" placeholder="Search speeches and debates…"
                    class="ah-search-input" autocomplete="off" spellcheck="false" autofocus>
             <button type="submit" class="ah-search-btn">Search</button>
             {% if q or has_filters %}
             <a href="/archive/search" class="ah-clear-link">Clear</a>
             {% endif %}
         </div>
-        <div class="ah-filter-row" style="flex-wrap:wrap; margin-top:8px;">
+        <div class="ah-filter-row">
             <select name="house" class="ah-filter-select" id="as-house-select" aria-label="Filter by house">
                 <option value="">All houses</option>
                 <option value="Commons" {% if house_filter == 'Commons' %}selected{% endif %}>Commons</option>
