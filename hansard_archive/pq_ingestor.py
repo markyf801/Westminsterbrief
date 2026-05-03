@@ -66,9 +66,10 @@ def _extract_pq_fields(value: dict) -> dict | None:
     answer_raw = value.get("answerText") or ""
     answer_text = _clean_whitespace(_strip_html(answer_raw)) or None
 
+    # askingMember / answeringMember are sometimes null in the API response;
+    # member IDs and body name/id are returned as flat fields.
     asking = value.get("askingMember") or {}
     answering_member_obj = value.get("answeringMember") or {}
-    answering_body_obj = value.get("answeringBody") or {}
 
     return {
         "uin": uin,
@@ -76,10 +77,10 @@ def _extract_pq_fields(value: dict) -> dict | None:
         "question_text": question_text,
         "answer_text": answer_text,
         "asking_member": (asking.get("name") or "").strip() or None,
-        "asking_mnis_id": asking.get("memberId") or None,
+        "asking_mnis_id": value.get("askingMemberId") or None,
         "answering_member": (answering_member_obj.get("name") or "").strip() or None,
-        "answering_body": (answering_body_obj.get("name") or "").strip() or None,
-        "answering_body_id": answering_body_obj.get("id") or None,
+        "answering_body": (value.get("answeringBodyName") or "").strip() or None,
+        "answering_body_id": value.get("answeringBodyId") or None,
         "tabled_date": _parse_date(value.get("dateTabled")),
         "answer_date": _parse_date(value.get("dateAnswered")),
         "is_answered": bool(answer_text),
@@ -153,6 +154,10 @@ def ingest_pq_date_range(
                     existing.answer_date = fields["answer_date"]
                     existing.is_answered = fields["is_answered"]
                     existing.answering_member = fields["answering_member"]
+                    existing.answering_body = fields["answering_body"]
+                    existing.answering_body_id = fields["answering_body_id"]
+                    existing.asking_member = fields["asking_member"]
+                    existing.asking_mnis_id = fields["asking_mnis_id"]
                     existing.updated_at = datetime.utcnow()
                     updated += 1
                 else:

@@ -1825,4 +1825,4 @@ def inject_version():
     return {'app_version': APP_VERSION}
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
