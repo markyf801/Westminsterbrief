@@ -47,6 +47,19 @@
                 {% if pq.is_answered %}Answered{% else %}Awaiting answer{% endif %}
             </span>
         </div>
+        <div class="sd-meta" style="margin-top:6px; font-size:13px; color:#576574;">
+            {% if pq.asking_member %}
+            <span>Asked by <strong>{{ pq.asking_member }}</strong></span>
+            {% endif %}
+            {% if pq.asking_member and (pq.answering_member or pq.answering_body) %}
+            <span style="margin:0 6px; color:#c0c8d4;">·</span>
+            {% endif %}
+            {% if pq.answering_member %}
+            <span>Answered by <strong>{{ pq.answering_member }}</strong>{% if pq.answering_body %}, {{ pq.answering_body }}{% endif %}</span>
+            {% elif pq.answering_body %}
+            <span>To <strong>{{ pq.answering_body }}</strong></span>
+            {% endif %}
+        </div>
 
         {% if policy_areas or specific_topics %}
         <div class="sd-theme-row">
