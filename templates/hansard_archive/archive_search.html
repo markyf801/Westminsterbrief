@@ -89,21 +89,22 @@
     <div class="info-box info-box-warn">{{ error_msg }}</div>
     {% endif %}
 
-    {# --- Results bar --- #}
+    {# --- Tabs (only shown when there's a query) --- #}
     {% if q %}
-    <div class="ah-results-bar">
-        {% if total > 0 %}
-        <span class="ah-results-count">{{ total }} result{{ 's' if total != 1 else '' }} for <strong>{{ q }}</strong></span>
-        {% if total_pages > 1 %}
-        <span class="ah-results-range">showing {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
-        {% endif %}
-        {% else %}
-        <span class="ah-results-count">No results for <strong>{{ q }}</strong></span>
-        {% endif %}
+    <div class="as-tabs">
+        <button class="as-tab as-tab-active" data-tab="hansard">
+            Debates &amp; speeches
+            {% if total > 0 %}<span class="as-tab-count">{{ total }}</span>{% endif %}
+        </button>
+        <button class="as-tab" data-tab="pq">
+            Written Questions
+            {% if pq_results %}<span class="as-tab-count">{{ pq_results|length }}</span>{% endif %}
+        </button>
     </div>
     {% endif %}
 
-    {# --- Results --- #}
+    {# --- Hansard results panel --- #}
+    <div id="as-panel-hansard">
     {% if results %}
     <div class="ah-results-list">
         {% for r in results %}
@@ -139,23 +140,19 @@
     </nav>
     {% endif %}
 
-    {% elif q and not error_msg and not pq_results %}
+    {% elif q and not error_msg %}
     <div class="empty-state ac-empty">
-        <p>No results found for <strong>{{ q }}</strong>.</p>
+        <p>No debate results for <strong>{{ q }}</strong>.</p>
         <p style="margin-top:8px; font-size:13px; color:#8a96a4;">
-            Try fewer words, different keywords, or browse by
-            <a href="/archive">policy area, department, or date</a>.
+            Try fewer words, different keywords, or check the Written Questions tab.
         </p>
     </div>
     {% endif %}
+    </div>{# /#as-panel-hansard #}
 
-    {# --- Written Questions results --- #}
+    {# --- Written Questions panel --- #}
+    <div id="as-panel-pq" style="display:none;">
     {% if pq_results %}
-    <div class="ah-section-heading" style="margin-top:28px; margin-bottom:8px;">
-        <h2 style="font-size:15px; font-weight:600; color:#1a4a6e; margin:0;">
-            Written Questions ({{ pq_results|length }})
-        </h2>
-    </div>
     <div class="ah-results-list">
         {% for r in pq_results %}
         <div class="ah-card as-card">
@@ -176,6 +173,13 @@
         {% endfor %}
     </div>
     {% endif %}
+
+    {% if q and not pq_results %}
+    <div class="empty-state ac-empty">
+        <p>No written question results for <strong>{{ q }}</strong>.</p>
+    </div>
+    {% endif %}
+    </div>{# /#as-panel-pq #}
 
     {# --- Source note --- #}
     <p class="ah-source-note">
@@ -199,6 +203,20 @@
         } else {
             dept.style.display = '';
         }
+    });
+}());
+
+(function () {
+    var tabs = document.querySelectorAll('.as-tab');
+    if (!tabs.length) return;
+    tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+            tabs.forEach(function (t) { t.classList.remove('as-tab-active'); });
+            tab.classList.add('as-tab-active');
+            var target = tab.getAttribute('data-tab');
+            document.getElementById('as-panel-hansard').style.display = target === 'hansard' ? '' : 'none';
+            document.getElementById('as-panel-pq').style.display      = target === 'pq'      ? '' : 'none';
+        });
     });
 }());
 </script>
