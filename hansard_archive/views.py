@@ -1472,7 +1472,6 @@ def archive_search():
     policy_filter = request.args.get("policy", "").strip()
     house_filter  = request.args.get("house", "").strip()
     dtype_filter  = request.args.get("dtype", "").strip()
-    dept_filter   = "" if house_filter == "Lords" else request.args.get("dept", "").strip()
     date_from     = request.args.get("from", "").strip()
     date_to       = request.args.get("to", "").strip()
     title_only    = request.args.get("title_only") == "1"
@@ -1493,7 +1492,6 @@ def archive_search():
                     policy_filter=policy_filter,
                     house_filter=house_filter,
                     dtype_filter=dtype_filter,
-                    dept_filter=dept_filter,
                     date_from=date_from,
                     date_to=date_to,
                     title_only=title_only,
@@ -1508,8 +1506,7 @@ def archive_search():
 
     qs_parts: dict = {"q": q}
     for k, v in [("policy", policy_filter), ("house", house_filter),
-                 ("dtype", dtype_filter), ("dept", dept_filter),
-                 ("from", date_from), ("to", date_to)]:
+                 ("dtype", dtype_filter), ("from", date_from), ("to", date_to)]:
         if v:
             qs_parts[k] = v
     if title_only:
@@ -1518,7 +1515,7 @@ def archive_search():
         qs_parts["page"] = page
     base_qs = urlencode(qs_parts)
 
-    has_filters = any([house_filter, dtype_filter, dept_filter,
+    has_filters = any([house_filter, dtype_filter,
                        policy_filter, date_from, date_to, title_only])
 
     resp = make_response(render_template(
@@ -1527,13 +1524,11 @@ def archive_search():
         policy_filter       = policy_filter,
         house_filter        = house_filter,
         dtype_filter        = dtype_filter,
-        dept_filter         = dept_filter,
         date_from           = date_from,
         date_to             = date_to,
         title_only          = title_only,
         has_filters         = has_filters,
         all_policy_areas    = _all_policy_areas(),
-        all_departments     = _all_departments(),
         debate_type_labels  = _DEBATE_TYPE_LABELS,
         results             = results,
         pq_results          = pq_results,

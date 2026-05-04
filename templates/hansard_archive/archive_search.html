@@ -52,17 +52,6 @@
             </select>
             {% endif %}
 
-            {% if all_departments %}
-            <select name="dept" class="ah-filter-select ah-filter-select-wide" id="as-dept-select"
-                    aria-label="Filter by department"
-                    {% if house_filter == 'Lords' %}style="display:none"{% endif %}>
-                <option value="">All departments</option>
-                {% for dept in all_departments %}
-                <option value="{{ dept }}" {% if dept_filter == dept %}selected{% endif %}>{{ dept }}</option>
-                {% endfor %}
-            </select>
-            {% endif %}
-
             {% if all_policy_areas %}
             <select name="policy" class="ah-filter-select ah-filter-select-wide" aria-label="Filter by policy area">
                 <option value="">All policy areas</option>
@@ -144,11 +133,7 @@
     <div class="empty-state ac-empty">
         <p>No debate results for <strong>{{ q }}</strong>.</p>
         <p style="margin-top:8px; font-size:13px; color:#8a96a4;">
-            {% if dept_filter %}
-            The department filter only applies to Oral Questions sessions — debates, Westminster Hall, and bill readings are not attributed to a department. Try removing the department filter.
-            {% else %}
             Try fewer words, different keywords, or check the Written Questions tab.
-            {% endif %}
         </p>
     </div>
     {% endif %}
@@ -196,20 +181,6 @@
 </div>{# /.ac-inner #}
 </div>{# /.ac-page #}
 <script>
-(function () {
-    var house = document.getElementById('as-house-select');
-    var dept  = document.getElementById('as-dept-select');
-    if (!house || !dept) return;
-    house.addEventListener('change', function () {
-        if (house.value === 'Lords') {
-            dept.style.display = 'none';
-            dept.value = '';
-        } else {
-            dept.style.display = '';
-        }
-    });
-}());
-
 (function () {
     var tabs = document.querySelectorAll('.as-tab');
     if (!tabs.length) return;
