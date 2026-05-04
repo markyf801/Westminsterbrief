@@ -515,6 +515,18 @@ def _last_ingested_label() -> str:
     return _human_date(row)
 
 
+def _archive_start_label() -> str:
+    """Human-readable label for the earliest session date in the archive."""
+    row = (
+        db.session.query(func.min(HansardSession.date))
+        .filter(HansardSession.is_container == False)
+        .scalar()
+    )
+    if not row:
+        return ""
+    return _human_date(row)
+
+
 _VOCAB_CACHE_TTL  = 300   # 5 minutes — refreshed after each ingest cycle
 _RECENT_CACHE_TTL = 900   # 15 minutes — recent-additions widget
 _policy_area_cache: tuple[list, float] | None = None
@@ -749,6 +761,7 @@ def archive_home():
             base_qs=base_qs,
             has_filters=has_filters,
             last_ingested=_last_ingested_label(),
+            archive_start=_archive_start_label(),
             today_str=date_type.today().isoformat(),
             recent_additions=_recent_additions(),
         )
@@ -791,6 +804,7 @@ def archive_home():
         base_qs=base_qs,
         has_filters=has_filters,
         last_ingested=last_ingested,
+        archive_start=_archive_start_label(),
         today_str=today_str,
         recent_additions=_recent_additions(),
     )

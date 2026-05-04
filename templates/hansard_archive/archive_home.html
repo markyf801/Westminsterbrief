@@ -16,7 +16,7 @@
         <h1 class="ah-title">Hansard Archive <span class="ah-beta-badge">BETA</span></h1>
         <p class="ah-desc">UK parliamentary debates — Commons and Lords</p>
         {% if last_ingested %}
-        <p class="ah-currency">Updated hourly during parliamentary sittings &nbsp;·&nbsp; Most recent session: <strong>{{ last_ingested }}</strong></p>
+        <p class="ah-currency">Updated hourly during parliamentary sittings &nbsp;·&nbsp; Most recent session: <strong>{{ last_ingested }}</strong>{% if archive_start %} &nbsp;·&nbsp; Archive from <strong>{{ archive_start }}</strong>{% endif %}</p>
         {% endif %}
     </div>
 
