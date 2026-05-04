@@ -1280,8 +1280,8 @@ def _fts_search(
         extra_params["dtype"] = dtype_filter
 
     if dept_filter:
-        extra_where_parts.append("AND s.department = :dept")
-        extra_params["dept"] = dept_filter
+        extra_where_parts.append("AND s.department ILIKE :dept")
+        extra_params["dept"] = f"%{dept_filter}%"
 
     if date_from:
         extra_where_parts.append("AND s.date >= :date_from")

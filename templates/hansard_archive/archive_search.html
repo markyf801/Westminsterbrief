@@ -144,7 +144,11 @@
     <div class="empty-state ac-empty">
         <p>No debate results for <strong>{{ q }}</strong>.</p>
         <p style="margin-top:8px; font-size:13px; color:#8a96a4;">
+            {% if dept_filter %}
+            The department filter only applies to Oral Questions sessions — debates, Westminster Hall, and bill readings are not attributed to a department. Try removing the department filter.
+            {% else %}
             Try fewer words, different keywords, or check the Written Questions tab.
+            {% endif %}
         </p>
     </div>
     {% endif %}
