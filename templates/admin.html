@@ -66,6 +66,21 @@
     </div>
   </div>
 
+  <!-- Archive DB counts -->
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
+    <h3 style="font-size:1rem; margin:0 0 12px;">Hansard Archive — DB Counts</h3>
+    {% if archive_stats.get('error') %}
+    <p style="color:#c62828; font-size:0.8rem; font-family:monospace; margin:0;">{{ archive_stats.error }}</p>
+    {% else %}
+    <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
+      <tr><td style="padding:4px 0; color:#555;">Debate sessions</td><td style="font-weight:600;">{{ archive_stats.debate_count }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Written Questions (total)</td><td style="font-weight:600;">{{ archive_stats.pq_count }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Written Questions (answered)</td><td style="font-weight:600; color:#2e7d32;">{{ archive_stats.pq_answered }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">PQ date range</td><td style="font-weight:600; font-size:0.8rem;">{{ archive_stats.pq_oldest }} → {{ archive_stats.pq_newest }}</td></tr>
+    </table>
+    {% endif %}
+  </div>
+
   <!-- Member Link Cross-Reference DB -->
   <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
     <h3 style="font-size:1rem; margin:0 0 12px;">Member ID Cross-Reference (Parliament ↔ TWFY)</h3>

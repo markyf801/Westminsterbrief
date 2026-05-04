@@ -1791,6 +1791,21 @@ def admin_panel():
     except Exception as e:
         dir_stats['error'] = (dir_stats.get('error') or '') + f' | YAML error: {e}'
 
+    # --- Archive DB stats ---
+    archive_stats = {}
+    try:
+        from hansard_archive.models import HansardSession, HaPQ
+        archive_stats['debate_count'] = f"{HansardSession.query.filter_by(is_container=False).count():,}"
+        archive_stats['pq_count']     = f"{HaPQ.query.count():,}"
+        archive_stats['pq_answered']  = f"{HaPQ.query.filter_by(is_answered=True).count():,}"
+        from sqlalchemy import func as _func2
+        oldest = db.session.query(_func2.min(HaPQ.tabled_date)).scalar()
+        newest = db.session.query(_func2.max(HaPQ.tabled_date)).scalar()
+        archive_stats['pq_oldest'] = oldest.isoformat() if oldest else '—'
+        archive_stats['pq_newest'] = newest.isoformat() if newest else '—'
+    except Exception as e:
+        archive_stats['error'] = str(e)
+
     # Show background ingestion status as the message if no other message and job ran/is running
     if not message and _committee_ingest_status['message']:
         message = _committee_ingest_status['message']
@@ -1804,7 +1819,8 @@ def admin_panel():
                            twfy_session=twfy_session,
                            twfy_keyword=twfy_keyword,
                            member_link_stats=member_link_stats,
-                           dir_stats=dir_stats)
+                           dir_stats=dir_stats,
+                           archive_stats=archive_stats)
 
 
 # ==========================================
