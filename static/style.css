@@ -1956,6 +1956,13 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
 }
 .ah-filter-select-wide { min-width: 200px; }
 .ah-filter-select:focus { outline: none; border-color: #4a7fa5; }
+/* Override global input[type="date"] width:100% / margin-bottom:15px inside filter rows */
+.ah-filter-row input[type="date"] {
+    width: 140px;
+    margin-bottom: 0;
+    padding: 6px 10px;
+    font-size: 13px;
+}
 .ah-filter-date {
     padding: 6px 10px;
     background: #fff;
