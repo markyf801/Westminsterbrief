@@ -5,9 +5,10 @@ import requests, io, csv
 from flask import Blueprint, render_template, request, make_response
 from docx import Document
 from docx.oxml.shared import OxmlElement, qn
-from datetime import datetime
+from datetime import datetime, date as date_type
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from cache_models import CachedQuestion, CachedMember
+from cache_models import CachedMember
+from extensions import db
 
 hansard_bp = Blueprint('hansard', __name__)
 
@@ -29,8 +30,7 @@ PARTY_COLOURS = {
     'Alliance': '#F6CB2F',
 }
 
-WQ_API_URL = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
-WQ_PAGE_SIZE = 400
+# DB cap — mirrors the old API cap so template variables are unchanged.
 WQ_MAX_RESULTS = 1200
 
 MEMBER_CACHE = {}
@@ -43,42 +43,6 @@ def strip_html(raw):
     text = re.sub(r'<[^>]+>', ' ', raw)
     text = _html_mod.unescape(text)
     return ' '.join(text.split())
-
-
-def _word_root(w):
-    """Strip common English suffixes so 'repayments' matches 'repayment' in text."""
-    for suffix in ('ments', 'ment', 'tions', 'tion', 'ings', 'ing', 'ers', 'es', 's'):
-        if w.endswith(suffix) and len(w) - len(suffix) >= 4:
-            return w[:-len(suffix)]
-    return w
-
-
-def fetch_wq_pages(params_base):
-    """Fetch up to WQ_MAX_RESULTS written questions via parallel pagination."""
-    all_items, total_available = [], 0
-    r = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': 0}, timeout=60)
-    if r.status_code != 200:
-        return [], 0
-    data = r.json()
-    total_available = data.get('totalResults', 0)
-    all_items.extend(data.get('results') or [])
-
-    skips = list(range(WQ_PAGE_SIZE, min(total_available, WQ_MAX_RESULTS), WQ_PAGE_SIZE))
-    if not skips:
-        return all_items, total_available
-
-    def _fetch(skip):
-        resp = requests.get(WQ_API_URL, params={**params_base, 'take': WQ_PAGE_SIZE, 'skip': skip}, timeout=60)
-        return resp.json().get('results') or [] if resp.status_code == 200 else []
-
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        for f in as_completed([ex.submit(_fetch, s) for s in skips]):
-            try:
-                all_items.extend(f.result())
-            except Exception:
-                pass
-
-    return all_items, total_available
 
 
 def prefetch_members(member_ids):
@@ -145,6 +109,71 @@ def add_hyperlink(paragraph, url, text):
     paragraph._p.append(hyperlink)
 
 
+def _search_pq_db(subjects, start_date, end_date, dept_id, house_filter, status_filter):
+    """
+    Query ha_pq and return (rows: list[HaPQ], total: int).
+
+    All filters applied at SQL level.
+    Keyword search: Postgres FTS via question_tsv GIN index; ILIKE fallback for SQLite.
+    Multiple subjects (comma-separated) are OR-ed together.
+    is_holding / is_withdrawn are not tracked in the archive — status filters for those
+    will naturally return 0 results.
+    """
+    from hansard_archive.models import HaPQ
+    from sqlalchemy import text as sqla_text, or_
+
+    is_pg = db.engine.url.drivername.startswith('postgresql')
+    q = HaPQ.query
+
+    if start_date:
+        try:
+            q = q.filter(HaPQ.tabled_date >= date_type.fromisoformat(start_date))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            q = q.filter(HaPQ.tabled_date <= date_type.fromisoformat(end_date))
+        except ValueError:
+            pass
+    if dept_id:
+        try:
+            q = q.filter(HaPQ.answering_body_id == int(dept_id))
+        except (ValueError, TypeError):
+            pass
+    if house_filter in ('Commons', 'Lords'):
+        q = q.filter(HaPQ.chamber == house_filter)
+    if status_filter == 'unanswered':
+        q = q.filter(HaPQ.is_answered == False)  # noqa: E712
+    elif status_filter == 'answered':
+        q = q.filter(HaPQ.is_answered == True)   # noqa: E712
+
+    active_subjects = [s for s in subjects if s]
+    if active_subjects:
+        if is_pg:
+            # OR multiple subjects via tsquery union (||)
+            fts_expr = " || ".join(
+                f"plainto_tsquery('english', :q{i})" for i in range(len(active_subjects))
+            )
+            params = {f"q{i}": s for i, s in enumerate(active_subjects)}
+            q = q.filter(sqla_text(f"question_tsv @@ ({fts_expr})").bindparams(**params))
+        else:
+            # SQLite ILIKE fallback (dev only — no GIN index)
+            ilike_filters = []
+            for subj in active_subjects:
+                like = f"%{subj}%"
+                ilike_filters.append(or_(
+                    HaPQ.heading.ilike(like),
+                    HaPQ.question_text.ilike(like),
+                    HaPQ.answer_text.ilike(like),
+                ))
+            q = q.filter(or_(*ilike_filters))
+
+    q = q.order_by(HaPQ.tabled_date.desc())
+    total = q.count()
+    rows = q.limit(WQ_MAX_RESULTS).all()
+    return rows, total
+
+
 @hansard_bp.route('/questions', methods=['GET', 'POST'])
 def index():
     results, error_message = [], None
@@ -166,176 +195,61 @@ def index():
         action = request.form.get('action', 'search')
 
         subjects = [s.strip() for s in subject.split(',') if s.strip()] or ['']
-        all_raw_results = []
-        seen_uins = set()
 
         try:
-            # Build shared API params — house pushed to API to cut wasted fetches.
-            # Correct param names per OpenAPI spec (questions-statements-api.parliament.uk/index.html).
-            # tabledWhenFrom/tabledWhenTo work reliably; answeringBodies is safe when a
-            # searchTerm narrows the result set. See CLAUDE.md "WQ API constraints".
-            base_params = {}
-            if start_date: base_params['tabledWhenFrom'] = start_date
-            if end_date: base_params['tabledWhenTo'] = end_date
-            if selected_dept_id: base_params['answeringBodies'] = [int(selected_dept_id)]
-            if selected_house == 'Commons': base_params['house'] = 'Commons'
-            elif selected_house == 'Lords': base_params['house'] = 'Lords'
+            pq_rows, total_available = _search_pq_db(
+                subjects, start_date, end_date,
+                selected_dept_id, selected_house, status_filter,
+            )
+            pre_filter_count = len(pq_rows)
 
-            def _fetch_subject(subj):
-                p = dict(base_params)
-                if subj:
-                    p['searchTerm'] = subj
-                return fetch_wq_pages(p)
+            # Pre-warm member cache in parallel (DB lookup, API fallback)
+            member_ids = list({r.asking_mnis_id for r in pq_rows if r.asking_mnis_id})
+            prefetch_members(member_ids)
 
-            # Parallel multi-subject fetches
-            fetch_errors = []
-            with ThreadPoolExecutor(max_workers=min(len(subjects), 4)) as ex:
-                futures = [ex.submit(_fetch_subject, s) for s in subjects]
-                for f in as_completed(futures):
-                    try:
-                        batch, avail = f.result()
-                        total_available = max(total_available, avail)
-                        for item in batch:
-                            uin = (item.get('value') or {}).get('uin')
-                            if uin and uin not in seen_uins:
-                                seen_uins.add(uin)
-                                all_raw_results.append(item)
-                    except Exception as e:
-                        fetch_errors.append(str(e))
+            for pq in pq_rows:
+                _, party, constituency, actual_house = get_member_details(
+                    pq.asking_mnis_id, pq.chamber or 'Commons'
+                )
 
-            if fetch_errors and not all_raw_results:
-                raise Exception(f"Parliament API unavailable — please try again in a moment. ({fetch_errors[0]})")
-
-            pre_filter_count = len(all_raw_results)
-
-            # Pre-warm member cache in parallel
-            all_member_ids = list({
-                mid
-                for item in all_raw_results
-                for mid in [
-                    item.get('value', {}).get('askingMemberId'),
-                    item.get('value', {}).get('answeringMemberId'),
-                ]
-                if mid
-            })
-            prefetch_members(all_member_ids)
-
-            # Build per-subject root sets for relevance filtering
-            # Strip common suffixes so "repayments" matches "repayment" in text
-            subject_word_sets = []
-            for subj in subjects:
-                roots = {_word_root(w.lower()) for w in subj.split() if len(w) >= 3}
-                if roots:
-                    subject_word_sets.append(roots)
-
-            # Python-level filtering and row building
-            for item in all_raw_results:
-                val = item.get('value') or {}
-
-                if selected_dept_id and str(val.get('answeringBodyId')) != selected_dept_id:
-                    continue
-
-                raw_date_full = val.get('dateTabled') or ''
-                raw_date_str = raw_date_full.split('T')[0]
-
-                if start_date and raw_date_str < start_date: continue
-                if end_date and raw_date_str > end_date: continue
-
-                # Relevance filter: at least 2 of N root words must appear (matching debate scanner logic).
-                # Requiring ALL words is too strict for multi-word topics — "student loan repayments"
-                # drops questions that say "loan repayment" without "student", etc.
-                if subject_word_sets:
-                    q_lower = (
-                        strip_html(val.get('questionText', '')) + ' ' +
-                        (val.get('heading') or '') + ' ' +
-                        strip_html(val.get('answerText') or '')
-                    ).lower()
-                    matched = False
-                    for word_set in subject_word_sets:
-                        min_m = 2 if len(word_set) >= 2 else 1
-                        if sum(1 for w in word_set if w in q_lower) >= min_m:
-                            matched = True
-                            break
-                    if not matched:
-                        continue
-
-                val_member_id = val.get('askingMemberId')
-                house_raw = val.get('house', 'Commons')
-                name, party, constituency, actual_house = get_member_details(val_member_id, house_raw)
-
-                if selected_house != "All" and actual_house != selected_house:
-                    continue
-
-                is_answered = bool((val.get('answerText') or '').strip() or val.get('dateAnswered'))
-                is_holding = val.get('answerIsHolding', False)
-                is_withdrawn = val.get('isWithdrawn', False)
-
-                # Answer status filter
-                if status_filter == 'unanswered' and (is_answered or is_holding or is_withdrawn):
-                    continue
-                elif status_filter == 'answered' and not (is_answered and not is_holding and not is_withdrawn):
-                    continue
-                elif status_filter == 'holding' and not is_holding:
-                    continue
-                elif status_filter == 'withdrawn' and not is_withdrawn:
-                    continue
-
+                tabled_str = pq.tabled_date.isoformat() if pq.tabled_date else ''
                 try:
-                    date_obj = datetime.fromisoformat(raw_date_str)
-                    f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
+                    f_date = f"{pq.tabled_date.day} {pq.tabled_date.strftime('%B %Y')}"
                 except Exception:
-                    f_date = "N/A"
+                    f_date = 'N/A'
 
-                uin = val.get('uin', '')
-                question_url = f"https://questions-statements.parliament.uk/written-questions/detail/{raw_date_str}/{uin}"
-                question_text = strip_html(val.get('questionText', ''))
-
-                answering_member_id = val.get('answeringMemberId')
-                ans_name = None
-                if answering_member_id:
-                    ans_name, _, _, _ = get_member_details(answering_member_id, 'Commons')
-
-                answer_text = strip_html(val.get('answerText') or '')
-
-                raw_answered = (val.get('dateAnswered') or '').split('T')[0]
                 try:
-                    da_obj = datetime.fromisoformat(raw_answered)
-                    date_answered = f"{da_obj.day} {da_obj.strftime('%B %Y')}"
+                    date_answered = (
+                        f"{pq.answer_date.day} {pq.answer_date.strftime('%B %Y')}"
+                        if pq.answer_date else ''
+                    )
                 except Exception:
                     date_answered = ''
 
-                if uin and CachedQuestion.is_cacheable(raw_date_str):
-                    try:
-                        if not CachedQuestion.get(uin):
-                            CachedQuestion.store(
-                                uin=uin, member_name=name, party=party,
-                                department_id=val.get('answeringBodyId', ''),
-                                department_name=val.get('answeringBodyName', ''),
-                                question_text=question_text,
-                                answer_text=val.get('answerText'),
-                                date_tabled=raw_date_str, url=question_url
-                            )
-                    except Exception:
-                        pass
+                question_url = (
+                    f"https://questions-statements.parliament.uk/written-questions/detail"
+                    f"/{tabled_str}/{pq.uin}"
+                )
 
+                house = pq.chamber or actual_house
                 results.append({
-                    'uin': uin,
-                    'url': question_url,
-                    'dept': val.get('answeringBodyName'),
-                    'name': name,
-                    'party': party,
-                    'role': "Life Peer" if actual_house == "Lords" else f"MP for {constituency}",
-                    'date': f_date,
-                    'text': question_text,
-                    'heading': val.get('heading', ''),
-                    'party_colour': PARTY_COLOURS.get(party, '#888888'),
-                    'answered': is_answered,
-                    'is_holding': is_holding,
-                    'is_withdrawn': is_withdrawn,
-                    'answer_text': answer_text,
-                    'answering_minister': ans_name,
-                    'date_answered': date_answered,
-                    '_sort_date': raw_date_str,
+                    'uin':                pq.uin,
+                    'url':                question_url,
+                    'dept':               pq.answering_body or '',
+                    'name':               pq.asking_member or 'Unknown',
+                    'party':              party,
+                    'role':               "Life Peer" if house == "Lords" else f"MP for {constituency}",
+                    'date':               f_date,
+                    'text':               pq.question_text or '',
+                    'heading':            pq.heading or '',
+                    'party_colour':       PARTY_COLOURS.get(party, '#888888'),
+                    'answered':           pq.is_answered,
+                    'is_holding':         False,
+                    'is_withdrawn':       False,
+                    'answer_text':        pq.answer_text or '',
+                    'answering_minister': pq.answering_member or '',
+                    'date_answered':      date_answered,
+                    '_sort_date':         tabled_str,
                 })
 
             results.sort(key=lambda r: r.get('_sort_date', ''), reverse=True)
@@ -395,7 +309,7 @@ def index():
 
             elif action == 'csv' and results:
                 si = io.StringIO()
-                si.write('\ufeff')  # UTF-8 BOM for Excel on Windows
+                si.write('﻿')  # UTF-8 BOM for Excel on Windows
                 cw = csv.writer(si)
                 for line in meta_lines:
                     cw.writerow([line])
