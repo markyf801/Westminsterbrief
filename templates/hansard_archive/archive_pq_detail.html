@@ -5,7 +5,7 @@
 {% block meta_description %}{{ meta_desc }}{% endblock %}
 {% block og_title %}{{ pq.heading or pq.uin }} — {{ pq.uin }}{% endblock %}
 {% block og_description %}Written Question by {{ pq.asking_member or 'an MP' }} to {{ pq.answering_body or 'a department' }}{% if human_tabled %}, tabled {{ human_tabled }}{% endif %}{% endblock %}
-{% block canonical_path %}{{ canonical_path }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
 
 {% block json_ld %}
 <script type="application/ld+json">

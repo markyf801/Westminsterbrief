@@ -663,8 +663,13 @@ def health():
 def robots():
     return app.send_static_file('robots.txt')
 
-_sitemap_cache: dict = {'xml': None, 'ts': 0.0}
-_SITEMAP_TTL = 3600  # 1 hour
+_sitemap_core_cache:  dict = {'xml': None, 'ts': 0.0}
+_sitemap_pqs1_cache:  dict = {'xml': None, 'ts': 0.0}
+_sitemap_pqs2_cache:  dict = {'xml': None, 'ts': 0.0}
+_sitemap_index_cache: dict = {'xml': None, 'ts': 0.0}
+_SITEMAP_TTL    = 3600   # 1h — core + index
+_SITEMAP_PQ_TTL = 86400  # 24h — PQ chunks
+_PQ_CHUNK_SIZE  = 50_000
 
 _SITEMAP_MONTHS = [
     "", "january", "february", "march", "april", "may", "june",
@@ -684,7 +689,7 @@ def _sitemap_slugify(s: str) -> str:
     return s
 
 
-def _build_sitemap_xml() -> str:
+def _build_sitemap_core_xml() -> str:
     from hansard_archive.models import (
         HansardSession, HansardContribution, HansardSessionTheme,
         THEME_TYPE_POLICY_AREA, THEME_TYPE_SPECIFIC,
@@ -700,7 +705,8 @@ def _build_sitemap_xml() -> str:
 
     # Static tool pages (content changes via deployments, not DB; omit lastmod)
     for path in ('/', '/questions', '/tracker', '/mp_search', '/biography',
-                 '/debates', '/archive', '/directory', '/terms', '/privacy'):
+                 '/debates', '/archive', '/directory', '/terms', '/privacy',
+                 '/history-of-hansard'):
         urls.append((f"{BASE}{path}", archive_lastmod if path == '/archive' else ""))
 
     # Date browse — one URL per distinct date with sessions
@@ -760,14 +766,6 @@ def _build_sitemap_xml() -> str:
         urls.append((f"{BASE}/archive/department/{_sitemap_slugify(dept)}",
                      max_d.isoformat() if max_d else ""))
 
-    # PQ detail pages excluded from sitemap pending DB-cached sitemap implementation.
-    # 90k URLs would push generation time to ~25s and risk Google timeout.
-    # See ideas-backlog.md: "Sitemap caching for PQ archive scale" (Phase 2A.5).
-
-    # Build XML
-    # Future: split into sitemap index + sub-sitemaps (by content type) when URL count
-    # approaches 50,000. Structure: /sitemap-index.xml → /sitemap-sessions.xml,
-    # /sitemap-mps.xml, /sitemap-themes.xml etc.
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -782,32 +780,94 @@ def _build_sitemap_xml() -> str:
     return '\n'.join(lines)
 
 
-@app.route('/sitemap.xml')
-def sitemap():
+def _build_sitemap_pqs_xml(offset: int, limit: int) -> str:
+    from hansard_archive.models import HaPQ
+    BASE = "https://westminsterbrief.co.uk"
+    rows = (db.session.query(HaPQ.uin, HaPQ.tabled_date)
+            .order_by(HaPQ.tabled_date.desc())
+            .offset(offset).limit(limit).all())
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for uin, tabled in rows:
+        lines.append('  <url>')
+        lines.append(f'    <loc>{BASE}/archive/pq/{uin}</loc>')
+        if tabled:
+            lines.append(f'    <lastmod>{tabled.isoformat()}</lastmod>')
+        lines.append('  </url>')
+    lines.append('</urlset>')
+    return '\n'.join(lines)
+
+
+def _build_sitemap_index_xml() -> str:
+    from datetime import date as _date
+    BASE = "https://westminsterbrief.co.uk"
+    today = _date.today().isoformat()
+    return '\n'.join([
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+        '  <sitemap>',
+        f'    <loc>{BASE}/sitemap-core.xml</loc>',
+        f'    <lastmod>{today}</lastmod>',
+        '  </sitemap>',
+        '  <sitemap>',
+        f'    <loc>{BASE}/sitemap-pqs-1.xml</loc>',
+        f'    <lastmod>{today}</lastmod>',
+        '  </sitemap>',
+        '  <sitemap>',
+        f'    <loc>{BASE}/sitemap-pqs-2.xml</loc>',
+        f'    <lastmod>{today}</lastmod>',
+        '  </sitemap>',
+        '</sitemapindex>',
+    ])
+
+
+def _serve_xml(cache_dict: dict, build_fn, ttl: int, fallback_empty: str):
     import time as _t
-    global _sitemap_cache
     now = _t.time()
-    if _sitemap_cache['xml'] and now - _sitemap_cache['ts'] < _SITEMAP_TTL:
-        resp = make_response(_sitemap_cache['xml'])
+    if cache_dict['xml'] and now - cache_dict['ts'] < ttl:
+        resp = make_response(cache_dict['xml'])
         resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
         return resp
     try:
-        xml = _build_sitemap_xml()
+        xml = build_fn()
     except Exception as exc:
         print(f'[SITEMAP] build error: {exc}', flush=True)
-        if _sitemap_cache['xml']:
-            resp = make_response(_sitemap_cache['xml'])
-            resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
-            return resp
-        return make_response(
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>',
-            500, {'Content-Type': 'application/xml; charset=utf-8'}
-        )
-    _sitemap_cache = {'xml': xml, 'ts': now}
+        xml = cache_dict['xml'] or fallback_empty
+    cache_dict['xml'] = xml
+    cache_dict['ts'] = now
     resp = make_response(xml)
     resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
     return resp
+
+
+_XML_EMPTY_URLSET = ('<?xml version="1.0" encoding="UTF-8"?>'
+                     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>')
+_XML_EMPTY_INDEX  = ('<?xml version="1.0" encoding="UTF-8"?>'
+                     '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                     '</sitemapindex>')
+
+
+@app.route('/sitemap.xml')
+def sitemap():
+    return _serve_xml(_sitemap_index_cache, _build_sitemap_index_xml, _SITEMAP_TTL, _XML_EMPTY_INDEX)
+
+@app.route('/sitemap-core.xml')
+def sitemap_core():
+    return _serve_xml(_sitemap_core_cache, _build_sitemap_core_xml, _SITEMAP_TTL, _XML_EMPTY_URLSET)
+
+@app.route('/sitemap-pqs-1.xml')
+def sitemap_pqs_1():
+    return _serve_xml(_sitemap_pqs1_cache,
+                      lambda: _build_sitemap_pqs_xml(0, _PQ_CHUNK_SIZE),
+                      _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
+
+@app.route('/sitemap-pqs-2.xml')
+def sitemap_pqs_2():
+    return _serve_xml(_sitemap_pqs2_cache,
+                      lambda: _build_sitemap_pqs_xml(_PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
+                      _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/history-of-hansard')
 def history_of_hansard():
