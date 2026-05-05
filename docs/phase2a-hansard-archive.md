@@ -82,3 +82,26 @@ timeline (Commons First Reading → ... → Royal Assent).
   (`/archive/mp/keir-starmer`) with 301 redirect from integer to slug as canonical.
   Slug generation logic, route registration, internal link updates, sitemap update,
   redirect handling. Estimated effort: 0.5–1 day.
+
+- **Member Profile / Member Research caching** — `/biography` and `/mp_search` currently
+  query Parliament's Members API live on each request. Pre-populating into local DB would
+  improve speed and resilience. Three tiers by data stability:
+  - Stable (name, party, career history, APPG roles, election results) → weekly refresh
+  - Semi-current (registered interests, voting record) → 24–48h refresh
+  - Real-time (today's votes) → query live, no cache
+  Note: the `/mp_search` Speeches tab already reads from local `ha_contribution` as of
+  5 May 2026; this item covers the remaining Members API calls (profile, bio, interests).
+  Estimated effort: 3–5 days (schema, ingestor, refresh cron, tool refactors).
+  Trigger: post-Phase 2 share, after launch usage data shows speed is a real bottleneck.
+
+- **Wikipedia description caching** — `/biography` fetches Wikipedia summaries live.
+  Same pre-population pattern as Members caching. Three safeguards required:
+  1. Daily refresh to limit vandalism exposure to <24h windows
+  2. Diff monitoring on refresh — flag unusual changes for review
+  3. Evaluate whether Parliament's official bio data covers the case sufficiently
+     to skip Wikipedia entirely before building
+  Attribution requirements: "Source: Wikipedia, accessed [date]", link back to source
+  article, CC-BY-SA licence compliance.
+  Estimated effort: 2–3 days plus ongoing operational care.
+  Trigger: after Members caching is in place, if Wikipedia rendering still adds enough
+  value to justify the operational complexity.

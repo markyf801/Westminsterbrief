@@ -141,6 +141,29 @@ Phase 2A.5 candidate. PQ archive adds ~90k URLs to the sitemap; per-request gene
 
 ---
 
+### Stakeholder Directory — Organisation Enrichment (Description, URL, Leadership)
+
+The 12,058 orgs in `sd_organisation` have `canonical_url` and `description` columns but both are empty for every org. Adding this data would make the directory pages meaningful rather than just engagement lists.
+
+**Description + URL (lower effort, high confidence):**
+Gemini Flash can generate a 2-sentence "who is this organisation" summary and canonical website URL for most UK policy orgs from training data. Batched overnight script, ~2–4 hours of API calls, a few pounds in API cost. Risk: URLs need verification (Gemini may hallucinate). Mitigation: store `url_verified = false` flag and surface unverified URLs as "unconfirmed" in the UI until spot-checked.
+
+**Chair and CEO (harder, schema change needed):**
+No `chair` or `ceo` fields in the schema yet. Leadership changes frequently (quarterly for some orgs), so stale data is a real risk. Better data sources than website scraping:
+- Charity Commission API (free) — trustee data for ~170k UK charities
+- Companies House API (free) — directors for registered companies
+- Gemini with web search — covers remainder but accuracy is variable and goes stale
+
+Recommended approach: Charity Commission + Companies House for registered entities; Gemini as fallback for trade bodies, universities, and think tanks not in either registry.
+
+**Effort:** Description + URL: ~1 day. Chair/CEO with registry APIs: 3–5 days including schema migration, ingestor, staleness handling.
+
+**Revisit trigger:** Directory is live and used; any "make org pages richer" session; Mark is thinking about what the org detail page should show.
+
+*Captured 5 May 2026.*
+
+---
+
 ## Killed
 
 *(Nothing formally killed yet — this section is for ideas explicitly decided against, with reason recorded so they don't keep resurfacing.)*
