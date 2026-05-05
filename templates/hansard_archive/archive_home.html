@@ -60,17 +60,6 @@
                 {% endfor %}
             </select>
 
-            {% if all_departments %}
-            <select name="dept" class="ah-filter-select ah-filter-select-wide" id="ah-dept-select"
-                    aria-label="Filter by department"
-                    {% if house_filter == 'Lords' %}style="display:none"{% endif %}>
-                <option value="">All departments</option>
-                {% for dept in all_departments %}
-                <option value="{{ dept }}" {% if dept_filter == dept %}selected{% endif %}>{{ dept }}</option>
-                {% endfor %}
-            </select>
-            {% endif %}
-
             <select name="policy" class="ah-filter-select ah-filter-select-wide" aria-label="Filter by policy area">
                 <option value="">All policy areas</option>
                 {% for pa in all_policy_areas %}
@@ -125,7 +114,7 @@
                     {% set s = item.session %}
                     <div class="ah-card ah-card-in-group">
                         <div class="ah-card-meta">
-                            {% if not group.house or group.house == 'Commons' and not group.dept %}
+                            {% if not group.dept %}
                             <span class="topic-source-badge topic-source-{{ s.house|lower }}">{{ s.house }}</span>
                             {% endif %}
                             {% if item.contrib_count %}
@@ -239,18 +228,5 @@
 </div>{# /.ah-inner #}
 </div>{# /.ah-page #}
 <script>
-(function () {
-    var house = document.getElementById('ah-house-select');
-    var dept  = document.getElementById('ah-dept-select');
-    if (!house || !dept) return;
-    house.addEventListener('change', function () {
-        if (house.value === 'Lords') {
-            dept.style.display = 'none';
-            dept.value = '';          // clear selection so it doesn't filter
-        } else {
-            dept.style.display = '';
-        }
-    });
-}());
 </script>
 {% endblock %}
