@@ -921,6 +921,43 @@ event volume.
 Build cost: trivial. Query against existing tagged archive data.
 Display in pre-payment flow.
 
+### Honest operating practices (locked 5 May 2026)
+
+Pricing remains flat at £15/month, but the subscription is committed
+to anti-ripoff operating practices that protect subscribers from
+the predatory patterns common in subscription products:
+
+1. **One-click cancellation.** No friction, no retention dialog, no
+   phone calls. If a subscriber wants out, they're out immediately.
+
+2. **Pause anytime.** Subscribers can pause for any reason (project
+   ended, parental leave, budget freeze) without cancelling.
+   Subscription resumes when they choose.
+
+3. **Disengagement nudges.** If a subscriber hasn't opened the last
+   8 weekly digests, automatic email: "Westminster Brief might not
+   be useful for you right now. Pause or cancel here."
+
+4. **Annual review prompts.** On 12-month anniversary, an email
+   summarising what was delivered that year + an active prompt to
+   confirm continuation.
+
+5. **Pre-signup activity disclosure.** Subscribers see their topic's
+   12-month activity history before paying (already locked).
+
+6. **Public, plain-English subscription terms.** No hidden auto-renew
+   trickery. Renewal date is clearly visible in subscriber dashboard.
+
+These commitments do for ethical positioning what activity disclosure
+does for expectation setting. They address the actual ripoff vectors
+(forgetting to cancel, hidden renewals, friction-blocked exits) at
+the operations layer rather than through pricing complexity.
+
+Variable pricing tied to activity is rejected: subscriptions paid
+for standing service. The fairness instinct that motivated variable
+pricing is honoured here through honest operations, which is the
+right place for it.
+
 ### Why Westminster Brief, when AI tools exist?
 
 Three reasons:
