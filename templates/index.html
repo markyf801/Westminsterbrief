@@ -48,13 +48,9 @@
     <p class="page-desc">
         Search Written Questions tabled in the Commons and Lords. Filter by department, house, and answer status. Export to CSV or Word.
         {% if last_pq_update %}<span class="wq-freshness">Archive updated: {{ last_pq_update }}</span>{% endif %}
+        {% if oldest_pq_date %}<br>Searching Westminster Brief's PQ archive (questions tabled from {{ oldest_pq_date }} to present).
+        For older questions visit <a href="https://questions-statements.parliament.uk/written-questions" target="_blank" style="color:#1a4a6e;">parliament.uk/written-questions</a>.{% endif %}
     </p>
-    {% if oldest_pq_date %}
-    <p class="page-desc" style="margin-top: 4px;">
-        Searching Westminster Brief's PQ archive (questions tabled from {{ oldest_pq_date }} to present).
-        For older questions visit <a href="https://questions-statements.parliament.uk/written-questions" target="_blank" style="color:#1a4a6e;">parliament.uk/written-questions</a>.
-    </p>
-    {% endif %}
 
     <form method="POST" action="/questions">
         <div class="form-group">
