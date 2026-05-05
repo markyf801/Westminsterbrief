@@ -148,7 +148,7 @@
                 {% if pq_results %}<span class="tab-count">{{ pq_results|length }}</span>{% endif %}
             </button>
             <button class="tab-btn" onclick="showTab('speeches', this)" id="tab-btn-speeches">
-                Speeches
+                Contributions
                 {% if speeches %}<span class="tab-count">{{ speeches|length }}</span>{% endif %}
             </button>
         </div>
@@ -293,8 +293,10 @@
             </div>
             {% elif speeches %}
             <p style="font-size:12px; color:#8a96a4; margin-bottom:12px;">
-                {% if member_header.is_lord %}Lords contributions{% else %}Commons and Westminster Hall contributions{% endif %}
-                via Hansard (Parliament UK) · {{ speeches|length }} most recent (≥50 words)
+                Parliamentary contributions — {{ speeches|length }} most recent sessions in Westminster Brief's Hansard archive
+                {% if hansard_archive_start %}(from {{ hansard_archive_start }}){% endif %}.
+                For full historical contributions, visit
+                <a href="https://hansard.parliament.uk" target="_blank" style="color:#4a7fa5;">Hansard.parliament.uk</a>.
             </p>
             <table class="speeches-table">
                 <thead>

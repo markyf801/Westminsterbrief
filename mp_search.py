@@ -40,8 +40,27 @@ DEPARTMENTS = {
 
 _profile_cache: dict = {}   # keyed on "header_{id}" or "profile_{id}"
 _speech_cache: dict = {}    # keyed on member_id (int)
+_archive_range_cache: dict = {}
 
 _TTL_24H = 86400.0
+_TTL_6H  = 21600.0
+
+
+def _get_hansard_archive_start() -> str:
+    """Return human-readable oldest date in ha_session (e.g. '1 May 2025'). Cached 6h."""
+    cached = _cache_get(_archive_range_cache, 'start', _TTL_6H)
+    if cached is not None:
+        return cached
+    try:
+        from extensions import db
+        from hansard_archive.models import HansardSession
+        from sqlalchemy import func
+        oldest = db.session.query(func.min(HansardSession.date)).scalar()
+        result = f"{oldest.day} {oldest.strftime('%B %Y')}" if oldest else ''
+    except Exception:
+        result = ''
+    _cache_set(_archive_range_cache, 'start', result)
+    return result
 
 
 def _cache_get(cache: dict, key, ttl: float):
@@ -170,58 +189,48 @@ def _fetch_profile_data(member_id: int) -> dict | None:
 
 
 def _fetch_speeches(member_id: int, is_lord: bool) -> list:
-    """Recent Hansard speech contributions, filtered to ≥50 words. Cached 24h."""
+    """
+    Return up to 50 recent sessions where this member contributed, from local
+    ha_contribution + ha_session tables. Cached 24h.
+
+    Replaces the old external Hansard API call which was capped at take=50
+    and filtered to ≥50 words, causing 30x undercounts for active members.
+    """
     cached = _cache_get(_speech_cache, member_id, _TTL_24H)
     if cached is not None:
         return cached
 
-    house = 'Lords' if is_lord else 'Commons'
-    raw = []
-    seen_ext_ids: set = set()
-
     try:
-        resp = requests.get(
-            f"{HANSARD_API_BASE}/search.json",
-            params={
-                'queryParameters.memberId': member_id,
-                'queryParameters.house': house,
-                'take': 50,
-            },
-            timeout=15
+        from extensions import db
+        from hansard_archive.models import HansardContribution, HansardSession
+
+        subq = (
+            db.session.query(HansardContribution.session_id)
+            .filter(HansardContribution.member_id == member_id)
+            .distinct()
+            .subquery()
         )
-        if resp.status_code == 200:
-            for c in resp.json().get('Contributions', []):
-                ext_id = c.get('DebateSectionExtId', '')
-                if ext_id and ext_id in seen_ext_ids:
-                    continue
-                if ext_id:
-                    seen_ext_ids.add(ext_id)
-
-                body = re.sub(r'<[^>]+>', '',
-                              c.get('ContributionTextFull') or c.get('ContributionText') or '')
-                if len(body.split()) < 50:
-                    continue
-
-                date_str = (c.get('SittingDate') or '')[:10]
-                debate_title = c.get('DebateSection') or 'Untitled contribution'
-
-                url = ''
-                if ext_id and date_str:
-                    slug = ''.join(w.capitalize() for w in
-                                   re.sub(r'[^a-zA-Z0-9\s]', '', debate_title).split())
-                    url = f"https://hansard.parliament.uk/{house}/{date_str}/debates/{ext_id}/{slug}"
-
-                raw.append({
-                    'date': date_str,
-                    'subject': debate_title,
-                    'chamber': house,
-                    'url': url,
-                })
+        sessions = (
+            db.session.query(HansardSession)
+            .join(subq, HansardSession.id == subq.c.session_id)
+            .filter(HansardSession.is_container == False)  # noqa: E712
+            .order_by(HansardSession.date.desc())
+            .limit(50)
+            .all()
+        )
+        result = [
+            {
+                'date': s.date.isoformat() if s.date else '',
+                'subject': s.title,
+                'chamber': s.house,
+                'url': s.hansard_url or '',
+            }
+            for s in sessions
+        ]
     except Exception as e:
-        logger.warning('[mp_research] Hansard speech fetch failed for %d: %s', member_id, e)
+        logger.warning('[mp_research] DB speech fetch failed for %d: %s', member_id, e)
+        result = []
 
-    raw.sort(key=lambda x: x['date'], reverse=True)
-    result = raw[:25]
     _cache_set(_speech_cache, member_id, result)
     return result
 
@@ -337,6 +346,7 @@ def search_mp_pqs():
         profile_data=profile_data, profile_error=profile_error,
         pq_results=pq_results, pq_error=pq_error,
         speeches=speeches, speeches_error=speeches_error,
+        hansard_archive_start=_get_hansard_archive_start(),
         departments=DEPARTMENTS,
         selected_dept=selected_dept,
         start_date=start_date, end_date=end_date,
