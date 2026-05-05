@@ -88,6 +88,8 @@ def main() -> None:
                         help="Service name for monitoring (pq-morning / pq-afternoon / pq-monday / backfill)")
     parser.add_argument("--no-tag", action="store_true",
                         help="Skip theme tagging (use for large backfill runs)")
+    parser.add_argument("--skip-answer-fetch", action="store_true",
+                        help="Skip per-row individual answer fetches (use for backfill — answer text already in DB)")
     args = parser.parse_args()
 
     run_start = datetime.utcnow()
@@ -139,7 +141,8 @@ def main() -> None:
         try:
             # --- Ingestion ---
             print(f"[pq-cron] Ingesting WQs {date_from} → {today}…", flush=True)
-            result = ingest_pq_date_range(date_from, today, verbose=True)
+            result = ingest_pq_date_range(date_from, today, verbose=True,
+                                          skip_answer_fetch=args.skip_answer_fetch)
             total_inserted = result["inserted"]
             total_updated = result["updated"]
             total_errors += result["errors"]

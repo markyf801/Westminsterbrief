@@ -809,6 +809,10 @@ def sitemap():
     resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
     return resp
 
+@app.route('/history-of-hansard')
+def history_of_hansard():
+    return render_template('history_of_hansard.html')
+
 @app.route('/terms')
 def terms():
     return render_template('terms.html')

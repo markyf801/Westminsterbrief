@@ -34,8 +34,8 @@ this is where they go. Don't stuff them into the product spec doc.
 
 ### 1. The History of Hansard
 
-**Status**: Content drafted (3 May 2026)
-**Proposed route**: `/about/history-of-hansard` or `/history-of-hansard`
+**Status**: Built and live (5 May 2026)
+**Route**: `/history-of-hansard`
 **Proposed nav location**: footer link initially; consider header nav 
 if usage is high
 **Estimated build effort**: 1-2 hours
@@ -63,8 +63,153 @@ Avoid whimsy; aim for the voice of an authoritative reference source.
 - Schema markup for Article type if applicable
 - Internal links to relevant /archive pages
 
-**Full content**: [paste in the 1000-word draft from session 3 May 2026 
-when ready to build]
+**Full content**:
+
+---
+
+# The History of Hansard
+
+Hansard is the edited verbatim record of debates in the UK Parliament. Its 
+modern form has been published continuously since 1909, but its origins 
+reach back to a long contest over whether parliamentary proceedings should 
+be public at all.
+
+## When Parliament was secret
+
+For most of its history, debates in the House of Commons were not officially 
+reported. Members spoke under parliamentary privilege, but publishing what 
+they said outside the chamber was a breach of that privilege — punishable 
+by both Houses. Anyone who attempted to report debates risked fines, 
+imprisonment, or summons before Parliament itself.
+
+This secrecy began to break down in 1771, when several London printers 
+defied the Commons by publishing accounts of debates. The radical John 
+Wilkes — then a London magistrate — refused to enforce the Commons' 
+warrants against them. After a confrontation with the Commons that produced 
+no clear winner, Parliament effectively conceded that prosecuting reporters 
+was politically untenable. Reporting continued unofficially, often through 
+sympathetic newspapers.
+
+## William Cobbett and the radical foundation (1802–1812)
+
+The first sustained attempt at a comprehensive record of parliamentary 
+proceedings came from William Cobbett, a radical journalist and publisher. 
+In 1802, Cobbett began publishing parliamentary debates as a supplement 
+to his weekly *Political Register*. Within a few years, his project had 
+expanded to three connected works: contemporary debates from 1803 onwards, 
+a retrospective parliamentary history covering proceedings before that, 
+and a collection of state trials.
+
+Cobbett's printer for these volumes was Thomas Curson Hansard — son of 
+Luke Hansard, who had been printer to the House of Commons since the 1770s.
+
+In 1810, Cobbett was prosecuted for seditious libel over an article 
+criticising the British government's treatment of mutinous soldiers. He 
+was fined and imprisoned for two years. By 1812, his finances had collapsed, 
+and he sold his interests in the parliamentary publications to T.C. Hansard.
+
+The name on the title page changed first; the substance of what was being 
+recorded did not.
+
+## The Hansard name takes hold (1813–1908)
+
+Through the 19th century, Hansard's *Parliamentary Debates* remained a 
+private commercial venture. The Hansard family continued to print it, 
+passing the business through generations. From 1829 the name "Hansard" 
+appeared prominently on every title page. Over time, "Hansard" became 
+the customary name for the report itself.
+
+Two events of the 19th century shaped what Hansard would become.
+
+First, in 1837, the firm became a defendant in *Stockdale v. Hansard*. 
+A book publisher sued Hansard for libel over content in an official Commons 
+report. The case wound through the courts and exposed a constitutional 
+gap: parliamentary privilege did not automatically extend to the printers 
+and publishers carrying parliamentary material to the public. Parliament 
+responded with the Parliamentary Papers Act 1840, which gave statutory 
+protection to publications made under Parliament's authority.
+
+Second, in 1893, a House of Commons select committee defined what kind 
+of record Hansard was supposed to be: not a strictly word-for-word 
+transcript, but "substantially the verbatim report, with repetitions 
+and redundancies omitted and with obvious mistakes corrected, but which 
+on the other hand leaves out nothing that adds to the meaning of the 
+speech or illustrates the argument." That definition — substantially 
+verbatim, lightly edited for clarity — has shaped Hansard's editorial 
+style ever since.
+
+## The official record begins (1909)
+
+Until the early 20th century, Hansard remained a privately produced 
+publication. It was thorough but not always comprehensive — not every 
+contribution was recorded in full, and reporting depended on what a 
+private firm could resource.
+
+In 1909, Parliament took over publication directly. From that year, 
+Hansard became an official record: produced by Parliament's own 
+reporters, comprehensive across every speech, and covering the two 
+Houses in separate volumes. The Stationery Office took over the 
+printing.
+
+This is the form most people now recognise as "Hansard" — the 
+authoritative, more or less verbatim record of debates, Q&A, ministerial 
+statements, and committee proceedings.
+
+The name "Hansard" was technically dropped from the cover page in 1909, 
+when responsibility moved from the family firm to the official 
+Parliamentary printer. But the name was already too well-established 
+to disappear; it was reinstated on the cover in 1943, where it remains.
+
+## Hansard today
+
+Modern Hansard is published online within hours of speeches being given, 
+and in print the following morning. It covers:
+
+- Debates in the Commons and the Lords chambers
+- Westminster Hall debates
+- Public Bill Committee proceedings
+- Written Statements and Written Answers to Parliamentary Questions
+- Petitions
+
+The historical archive — going back to 1803 — is digitised and freely 
+searchable on the official Hansard website at hansard.parliament.uk.
+
+By convention, if a member makes an inaccurate statement in Parliament, 
+they are expected to write a correction into the copy of Hansard kept 
+in the House of Commons library. Hansard reporters do light editing for 
+clarity but not substance: members cannot revise their views in the 
+record after the fact.
+
+## Why Hansard matters
+
+Hansard exists because the publication of what is said in Parliament 
+is now seen as a foundation of democratic accountability — but that 
+view took two centuries to settle. The path from secret debates and 
+imprisoned reporters in the 18th century to today's online same-day 
+publication is the path of Parliament becoming open to the public it 
+serves.
+
+For policy professionals, journalists, researchers, and engaged 
+citizens, Hansard is the primary record of what was said, who said 
+it, and how positions on issues have evolved over time.
+
+Westminster Brief draws on Hansard as one of its primary data sources, 
+indexing debates from the past 12 months for quick search and 
+theme-based browsing. For older material, or for the canonical 
+authoritative version of any debate, the official record is at 
+[hansard.parliament.uk](https://hansard.parliament.uk).
+
+---
+
+*Sources and further reading:*
+
+- [Hansard's official site at hansard.parliament.uk](https://hansard.parliament.uk)
+- [Parliament's living heritage page on William Cobbett](https://www.parliament.uk/about/living-heritage/evolutionofparliament/parliamentwork/communicating/from-the-parliamentary-collections/collections/william-cobbett/)
+- *The History of Hansard*, John Vice and Stephen Farrell, House of Lords Library
+- [Commonwealth Hansard Editors Association — About Hansard](https://www.commonwealth-hansard.org/about-hansard.html)
+- The Parliamentary Papers Act 1840
+
+---
 
 ---
 
@@ -133,6 +278,41 @@ product but with a slightly broader curiosity radius.
 3. Politically neutral — about the institution, not partisan content
 
 **Estimated build effort**: 1-2 days for v1 page with 8-10 entries
+
+**Drafted entries** (ready to incorporate into build):
+
+---
+
+#### Acts of Parliament on vellum (1849–2017)
+
+For most of Parliament's history, the official copies of Acts — the permanent
+record of laws passed — were inscribed on parchment or vellum, durable materials
+made from animal skin (typically calfskin for vellum, goatskin or sheepskin for
+parchment).
+
+The tradition went back to the medieval period, when handwritten parchment rolls
+were the standard medium for legal documents. In 1849, following recommendations
+from the Select Committee on Printing the previous year, both Houses agreed to
+switch from handwritten parchment rolls to printed vellum. The change reduced
+costs and ended the practice of "ingrossing" (handwriting) and "inrolling" Acts.
+
+Printed vellum remained the medium for record copies of public Acts from 1849
+until 2015. In February 2016, the House of Lords proposed switching to archival
+paper to save money — an estimated £80,000 a year. The proposal triggered a small
+political controversy. James Gray MP, who secured the Commons debate on the change,
+argued the saving was small relative to the symbolic value of vellum. Sir Gerald
+Howarth MP noted vellum's known durability of 500+ years, against unknown longevity
+of any alternative.
+
+A compromise was eventually reached. From 2017, record copies of Acts have been
+printed on archival paper but bound in vellum covers. The tradition survives, in
+attenuated form.
+
+The UK's last traditional vellum maker is William Cowley, established 1870, in
+Newport Pagnell, Buckinghamshire.
+
+*Sources: House of Commons Library briefing CBP-7451; UK Parliament "From
+parchment to print"; ICLR.*
 
 ---
 

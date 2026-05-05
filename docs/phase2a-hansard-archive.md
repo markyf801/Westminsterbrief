@@ -106,14 +106,9 @@ timeline (Commons First Reading → ... → Royal Assent).
   Trigger: after Members caching is in place, if Wikipedia rendering still adds enough
   value to justify the operational complexity.
 
-- **History of Hansard page** — Static long-form page at `/history-of-hansard`. ~1000-word
-  draft exists (see `docs/content-roadmap.md`). Covers pre-Hansard secrecy, Cobbett's
-  radical foundation, the Hansard family era, Stockdale v Hansard and 1840 Act, the 1909
-  switch to official record, modern Hansard. SEO title, meta description, Article schema,
-  internal links to `/archive`. Content is drafted and ready to build. Estimated effort:
-  1–2 hours once content is pasted into the spec.
-  Trigger: quiet content session; any "SEO content" conversation; post-share when polishing
-  the site for a wider audience.
+- **History of Hansard page** — ✓ Built and live at `/history-of-hansard` (5 May 2026).
+  SEO title, meta description, Article schema, footer link, internal link to `/archive`.
+  Content in `docs/content-roadmap.md`.
 
 - **Parliamentary Curiosities page** — Single long-form page organised by theme (Ceremony,
   Procedure, Language, Origins). v1 with 8–10 entries, growing over time. Candidates listed
