@@ -106,6 +106,15 @@ timeline (Commons First Reading → ... → Royal Assent).
   Trigger: after Members caching is in place, if Wikipedia rendering still adds enough
   value to justify the operational complexity.
 
+- **Member Research — contributions tab ignores department filter** — On `/mp_search`,
+  the "Filter PQs by department" dropdown correctly filters the Written Questions tab but
+  has no effect on the Contributions tab (which always shows the 50 most recent sessions
+  regardless). The label is technically accurate ("Filter PQs by...") but looks inconsistent
+  at a glance. Fix path: build a department→policy-area mapping (e.g. "Department for
+  Education" → "Education and skills"), then filter `ha_contribution` results by matching
+  `ha_session_theme.theme` when a department is selected. Uses the Phase 2A policy_area
+  tagging infrastructure — no new data work needed. Estimated effort: 1–2 days.
+
 - **Holding/withdrawn filter backfill** — `is_holding` and `is_withdrawn` columns exist in
   `ha_pq` and the ingestor now correctly populates them via the individual endpoint for all
   answered rows on incremental cron runs (from 5 May 2026 onward). Historical rows (90k)
