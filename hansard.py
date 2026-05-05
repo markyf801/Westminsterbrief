@@ -243,7 +243,7 @@ def index():
             prefetch_members(member_ids)
 
             for pq in pq_rows:
-                _, party, constituency, actual_house = get_member_details(
+                api_name, party, constituency, actual_house = get_member_details(
                     pq.asking_mnis_id, pq.chamber or 'Commons'
                 )
 
@@ -271,7 +271,7 @@ def index():
                     'uin':                pq.uin,
                     'url':                question_url,
                     'dept':               pq.answering_body or '',
-                    'name':               pq.asking_member or 'Unknown',
+                    'name':               pq.asking_member or api_name or 'Unknown',
                     'party':              party,
                     'role':               "Life Peer" if house == "Lords" else f"MP for {constituency}",
                     'date':               f_date,
