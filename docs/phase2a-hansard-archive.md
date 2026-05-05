@@ -106,6 +106,24 @@ timeline (Commons First Reading → ... → Royal Assent).
   Trigger: after Members caching is in place, if Wikipedia rendering still adds enough
   value to justify the operational complexity.
 
+- **History of Hansard page** — Static long-form page at `/history-of-hansard`. ~1000-word
+  draft exists (see `docs/content-roadmap.md`). Covers pre-Hansard secrecy, Cobbett's
+  radical foundation, the Hansard family era, Stockdale v Hansard and 1840 Act, the 1909
+  switch to official record, modern Hansard. SEO title, meta description, Article schema,
+  internal links to `/archive`. Content is drafted and ready to build. Estimated effort:
+  1–2 hours once content is pasted into the spec.
+  Trigger: quiet content session; any "SEO content" conversation; post-share when polishing
+  the site for a wider audience.
+
+- **Parliamentary Curiosities page** — Single long-form page organised by theme (Ceremony,
+  Procedure, Language, Origins). v1 with 8–10 entries, growing over time. Candidates listed
+  in `docs/content-roadmap.md`. Builds Westminster Brief's character as a site that
+  genuinely understands Parliament rather than just scraping its data. Strong SEO potential
+  for procedural/lexical queries. Mark to draft initial entries when there's quiet time.
+  Estimated effort: 1–2 days for v1.
+  Trigger: content draft exists in content-roadmap.md; any "site character" or "SEO content"
+  conversation; post-share when capacity allows.
+
 - **Member Research — contributions tab ignores department filter** — On `/mp_search`,
   the "Filter PQs by department" dropdown correctly filters the Written Questions tab but
   has no effect on the Contributions tab (which always shows the 50 most recent sessions
