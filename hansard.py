@@ -109,6 +109,37 @@ def add_hyperlink(paragraph, url, text):
     paragraph._p.append(hyperlink)
 
 
+def _oldest_pq_date() -> str:
+    """Return human-readable oldest tabled_date in ha_pq (e.g. '30 Apr 2025'), or ''."""
+    try:
+        from hansard_archive.models import HaPQ
+        from sqlalchemy import func
+        oldest = db.session.query(func.min(HaPQ.tabled_date)).scalar()
+        return f"{oldest.day} {oldest.strftime('%B %Y')}" if oldest else ''
+    except Exception:
+        return ''
+
+
+def _last_pq_update():
+    """Return the most recent successful PQ cron run time, or None."""
+    try:
+        from hansard_archive.models import HaCronRun
+        run = (
+            HaCronRun.query
+            .filter(
+                HaCronRun.service_name.in_(['pq-morning', 'pq-afternoon', 'pq-monday']),
+                HaCronRun.status == 'ok',
+            )
+            .order_by(HaCronRun.finished_at.desc())
+            .first()
+        )
+        if run and run.finished_at:
+            return run.finished_at.strftime('%d %b %Y %H:%M') + ' UTC'
+    except Exception:
+        pass
+    return None
+
+
 def _search_pq_db(subjects, start_date, end_date, dept_id, house_filter, status_filter):
     """
     Query ha_pq and return (rows: list[HaPQ], total: int).
@@ -143,9 +174,13 @@ def _search_pq_db(subjects, start_date, end_date, dept_id, house_filter, status_
     if house_filter in ('Commons', 'Lords'):
         q = q.filter(HaPQ.chamber == house_filter)
     if status_filter == 'unanswered':
-        q = q.filter(HaPQ.is_answered == False)  # noqa: E712
+        q = q.filter(HaPQ.is_answered == False)   # noqa: E712
     elif status_filter == 'answered':
-        q = q.filter(HaPQ.is_answered == True)   # noqa: E712
+        q = q.filter(HaPQ.is_answered == True)    # noqa: E712
+    elif status_filter == 'holding':
+        q = q.filter(HaPQ.is_holding == True)     # noqa: E712
+    elif status_filter == 'withdrawn':
+        q = q.filter(HaPQ.is_withdrawn == True)   # noqa: E712
 
     active_subjects = [s for s in subjects if s]
     if active_subjects:
@@ -244,8 +279,8 @@ def index():
                     'heading':            pq.heading or '',
                     'party_colour':       PARTY_COLOURS.get(party, '#888888'),
                     'answered':           pq.is_answered,
-                    'is_holding':         False,
-                    'is_withdrawn':       False,
+                    'is_holding':         pq.is_holding,
+                    'is_withdrawn':       pq.is_withdrawn,
                     'answer_text':        pq.answer_text or '',
                     'answering_minister': pq.answering_member or '',
                     'date_answered':      date_answered,
@@ -345,7 +380,9 @@ def index():
                            end_date=end_date,
                            total_available=total_available,
                            pre_filter_count=pre_filter_count,
-                           results_cap=WQ_MAX_RESULTS)
+                           results_cap=WQ_MAX_RESULTS,
+                           last_pq_update=_last_pq_update(),
+                           oldest_pq_date=_oldest_pq_date())
 
 
 @hansard_bp.route('/questions/download_selected', methods=['POST'])

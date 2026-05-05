@@ -108,10 +108,12 @@ def _extract_pq_fields(value: dict) -> dict | None:
         "answering_member": (answering_member_obj.get("name") or "").strip() or None,
         "answering_body": (value.get("answeringBodyName") or "").strip() or None,
         "answering_body_id": value.get("answeringBodyId") or None,
-        "tabled_date": _parse_date(value.get("dateTabled")),
-        "answer_date": _parse_date(value.get("dateAnswered")),
-        "is_answered": bool(answer_text),
-        "chamber": (value.get("house") or "").strip() or None,
+        "tabled_date":  _parse_date(value.get("dateTabled")),
+        "answer_date":  _parse_date(value.get("dateAnswered")),
+        "is_answered":  bool(answer_text),
+        "is_holding":   bool(value.get("answerIsHolding", False)),
+        "is_withdrawn": bool(value.get("isWithdrawn", False)),
+        "chamber":      (value.get("house") or "").strip() or None,
     }
 
 
@@ -187,9 +189,11 @@ def ingest_pq_date_range(
             try:
                 existing = db.session.query(HaPQ).filter_by(uin=fields["uin"]).first()
                 if existing:
-                    existing.answer_text = fields["answer_text"]
-                    existing.answer_date = fields["answer_date"]
-                    existing.is_answered = fields["is_answered"]
+                    existing.answer_text   = fields["answer_text"]
+                    existing.answer_date   = fields["answer_date"]
+                    existing.is_answered   = fields["is_answered"]
+                    existing.is_holding    = fields["is_holding"]
+                    existing.is_withdrawn  = fields["is_withdrawn"]
                     existing.answering_member = fields["answering_member"]
                     existing.answering_body = fields["answering_body"]
                     existing.answering_body_id = fields["answering_body_id"]

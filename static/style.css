@@ -400,6 +400,15 @@ input:focus, select:focus, textarea:focus {
     margin: 6px 0 18px;
 }
 
+.wq-freshness {
+    display: inline-block;
+    font-size: 12px;
+    color: #7a8a9a;
+    margin-left: 10px;
+    border-left: 1px solid #d0dce8;
+    padding-left: 10px;
+}
+
 /* --- INFO BOX (tip/hint panels) --- */
 .info-box {
     background: #eef5fb;
