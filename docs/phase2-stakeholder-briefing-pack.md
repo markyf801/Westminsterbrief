@@ -754,3 +754,80 @@ Polish, testing, real-data trial runs. Generate test packs on different topics a
 
 Total: realistically 6-8 weeks of focused work, consistent with the revised timeline above.
 The sample pack approach is important: it's much easier to design the system once you have a target output than to design the system speculatively. Build something rough first, then refine.
+
+---
+
+## Strategic pivot — Phase 2B reframed (5 May 2026)
+
+Phase 2B is now an alert subscription product, not the £49 briefing pack.
+
+### What Phase 2B becomes
+
+A £5/month subscription delivering **on-trigger email alerts** to
+subscribers when material parliamentary activity happens on their
+chosen topics.
+
+Topic specification: hybrid model — subscribers pick from the GOV.UK
+policy area taxonomy AND can add free-text specific keywords. Maps
+directly onto the two-level theme tagging already built in Phase 2A
+(policy_area + specific_themes).
+
+Audience: civil service colleagues + public affairs / charity / think
+tank professionals (both, in roughly equal weighting).
+
+Goal: build recurring relationships with subscribers — not just test
+willingness to pay or cover costs.
+
+### Why this displaces the £49 pack from Phase 2B
+
+The £49 one-off briefing pack (previously locked as Phase 2B in this
+document) is reframed as a Phase 2C candidate or possibly dropped,
+pending real-use signal from Phase 2B subscribers. Reasoning:
+
+- Recurring relationship > one-off transaction for ongoing user
+  research and retention
+- Subscription economics generally outperform one-off in adjacent
+  product spaces
+- The infrastructure built for alerts (user accounts, subscription
+  management, email delivery, trigger detection) is reusable for any
+  future product
+- The £49 pack's deepest analytical work (position evolution,
+  lexical drift) has a higher trust bar than alerts and benefits from
+  user data before being built
+
+### What's deferred
+
+Concrete details to be worked out post-trip:
+- Definition of "material" (which events trigger an alert)
+- Throttling rules (max emails per day/week per subscriber)
+- Email template design
+- Civil service propriety framing for paid subscription
+- Stripe subscription integration
+- Subscription management UX (signup, cancel, pause, change topics)
+- Whether to keep £49 pack as Phase 2C or drop entirely
+
+### Implications for build sequence
+
+Phase 2A (free archive, current shipping) remains unchanged.
+
+Phase 2B (alerts subscription) probably 4-6 weeks of focused build:
+- User accounts + auth
+- Subscription topic management
+- Trigger detection on existing data ingestion
+- Email infrastructure (Postmark/SendGrid/etc., DKIM, deliverability)
+- Email template + content generation pipeline
+- Stripe subscription billing
+- Subscriber dashboard for managing their feed
+
+Phase 2C: TBD — could be £49 pack, could be team/agency tier, could
+be retired as obsolete.
+
+### Important: don't act before Phase 2A real use
+
+This pivot is captured but not yet building. Phase 2A goes live with
+civil service share first. Real subscriber demand from civil service
+users (who'd want alerts? on what topics? at what frequency?)
+informs Phase 2B design.
+
+Don't start Phase 2B build until at least 2-4 weeks of Phase 2A
+real-user signal exists.
