@@ -157,6 +157,18 @@ The cost of an unnecessary search is small. The cost of asserting confidently an
 
 ---
 
+## Verify data paths before adding UI features
+
+Before adding a UI filter, display field, or status badge that depends on a data column, verify that the underlying data path actually returns non-default values across realistic samples.
+
+A column that exists but only ever holds its default (e.g. `is_holding = false` for all 90k rows because the bulk API endpoint doesn't return that field) is worse than no column at all — it creates the appearance of supported functionality that silently fails. Users who filter by "holding answer" and see zero results don't know whether that means no holding answers exist, or whether the filter is broken.
+
+The check is cheap: before building the UI, run a count query against the column and confirm the distribution looks realistic. For a 12-month PQ archive, "0 holding answers" should immediately raise a flag — Parliament issues hundreds of holding answers per year.
+
+*Added 5 May 2026 — from is_holding/is_withdrawn backfill: bulk WQ API endpoint omits these fields; individual endpoint includes them. All 90k rows defaulted to false despite correct field mapping.*
+
+---
+
 ## Document scope and updates
 
 This document captures the agreement as of 26 April 2026. It's expected to evolve. When working patterns shift — Mark wants more or less of something, a new working concern emerges, the project enters a different phase — update this document.
