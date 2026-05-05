@@ -114,9 +114,7 @@
                     {% set s = item.session %}
                     <div class="ah-card ah-card-in-group">
                         <div class="ah-card-meta">
-                            {% if not group.dept %}
                             <span class="topic-source-badge topic-source-{{ s.house|lower }}">{{ s.house }}</span>
-                            {% endif %}
                             {% if item.contrib_count %}
                             <span class="ah-card-contribs">{{ item.contrib_count }} contribution{{ 's' if item.contrib_count != 1 else '' }}</span>
                             {% endif %}
