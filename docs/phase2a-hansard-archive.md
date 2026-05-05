@@ -105,3 +105,17 @@ timeline (Commons First Reading → ... → Royal Assent).
   Estimated effort: 2–3 days plus ongoing operational care.
   Trigger: after Members caching is in place, if Wikipedia rendering still adds enough
   value to justify the operational complexity.
+
+- **Holding/withdrawn filter backfill** — `is_holding` and `is_withdrawn` columns exist in
+  `ha_pq` and the ingestor now correctly populates them via the individual endpoint for all
+  answered rows on incremental cron runs (from 5 May 2026 onward). Historical rows (90k)
+  remain defaulted to false because the bulk WQ API endpoint omits these fields.
+  The holding/withdrawn options have been removed from the `/questions` status filter UI
+  pending this backfill. To restore them:
+  1. Run the individual-endpoint backfill over a quiet weekend (~12 hours): iterate all
+     `ha_pq` rows where `is_answered=true`, call `/questions/{api_id}` for each, write
+     `is_holding` and `is_withdrawn`. Needs the `api_id` stored — currently not persisted
+     (it's a transient `_api_id` field). Schema addition required: `ha_pq.parliament_id INT`.
+  2. Once historical data populated and verified non-zero, re-add the filter options to
+     `/questions` template.
+  Estimated effort: 0.5 day schema + 1 day backfill script + 12h run + 0.5h UI restore.

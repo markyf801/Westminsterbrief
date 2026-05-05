@@ -53,19 +53,27 @@ def _parse_date(val) -> date | None:
         return None
 
 
-def _fetch_full_answer(api_id: int) -> str | None:
-    """Fetch full answer text via the individual question endpoint."""
+def _fetch_individual(api_id: int) -> dict | None:
+    """Fetch the full individual question record, which includes fields the
+    bulk endpoint omits (answerIsHolding, isWithdrawn, full answer text)."""
     url = f"{WQ_API_BASE}/{api_id}"
     try:
         resp = requests.get(url, timeout=_REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return None
-        value = resp.json().get("value") or {}
-        raw = value.get("answerText") or ""
-        return _clean_whitespace(_strip_html(raw)) or None
+        return resp.json().get("value") or {}
     except Exception as exc:
-        _log.warning("Full answer fetch failed for id=%s: %s", api_id, exc)
+        _log.warning("Individual fetch failed for id=%s: %s", api_id, exc)
         return None
+
+
+def _fetch_full_answer(api_id: int) -> str | None:
+    """Fetch full answer text via the individual question endpoint."""
+    value = _fetch_individual(api_id)
+    if not value:
+        return None
+    raw = value.get("answerText") or ""
+    return _clean_whitespace(_strip_html(raw)) or None
 
 
 def _extract_pq_fields(value: dict) -> dict | None:
@@ -121,6 +129,7 @@ def ingest_pq_date_range(
     date_from: date,
     date_to: date,
     verbose: bool = True,
+    skip_answer_fetch: bool = False,
 ) -> dict:
     """
     Fetch and upsert WQs with tabledDate in [date_from, date_to].
@@ -176,15 +185,26 @@ def ingest_pq_date_range(
                 errors += 1
                 continue
 
-            # Fetch full answer text if bulk endpoint returned truncated version
-            if fields.pop("_answer_truncated", False):
-                api_id = fields.pop("_api_id", None)
-                full_text = _fetch_full_answer(api_id) if api_id else None
+            # For answered rows, fetch the individual endpoint to get fields the
+            # bulk endpoint omits: answerIsHolding, isWithdrawn, and full answer
+            # text. skip_answer_fetch=True bypasses this for large backfill runs.
+            api_id = fields.pop("_api_id", None)
+            answer_truncated = fields.pop("_answer_truncated", False)
+            if not skip_answer_fetch and fields["is_answered"] and api_id:
+                full = _fetch_individual(api_id)
+                if full:
+                    full_text = _clean_whitespace(_strip_html(full.get("answerText") or "")) or None
+                    if full_text:
+                        fields["answer_text"] = full_text
+                    fields["is_holding"]  = bool(full.get("answerIsHolding", False))
+                    fields["is_withdrawn"] = bool(full.get("isWithdrawn", False))
+                time.sleep(_INTER_REQUEST_DELAY)
+            elif not skip_answer_fetch and answer_truncated and api_id:
+                # Unanswered but truncated — fetch for full text only
+                full_text = _fetch_full_answer(api_id)
                 if full_text:
                     fields["answer_text"] = full_text
                 time.sleep(_INTER_REQUEST_DELAY)
-            else:
-                fields.pop("_api_id", None)
 
             try:
                 existing = db.session.query(HaPQ).filter_by(uin=fields["uin"]).first()
