@@ -61,6 +61,14 @@ body {
     background: rgba(255,255,255,0.06);
 }
 
+.nav-divider {
+    color: rgba(255,255,255,0.25);
+    font-size: 14px;
+    padding: 0 2px;
+    pointer-events: none;
+    user-select: none;
+}
+
 .nav-beta {
     display: inline-block;
     font-size: 9px;
