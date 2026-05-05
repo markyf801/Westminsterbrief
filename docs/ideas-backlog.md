@@ -59,6 +59,16 @@ Early Day Motions digest as a content marketing vehicle: a weekly public summary
 
 ---
 
+### PQ Backfill — Chunked Date-Range Mode
+
+Large backfills (`--days 365`) hit Parliament WQ API 500 errors at high pagination depths (skip=61000+) because the API struggles with offset queries over large result sets. Fix: add an optional `--chunk-days` flag to `ingest_pq_cron.py` that splits the date range into smaller windows (e.g. 30 days at a time), each paginated independently. Keeps skip values low and avoids the deep-offset failure mode.
+
+**Revisit trigger:** Any future full-year backfill run; any session adding `--skip-answer-fetch` or similar backfill flags; before the next schema migration that requires re-ingesting all rows.
+
+*Captured 5 May 2026 — observed during is_holding/is_withdrawn backfill (500 errors at skip=61000+).*
+
+---
+
 ### Periodic API Audit Ritual
 Formal check (quarterly or when adding a new feature) of all external API dependencies: are documented behaviours still accurate? Any new endpoints available? Any deprecated params still in use? Surfaces the kind of drift that caused the tracker regression (answeringBodies re-introduced despite documented constraint).
 
