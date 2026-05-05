@@ -795,10 +795,46 @@ pending real-use signal from Phase 2B subscribers. Reasoning:
   lexical drift) has a higher trust bar than alerts and benefits from
   user data before being built
 
-### Why £5/month, not £49 one-off
+### Pricing — two-tier subscription
+
+**Starter tier: £5/month**
+- Single topic
+- Weekly email digest
+- Low-friction onramp; serves the "easier to say yes" instinct
+
+**Main tier: £15/month**
+- Multiple topics (limit TBD, suggest 5)
+- Triggered alerts on material parliamentary activity
+- Priority flagging for urgent events
+- Richer monthly summary
+
+The two tiers create:
+- Price anchoring (£5 is "starter," £15 is "real")
+- Real differentiation (not just price difference — feature difference)
+- Low-friction entry without underselling
+- Upsell path from starter to main as users find value
+
+Reasoning for £15 main tier (not £3-5 flat):
+- Comparable substack-style policy commentary at £5-15/month —
+  Westminster Brief delivers more substantive value
+- Civil service hourly rates make £15/month equivalent to <30 mins
+  of monitoring time saved per month
+- Anchoring at £15 keeps positioning as a serious product, not a
+  hobby priced as charity
+- Starvation pricing (£3-5 flat) creates a margin trap and selects
+  for price-sensitive customers
+- Higher anchor preserves room to add discount tiers later
+  (charity rate, civil service rate) without the reverse problem
+  of trying to raise from £3 to £15
+
+Pricing remains open to revision based on real-use feedback. The
+strategic commitment is "tiered, with starter wedge" not "£5/£15
+specifically."
+
+### Why tiered subscription over £49 one-off
 
 The previous spec locked £49 one-off as Phase 2B. The pivot to
-£5/month subscription is grounded in:
+tiered subscription is grounded in:
 
 - Lower commitment threshold: £5/month sits below most users'
   approval friction; £49 requires deliberate decision
