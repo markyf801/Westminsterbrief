@@ -1265,20 +1265,33 @@ def archive_policy(policy_slug: str):
 
 @archive_bp.route("/theme/<string:theme_slug>")
 def archive_theme(theme_slug: str):
-    # Reverse-lookup: find theme whose slugified name matches (themes with ≥5 sessions only)
+    # Reverse-lookup: find theme whose slugified name matches
     rows = (
-        db.session.query(
-            HansardSessionTheme.theme,
-            func.count(HansardSessionTheme.session_id),
-        )
+        db.session.query(HansardSessionTheme.theme)
         .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
-        .group_by(HansardSessionTheme.theme)
-        .having(func.count(HansardSessionTheme.session_id) >= 5)
+        .distinct()
         .all()
     )
     theme_name = next((r[0] for r in rows if _slugify(r[0]) == theme_slug), None)
     if not theme_name:
-        abort(404)
+        # Slug not in DB — show friendly empty page rather than 404
+        display_name = theme_slug.replace("-", " ")
+        return render_template(
+            "hansard_archive/archive_collection.html",
+            page_type      = "theme",
+            heading        = display_name,
+            subtitle       = "No sessions on this topic in the archive",
+            breadcrumb     = [("Hansard Archive", "/archive"), (display_name, None)],
+            items          = [],
+            page           = 1,
+            total_pages    = 1,
+            total          = 0,
+            base_qs        = "",
+            canonical_path = f"/archive/theme/{theme_slug}",
+            og_title       = f"{display_name} — Hansard Archive",
+            meta_desc      = f"No sessions found in the Westminster Brief Hansard archive for {display_name}.",
+            json_ld_type   = "CollectionPage",
+        )
 
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
