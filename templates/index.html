@@ -46,8 +46,15 @@
 <div class="box">
     <h2>Written Questions Scanner</h2>
     <p class="page-desc">
-        Search Written Questions tabled in the Commons and Lords. Filter by department, house, and answer status. Results draw from Parliament's live Written Questions API — export to CSV or Word.
+        Search Written Questions tabled in the Commons and Lords. Filter by department, house, and answer status. Export to CSV or Word.
+        {% if last_pq_update %}<span class="wq-freshness">Archive updated: {{ last_pq_update }}</span>{% endif %}
     </p>
+    {% if oldest_pq_date %}
+    <p class="page-desc" style="margin-top: 4px;">
+        Searching Westminster Brief's PQ archive (questions tabled from {{ oldest_pq_date }} to present).
+        For older questions visit <a href="https://questions-statements.parliament.uk/written-questions" target="_blank" style="color:#1a4a6e;">parliament.uk/written-questions</a>.
+    </p>
+    {% endif %}
 
     <form method="POST" action="/questions">
         <div class="form-group">
@@ -112,11 +119,9 @@
 {% if pre_filter_count > 0 %}
 <div class="info-box" style="margin-top: 20px;">
     Showing <strong>{{ results|length }}</strong> question{{ 's' if results|length != 1 else '' }} matching your filters.
-    {% if pre_filter_count > results|length %}
-    <strong>{{ pre_filter_count - results|length }}</strong> of the {{ pre_filter_count }} retrieved from the Parliament API were removed by your active filters (date range, relevance, house, or answer status).
-    {% endif %}
-    {% if total_available > pre_filter_count %}
-    The Parliament API has <strong>{{ total_available }}</strong> total results for this search.
+    {% if total_available > results|length %}
+    <strong>{{ total_available }}</strong> total matches in the archive — showing first {{ results_cap }}.
+    Add a <strong>date range</strong> or <strong>department filter</strong> to narrow results.
     {% endif %}
     {% if results|length >= results_cap %}
     Add a <strong>date range</strong> or <strong>department filter</strong> to see a more focused set.

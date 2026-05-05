@@ -454,7 +454,14 @@ with app.app_context():
         app.logger.warning('ha_session_theme migration failed: %s', _e)
     _mig_log('ha_session_theme cols done')
     try:
-        # ha_pq / ha_pq_theme created by db.create_all() — no extra columns yet
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE ha_pq ADD COLUMN IF NOT EXISTS is_holding BOOLEAN NOT NULL DEFAULT false"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE ha_pq ADD COLUMN IF NOT EXISTS is_withdrawn BOOLEAN NOT NULL DEFAULT false"
+            ))
+            _conn.commit()
         _mig_log('ha_pq cols done')
     except Exception as _e:
         app.logger.warning('ha_pq migration failed: %s', _e)

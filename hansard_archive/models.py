@@ -190,10 +190,12 @@ class HaPQ(db.Model):
     answering_body = db.Column(db.String(200), index=True)
     answering_body_id = db.Column(db.Integer, index=True)
 
-    tabled_date = db.Column(db.Date, nullable=False, index=True)
-    answer_date = db.Column(db.Date)
-    is_answered = db.Column(db.Boolean, default=False, nullable=False, index=True)
-    chamber = db.Column(db.String(20), index=True)  # Commons | Lords
+    tabled_date  = db.Column(db.Date, nullable=False, index=True)
+    answer_date  = db.Column(db.Date)
+    is_answered  = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    is_holding   = db.Column(db.Boolean, default=False, nullable=False)
+    is_withdrawn = db.Column(db.Boolean, default=False, nullable=False)
+    chamber      = db.Column(db.String(20), index=True)  # Commons | Lords
 
     ingested_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
