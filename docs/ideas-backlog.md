@@ -8,6 +8,18 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Hansard Archive on Homepage + Naming Disambiguation
+
+Add a 7th card to the homepage tool grid for the Hansard Archive. Suggested card: title "Hansard Archive [BETA]", description covering 12 months of debates and WQs organised by policy area, MP, and theme with AI tagging, CTA "Open Hansard Archive →", link `/archive`. Grid treatment: 4-per-row or a featured first card rather than forcing 7 into a 3-column layout.
+
+Also resolve the naming confusion between "Hansard Search" (existing card — live API) and "Hansard Archive" (new — local DB). Preferred option: rename the existing card to "Live Hansard Search" and add a one-line differentiator to each ("Searches the live Hansard API" vs "Browse 12 months of AI-tagged debates"). Retiring Hansard Search outright is an option once Archive coverage is confident.
+
+**Revisit trigger:** Hansard Archive is share-stable (backfill complete, cron running clean, no known data gaps); any homepage or onboarding session; any "what should new users see first?" conversation.
+
+*Captured 5 May 2026 — deferred until Archive is share-stable.*
+
+---
+
 ### Government Consultations
 Add a parallel data layer to the directory covering government consultations. Three states (open / closed-awaiting-response / closed-responded), plus anticipated/forthcoming consultations. Data source: gov.uk consultations and department publications. Cross-references nicely with existing committee evidence — same organisations often engage with both. Probably 30–50 hours of work for v1. See `docs/consultations-design-note.md` for fuller thinking.
 
