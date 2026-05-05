@@ -88,7 +88,7 @@
             </div>
         </div>
 
-        <div class="form-row">
+        <div class="form-row" style="align-items: flex-end;">
             <div class="form-group" style="flex: 0 0 auto;">
                 <label class="form-label">From Date:</label>
                 <input type="date" name="start_date" value="{{ request.form.get('start_date', '') }}" style="width: 160px;">
@@ -97,7 +97,7 @@
                 <label class="form-label">To Date:</label>
                 <input type="date" name="end_date" value="{{ request.form.get('end_date', '') }}" style="width: 160px;">
             </div>
-            <div class="form-group" style="flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px; margin-bottom: 15px;">
+            <div style="flex: 0 0 auto; display: flex; gap: 8px;">
                 <button type="submit" name="action" value="search" class="btn btn-primary">Search</button>
                 <button type="submit" name="action" value="csv"    class="btn btn-success">Export CSV</button>
                 <button type="submit" name="action" value="word"   class="btn btn-purple">Export Word</button>
