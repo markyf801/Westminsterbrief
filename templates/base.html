@@ -55,7 +55,7 @@
         <a href="/archive"  {% if request.path.startswith('/archive') %}class="nav-active"{% endif %}>Hansard Archive <span class="nav-beta">BETA</span></a>
         {# <a href="/debate_prep" {% if request.path.startswith('/debate_prep') %}class="nav-active"{% endif %}>Debate Prep</a> #}
         <a href="/directory" {% if request.path.startswith('/directory') %}class="nav-active"{% endif %}>Stakeholder Engagement</a>
-        <span class="nav-divider">|</span>
+        <span class="nav-divider"></span>
         <a href="/history-of-hansard" {% if request.path == '/history-of-hansard' %}class="nav-active"{% endif %}>History of Hansard</a>
         {% if current_user.is_authenticated %}
             <a href="/my_alerts" class="nav-auth-alerts {% if request.path == '/my_alerts' %}nav-active{% endif %}">👤 My Alerts</a>
