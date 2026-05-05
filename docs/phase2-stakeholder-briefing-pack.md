@@ -897,6 +897,30 @@ Open questions deferred:
   only, vs AI-judged)
 - Per-subscriber cadence preference (Phase 2B.5+ option)
 
+### Pre-signup activity disclosure (locked 5 May 2026)
+
+Before payment, subscribers see activity history for their chosen
+topic across the past 12 months. Format: total event count, monthly
+average, breakdown by event type, and framing language for genuinely
+quiet topics.
+
+Reuses the activity indicator pattern already designed for the £49
+briefing pack (now Phase 2C candidate).
+
+Purpose: prevent expectation mismatch. Subscribers who choose busy
+topics know they'll get processed signal. Subscribers who choose
+quiet topics know they're paying for watch coverage. Both are
+paying for monitoring; the framing differs based on activity level;
+price stays flat.
+
+This addresses the "what if they pay £15 and nothing happens"
+concern without breaking subscription economics. Variable pricing
+explicitly rejected: subscriptions paid for standing service, not
+event volume.
+
+Build cost: trivial. Query against existing tagged archive data.
+Display in pre-payment flow.
+
 ### Why Westminster Brief, when AI tools exist?
 
 Three reasons:
