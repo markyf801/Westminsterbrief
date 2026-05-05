@@ -875,6 +875,35 @@ Phase 2B (alerts subscription) probably 4-6 weeks of focused build:
 Phase 2C: TBD — could be £49 pack, could be team/agency tier, could
 be retired as obsolete.
 
+### Why Westminster Brief, when AI tools exist?
+
+Three reasons:
+
+**1. We have the data, structured for this purpose.**
+
+General AI tools can search the web, but they don't have a 12-month
+parliamentary archive themed by policy area, indexed by MP, and
+updated daily. Our alerts come from structured queries against real
+parliamentary data — not from a model trying to find things on the
+open web.
+
+**2. Themed monitoring needs a tagged corpus.**
+
+When you subscribe to alerts on "apprenticeship funding", we match
+against our two-level theme tagging (policy area + specific themes).
+General AI tools can't do this — they'd need access to the same
+tagged corpus to come close.
+
+**3. We use the latest AI models automatically.**
+
+When you subscribe, you don't pick a model. We use the most capable
+available AI for analytical work and automatically upgrade as better
+models become available. You don't have to think about it; we handle
+it.
+
+The data layer is the moat. The AI is the engine. Both matter; the
+data is harder to replicate.
+
 ### Important: don't act before Phase 2A real use
 
 This pivot is captured but not yet building. Phase 2A goes live with
