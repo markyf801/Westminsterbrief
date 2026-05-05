@@ -875,6 +875,28 @@ Phase 2B (alerts subscription) probably 4-6 weeks of focused build:
 Phase 2C: TBD — could be £49 pack, could be team/agency tier, could
 be retired as obsolete.
 
+### Alert delivery cadence (locked 5 May 2026)
+
+Default delivery: daily digest by email on days when matched events
+fire. Weekly summary email if no events fire for a full week.
+
+This balances:
+- Always delivering value (no silent weeks)
+- Avoiding daily busywork (no "nothing happened" emails most days)
+- Self-correction for thin topics (subscribers see for themselves
+  when their topic is quiet)
+- Operational simplicity (one cron, simple logic)
+
+Variable pricing tied to activity rejected: subscriptions are paid
+for the standing monitoring service, not for individual events.
+Insurance/security/audit services don't price by event volume; the
+peace of mind is the product.
+
+Open questions deferred:
+- Threshold for "active day" (any matched event, vs material events
+  only, vs AI-judged)
+- Per-subscriber cadence preference (Phase 2B.5+ option)
+
 ### Why Westminster Brief, when AI tools exist?
 
 Three reasons:
