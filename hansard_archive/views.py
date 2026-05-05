@@ -600,7 +600,7 @@ def archive_home():
     # Text search lives at /archive/search (noindex); browse stays at /archive (indexed).
     if q:
         fwd: dict = {"q": q}
-        for k in ("policy", "house", "dtype", "dept", "from", "to"):
+        for k in ("policy", "house", "dtype", "from", "to"):
             v = request.args.get(k, "").strip()
             if v:
                 fwd[k] = v
@@ -610,7 +610,6 @@ def archive_home():
 
     house_filter  = request.args.get("house", "")
     dtype_filter  = request.args.get("dtype", "")
-    dept_filter   = "" if house_filter == "Lords" else request.args.get("dept", "")
     policy_filter = request.args.get("policy", "")
     date_from     = request.args.get("from", "")
     date_to       = request.args.get("to", "")
@@ -627,9 +626,6 @@ def archive_home():
 
     if dtype_filter and dtype_filter in _DEBATE_TYPE_LABELS:
         stmt = stmt.filter(HansardSession.debate_type == dtype_filter)
-
-    if dept_filter:
-        stmt = stmt.filter(HansardSession.department == dept_filter)
 
     if policy_filter:
         policy_sub = (
@@ -658,14 +654,13 @@ def archive_home():
     filter_params = {k: v for k, v in {
         "house":      house_filter,
         "dtype":      dtype_filter,
-        "dept":       dept_filter,
         "policy":     policy_filter,
         "from":       date_from,
         "to":         date_to,
         "title_only": "1" if title_only else "",
     }.items() if v}
     base_qs    = urlencode(filter_params)
-    has_filters = bool(house_filter or dtype_filter or dept_filter or policy_filter or date_from or date_to)
+    has_filters = bool(house_filter or dtype_filter or policy_filter or date_from or date_to)
 
     # --- Grouped view: oral_questions or pmqs ---
     grouped = dtype_filter in ("oral_questions", "pmqs")
@@ -750,13 +745,11 @@ def archive_home():
             q="",
             house_filter=house_filter,
             dtype_filter=dtype_filter,
-            dept_filter=dept_filter,
             policy_filter=policy_filter,
             date_from=date_from,
             date_to=date_to,
             title_only=title_only,
             all_policy_areas=_all_policy_areas(),
-            all_departments=_all_departments(),
             debate_type_labels=_DEBATE_TYPE_LABELS,
             base_qs=base_qs,
             has_filters=has_filters,
@@ -789,7 +782,6 @@ def archive_home():
         q=q,
         house_filter=house_filter,
         dtype_filter=dtype_filter,
-        dept_filter=dept_filter,
         policy_filter=policy_filter,
         date_from=date_from,
         date_to=date_to,
@@ -799,7 +791,6 @@ def archive_home():
         total_pages=total_pages,
         per_page=_PER_PAGE,
         all_policy_areas=_all_policy_areas(),
-        all_departments=_all_departments(),
         debate_type_labels=_DEBATE_TYPE_LABELS,
         base_qs=base_qs,
         has_filters=has_filters,
