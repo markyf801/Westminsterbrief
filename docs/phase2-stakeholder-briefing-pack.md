@@ -795,6 +795,23 @@ pending real-use signal from Phase 2B subscribers. Reasoning:
   lexical drift) has a higher trust bar than alerts and benefits from
   user data before being built
 
+### Why £5/month, not £49 one-off
+
+The previous spec locked £49 one-off as Phase 2B. The pivot to
+£5/month subscription is grounded in:
+
+- Lower commitment threshold: £5/month sits below most users'
+  approval friction; £49 requires deliberate decision
+- Audience fit: civil service colleagues and small charities can
+  sustain £5 as a personal/expense line item; £49 is a procurement
+  conversation
+- Recurring relationship over one-off transaction (matches the
+  primary goal — relationships, not single sales)
+- Lower price = lower risk for first paid users = higher conversion
+  rate from free archive
+- Subscription pattern fits adjacent products: Slack, Notion,
+  Substack, Calendly all use cheap-tier-first as a wedge
+
 ### What's deferred
 
 Concrete details to be worked out post-trip:
