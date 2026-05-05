@@ -56,6 +56,34 @@ Captured in `docs/phase2a-hansard-archive.md`. Top priorities on return:
 
 ---
 
+## Session: 5 May 2026 (late evening) — Phase 2B strategic decisions
+
+Two decisions captured and committed to `docs/phase2-stakeholder-briefing-pack.md`.
+
+**Decision 1: Phase 2B reframed as alert subscription product.**
+On-trigger email alerts to subscribers on chosen topics (GOV.UK policy
+area taxonomy + free-text keywords). Replaces the £49 one-off briefing
+pack as Phase 2B. Briefing pack moves to Phase 2C candidate or possibly
+dropped pending real-use signal from Phase 2B.
+
+**Decision 2: Two-tier pricing.**
+- £5/month starter — single topic, weekly digest, low-friction onramp
+- £15/month main — multiple topics (suggest 5), triggered alerts,
+  priority flagging, richer monthly summary
+
+Rationale for £15 anchor (not £3-5 flat): value-vs-price mismatch at
+low end, margin trap, and starvation pricing selects for price-sensitive
+customers. Anchoring at £15 preserves room for later discount tiers
+(charity rate, civil service rate) without the reverse problem.
+
+Pricing open to revision from real-use feedback. Strategic commitment
+is "tiered with starter wedge," not "£5/£15 specifically."
+
+**Build gate:** not before 2-4 weeks of Phase 2A real-user signal
+post-share.
+
+---
+
 ## Session: 1 May 2026 — Phase 2A soft-launch framing + cron architecture
 
 **Key decisions:**
