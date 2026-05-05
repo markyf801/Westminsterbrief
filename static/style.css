@@ -1617,7 +1617,8 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
-    margin-right: 4px;
+    flex-basis: 100%;
+    margin-bottom: 2px;
 }
 .sd-related-item {
     display: flex;

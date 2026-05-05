@@ -366,8 +366,8 @@ def _related_sessions(session: HansardSession) -> dict:
     if not related:
         return {"items": [], "total": 0}
 
-    # Sort by date proximity, then Commons before Lords within the same date.
-    related.sort(key=lambda c: (abs((c.date - session.date).days), 0 if c.house == "Commons" else 1))
+    # Chronological ascending — shows parliamentary journey oldest-to-newest.
+    related.sort(key=lambda c: c.date)
     total = len(related)
     display = related[:_RELATED_PANEL_MAX]
 
