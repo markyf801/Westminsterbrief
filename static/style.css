@@ -1597,6 +1597,78 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
 }
 .btn-export:hover { background: #1e5580; }
 
+/* Bill-grouped committee stage accordion */
+.ah-bill-group {
+    background: #fff;
+    border: 1px solid #d8e4ed;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    overflow: hidden;
+}
+.ah-bill-group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 16px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+.ah-bill-group-header::-webkit-details-marker { display: none; }
+.ah-bill-group-header::before {
+    content: '▶';
+    font-size: 10px;
+    color: #7a8a9a;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+}
+details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
+.ah-bill-group-header:hover { background: #f4f8fc; }
+.ah-bill-group-title {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a2332;
+}
+.ah-bill-group-count {
+    font-size: 12px;
+    color: #8a96a4;
+    white-space: nowrap;
+}
+.ah-bill-group-sessions {
+    border-top: 1px solid #e8f0f7;
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.ah-bill-stage-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: background 0.12s;
+}
+.ah-bill-stage-item:hover { background: #f0f6fb; }
+.ah-bill-stage-date {
+    font-size: 12px;
+    font-weight: 600;
+    color: #1a2332;
+    min-width: 105px;
+}
+.ah-bill-stage-dtype {
+    font-size: 12px;
+    color: #5a6878;
+    flex: 1;
+}
+.ah-bill-stage-contribs {
+    font-size: 11px;
+    color: #8a96a4;
+    white-space: nowrap;
+}
+
 /* Related sessions panel */
 .sd-related {
     background: #eef3f8;

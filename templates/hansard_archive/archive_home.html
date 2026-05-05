@@ -86,6 +86,11 @@
             {% if total > 0 %}
             <span class="ah-results-range">showing groups {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
             {% endif %}
+        {% elif bill_grouped %}
+            <span class="ah-results-count">{{ total }} bill{{ 's' if total != 1 else '' }}</span>
+            {% if total > 0 %}
+            <span class="ah-results-range">showing {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + per_page, total] | min }}</span>
+            {% endif %}
         {% elif has_filters %}
             <span class="ah-results-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
             {% if total > 0 %}
@@ -144,6 +149,38 @@
         {% else %}
         <div class="empty-state ah-empty">
             <p>No sessions found matching your filters.</p>
+        </div>
+        {% endif %}
+
+    {# --- Bill-grouped view (committee_stage without search query) --- #}
+    {% elif bill_grouped %}
+        {% if bill_group_items %}
+        <div class="ah-results-list">
+            {% for group in bill_group_items %}
+            <details class="ah-bill-group">
+                <summary class="ah-bill-group-header">
+                    <span class="ah-bill-group-title">{{ group.title }}</span>
+                    <span class="ah-bill-group-count">{{ group.session_count }} stage{{ 's' if group.session_count != 1 else '' }}</span>
+                </summary>
+                <div class="ah-bill-group-sessions">
+                    {% for item in group.sessions %}
+                    {% set s = item.session %}
+                    <a class="ah-bill-stage-item" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">
+                        <span class="ah-bill-stage-date">{{ item.human_date }}</span>
+                        <span class="topic-source-badge topic-source-{{ s.house|lower }}">{{ s.house }}</span>
+                        <span class="ah-bill-stage-dtype">{{ item.debate_type_label }}</span>
+                        {% if item.contrib_count %}
+                        <span class="ah-bill-stage-contribs">{{ item.contrib_count }} contribution{{ 's' if item.contrib_count != 1 else '' }}</span>
+                        {% endif %}
+                    </a>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state ah-empty">
+            <p>No committee stage sessions found matching your filters.</p>
         </div>
         {% endif %}
 

@@ -734,6 +734,8 @@ def archive_home():
         return render_template(
             "hansard_archive/archive_home.html",
             grouped=True,
+            bill_grouped=False,
+            bill_group_items=[],
             group_items=group_items,
             total_groups=total_groups,
             total_sessions=total_sessions,
@@ -741,6 +743,105 @@ def archive_home():
             total=total_groups,
             total_pages=total_pages,
             per_page=_GROUPS_PER_PAGE,
+            page=page,
+            q="",
+            house_filter=house_filter,
+            dtype_filter=dtype_filter,
+            policy_filter=policy_filter,
+            date_from=date_from,
+            date_to=date_to,
+            title_only=title_only,
+            all_policy_areas=_all_policy_areas(),
+            debate_type_labels=_DEBATE_TYPE_LABELS,
+            base_qs=base_qs,
+            has_filters=has_filters,
+            last_ingested=_last_ingested_label(),
+            archive_start=_archive_start_label(),
+            today_str=date_type.today().isoformat(),
+            recent_additions=_recent_additions(),
+        )
+
+    # --- Bill-grouped view: committee_stage (no search query) ---
+    _BILL_GROUPS_PER_PAGE = 20
+    bill_grouped = dtype_filter == "committee_stage" and not q
+
+    if bill_grouped:
+        all_sessions = (
+            stmt
+            .with_entities(
+                HansardSession.id,
+                HansardSession.title,
+                HansardSession.date,
+                HansardSession.house,
+                HansardSession.debate_type,
+                HansardSession.slug,
+            )
+            .order_by(HansardSession.date)
+            .all()
+        )
+
+        # Group by normalised title
+        from collections import defaultdict
+        groups_dict: dict = defaultdict(list)
+        for row in all_sessions:
+            norm = _normalise_title(row.title) or row.title
+            groups_dict[norm].append(row)
+
+        # Sort groups by most recent session date desc
+        sorted_groups = sorted(
+            groups_dict.items(),
+            key=lambda kv: max(r.date for r in kv[1]),
+            reverse=True,
+        )
+
+        total_bill_groups = len(sorted_groups)
+        total_pages_bill  = max(1, (total_bill_groups + _BILL_GROUPS_PER_PAGE - 1) // _BILL_GROUPS_PER_PAGE)
+        page_groups = sorted_groups[(page - 1) * _BILL_GROUPS_PER_PAGE : page * _BILL_GROUPS_PER_PAGE]
+
+        # Fetch full session objects and contrib counts for page only
+        page_session_ids = [r.id for _, rows in page_groups for r in rows]
+        sessions_full = (
+            HansardSession.query.filter(HansardSession.id.in_(page_session_ids)).all()
+            if page_session_ids else []
+        )
+        sessions_by_id = {s.id: s for s in sessions_full}
+        bg_contrib_counts = _batch_load_contrib_counts(page_session_ids)
+        bg_policy_areas, bg_specific_topics = _batch_load_tags(page_session_ids)
+
+        def _bill_item(row):
+            s = sessions_by_id.get(row.id)
+            if not s:
+                return None
+            return {
+                "session":           s,
+                "human_date":        _human_date(s.date),
+                "url_date":          _url_date(s.date),
+                "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+                "contrib_count":     bg_contrib_counts.get(s.id, 0),
+                "policy_areas":      sorted(bg_policy_areas.get(s.id, [])),
+                "specific_topics":   sorted(bg_specific_topics.get(s.id, [])),
+            }
+
+        bill_group_items = []
+        for norm_title, rows in page_groups:
+            items = [i for i in (_bill_item(r) for r in rows) if i]
+            if items:
+                bill_group_items.append({
+                    "title":         items[0]["session"].title,  # use actual title from first session
+                    "session_count": len(items),
+                    "sessions":      items,  # already sorted chronologically (asc) from query
+                })
+
+        return render_template(
+            "hansard_archive/archive_home.html",
+            grouped=False,
+            bill_grouped=True,
+            bill_group_items=bill_group_items,
+            group_items=[],
+            session_items=[],
+            total=total_bill_groups,
+            total_pages=total_pages_bill,
+            per_page=_BILL_GROUPS_PER_PAGE,
             page=page,
             q="",
             house_filter=house_filter,
@@ -777,6 +878,8 @@ def archive_home():
     return render_template(
         "hansard_archive/archive_home.html",
         grouped=False,
+        bill_grouped=False,
+        bill_group_items=[],
         group_items=[],
         session_items=session_items,
         q=q,
