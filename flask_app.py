@@ -55,6 +55,7 @@ def _validate_external_url(url: str) -> str:
 from hansard import hansard_bp
 from biography import biography_bp
 from hansard_archive.views import archive_bp
+from hansard_archive.slugs import slugify_theme as _slugify_theme
 from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
 from mp_search import mp_search_bp
@@ -102,16 +103,9 @@ limiter.default_limits = ["200 per hour", "30 per minute"]
 # Feature flag helper available in all Jinja2 templates as feature_enabled(...)
 app.jinja_env.globals['feature_enabled'] = feature_enabled
 
-# slugify filter — used by archive templates to build /archive/policy/, /archive/theme/,
-# /archive/department/ URLs. Must match _slugify() in hansard_archive/views.py exactly.
-import re as _re
-def _jinja_slugify(s: str) -> str:
-    s = s.lower()
-    s = _re.sub(r"[^a-z0-9\s-]", "", s)
-    s = _re.sub(r"\s+", "-", s.strip())
-    s = _re.sub(r"-+", "-", s)
-    return s
-app.jinja_env.filters['slugify'] = _jinja_slugify
+# slugify filter — builds /archive/policy/, /archive/theme/, /archive/department/ URLs.
+# Single source of truth lives in hansard_archive/slugs.py:slugify_theme().
+app.jinja_env.filters['slugify'] = _slugify_theme
 
 # Security headers
 from flask_talisman import Talisman
@@ -681,12 +675,6 @@ def _sitemap_url_date(d) -> str:
     return f"{d.day}-{_SITEMAP_MONTHS[d.month]}-{d.year}"
 
 
-def _sitemap_slugify(s: str) -> str:
-    s = s.lower()
-    s = re.sub(r"[^a-z0-9\s-]", "", s)
-    s = re.sub(r"\s+", "-", s.strip())
-    s = re.sub(r"-+", "-", s)
-    return s
 
 
 def _build_sitemap_core_xml() -> str:
@@ -722,7 +710,7 @@ def _build_sitemap_core_xml() -> str:
                            .join(HansardSession, HansardSession.id == HansardSessionTheme.session_id)
                            .filter(HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA)
                            .group_by(HansardSessionTheme.theme).all()):
-        urls.append((f"{BASE}/archive/policy/{_sitemap_slugify(theme)}",
+        urls.append((f"{BASE}/archive/policy/{_slugify_theme(theme)}",
                      max_d.isoformat() if max_d else ""))
 
     # Specific theme pages — only themes with 5+ sessions (per spec)
@@ -735,7 +723,7 @@ def _build_sitemap_core_xml() -> str:
                               .group_by(HansardSessionTheme.theme)
                               .having(sqlfunc.count(HansardSessionTheme.session_id) >= 5)
                               .all()):
-        urls.append((f"{BASE}/archive/theme/{_sitemap_slugify(theme)}",
+        urls.append((f"{BASE}/archive/theme/{_slugify_theme(theme)}",
                      max_d.isoformat() if max_d else ""))
 
     # Session detail pages — non-container sessions with a slug
@@ -763,7 +751,7 @@ def _build_sitemap_core_xml() -> str:
                                  sqlfunc.max(HansardSession.date))
                           .filter(HansardSession.department.isnot(None))
                           .group_by(HansardSession.department).all()):
-        urls.append((f"{BASE}/archive/department/{_sitemap_slugify(dept)}",
+        urls.append((f"{BASE}/archive/department/{_slugify_theme(dept)}",
                      max_d.isoformat() if max_d else ""))
 
     lines = [

@@ -44,6 +44,7 @@ from hansard_archive.models import (
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
 )
+from hansard_archive.slugs import slugify_theme
 
 archive_bp = Blueprint("archive", __name__, url_prefix="/archive")
 
@@ -175,13 +176,6 @@ def _parse_url_date(date_str: str) -> date_type | None:
         return None
 
 
-def _slugify(s: str) -> str:
-    """Convert a label to a URL slug (matches sitemap slugification)."""
-    s = s.lower()
-    s = re.sub(r"[^a-z0-9\s-]", "", s)
-    s = re.sub(r"\s+", "-", s.strip())
-    s = re.sub(r"-+", "-", s)
-    return s
 
 
 def _is_postgres() -> bool:
@@ -1148,7 +1142,7 @@ def archive_mp(member_id: int):
 def archive_department(dept_slug: str):
     # Reverse-lookup: find department whose slugified name matches
     all_depts = _all_departments()
-    dept_name = next((d for d in all_depts if _slugify(d) == dept_slug), None)
+    dept_name = next((d for d in all_depts if slugify_theme(d) == dept_slug), None)
     if not dept_name:
         abort(404)
 
@@ -1203,7 +1197,7 @@ def archive_department(dept_slug: str):
 def archive_policy(policy_slug: str):
     # Reverse-lookup: find policy area whose slugified name matches
     all_policies = _all_policy_areas()
-    policy_name  = next((p for p in all_policies if _slugify(p) == policy_slug), None)
+    policy_name  = next((p for p in all_policies if slugify_theme(p) == policy_slug), None)
     if not policy_name:
         abort(404)
 
@@ -1272,7 +1266,7 @@ def archive_theme(theme_slug: str):
         .distinct()
         .all()
     )
-    theme_name = next((r[0] for r in rows if _slugify(r[0]) == theme_slug), None)
+    theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
     if not theme_name:
         # Slug not in DB — show friendly empty page rather than 404
         display_name = theme_slug.replace("-", " ")

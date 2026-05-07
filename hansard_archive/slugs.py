@@ -92,3 +92,39 @@ def make_slug(title: str, ext_id: str, suffix_len: int = 4) -> str:
     title_part = title_to_slug(title)
     short_id = (ext_id or "xxxx")[-suffix_len:].lower()
     return f"{title_part}-{short_id}"
+
+
+def slugify_theme(s: str) -> str:
+    """
+    Convert a theme, policy area, or department label to a URL slug.
+
+    Single source of truth for /archive/theme/<slug>, /archive/policy/<slug>,
+    and /archive/department/<slug> URLs. Imported by views.py (reverse-lookup),
+    flask_app.py (sitemap + Jinja filter).
+
+    Rules (locked — Google has indexed these URLs, do not change):
+    - Lowercase
+    - Strip all characters that are not a-z, 0-9, whitespace, or hyphen
+    - Collapse whitespace sequences to a single hyphen
+    - Collapse multiple consecutive hyphens to one
+
+    Edge cases (verified against implementation, 7 May 2026):
+    - Apostrophes (straight ' and curly '): stripped with no replacement
+        "Children's services" -> "childrens-services"
+    - Ampersands: stripped; surrounding spaces collapse to one hyphen
+        "Health & social care" -> "health-social-care"
+        NOT "health-and-social-care" — no substitution is performed
+    - Non-ASCII / accented characters: stripped, not transliterated
+        "Education eleves" (with accents) -> "education-lves"
+        Accented chars don't appear in GOV.UK theme taxonomy so this
+        is theoretical, but the behaviour is drop not replace.
+    - Commas, colons, parentheses: stripped
+        "Science, technology" -> "science-technology"
+    - Existing hyphens: preserved (they are in the allowed set)
+        "Pre-16 education" -> "pre-16-education"
+    """
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9\s-]", "", s)
+    s = re.sub(r"\s+", "-", s.strip())
+    s = re.sub(r"-+", "-", s)
+    return s
