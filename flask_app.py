@@ -745,17 +745,8 @@ def _build_sitemap_core_xml() -> str:
                       .order_by(HansardSession.date.desc()).all()):
         urls.append((f"{BASE}/archive/debate/{_sitemap_url_date(d)}/{slug}", d.isoformat()))
 
-    # MP pages — one per distinct member_id with at least one contribution
-    # lastmod uses MAX(ingested_at) which clusters on backfill date for historical data.
-    # If Search Console shows unexpected re-crawl patterns, switch to:
-    #   MAX(ha_session.date) via join on session_id — semantically tighter lastmod.
-    for (member_id, last_ingested) in (db.session
-                                       .query(HansardContribution.member_id,
-                                              sqlfunc.max(HansardContribution.ingested_at))
-                                       .filter(HansardContribution.member_id.isnot(None))
-                                       .group_by(HansardContribution.member_id).all()):
-        lastmod = last_ingested.date().isoformat() if last_ingested else ""
-        urls.append((f"{BASE}/archive/mp/{member_id}", lastmod))
+    # MP pages excluded from sitemap: page design is Week 3 work (not yet final shape).
+    # Re-add when MP archive pages are properly built and indexed design is confirmed.
 
     # Department pages — one per distinct non-null department
     for (dept, max_d) in (db.session

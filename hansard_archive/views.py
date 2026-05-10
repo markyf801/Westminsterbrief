@@ -1066,9 +1066,11 @@ def archive_mp(member_id: int):
         abort(404)
     member_attr = _parse_attribution(name_row.member_name)
 
-    # Distinct sessions this member contributed to, newest first
+    # Distinct sessions this member contributed to, newest first.
+    # SELECT includes session_id AND date so ORDER BY date satisfies Postgres's
+    # rule that DISTINCT queries can only order by selected columns.
     session_ids_q = (
-        db.session.query(HansardContribution.session_id)
+        db.session.query(HansardContribution.session_id, HansardSession.date)
         .join(HansardSession, HansardSession.id == HansardContribution.session_id)
         .filter(
             HansardContribution.member_id == member_id,
