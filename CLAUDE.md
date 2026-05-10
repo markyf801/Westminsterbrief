@@ -586,6 +586,66 @@ Never name a SQLAlchemy model column any of these — they shadow built-in SQLAl
 
 Use descriptive names: `search_query`, `result_data`, `cached_at`, etc.
 
+## SQLite vs Postgres divergences — queries that pass locally but fail in production
+
+SQLite is permissive about several SQL constructs that Postgres rejects. Because Westminster Brief develops against SQLite locally and runs Postgres in production, these gaps are silent: local tests pass, production 500s.
+
+**Before writing or reviewing any query that uses `.distinct()`, `.group_by()`, `DISTINCT ON`, or window functions, check it against this list.**
+
+### 1. DISTINCT + ORDER BY — columns must appear in SELECT
+
+```python
+# WRONG — SQLite silently allows this; Postgres raises InvalidColumnReference
+db.session.query(HansardContribution.session_id)
+    .join(HansardSession, ...)
+    .distinct()
+    .order_by(HansardSession.date.desc())
+
+# CORRECT — add the ORDER BY column to SELECT
+db.session.query(HansardContribution.session_id, HansardSession.date)
+    .join(HansardSession, ...)
+    .distinct()
+    .order_by(HansardSession.date.desc())
+# Then extract only session_id: [r[0] for r in results]
+```
+
+**Real incident:** `/archive/mp/<id>` 500'd in production for ~5 days (481 GSC errors, May 2026). Fixed by adding `HansardSession.date` to the SELECT list.
+
+### 2. GROUP BY — non-aggregated columns must be in GROUP BY
+
+```python
+# WRONG — SQLite allows selecting non-aggregated columns; Postgres rejects
+db.session.query(HansardSession.id, HansardSession.title, func.count(...))
+    .group_by(HansardSession.id)  # title not in GROUP BY
+
+# CORRECT — include all non-aggregated SELECTed columns
+db.session.query(HansardSession.id, HansardSession.title, func.count(...))
+    .group_by(HansardSession.id, HansardSession.title)
+```
+
+Exception: if `id` is the primary key, Postgres allows other columns from that table without listing them (functional dependency rule). But explicit is safer.
+
+### 3. Boolean columns — Python bool vs integer
+
+SQLite stores booleans as integers (0/1). Postgres has a native boolean type. SQLAlchemy handles this correctly via `db.Column(db.Boolean)` — but raw SQL comparisons using `= 1` or `= 0` will fail on Postgres. Always use `IS TRUE` / `IS FALSE` in raw SQL, or use SQLAlchemy ORM comparisons (`Model.flag == True`).
+
+### 4. DISTINCT ON — Postgres only
+
+`DISTINCT ON (expr)` is a Postgres extension. SQLite does not support it. If you need "latest row per group" logic, use a subquery or window function that works on both — or accept that this query is Postgres-only and document it clearly.
+
+### 5. Timezone-aware datetimes
+
+SQLite stores datetimes as plain strings. Postgres distinguishes `TIMESTAMP` (naive) from `TIMESTAMPTZ` (timezone-aware). `datetime.utcnow()` produces a naive datetime — this works with Postgres `TIMESTAMP` columns but will produce warnings or errors with `TIMESTAMPTZ`. Westminster Brief models use naive datetimes throughout; keep it consistent and don't mix.
+
+### Pre-push checklist for new queries
+
+Before pushing any new query that uses DISTINCT, GROUP BY, or subqueries:
+
+1. Does `.distinct()` have an ORDER BY? If yes — is every ORDER BY column in the SELECT list?
+2. Does `.group_by()` leave any non-aggregated columns outside the GROUP BY clause?
+3. Is any raw SQL using `= 1` / `= 0` for booleans? Change to `IS TRUE` / `IS FALSE`.
+4. Does the query use `DISTINCT ON`? Note it as Postgres-only.
+
 ## Variables used in render_template must always be initialised
 
 Any variable passed to `render_template()` must be initialised with a default value **before** any `if` block that might set it. If the variable is only set inside `if request.method == 'POST':`, a GET request will crash with `UnboundLocalError`.
