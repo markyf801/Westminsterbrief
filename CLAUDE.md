@@ -233,10 +233,42 @@ Sequence after regenerating the Postgres password:
    - `archive-cron-morning`
    - `archive-cron-daytime-mth`
    - `archive-cron-daytime-fri`
+   - `pq-cron-early`
+   - `pq-cron-morning`
+   - `pq-cron-afternoon`
+   - `pq-cron-monday`
    - `backup-cron-r2`
 3. Verify Flask picked up the new credential: hit `/health` and confirm `status=ok`
 
 Variable References are not "live" — they resolve at deploy time only.
+
+### Ingestion schedules — all Railway cron services
+
+**Hansard debates, speeches, Written Ministerial Statements** (`scripts/archive_cron.py`):
+
+| Service | Cron (UTC) | BST window | GMT window | Purpose |
+|---|---|---|---|---|
+| `archive-cron-morning` | `0 8 * * 1-5` | 09:00 Mon–Fri | 08:00 Mon–Fri | Morning catch-up, 3-day window |
+| `archive-cron-daytime-mth` | `0 11-23 * * 1-4` | 12:00–midnight Mon–Thu | 11:00–23:00 Mon–Thu | Hourly during sittings |
+| `archive-cron-daytime-fri` | `0 9-19 * * 5` | 10:00–20:00 Fri | 09:00–19:00 Fri | Hourly during Friday sittings |
+
+WMS are classified within the same Hansard ingestion — no separate cron. Theme tagging runs inline at the end of every Hansard cron run (not a separate service).
+
+**Written Questions** (`scripts/ingest_pq_cron.py`, 7-day rolling window):
+
+| Service | Cron (UTC) | BST window | GMT window | Purpose |
+|---|---|---|---|---|
+| `pq-cron-early` | `30 8 * * 1-5` | 09:30 Mon–Fri | 08:30 Mon–Fri | First capture after Parliament's 08:00–09:30 publication window |
+| `pq-cron-morning` | `30 9 * * 1-5` | 10:30 Mon–Fri | 09:30 Mon–Fri | Safety net for late-published questions |
+| `pq-cron-afternoon` | `0 14 * * 1-5` | 15:00 Mon–Fri | 14:00 Mon–Fri | Captures answers published mid-afternoon |
+| `pq-cron-monday` | `0 9 * * 1` | 10:00 Monday | 09:00 Monday | Post-weekend backlog catch-up |
+
+**Timing rationale:** The `/questions` tool queries `ha_pq` (local DB), not Parliament's API directly (refactored at commit `57e7273`). The early + morning cron pair restores morning readiness: civil servants checking new PQs at 09:30–10:00 UK will see that day's questions already in the DB. In BST, `pq-cron-early` fires right at Parliament's publication window close. In GMT, `pq-cron-morning` becomes the effective first capture at 09:30 UK — marginally later but within the start-of-day window. Duplicate upserts across the two morning runs are silent (PQ table uses upsert-by-UIN).
+
+**Stakeholder directory**: No automated cron. Ministerial meetings loaded via CSV upload + `stakeholder_directory/pipeline.py` when GOV.UK publishes quarterly transparency data. Committee evidence triggered manually via `/admin` panel. Lobbying register also manual.
+
+**Other**:
+- `backup-cron-r2` — daily pg_dump to Cloudflare R2
 
 ### Bulk migrations and volume size
 
