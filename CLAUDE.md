@@ -309,6 +309,12 @@ These conventions are locked for any URL/slug work that builds public archive pa
 - **MP seat changes:** stable-first. Once an MP slug is assigned, it never changes even if they switch constituencies. Page content updates to reflect current role, but the URL is permanent
 - **Lord slugs:** `firstname-lastname-of-place` matching their official title where possible. Fallback: `firstname-lastname-baron`
 - **Constituency normalisation rules:** lowercase, hyphens for spaces, keep "and" (`holborn-and-st-pancras`), normalise "St" to lowercase `st`, strip apostrophes (`st-albans` not `st-alban's`), strip commas
+- **Theme / policy area / department slugs** (locked 7 May 2026): implemented in `hansard_archive/slugs.py:slugify_theme()` — the single source of truth, imported by `views.py`, `flask_app.py` (sitemap), and the Jinja `slugify` filter. Rule: lowercase → strip all chars not in `[a-z0-9\s-]` → whitespace to hyphen → collapse multiple hyphens. Verified edge case behaviour:
+  - Apostrophes (straight and curly): stripped, not replaced — `"Children's services"` → `"childrens-services"`
+  - Ampersands: stripped; surrounding spaces collapse to one hyphen — `"Health & social care"` → `"health-social-care"` (not `"health-and-social-care"`)
+  - Non-ASCII / accented characters: stripped entirely, not transliterated — accented chars don't appear in GOV.UK theme taxonomy so this is theoretical
+  - Commas, colons, parentheses: stripped — `"Science, technology"` → `"science-technology"`
+  - Existing hyphens: preserved — `"Pre-16 education"` → `"pre-16-education"`
 
 ## Canonical domain and URLs (locked 1 May 2026)
 

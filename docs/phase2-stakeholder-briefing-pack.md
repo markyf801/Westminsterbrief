@@ -266,7 +266,7 @@ When dtype=oral_questions or dtype=pmqs and no search query, group results by da
 Decision points still open for Phase 2A
 
 Lords debates at launch — DECIDED (30 April 2026). Lords included in Phase 2A. Pipeline code complete; 1-day Lords test pending. 12-month backfill and container sweep follow test. Week 3 page templates must support both houses (house field on ha_session already present). See docs/lords-ingestion-spec.md for full Lords pipeline spec.
-Specific URL structure for theme pages. Slug conventions need locking before Week 3 — Mark has SEO slug conventions for MP/constituency pages but theme slugs are new. Suggest locking alongside the Week 3 page template work.
+Specific URL structure for theme pages. Slug conventions locked 7 May 2026 — see CLAUDE.md SEO conventions section and `hansard_archive/slugs.py:slugify_theme()` for the canonical implementation and edge case documentation.
 Search backend: Postgres full-text search (simple, no new dependencies) vs dedicated search service (more capable, more setup). Decide at start of Week 3 as it affects the search page architecture.
 
 Success metrics for Phase 2A
