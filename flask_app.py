@@ -660,10 +660,12 @@ def robots():
 _sitemap_core_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_pqs1_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_pqs2_cache:  dict = {'xml': None, 'ts': 0.0}
+_sitemap_pqs3_cache:  dict = {'xml': None, 'ts': 0.0}
+_sitemap_pqs4_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_index_cache: dict = {'xml': None, 'ts': 0.0}
 _SITEMAP_TTL    = 3600   # 1h — core + index
 _SITEMAP_PQ_TTL = 86400  # 24h — PQ chunks
-_PQ_CHUNK_SIZE  = 50_000
+_PQ_CHUNK_SIZE  = 25_000  # 25k per chunk; 4 chunks covers ~100k PQs
 
 _SITEMAP_MONTHS = [
     "", "january", "february", "march", "april", "may", "june",
@@ -783,23 +785,22 @@ def _build_sitemap_index_xml() -> str:
     from datetime import date as _date
     BASE = "https://westminsterbrief.co.uk"
     today = _date.today().isoformat()
-    return '\n'.join([
+    chunks = ['sitemap-core.xml',
+              'sitemap-pqs-1.xml', 'sitemap-pqs-2.xml',
+              'sitemap-pqs-3.xml', 'sitemap-pqs-4.xml']
+    lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-        '  <sitemap>',
-        f'    <loc>{BASE}/sitemap-core.xml</loc>',
-        f'    <lastmod>{today}</lastmod>',
-        '  </sitemap>',
-        '  <sitemap>',
-        f'    <loc>{BASE}/sitemap-pqs-1.xml</loc>',
-        f'    <lastmod>{today}</lastmod>',
-        '  </sitemap>',
-        '  <sitemap>',
-        f'    <loc>{BASE}/sitemap-pqs-2.xml</loc>',
-        f'    <lastmod>{today}</lastmod>',
-        '  </sitemap>',
-        '</sitemapindex>',
-    ])
+    ]
+    for name in chunks:
+        lines += [
+            '  <sitemap>',
+            f'    <loc>{BASE}/{name}</loc>',
+            f'    <lastmod>{today}</lastmod>',
+            '  </sitemap>',
+        ]
+    lines.append('</sitemapindex>')
+    return '\n'.join(lines)
 
 
 def _serve_xml(cache_dict: dict, build_fn, ttl: int, fallback_empty: str):
@@ -839,13 +840,25 @@ def sitemap_core():
 @app.route('/sitemap-pqs-1.xml')
 def sitemap_pqs_1():
     return _serve_xml(_sitemap_pqs1_cache,
-                      lambda: _build_sitemap_pqs_xml(0, _PQ_CHUNK_SIZE),
+                      lambda: _build_sitemap_pqs_xml(0 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
                       _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/sitemap-pqs-2.xml')
 def sitemap_pqs_2():
     return _serve_xml(_sitemap_pqs2_cache,
-                      lambda: _build_sitemap_pqs_xml(_PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
+                      lambda: _build_sitemap_pqs_xml(1 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
+                      _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
+
+@app.route('/sitemap-pqs-3.xml')
+def sitemap_pqs_3():
+    return _serve_xml(_sitemap_pqs3_cache,
+                      lambda: _build_sitemap_pqs_xml(2 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
+                      _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
+
+@app.route('/sitemap-pqs-4.xml')
+def sitemap_pqs_4():
+    return _serve_xml(_sitemap_pqs4_cache,
+                      lambda: _build_sitemap_pqs_xml(3 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
                       _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/history-of-hansard')
