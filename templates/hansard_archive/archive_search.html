@@ -81,19 +81,27 @@
     {# --- Tabs (only shown when there's a query) --- #}
     {% if q %}
     <div class="as-tabs">
-        <button class="as-tab as-tab-active" data-tab="hansard">
+        <button class="as-tab {% if active_tab == 'hansard' %}as-tab-active{% endif %}" data-tab="hansard">
             Debates &amp; speeches
             {% if total > 0 %}<span class="as-tab-count">{{ total }}</span>{% endif %}
         </button>
-        <button class="as-tab" data-tab="pq">
+        <button class="as-tab {% if active_tab == 'pq' %}as-tab-active{% endif %}" data-tab="pq">
             Written Questions
-            {% if pq_results %}<span class="as-tab-count">{{ pq_results|length }}</span>{% endif %}
+            {% if pq_count > 0 %}<span class="as-tab-count">{{ pq_count }}</span>{% endif %}
         </button>
     </div>
+
+    {# --- Auto-switch notice --- #}
+    {% if auto_switched %}
+    <div class="as-auto-switch-notice">
+        <a href="/archive/search?{{ notice_qs }}&tab=hansard">No debates match this query.</a>
+        Showing {{ pq_count }} Written Question{{ 's' if pq_count != 1 else '' }} instead.
+    </div>
+    {% endif %}
     {% endif %}
 
     {# --- Hansard results panel --- #}
-    <div id="as-panel-hansard">
+    <div id="as-panel-hansard"{% if active_tab != 'hansard' %} style="display:none;"{% endif %}>
     {% if results %}
     <div class="ah-results-list">
         {% for r in results %}
@@ -131,16 +139,24 @@
 
     {% elif q and not error_msg %}
     <div class="empty-state ac-empty">
+        {% if pq_count > 0 %}
         <p>No debate results for <strong>{{ q }}</strong>.</p>
         <p style="margin-top:8px; font-size:13px; color:#8a96a4;">
-            Try fewer words, different keywords, or check the Written Questions tab.
+            Written Question results are available on the Written Questions tab above.
         </p>
+        {% else %}
+        <p>No results for <strong>{{ q }}</strong> across debates or Written Questions.</p>
+        <p style="margin-top:8px; font-size:13px; color:#8a96a4;">
+            Try fewer words, broader keywords, or check whether the query is within the archive's
+            coverage window (last 12 months for debates and Written Questions).
+        </p>
+        {% endif %}
     </div>
     {% endif %}
     </div>{# /#as-panel-hansard #}
 
     {# --- Written Questions panel --- #}
-    <div id="as-panel-pq" style="display:none;">
+    <div id="as-panel-pq"{% if active_tab != 'pq' %} style="display:none;"{% endif %}>
     {% if pq_results %}
     <div class="ah-results-list">
         {% for r in pq_results %}
@@ -184,15 +200,47 @@
 (function () {
     var tabs = document.querySelectorAll('.as-tab');
     if (!tabs.length) return;
+
+    function activateTab(tabName, pushState) {
+        tabs.forEach(function (t) { t.classList.remove('as-tab-active'); });
+        var activeTab = document.querySelector('[data-tab="' + tabName + '"]');
+        if (activeTab) activeTab.classList.add('as-tab-active');
+        document.getElementById('as-panel-hansard').style.display = tabName === 'hansard' ? '' : 'none';
+        document.getElementById('as-panel-pq').style.display      = tabName === 'pq'      ? '' : 'none';
+        if (pushState) {
+            var url = new URL(window.location.href);
+            url.searchParams.set('tab', tabName);
+            history.pushState({tab: tabName}, '', url.toString());
+        }
+    }
+
     tabs.forEach(function (tab) {
         tab.addEventListener('click', function () {
-            tabs.forEach(function (t) { t.classList.remove('as-tab-active'); });
-            tab.classList.add('as-tab-active');
-            var target = tab.getAttribute('data-tab');
-            document.getElementById('as-panel-hansard').style.display = target === 'hansard' ? '' : 'none';
-            document.getElementById('as-panel-pq').style.display      = target === 'pq'      ? '' : 'none';
+            activateTab(tab.getAttribute('data-tab'), true);
         });
     });
+
+    window.addEventListener('popstate', function (e) {
+        if (e.state && e.state.tab) {
+            activateTab(e.state.tab, false);
+        } else {
+            // Popstate with no state: restore from URL param
+            var url = new URL(window.location.href);
+            activateTab(url.searchParams.get('tab') || 'hansard', false);
+        }
+    });
+
+    // If auto-switch happened server-side, update URL to reflect active PQ tab
+    // so back button returns here correctly.
+    {% if auto_switched %}
+    (function () {
+        var url = new URL(window.location.href);
+        if (!url.searchParams.get('tab')) {
+            url.searchParams.set('tab', 'pq');
+            history.replaceState({tab: 'pq'}, '', url.toString());
+        }
+    }());
+    {% endif %}
 }());
 </script>
 {% endblock %}

@@ -1592,6 +1592,7 @@ def archive_search():
     date_from     = request.args.get("from", "").strip()
     date_to       = request.args.get("to", "").strip()
     title_only    = request.args.get("title_only") == "1"
+    tab_param     = request.args.get("tab", "").strip()
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
@@ -1621,6 +1622,20 @@ def archive_search():
             error_msg = "Search is temporarily unavailable."
             print(f"[archive_search] error: {exc}", flush=True)
 
+    pq_count = len(pq_results)
+
+    # Active tab: explicit URL param wins; otherwise auto-switch when debates
+    # are empty but PQs have results, so the user lands on content not emptiness.
+    if tab_param in ("hansard", "pq"):
+        active_tab = tab_param
+        auto_switched = False
+    elif total == 0 and pq_count > 0:
+        active_tab = "pq"
+        auto_switched = True
+    else:
+        active_tab = "hansard"
+        auto_switched = False
+
     qs_parts: dict = {"q": q}
     for k, v in [("policy", policy_filter), ("house", house_filter),
                  ("dtype", dtype_filter), ("from", date_from), ("to", date_to)]:
@@ -1630,7 +1645,14 @@ def archive_search():
         qs_parts["title_only"] = "1"
     if page > 1:
         qs_parts["page"] = page
+    # Preserve explicit tab choice across pagination
+    if tab_param in ("hansard", "pq"):
+        qs_parts["tab"] = tab_param
     base_qs = urlencode(qs_parts)
+
+    # Separate base_qs without tab for the auto-switch notice link
+    notice_qs_parts = {k: v for k, v in qs_parts.items() if k != "tab"}
+    notice_qs = urlencode(notice_qs_parts)
 
     has_filters = any([house_filter, dtype_filter,
                        policy_filter, date_from, date_to, title_only])
@@ -1649,13 +1671,17 @@ def archive_search():
         debate_type_labels  = _DEBATE_TYPE_LABELS,
         results             = results,
         pq_results          = pq_results,
+        pq_count            = pq_count,
         total               = total,
         total_pages         = total_pages,
         per_page            = _PER_PAGE,
         page                = page,
         base_qs             = base_qs,
+        notice_qs           = notice_qs,
         error_msg           = error_msg,
         is_postgres         = _is_postgres(),
+        active_tab          = active_tab,
+        auto_switched       = auto_switched,
     ))
     resp.headers["X-Robots-Tag"] = "noindex, nofollow"
     return resp

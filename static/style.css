@@ -2299,6 +2299,19 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
     background: #dbeafe;
     color: #1d4ed8;
 }
+.as-auto-switch-notice {
+    font-size: 13px;
+    color: #6b7280;
+    margin: 10px 0 4px;
+    padding: 7px 12px;
+    background: #f8f9fb;
+    border-radius: 4px;
+    border-left: 3px solid #d1d5db;
+}
+.as-auto-switch-notice a {
+    color: #4b5563;
+    text-decoration: underline;
+}
 
 /* --- FEEDBACK FORM --- */
 .feedback-success {
