@@ -6,7 +6,7 @@
 
 {% block content %}
 <div class="box">
-    <h2>☀️ Today’s PQs Tracker</h2>
+    <h2>Today’s PQs Tracker</h2>
 
     <p class="page-desc">
         See the Written Questions tabled on the most recent sitting day, grouped by policy theme. Select the themes you need and export a Word briefing — useful for preparing departmental responses or flagging incoming questions.
@@ -43,7 +43,7 @@
         
         <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
             <button type="button" onclick="openExportModal()" class="btn-search" style="border-radius: 6px; padding: 12px 24px;">
-                ⚙️ Generate Word Briefing...
+                Generate Word Briefing...
             </button>
         </div>
 
@@ -52,8 +52,8 @@
                 Questions tabled: <strong>{{ sorted_grouped_results.values()|list|first|attr('display_date') }}</strong>
             </div>
             <div style="display:flex; gap:6px;">
-                <button id="btn-theme-view" class="view-toggle active-toggle" onclick="setView('theme')">🏷️ By Theme</button>
-                <button id="btn-list-view" class="view-toggle" onclick="setView('list')">📋 Full List</button>
+                <button id="btn-theme-view" class="view-toggle active-toggle" onclick="setView('theme')">By Theme</button>
+                <button id="btn-list-view" class="view-toggle" onclick="setView('list')">Full List</button>
             </div>
         </div>
 
