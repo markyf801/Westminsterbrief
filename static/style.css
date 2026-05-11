@@ -86,6 +86,23 @@ body {
     pointer-events: none;
 }
 
+/* Canonical BETA badge — used inline with page headings and card titles */
+.badge-beta {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: #fff;
+    background: #e67e22;
+    border-radius: 3px;
+    padding: 1px 6px;
+    vertical-align: middle;
+    margin-left: 6px;
+    position: relative;
+    top: -1px;
+}
+
 .navbar .brand {
     font-size: 17px;
     font-weight: 800;
@@ -187,6 +204,53 @@ body {
     box-shadow: 0 1px 4px rgba(26,35,50,0.07);
     margin-bottom: 20px;
     border: 1px solid #e0e6ed;
+}
+
+/* Article content — used for long-form editorial pages (e.g. History of Hansard) */
+.article-content h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #1a2332;
+    margin-bottom: 6px;
+    line-height: 1.25;
+}
+
+.article-content .article-byline {
+    color: #8a96a4;
+    font-size: 13px;
+    margin-bottom: 28px;
+}
+
+.article-content h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #1a2332;
+    margin: 32px 0 12px;
+}
+
+.article-content h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2d3748;
+    margin-bottom: 12px;
+}
+
+.article-content ul {
+    margin: 12px 0 16px 24px;
+    line-height: 1.8;
+}
+
+.article-content .article-sources {
+    font-size: 13px;
+    color: #5a6878;
+    line-height: 2;
+    margin: 0 0 0 20px;
+}
+
+.article-content hr {
+    border: none;
+    border-top: 1px solid #e0e6ed;
+    margin: 36px 0 28px;
 }
 
 /* --- TYPOGRAPHY --- */
@@ -488,7 +552,9 @@ input:focus, select:focus, textarea:focus {
 .tool-card-icon {
     font-size: 26px;
     line-height: 1;
+    color: #1a4a6e;
 }
+.tool-card-icon svg { display: block; }
 
 .tool-card-title {
     color: white;
@@ -689,17 +755,8 @@ input:focus, select:focus, textarea:focus {
 }
 
 .scanner-tab .badge-beta {
-    display: inline-block;
-    background: #e67e22;
-    color: #fff;
-    font-size: 9px;
-    font-weight: 700;
-    padding: 2px 5px;
-    border-radius: 10px;
     margin-left: 4px;
-    vertical-align: middle;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
+    top: 0;
 }
 
 .scanner-panel { display: none; }
@@ -1296,6 +1353,19 @@ body.page-home {
     padding: 3px 9px;
 }
 
+/* Coverage statement — full-width fact line between hero and Why panel */
+.wb-coverage {
+    padding: 0 0 32px;
+    margin-bottom: 36px;
+}
+
+.wb-coverage-text {
+    font-size: 13px;
+    color: #5a6878;
+    line-height: 1.6;
+    margin: 0;
+}
+
 /* Why Westminster Brief section */
 .wb-why {
     padding: 0 0 36px;
@@ -1329,7 +1399,9 @@ body.page-home {
     line-height: 1;
     flex-shrink: 0;
     margin-top: 2px;
+    color: #1a4a6e;
 }
+.wb-why-icon svg { display: block; }
 
 .wb-why-title {
     font-weight: 600;
@@ -1954,20 +2026,6 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
 .ah-recent-browse:hover { text-decoration: underline; }
 .ah-recent-updated { color: #8a96a4; margin-left: auto; white-space: nowrap; }
 
-.ah-beta-badge {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    color: #fff;
-    background: #e67e22;
-    border-radius: 3px;
-    padding: 1px 6px;
-    vertical-align: middle;
-    margin-left: 8px;
-    position: relative;
-    top: -2px;
-}
 
 /* Search form — white card */
 .ah-form {

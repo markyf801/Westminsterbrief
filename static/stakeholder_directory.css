@@ -20,20 +20,6 @@
 .badge-st-orange { background: #ffedd5; color: #c2410c; }
 .badge-st-grey   { background: #f1f5f9; color: #475569; }
 
-/* --- BETA badge (nav + page headings) --- */
-.badge-beta {
-    display: inline-block;
-    background: #e67e22;
-    color: #fff;
-    font-size: 9px;
-    font-weight: 700;
-    padding: 2px 5px;
-    border-radius: 10px;
-    margin-left: 4px;
-    vertical-align: middle;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
 
 /* --- Directory index stats row --- */
 .dir-stats-row {

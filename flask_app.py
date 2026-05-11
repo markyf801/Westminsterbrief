@@ -601,8 +601,27 @@ def ping():
 @app.route('/')
 @app.route('/home')
 def home():
+    from sqlalchemy import func as sql_func
+    session_count_str, pq_count_str, org_count_str = "", "", ""
     try:
-        return render_template('home.html')
+        from hansard_archive.models import HansardSession, HaPQ
+        sc  = db.session.query(sql_func.count(HansardSession.id)).filter(HansardSession.is_container == False).scalar() or 0
+        pqc = db.session.query(sql_func.count(HaPQ.id)).scalar() or 0
+        if sc:
+            session_count_str = f"over {(sc // 1000) * 1000:,}"
+        if pqc:
+            pq_count_str = f"over {(pqc // 10000) * 10000:,}"
+    except Exception:
+        pass
+    try:
+        from stakeholder_directory.models import Organisation
+        orgc = db.session.query(sql_func.count(Organisation.id)).scalar() or 0
+        if orgc:
+            org_count_str = f"{(orgc // 1000) * 1000:,}+"
+    except Exception:
+        pass
+    try:
+        return render_template('home.html', session_count=session_count_str, pq_count=pq_count_str, org_count=org_count_str)
     except Exception as _e:
         print(f'[HOME ERROR] {_e}', flush=True)
         raise

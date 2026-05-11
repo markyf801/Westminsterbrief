@@ -24,7 +24,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=15">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=17">
     {% block extra_head %}{% endblock %}
     {% block json_ld %}
     <script type="application/ld+json">
@@ -90,10 +90,12 @@
 
     <div class="footer">
         &copy; 2026 Westminster Brief. AI-generated briefing content is original work and may not be reproduced without permission.
-        <br style="margin-bottom:6px;">
         Contains Parliamentary information licensed under the
         <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank">Open Parliament Licence v3.0</a>.
-        Hansard Archive updated hourly during sittings.
+        <br style="margin-bottom:6px;">
+        Hansard updated hourly during sittings
+        &nbsp;·&nbsp;
+        Written Questions updated each morning
         &nbsp;·&nbsp;
         <a href="/terms">Terms of Use</a>
         &nbsp;·&nbsp;
@@ -102,8 +104,10 @@
         <a href="/feedback">Feedback &amp; Contact</a>
         &nbsp;·&nbsp;
         <a href="/history-of-hansard">History of Hansard</a>
+        {% if session.get('admin_authenticated') %}
         &nbsp;·&nbsp;
         <a href="/admin" style="color:inherit; opacity:0.5;">Admin</a>
+        {% endif %}
     </div>
 
 </body>
