@@ -29,6 +29,20 @@ Add a parallel data layer to the directory covering government consultations. Th
 
 ---
 
+### Key Speakers on a Topic — Three Product Surfaces
+
+Who's actually leading the parliamentary conversation on a given issue, not just who's spoken once. Three distinct surfaces with different build costs:
+
+1. **Theme page enhancement** (`/archive/theme/<slug>`) — "Top contributors" panel: count-based, no analytical work, indexable for SEO. Build cost: ~1–2 days. Free feature.
+2. **Paid briefing pack** (Phase 2B) — "Key MPs to engage": full analytical treatment, position analysis, advocate identification, Whitehall-aware framing. Already scoped as part of the £49 pack design.
+3. **Subscription alert** (Phase 2B reframed) — "New contributions on theme X by MPs you follow": recurring product, different shape from the briefing pack.
+
+**Revisit trigger:** 4+ weeks post-share with GSC data on theme-page traffic. If theme pages are getting organic visits, Option 1 is high-leverage and low-cost. If theme pages get no traffic, Option 1 doesn't earn its build cost. Usage patterns inform which surface is worth building first.
+
+*Captured 11 May 2026 — sparked by looking at a session detail page and noticing speaker info is buried in the contribution list. Right surface depends on how users actually traverse the archive.*
+
+---
+
 ### MP Engagement Scoring
 Rank MPs by observable parliamentary engagement per topic — WQs tabled, debate contributions, EDM signatures, committee questions, adjournment debates — as a composite score. Output: "MPs most engaged with [topic X]." Useful for stakeholder mapping by charity policy officers, public affairs professionals, and researchers. Potentially a flagship paid-tier feature.
 

@@ -464,9 +464,12 @@ def _session_context(session: HansardSession) -> dict:
             "speech_text":  c.speech_text or "",
         })
 
+    unique_speakers = len({c.member_id for c in raw_contribs if c.member_id is not None})
+
     return {
         "session":           session,
         "contributions":     contributions,
+        "unique_speakers":   unique_speakers,
         "policy_areas":      policy_areas,
         "specific_topics":   specific_topics,
         "human_date":        _human_date(session.date),
