@@ -219,7 +219,7 @@ Clear mapping to avoid confusion when discussing issues:
 
 ### Railway Postgres connections
 
-- **Local connections** (migration scripts, pg_dump, psql) need the **public URL** from Postgres service → Database → Config — looks like `postgresql://...@<region>.proxy.rlwy.net:PORT/railway`. The internal hostname (`postgres.railway.internal`) only resolves inside Railway's network.
+- **Local connections** (migration scripts, pg_dump, psql) need the **public URL** from Postgres service → Database → Config. **The actual hostname for this project is `hopper.proxy.rlwy.net:50798`** — not the generic `<region>.proxy.rlwy.net` pattern shown in Railway docs. Full URL shape: `postgresql://postgres:<password>@hopper.proxy.rlwy.net:50798/railway`. The internal hostname (`postgres.railway.internal`) only resolves inside Railway's network.
 - **Production Flask service** uses `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a Variable Reference — not a hardcoded string. This resolves at deploy time.
 
 ### Password rotation
@@ -701,6 +701,42 @@ if request.method == 'POST':
 return render_template('page.html', total_available=total_available)
 ```
 
+## Flask template safety — reserved Jinja2 globals
+
+Flask injects these names as Jinja2 globals on every request. Passing any of them as a `render_template()` kwarg silently replaces the global with the kwarg value. The collision causes no error at render time — it only fails later when something in a template (often `base.html`) calls a method on the original global object.
+
+**Reserved names — never use as render_template kwargs:**
+
+| Name | What it is |
+|---|---|
+| `session` | Flask session proxy |
+| `request` | Flask request object |
+| `g` | Flask app-context global |
+| `config` | Flask app config |
+| `url_for` | URL builder function |
+| `get_flashed_messages` | Flash message accessor |
+| `current_user` | Flask-Login user proxy |
+
+**Pattern to avoid:**
+```python
+ctx = {"session": hansard_session_obj, ...}
+return render_template("page.html", **ctx)
+```
+
+**Pattern to prefer — rename the kwarg:**
+```python
+ctx = {"hs_session": hansard_session_obj, ...}
+return render_template("page.html", **ctx)
+```
+
+If the kwarg name is load-bearing (templates already reference it), inject truly global values via a `@app.context_processor` instead of calling them through the shadowed global in templates.
+
+**Triggered by:** May 2026 — `_session_context()` in `hansard_archive/views.py` passed a `HansardSession` model as `"session"`. Adding `{% if session.get('admin_authenticated') %}` to `base.html` for the admin link called `.get()` on the model, breaking every `/archive/debate/...` page in production. Fix: context processor injecting `admin_authenticated` directly.
+
+**Defensive measures to build (separate piece of work):**
+- `tests/test_routes.py` — pytest suite hitting key routes via Flask test client, asserts HTTP 200. Catches base.html regressions and template-context collisions at test time.
+- Pre-push lint script — greps `render_template()` calls for reserved kwarg names, fails if found.
+
 ## TWFY API — known quirks
 
 - **Date range + `person=` param**: TWFY ignores the date range when `person=` is also set. Always apply a Python-level date filter after fetching minister speeches. Never rely on TWFY to enforce the date.
@@ -1022,21 +1058,41 @@ When Mark requests a push of a small unrelated change while in the middle of a P
 
 ## Pre-push checklist
 
-Before every `git push`, run:
-```bash
-python -c "from flask_app import app; print('OK')"
-```
-If this fails, do not push. Fix the import error first.
+Before every `git push`:
+1. `python -c "from flask_app import app; print('OK')"` — must return OK. Fix import errors first.
+2. `git status` — confirm only intended files are staged. No accidental .env, debug scripts, or unrelated changes.
+3. Confirm you are on a known-good branch (not a detached HEAD or experiment branch).
 
 After Railway deploys, verify with these full URLs:
 
 | Check | URL |
 |---|---|
 | Health (commit hash + API status) | `https://westminsterbrief.co.uk/health` |
-| PQ detail page (Phase 2) | `https://westminsterbrief.co.uk/archive/pq/111792` |
+| PQ detail page | `https://westminsterbrief.co.uk/archive/pq/111792` |
 | Archive search with filter | `https://westminsterbrief.co.uk/archive/search?q=franchising` |
 | Sitemap | `https://westminsterbrief.co.uk/sitemap.xml` |
 | Archive home | `https://westminsterbrief.co.uk/archive` |
+
+## Pre-share checklist
+
+Run this before sending the site to any new user group. Landing-page review is not sufficient — detail pages have a different failure mode (template-context bugs, missing data fields) that only surfaces when you actually click through to them.
+
+Walk each of these end-to-end with realistic data:
+
+- [ ] Landing page renders cleanly
+- [ ] Hansard Archive index + **at least one session detail page** (click through from search results)
+- [ ] A PQ detail page — confirm asking MP name and answering minister name both appear
+- [ ] An MP archive page (e.g. `/archive/mp/<id>`)
+- [ ] Search results page with results, and an empty-results state
+- [ ] Stakeholder Directory index + at least one organisation detail view
+- [ ] Member Research + Member Profiles for one MP
+- [ ] Parliamentary Research Tool (both tabs, run a real search)
+
+Also:
+- [ ] No 500 errors, no missing data fields, no broken layouts on any of the above
+- [ ] Check Google Search Console for new error patterns since last push
+
+**Triggered by:** May 2026 — two share-blocking bugs (session detail pages returning 500 from a Flask session variable collision; asking MP and answering minister names missing from all PQ detail pages) went undetected during a landing-page polish review and were only found by spot-clicking detail pages.
 
 ## Things to avoid
 - Don't use port 5432 for Supabase if ever added — use the connection pooler on 6543
