@@ -1920,5 +1920,10 @@ app.register_blueprint(archive_bp)
 def inject_version():
     return {'app_version': APP_VERSION}
 
+@app.context_processor
+def inject_admin_auth():
+    from flask import session as flask_session
+    return {'admin_authenticated': flask_session.get('admin_authenticated', False)}
+
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
