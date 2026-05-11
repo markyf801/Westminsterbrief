@@ -1,5 +1,10 @@
 FROM python:3.12-slim
 
+# Pin libpq5 to PG16 — pgdg now includes PG18 whose libpq5 requires
+# libldap-2.5-0 that is unavailable on Debian Bookworm.
+RUN printf 'Package: libpq5\nPin: version 16.*\nPin-Priority: 1001\n' \
+    > /etc/apt/preferences.d/pin-libpq5
+
 # postgresql-client (pg_dump) and gnupg for backup-cron-r2.
 # Safe to include for all cron services — archive crons don't use these binaries
 # but having them present doesn't affect runtime.
