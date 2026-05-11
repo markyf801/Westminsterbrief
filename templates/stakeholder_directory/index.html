@@ -73,7 +73,7 @@
     {% endif %}
 
     <p style="font-size:12.5px; color:#888; margin-top:12px; margin-bottom:0;">
-        Data coverage: select committee evidence (oral and written) across all main UK government departments, 2024–2026{% if coverage.committee %} ({{ coverage.committee }}){% endif %}. Ministerial meetings: Department for Education{% if coverage.ministerial %} {{ coverage.ministerial }}{% endif %}{% if coverage.lobbying %}; lobbying register {{ coverage.lobbying }}{% endif %}.
+        Data coverage: select committee evidence (oral and written) across all main UK government departments, {{ coverage.committee or '2024–2026' }}. Ministerial meetings: Department for Education{% if coverage.ministerial %} {{ coverage.ministerial }}{% endif %}{% if coverage.lobbying %}; lobbying register {{ coverage.lobbying }}{% endif %}.
         Ministerial meetings for additional departments will be added progressively.
     </p>
 </div>

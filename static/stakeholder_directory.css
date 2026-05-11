@@ -5,20 +5,18 @@
 /* --- Source type badges --- */
 .badge-st {
     display: inline-block;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     padding: 2px 8px;
-    border-radius: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    border-radius: 3px;
     white-space: nowrap;
 }
 
-.badge-st-blue   { background: #dbeafe; color: #1e40af; }
-.badge-st-purple { background: #ede9fe; color: #5b21b6; }
-.badge-st-teal   { background: #ccfbf1; color: #0f766e; }
-.badge-st-orange { background: #ffedd5; color: #c2410c; }
-.badge-st-grey   { background: #f1f5f9; color: #475569; }
+.badge-st-blue   { background: #e8edf4; color: #4a7fa5; }
+.badge-st-purple { background: #e8edf4; color: #4a7fa5; }
+.badge-st-teal   { background: #e8edf4; color: #4a7fa5; }
+.badge-st-orange { background: #f1f4f8; color: #5a7a9a; }
+.badge-st-grey   { background: #f1f5f9; color: #64748b; }
 
 
 /* --- Directory index stats row --- */

@@ -93,7 +93,9 @@ def index():
     def _year_range(min_d, max_d):
         if not min_d:
             return None
-        y1, y2 = min_d.year, max_d.year
+        from datetime import date as _date
+        y1 = min_d.year
+        y2 = min(max_d.year, _date.today().year)  # cap at current year to guard against data typos
         return str(y1) if y1 == y2 else f'{y1}–{y2}'
 
     coverage = {row.grp: _year_range(row.min_d, row.max_d) for row in _cov_rows}
