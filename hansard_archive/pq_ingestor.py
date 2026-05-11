@@ -114,6 +114,7 @@ def _extract_pq_fields(value: dict) -> dict | None:
         "asking_member": (asking.get("name") or "").strip() or None,
         "asking_mnis_id": value.get("askingMemberId") or None,
         "answering_member": (answering_member_obj.get("name") or "").strip() or None,
+        "answering_mnis_id": value.get("answeringMemberId") or None,
         "answering_body": (value.get("answeringBodyName") or "").strip() or None,
         "answering_body_id": value.get("answeringBodyId") or None,
         "tabled_date":  _parse_date(value.get("dateTabled")),
@@ -215,6 +216,7 @@ def ingest_pq_date_range(
                     existing.is_holding    = fields["is_holding"]
                     existing.is_withdrawn  = fields["is_withdrawn"]
                     existing.answering_member = fields["answering_member"]
+                    existing.answering_mnis_id = fields["answering_mnis_id"]
                     existing.answering_body = fields["answering_body"]
                     existing.answering_body_id = fields["answering_body_id"]
                     existing.asking_member = fields["asking_member"]

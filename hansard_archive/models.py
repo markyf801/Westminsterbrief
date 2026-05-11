@@ -187,6 +187,7 @@ class HaPQ(db.Model):
     asking_member = db.Column(db.String(200))
     asking_mnis_id = db.Column(db.Integer, index=True)
     answering_member = db.Column(db.String(200))
+    answering_mnis_id = db.Column(db.Integer, index=True)
     answering_body = db.Column(db.String(200), index=True)
     answering_body_id = db.Column(db.Integer, index=True)
 
