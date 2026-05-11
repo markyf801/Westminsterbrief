@@ -15,6 +15,9 @@
     <div class="ah-header">
         <h1 class="ah-title">Hansard Archive <span class="badge-beta">BETA</span></h1>
         <p class="ah-desc">UK parliamentary debates — Commons and Lords</p>
+        {% if archive_session_count or archive_pq_count %}
+        <p class="ah-desc">Search {{ archive_session_count or '5,000+' }} debates and {{ archive_pq_count or '90,000+' }} Written Questions by topic, MP, department, or date.</p>
+        {% endif %}
         {% if last_ingested %}
         <p class="ah-currency">Updated hourly during parliamentary sittings &nbsp;·&nbsp; Most recent session: <strong>{{ last_ingested }}</strong>{% if archive_start %} &nbsp;·&nbsp; Archive from <strong>{{ archive_start }}</strong>{% endif %}</p>
         {% endif %}
@@ -41,7 +44,7 @@
     <form class="ah-form" method="get" action="/archive">
         <div class="ah-search-row">
             <label for="ah-search-q" class="ah-visually-hidden">Search Hansard speeches and debates</label>
-            <input type="text" name="q" id="ah-search-q" placeholder="Search speeches and debates…"
+            <input type="text" name="q" id="ah-search-q" placeholder="Search by topic, MP, or keyword…"
                    class="ah-search-input" autocomplete="off" spellcheck="false">
             <button type="submit" class="ah-search-btn">Search</button>
             {% if has_filters %}<a href="/archive" class="ah-clear-link">Clear</a>{% endif %}

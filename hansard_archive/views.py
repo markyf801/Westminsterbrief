@@ -613,6 +613,16 @@ def archive_home():
     except (ValueError, TypeError):
         page = 1
 
+    # Counts for the search affordance line — queried once, passed to all render paths
+    try:
+        _sc = db.session.query(func.count(HansardSession.id)).filter(HansardSession.is_container == False).scalar() or 0
+        _pqc = db.session.query(func.count(HaPQ.id)).scalar() or 0
+        archive_session_count = f"{_sc:,}" if _sc else ""
+        archive_pq_count = f"{(_pqc // 10000) * 10000:,}+" if _pqc else ""
+    except Exception:
+        archive_session_count = ""
+        archive_pq_count = ""
+
     stmt = HansardSession.query.filter_by(is_container=False)
 
     if house_filter in ("Commons", "Lords"):
@@ -753,6 +763,8 @@ def archive_home():
             archive_start=_archive_start_label(),
             today_str=date_type.today().isoformat(),
             recent_additions=_recent_additions(),
+            archive_session_count=archive_session_count,
+            archive_pq_count=archive_pq_count,
         )
 
     # --- Bill-grouped view: committee_stage (no search query) ---
@@ -852,6 +864,8 @@ def archive_home():
             archive_start=_archive_start_label(),
             today_str=date_type.today().isoformat(),
             recent_additions=_recent_additions(),
+            archive_session_count=archive_session_count,
+            archive_pq_count=archive_pq_count,
         )
 
     # --- Flat list (default) ---
@@ -895,6 +909,8 @@ def archive_home():
         archive_start=_archive_start_label(),
         today_str=today_str,
         recent_additions=_recent_additions(),
+        archive_session_count=archive_session_count,
+        archive_pq_count=archive_pq_count,
     )
 
 
