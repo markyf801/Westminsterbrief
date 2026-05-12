@@ -262,8 +262,8 @@ h3 { font-size: 17px; }
 /* --- FORMS --- */
 p.form-hint {
     margin: -10px 0 10px;
-    font-size: 12px;
-    color: #718096;
+    font-size: 14px;
+    color: #5a6878;
 }
 
 label.form-label {
