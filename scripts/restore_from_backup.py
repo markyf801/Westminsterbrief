@@ -148,11 +148,17 @@ def main():
         log(f"Decompressed ({os.path.getsize(sql_path):,} bytes)")
 
         # 4. Restore via psql
+        # Extract password from URL and pass as PGPASSWORD env var so psql
+        # never needs to prompt (prompt would be invisible with stderr=PIPE).
+        import urllib.parse as _urlparse
+        _parsed = _urlparse.urlparse(target_db_url)
+        _pg_env = {**os.environ, "PGPASSWORD": _parsed.password or ""}
         log("Running psql restore (this may take a moment)...")
         result = subprocess.run(
             [_PSQL, target_db_url, "-f", sql_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=_pg_env,
         )
         if result.returncode != 0:
             die(f"psql restore failed:\n{result.stderr.decode()[:1000]}")
