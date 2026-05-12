@@ -309,6 +309,11 @@ STRIPE_WEBHOOK_SECRET=
 ```
 
 ## Local development
+
+**Local environment: Windows 11.** Shell is PowerShell. Postgres CLI tools at `C:\Program Files\PostgreSQL\18\bin\` (on system PATH). `gpg` is not in PATH — use `C:\Program Files\Git\usr\bin\gpg.exe` directly. PG16 server installed at `C:\Program Files\PostgreSQL\16\bin\` (not on PATH) for local restore testing.
+
+**Windows subprocess pattern:** Any script that invokes an external binary via `subprocess.run(["binary", ...])` must use a platform-resolved constant rather than a hardcoded name, because external tools (`gpg`, `psql`, `pg_dump`) are not reliably on PATH on Windows. Follow the `_GPG` / `_PSQL` pattern in `restore_from_backup.py`: `r"C:\full\path\binary.exe" if platform.system() == "Windows" else "binary"`.
+
 ```bash
 cd c:\Users\marky\hansard_app
 pip install -r requirements.txt

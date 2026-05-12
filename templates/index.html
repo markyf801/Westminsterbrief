@@ -55,8 +55,9 @@
     <form method="POST" action="/questions">
         <div class="form-group">
             <label class="form-label">Search Topic:</label>
-            <input type="text" name="subject" placeholder="Enter subjects separated by commas"
+            <input type="text" name="subject" placeholder="e.g. franchising in higher education, student loans"
                    value="{{ request.form.get('subject', '') }}">
+            <p class="form-hint">Broad single-word searches return more results — narrow with a phrase for better precision.</p>
         </div>
 
         <div class="form-row">
