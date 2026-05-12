@@ -314,6 +314,16 @@ STRIPE_WEBHOOK_SECRET=
 
 **Windows subprocess pattern:** Any script that invokes an external binary via `subprocess.run(["binary", ...])` must use a platform-resolved constant rather than a hardcoded name, because external tools (`gpg`, `psql`, `pg_dump`) are not reliably on PATH on Windows. Follow the `_GPG` / `_PSQL` pattern in `restore_from_backup.py`: `r"C:\full\path\binary.exe" if platform.system() == "Windows" else "binary"`.
 
+**subprocess.run diagnostic pattern — always apply to new scripts:** When calling an external binary with `stdout=PIPE, stderr=PIPE`, always surface stderr regardless of exit code, and pass `errors="replace"` to decode. Silent success with no tables/output is a common failure mode when psql/gpg run but fail internally. Template:
+```python
+result = subprocess.run([...], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+stderr_out = result.stderr.decode(errors="replace")
+if stderr_out.strip():
+    log(f"stderr:\n{stderr_out[:3000]}")
+if result.returncode != 0:
+    die(f"command failed (exit {result.returncode})")
+```
+
 ```bash
 cd c:\Users\marky\hansard_app
 pip install -r requirements.txt
