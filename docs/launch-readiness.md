@@ -46,7 +46,7 @@ This document captures everything that must be true before flipping `FEATURE_AUT
 - [ ] Postmark sending domain `westminsterbrief.co.uk` verified (SPF, DKIM, Return-Path) — already done locally, confirm active on Railway
 - [ ] `/health` endpoint passing all checks on production (DB, Gemini API, TWFY API)
 - [ ] Smoke test passing on live Railway after deploy
-- [x] External Postgres backup pipeline built and first R2 upload verified — `daily/2026-04-29.sql.gz.gpg` confirmed in bucket (83MB dump, compressed to 5.5MB, encrypted)
+- [x] External Postgres backup pipeline built and working. First *successful* backup: `daily/2026-05-11.sql.gz.gpg` (~107MB compressed + encrypted). Pipeline was deployed 29 April but failed silently 29 Apr – 10 May due to a Docker dependency issue (PGDG PG18 client required `libldap` incompatible with Debian Bookworm); fixed 11 May by switching to Debian native `postgresql-client`. The 13-day gap (29 Apr – 10 May 2026) is accepted as unrecoverable historical loss. Daily backups confirmed running from 11 May onwards.
 - [ ] **[HARD BLOCKER]** Restoration test verified end-to-end before public launch. Test must include: download from R2, decrypt, decompress, restore into clean Postgres, confirm tables and row counts match production. Script and runbook are ready (`scripts/restore_from_backup.py`, `docs/recovery-runbook.md`). **No feature flag may be flipped from `hidden` to `beta` or `live` until this test passes.**
 
 ---
