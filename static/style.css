@@ -1605,11 +1605,19 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
     color: #2a5a8a;
     border: 1px solid #c8dcea;
 }
-.archive-tag-policy:hover { background: #d4e5f5; }
+.archive-tag-policy:hover { background: #d4e5f5; text-decoration: underline; }
 .archive-tag-topic {
     background: #f0f4f0;
     color: #3a6040;
     border: 1px solid #c8dcc8;
+}
+.archive-tag-topic:hover { background: #e4ece4; text-decoration: underline; }
+.sd-theme-label {
+    font-size: 11px;
+    color: #6b7a8d;
+    font-weight: 600;
+    margin-right: 4px;
+    letter-spacing: 0.2px;
 }
 
 /* Page wrapper — sets light background for this page only */

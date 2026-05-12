@@ -50,6 +50,7 @@
 
         {% if policy_areas or specific_topics %}
         <div class="sd-theme-row">
+            <span class="sd-theme-label">Related topics:</span>
             {% for pa in policy_areas %}
             <a href="/archive/policy/{{ pa|slugify }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
             {% endfor %}
