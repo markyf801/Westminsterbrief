@@ -37,6 +37,13 @@ _GPG = (
     else "gpg"
 )
 
+# On Windows, psql is not always in PATH even when PG client tools are installed.
+_PSQL = (
+    r"C:\Program Files\PostgreSQL\16\bin\psql.exe"
+    if platform.system() == "Windows"
+    else "psql"
+)
+
 
 def log(msg):
     print(f"[restore] {msg}", flush=True)
@@ -143,7 +150,7 @@ def main():
         # 4. Restore via psql
         log("Running psql restore (this may take a moment)...")
         result = subprocess.run(
-            ["psql", target_db_url, "-f", sql_path],
+            [_PSQL, target_db_url, "-f", sql_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
