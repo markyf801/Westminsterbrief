@@ -23,11 +23,19 @@ Safety:
 
 import gzip
 import os
+import platform
 import subprocess
 import sys
 import tempfile
 
 import boto3
+
+# On Windows, gpg is bundled with Git but not always in PATH.
+_GPG = (
+    r"C:\Program Files\Git\usr\bin\gpg.exe"
+    if platform.system() == "Windows"
+    else "gpg"
+)
 
 
 def log(msg):
@@ -112,7 +120,7 @@ def main():
         log("Decrypting...")
         result = subprocess.run(
             [
-                "gpg", "--batch", "--yes",
+                _GPG, "--batch", "--yes",
                 "--passphrase-fd", "0",
                 "--decrypt",
                 "--output", gz_path,
