@@ -29,6 +29,9 @@ import sys
 import tempfile
 
 import boto3
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # On Windows, gpg is bundled with Git but not always in PATH.
 _GPG = (
@@ -141,26 +144,37 @@ def main():
         log(f"Decrypted ({os.path.getsize(gz_path):,} bytes)")
 
         # 3. Decompress
+        # PG17-only SET statements that fail on older local servers — strip them.
+        # These are session-level no-ops; removing them has no effect on data.
+        _PG17_ONLY = [b"transaction_timeout"]
+
         log("Decompressing...")
         with gzip.open(gz_path, "rb") as f_in, open(sql_path, "wb") as f_out:
-            while chunk := f_in.read(1024 * 1024):
-                f_out.write(chunk)
+            for line in f_in:
+                if any(pat in line for pat in _PG17_ONLY):
+                    continue
+                f_out.write(line)
         log(f"Decompressed ({os.path.getsize(sql_path):,} bytes)")
 
         # 4. Restore via psql
-        # Extract password from URL and pass as PGPASSWORD env var so psql
-        # never needs to prompt (prompt would be invisible with stderr=PIPE).
+        # Prefer PGPASSWORD env var directly (avoids URL-encoding issues with
+        # special characters in passwords). Fall back to extracting from URL.
         import urllib.parse as _urlparse
         _parsed = _urlparse.urlparse(target_db_url)
-        _pg_env = {**os.environ, "PGPASSWORD": _parsed.password or ""}
+        _password = os.environ.get("PGPASSWORD") or _urlparse.unquote(_parsed.password or "")
+        _pg_env = {**os.environ, "PGPASSWORD": _password}
         log("Running psql restore (this may take a moment)...")
-        result = subprocess.run(
-            [_PSQL, "--echo-errors", target_db_url, "-f", sql_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_pg_env,
-        )
-        stderr_out = result.stderr.decode(errors="replace")
+        stderr_log = os.path.join(tmpdir, "psql_stderr.txt")
+        with open(stderr_log, "w", encoding="utf-8") as _stderr_f:
+            result = subprocess.run(
+                [_PSQL, "-f", sql_path,
+                 "--echo-errors", "--set", "ON_ERROR_STOP=1",
+                 target_db_url],
+                stderr=_stderr_f,
+                env=_pg_env,
+            )
+        with open(stderr_log, encoding="utf-8", errors="replace") as _f:
+            stderr_out = _f.read()
         if stderr_out.strip():
             log(f"psql stderr (first 3000 chars):\n{stderr_out[:3000]}")
         if result.returncode != 0:
