@@ -82,9 +82,29 @@ KNOWN_TWFY_IDS = {
 }
 
 DEPARTMENTS_TWFY = [
-    "All Departments", "Department for Education", "Department of Health and Social Care",
-    "HM Treasury", "Home Office", "Ministry of Defence", "Ministry of Justice",
-    "Department for Science, Innovation and Technology", "Cabinet Office"
+    "Attorney General's Office",
+    "Cabinet Office",
+    "Department for Business and Trade",
+    "Department for Culture, Media and Sport",
+    "Department for Education",
+    "Department for Energy Security and Net Zero",
+    "Department for Environment, Food and Rural Affairs",
+    "Department for Science, Innovation and Technology",
+    "Department for Transport",
+    "Department for Work and Pensions",
+    "Department of Health and Social Care",
+    "Foreign, Commonwealth and Development Office",
+    "HM Revenue and Customs",
+    "HM Treasury",
+    "Home Office",
+    "Ministry of Defence",
+    "Ministry of Housing, Communities and Local Government",
+    "Ministry of Justice",
+    "Northern Ireland Office",
+    "Office of the Leader of the House of Commons",
+    "Office of the Leader of the House of Lords",
+    "Scotland Office",
+    "Wales Office",
 ]
 
 DEPT_KEYWORDS = {
@@ -2249,7 +2269,7 @@ def debates_topic():
         start_date = request.form.get('start_date', '').strip()
         end_date = request.form.get('end_date', '').strip()
         house_filter = request.form.get('house_filter', 'all')
-        selected_depts = request.form.getlist('dept_filter')
+        selected_depts = [d for d in request.form.getlist('dept_filter') if d]
         # Pre-expanded query from the preview-and-edit UI — skip Gemini expansion if provided
         preset_expanded = request.form.get('expanded_query', '').strip()
 
