@@ -198,6 +198,8 @@ class HaPQ(db.Model):
     is_withdrawn = db.Column(db.Boolean, default=False, nullable=False)
     chamber      = db.Column(db.String(20), index=True)  # Commons | Lords
 
+    api_id      = db.Column(db.Integer, index=True)  # Parliament API numeric id for individual endpoint
+
     ingested_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 

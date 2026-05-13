@@ -31,7 +31,6 @@ _PAGE_SIZE = 500
 _COMMIT_BATCH = 200
 _INTER_REQUEST_DELAY = 0.3   # seconds between paginated requests
 _PAGE_RETRIES = 3            # retries on transient errors before skipping a page
-_ANSWER_TRUNC_THRESHOLD = 300  # bulk endpoint truncates answers at ~258 chars
 
 
 def _strip_html(html: str) -> str:
@@ -67,15 +66,6 @@ def _fetch_individual(api_id: int) -> dict | None:
         return None
 
 
-def _fetch_full_answer(api_id: int) -> str | None:
-    """Fetch full answer text via the individual question endpoint."""
-    value = _fetch_individual(api_id)
-    if not value:
-        return None
-    raw = value.get("answerText") or ""
-    return _clean_whitespace(_strip_html(raw)) or None
-
-
 def _extract_pq_fields(value: dict) -> dict | None:
     """Extract and normalise fields from a WQ API value object."""
     uin = (value.get("uin") or "").strip()
@@ -90,23 +80,13 @@ def _extract_pq_fields(value: dict) -> dict | None:
     answer_raw = value.get("answerText") or ""
     answer_text = _clean_whitespace(_strip_html(answer_raw)) or None
 
-    # Bulk endpoint truncates answer text at ~258 chars. Detect truncation by
-    # checking if the stripped text is under threshold and ends mid-sentence.
-    api_id = value.get("id")
-    answer_truncated = bool(
-        answer_text
-        and len(answer_text) < _ANSWER_TRUNC_THRESHOLD
-        and api_id
-    )
-
     # askingMember / answeringMember are sometimes null in the API response;
     # member IDs and body name/id are returned as flat fields.
     asking = value.get("askingMember") or {}
     answering_member_obj = value.get("answeringMember") or {}
 
     return {
-        "_api_id": api_id,               # transient — used to fetch full answer
-        "_answer_truncated": answer_truncated,
+        "api_id": value.get("id"),       # Parliament numeric id; stored for individual-endpoint lookups
         "uin": uin,
         "heading": (value.get("heading") or "").strip() or None,
         "question_text": question_text,
@@ -186,11 +166,11 @@ def ingest_pq_date_range(
                 errors += 1
                 continue
 
-            # For answered rows, fetch the individual endpoint to get fields the
-            # bulk endpoint omits: answerIsHolding, isWithdrawn, and full answer
-            # text. skip_answer_fetch=True bypasses this for large backfill runs.
-            api_id = fields.pop("_api_id", None)
-            answer_truncated = fields.pop("_answer_truncated", False)
+            # For answered rows, fetch the individual endpoint to get full answer
+            # text plus fields the bulk endpoint omits (answerIsHolding,
+            # isWithdrawn). skip_answer_fetch=True bypasses this for bulk passes
+            # where only api_id population is needed.
+            api_id = fields.get("api_id")
             if not skip_answer_fetch and fields["is_answered"] and api_id:
                 full = _fetch_individual(api_id)
                 if full:
@@ -199,12 +179,6 @@ def ingest_pq_date_range(
                         fields["answer_text"] = full_text
                     fields["is_holding"]  = bool(full.get("answerIsHolding", False))
                     fields["is_withdrawn"] = bool(full.get("isWithdrawn", False))
-                time.sleep(_INTER_REQUEST_DELAY)
-            elif not skip_answer_fetch and answer_truncated and api_id:
-                # Unanswered but truncated — fetch for full text only
-                full_text = _fetch_full_answer(api_id)
-                if full_text:
-                    fields["answer_text"] = full_text
                 time.sleep(_INTER_REQUEST_DELAY)
 
             try:
@@ -221,6 +195,8 @@ def ingest_pq_date_range(
                     existing.answering_body_id = fields["answering_body_id"]
                     existing.asking_member = fields["asking_member"]
                     existing.asking_mnis_id = fields["asking_mnis_id"]
+                    if fields.get("api_id"):
+                        existing.api_id = fields["api_id"]
                     existing.updated_at = datetime.utcnow()
                     updated += 1
                 else:

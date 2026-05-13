@@ -461,6 +461,12 @@ with app.app_context():
             _conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_ha_pq_answering_mnis_id ON ha_pq (answering_mnis_id)"
             ))
+            _conn.execute(text(
+                "ALTER TABLE ha_pq ADD COLUMN IF NOT EXISTS api_id INTEGER"
+            ))
+            _conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_ha_pq_api_id ON ha_pq (api_id)"
+            ))
             _conn.commit()
         _mig_log('ha_pq cols done')
     except Exception as _e:
