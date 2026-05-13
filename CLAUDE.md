@@ -1,10 +1,109 @@
 # Westminster Brief — Project Instructions
 
-## What this project is
+---
 
-Westminster Brief is a parliamentary research and stakeholder intelligence tool for UK policy professionals — built by a civil servant, free for gov.uk users.
+## Project orientation
 
-Lets users search Hansard, track Written Questions, analyse debates, research stakeholders, and generate Word briefings. Deployed on Railway at `westminsterbrief.co.uk`.
+Westminster Brief is a UK parliamentary research tool — free for civil servants and policy professionals, paid subscription for everyone else. Live at `westminsterbrief.co.uk` on Railway. Built by Mark Forde, a UK civil servant (higher education policy), as a side project at ~24 hours/week.
+
+**Current phase:** Phase 2A (free public Hansard archive live). Next: Phase 2A.5 (PQ answer caching, smoke tests, minor UX). Phase 2 (paid stakeholder briefing pack) follows after.
+
+**Three-role working model:**
+- **Mark** — developer and product owner. Makes all decisions.
+- **Claude Code** — implementer. Writes code, runs builds, manages files. Proceeds directly on clear tasks.
+- **Opus (chat session)** — strategic advisor. Called in for architecture decisions, product strategy, stuck debugging, anything needing fresh judgment before Code acts.
+
+**Briefs for Code from Opus are written in fenced code blocks** so Mark gets a copy-button UI when pasting from the Opus chat response into a Code session.
+
+---
+
+## Working pattern
+
+- **Branch:** `master` (not `main`) — always work here unless explicitly on a feature branch
+- **GitHub:** `https://github.com/markyf801/Westminsterbrief` — Railway auto-deploys on push to master
+- **Never push automatically** — commit locally, show what changed, wait for Mark to say "push" or "push it"
+- **Local environment:** Windows 11, PowerShell, Python 3.13. Postgres client tools at `C:\Program Files\PostgreSQL\18\bin\` (on PATH). PG16 server at `C:\Program Files\PostgreSQL\16\bin\` (not on PATH) for local restore testing.
+- **Production environment:** Railway, Linux/Docker, Python 3.12
+- **Start local dev server:** `python flask_app.py` — runs at `http://127.0.0.1:5000`
+- **Plan mode for anything touching >3 files or >1 system** — ask before building, not after
+
+---
+
+## How future Claude/Code sessions should start
+
+At the beginning of any new working session:
+
+1. Read this CLAUDE.md — at minimum the "Project orientation", "Active priorities", and any section relevant to the current task
+2. Check "Active priorities" to understand what's in progress and where the plans live
+3. For any module you're about to change, read its design doc (see "Project files reference")
+4. Run `git log --oneline -10` to orient to recent commits
+5. **Do not assume implicit knowledge from past sessions** — verify by reading canonical docs on disk
+
+The spec captures locked decisions; it does not always capture what's been built since the last edit. Before drafting a plan or scoping work, ask: "What's actually been built vs what the doc lists as pending?"
+
+---
+
+## Active priorities — Phase 2A.5
+
+Current work queue. Each item has a plan or location:
+
+| Priority | What | Plan / location |
+|---|---|---|
+| High | PQ answer text caching | `docs/phase-2a5-pq-answer-text-plan.md` (6-stage build plan) |
+| Medium | Route smoke tests + reserved-kwarg lint guard | Described in "Flask template safety" section below |
+| Medium | Backup monitoring (Railway alert + `/health` backup-freshness) | Captured — no doc yet, ~2hr build |
+| Later | `pg_dump -Fc` / `pg_restore -j4` migration for faster restores | Defer — current plain-SQL restore works after 13 May fixes |
+
+Phase 2 (paid product: stakeholder briefing pack) is on hold until Phase 2A.5 items are cleared. Plan: `westminster-brief-phase-2-brief.md` (project root).
+
+---
+
+## Project files reference
+
+Key documents a new session should know about:
+
+| File | What it is |
+|---|---|
+| `docs/launch-readiness.md` | Pre-launch hard blockers and completion status — check before scoping work |
+| `docs/recovery-runbook.md` | Disaster recovery procedure — updated after 13 May 2026 restore drill |
+| `docs/design-principles.md` | Visual + copy guide — read before any UI redesign |
+| `docs/api-reference.md` | Confirmed working parameters for Parliament/GOV.UK APIs |
+| `docs/parliamentary-debate-types.md` | Hansard debate type taxonomy — read when touching classification logic |
+| `docs/stakeholder-directory-design.md` | Stakeholder Directory spec — read before touching that module |
+| `docs/pre-launch-checklist.md` | Legal/compliance + SEO checklist — do not remove noindex without working through this |
+| `docs/ideas-backlog.md` | Active ideas and killed ideas — capture new ideas here during sessions |
+| `westminster-brief-phase-2-brief.md` | Phase 2 (paid product) master scoping doc |
+
+---
+
+## Conventions and gotchas
+
+**Windows binary paths — always use platform constants:**
+Scripts calling external binaries (`gpg`, `psql`, `pg_dump`) via `subprocess.run()` must use platform-resolved constants, not bare names — these tools are not reliably on PATH on Windows. See `scripts/restore_from_backup.py` for the `_GPG` / `_PSQL` pattern.
+
+**PGPASSWORD — pass via env, not URL-encoding:**
+When calling psql in a subprocess, extract the password and pass it as `PGPASSWORD` in the env dict. URL-encoded passwords with special characters cause auth failures.
+
+**psql `-f` flag must come BEFORE the connection URL:**
+`psql -f file.sql postgresql://...` works. `psql postgresql://... -f file.sql` does NOT on Windows — psql stops processing flags after the positional dbname argument. Root cause of two days of silent failures, 12–13 May 2026.
+
+**`stdout=PIPE` + large subprocess output = deadlock:**
+For subprocesses producing large output (e.g. psql restoring a 460 MB dump), never use `stdout=subprocess.PIPE`. The pipe buffer fills and the process hangs indefinitely. Let stdout stream to terminal; capture only stderr to a temp file if needed.
+
+**Postgres sequence desync after Railway failover:**
+After a Railway Postgres failover or WAL recovery, auto-increment sequences can reset to a low value while data remains intact. Symptom: `duplicate key value violates unique constraint "ha_session_pkey"`. Fix in Railway's Postgres Query console:
+```sql
+SELECT setval(pg_get_serial_sequence('table_name', 'id'), (SELECT MAX(id) FROM table_name));
+```
+Run for each affected table (`ha_session`, `ha_contribution`, `ha_pq`, `ha_session_theme`).
+
+**`ON_ERROR_STOP=1` for psql restores:**
+Always pass `--set ON_ERROR_STOP=1` when restoring via psql. Without it, psql returns exit code 0 even when individual SQL statements fail.
+
+**PG17 backup → PG16 local restore:**
+Railway runs PG17. `SET transaction_timeout = 0;` in the dump is a PG17-only parameter. The restore script strips this line during decompression (`_PG17_ONLY` filter). Do not remove this filter.
+
+---
 
 ## Stack
 - **Backend:** Flask 3.0 with blueprints, deployed on Railway
@@ -402,7 +501,11 @@ The first full ingestion (Apr 2026) produced only 7 written evidence records vs 
 
 ## Active work in progress
 
-**Stakeholder directory module** — see `docs/stakeholder-directory-design.md` for full spec. Foundation phase complete (schema, vocabularies, scoring module). Next: ingester for ministerial meetings (Prompt 3 in the build plan). Module is parallel to existing tables — does not modify `StakeholderOrg`, `TrackedStakeholder`, or any existing data layer.
+**Phase 2A** — Hansard archive live in production. WQ archive live. Member cache seeding live. PQ detail pages, archive search, and sitemap all live.
+
+**Phase 2A.5** — See "Active priorities" section above for current queue.
+
+**Stakeholder directory module** — see `docs/stakeholder-directory-design.md` for full spec. Foundation phase complete (schema, vocabularies, scoring module). Ministerial meetings ingested. Committee evidence partially ingested (written evidence re-run needed — see "Committee evidence ingestion" above).
 
 **Hansard migration** — substantively complete. The `SEARCH_BACKEND=hansard` flag is the production path for parliamentary search; TWFY is no longer the primary data source.
 
@@ -585,6 +688,9 @@ Opus is particularly valuable for:
 - API behaviour that is undocumented or inconsistent (e.g. Parliament WQ API search semantics)
 - Issues where the fix keeps oscillating between two failure modes (too strict ↔ too loose)
 - Any change that has been reverted or re-applied more than once
+- Any situation where Code is considering a destructive operation as a "fix"
+- Credential / auth failures with unclear root cause
+- Any production-environment anomaly where the right response is uncertain
 
 ### Transient vs permanent errors — different responses required
 | Error type | Examples | Correct response |
@@ -757,7 +863,7 @@ If the kwarg name is load-bearing (templates already reference it), inject truly
 
 **Triggered by:** May 2026 — `_session_context()` in `hansard_archive/views.py` passed a `HansardSession` model as `"session"`. Adding `{% if session.get('admin_authenticated') %}` to `base.html` for the admin link called `.get()` on the model, breaking every `/archive/debate/...` page in production. Fix: context processor injecting `admin_authenticated` directly.
 
-**Defensive measures to build (separate piece of work):**
+**Defensive measures to build (Phase 2A.5):**
 - `tests/test_routes.py` — pytest suite hitting key routes via Flask test client, asserts HTTP 200. Catches base.html regressions and template-context collisions at test time.
 - Pre-push lint script — greps `render_template()` calls for reserved kwarg names, fails if found.
 
@@ -868,12 +974,6 @@ Before drafting a brief or scoping next steps, ask Code (or Mark) for current st
 
 Even when the spec doc has been updated recently, this check is cheap and catches drift. The cost of an unnecessary status check is small. The cost of drafting a brief against a stale spec is larger — it wastes Code's time, risks rebuilding things that exist, and can introduce regressions if Code starts on the redundant work.
 
-The 1 May 2026 session surfaced this twice:
-- Cron schedule was assumed daily-overnight per spec; had been agreed hourly in a separate conversation with previous Opus
-- Item 3 page templates and search were assumed unbuilt per running order; were largely complete
-
-Both were caught — once by Mark spotting the cron change, once by Mark pausing the item 3 brief. Both should have been caught by Opus first via status check.
-
 ---
 
 ## When to escalate to Opus / chat session
@@ -884,11 +984,9 @@ But there's a category of situations where code should pause, surface findings t
 
 ### Trigger conditions for escalation
 
-Code should pause and recommend escalation when any of the following are true:
-
 **1. Architectural decisions with cross-cutting impact.**
-- A change would affect multiple subsystems (e.g. directory + tracker + WQ scanner all use the same API helper)
-- A new pattern is being introduced that other code might follow (e.g. caching strategy, retry logic, error handling shape)
+- A change would affect multiple subsystems
+- A new pattern is being introduced that other code might follow
 - A schema change would require migration across multiple tables or features
 - The right answer depends on product strategy, not just technical correctness
 
@@ -898,57 +996,29 @@ Code should pause and recommend escalation when any of the following are true:
 - A constraint document conflicts with observed behaviour
 - A code change is producing unexpected side effects in unrelated areas
 
-When code's diagnosis surfaces something surprising, the right next step is usually to verify the diagnosis with Opus rather than act on it. Today's WQ API parameter discovery (where the documented constraint was wrong because we'd been using wrong parameter names) is a paradigm case.
-
 **3. Product or scope questions.**
 - The user request is ambiguous between two materially different interpretations
-- Implementing what's literally asked would produce a worse outcome than implementing what's likely meant
 - The change touches user-facing behaviour where the right design depends on audience considerations
-- The work feels out of proportion to the value (much smaller, or much larger, than expected)
+- The work feels out of proportion to the value
 
 **4. Civil service or operational considerations.**
 - Anything that materially shifts Westminster Brief from "private project" toward "public service"
 - Scheduled jobs, public-facing accounts, branded social media, paid integrations
-- Anything that would normally trigger a disclosure conversation
 
 **5. Resource implications.**
-- A change would meaningfully increase API costs (LLM calls in particular — Opus invocations are especially cost-sensitive)
+- A change would meaningfully increase API costs (LLM calls — Opus invocations are especially cost-sensitive)
 - A change would require new paid services
-- A change would significantly increase storage, bandwidth, or compute usage
 
 **6. Output rule boundary changes.**
-- A free feature being asked to produce authored inference (would breach the free-toolkit rule)
-- A paid product code path losing one of the six safeguards (citation, confidence, disclosure footer, observational language, neutral framing, no civil service voice)
-- A new feature that blurs the free/paid boundary
+- A free feature being asked to produce authored inference
+- A paid product code path losing one of the six safeguards
 
 ### What escalation looks like in practice
 
-When a trigger fires, code should:
-
-1. **Stop before implementation.**
-2. **Report findings or context to Mark with specifics.** Not "this is complex, want help?" but "I've found X, the implications are Y, the options are A, B, or C."
-3. **Recommend bringing the question to Opus** if Mark wants strategic input before proceeding.
-4. **Wait for direction.** Don't proceed with a guess.
-
-### What is *not* a trigger
-
-Code should *not* escalate for:
-
-- Routine implementation work where the brief is clear
-- Bug fixes with obvious causes
-- Test additions
-- Documentation updates
-- Refactors within a single function or file
-- Anything where the right answer is clear from CLAUDE.md or the design docs
-
-The escalation pattern is for situations where strategic judgement adds value, not for every uncertain moment.
-
-### Examples from recent sessions
-
-- **Should escalate:** "The tracker fetches 500 questions and assumes the API returns UIN-descending. I've discovered the API actually has working date filters under different parameter names. Should we keep the workaround or switch?"
-- **Should not escalate:** "I've added the question type derivation logic and three tests. All pass."
-- **Should escalate:** "Mark asked for inquiry tracking. Implementing it would add a new schema, a new ingester, and ~15 hours of work. Worth confirming before starting."
-- **Should not escalate:** "Mark asked for badges on engagement rows. I've implemented them and the tests pass."
+1. Stop before implementation.
+2. Report findings or context to Mark with specifics.
+3. Recommend bringing the question to Opus if Mark wants strategic input.
+4. Wait for direction. Don't proceed with a guess.
 
 ---
 
@@ -956,60 +1026,41 @@ The escalation pattern is for situations where strategic judgement adds value, n
 
 Mark generates ideas at high volume mid-session. When a new idea comes up that isn't being actioned immediately, Claude Code should capture it in `docs/ideas-backlog.md` — name, one-line description, revisit trigger — without being asked. This is Claude's job, not Mark's.
 
-The format is: add to the Active section, note what conditions would make it worth revisiting, and move on. Don't let ideas drift into conversation history where they'll be lost.
-
-When a revisit trigger condition applies in a later session, surface the idea to Mark for a decision. Don't act on it; surface it. If Mark explicitly kills an idea, move it to the Killed section with a one-line reason so it doesn't keep resurfacing.
-
 ---
 
 ## Exploratory work and branches
 
-Mark generates ideas at high volume. Many are good and worth exploring; sketching them in service of evaluating them is valuable. The discipline isn't "don't have ideas" — it's "don't sketch them on top of in-flight work or on the main branch."
-
 When Mark proposes a substantial new feature or direction:
 1. Engage with the substance briefly to clarify the brief
-2. Suggest creating a feature branch for the sketch (e.g. `experiment/inquiry-tracking`)
-3. Build a v1 sketch on the branch, not on main
+2. Suggest creating a feature branch (e.g. `experiment/inquiry-tracking`)
+3. Build a v1 sketch on the branch, not on master
 4. After review, decide whether to merge, iterate, or shelve
-5. Main stays clean throughout
-
-This preserves Mark's generative working style while protecting the production branch from half-finished experiments.
+5. Master stays clean throughout
 
 ---
 
 ## Preserving documented architectural decisions
 
-When previous commits deliberately removed or avoided something with a stated reason, do not reintroduce it without engaging with that reason. This is the standard "Chesterton's fence" principle: there was a fence; before removing it, find out why it was put there.
+When previous commits deliberately removed or avoided something with a stated reason, do not reintroduce it without engaging with that reason (Chesterton's fence principle).
 
-This has bitten the project before. The tracker regression of April 2026 was caused by reintroducing the `answeringBodies` parameter that two prior commits had removed deliberately with a clear stated reason ("causes 30s+ timeouts"). The reintroducing commit's message claimed to be fixing an indentation bug — the actual diff replaced the working architecture with a previously-rejected approach.
+The tracker regression of April 2026 was caused by reintroducing the `answeringBodies` parameter that two prior commits had removed with a clear stated reason. The reintroducing commit's message claimed to be fixing an indentation bug — the actual diff replaced the working architecture with a previously-rejected approach.
 
 ### Working principle
 
-When changing any code in this codebase that has a documented constraint or a deliberate architectural pattern:
+When changing any code that has a documented constraint:
 
-1. **Read the relevant constraint document before making the change.** For WQ-related code, read the WQ API constraints section above. For directory-related code, read `docs/stakeholder-directory-design.md`. For dashboard-related code, `docs/dashboard-roadmap.md`. For design changes, `docs/design-principles.md`.
-
-2. **If a previous commit's documented decision conflicts with the change being made, surface it.** Don't silently override. Either: refute the original reasoning explicitly with new evidence, or design around the constraint. Don't pretend the constraint isn't there.
-
-3. **Commit messages must accurately describe the diff.** A commit that replaces a working architecture should not be described as "fix indentation bug" even if there's an indentation issue elsewhere in the changed lines. Future debugging depends on commit messages matching reality.
-
-4. **Verify regressions haven't been introduced.** Before declaring a change complete, test that the previous working behaviour still holds. The tracker regression existed undetected for over a week because the change wasn't tested against its actual user-facing function.
-
-### When asking Claude (Code or otherwise) to change WQ-related, directory-related, or other constraint-bearing code
-
-Begin the request with: "before making changes, read [the relevant constraint document] and confirm the constraints you'll be working within." This forces explicit acknowledgement of prior decisions and reduces accidental regression risk.
-
-If asked to "refactor" or "improve" code that's working, the right starting question is "what constraints does this code currently respect, and which (if any) is the refactor relaxing?" Refactors that quietly relax documented constraints are how regressions land.
+1. **Read the relevant constraint document before making the change.**
+2. **If a previous commit's documented decision conflicts, surface it.** Don't silently override.
+3. **Commit messages must accurately describe the diff.**
+4. **Verify regressions haven't been introduced** before declaring a change complete.
 
 ### Verification corollary — constraint documents are beliefs, not truth
 
-The Chesterton's fence principle applies to constraints too: before treating a documented constraint as a hard rule, verify that it is still correct. Constraint documents record what was believed at the time of writing — they can be wrong, stale, or based on a flawed diagnostic.
+Constraint documents record what was believed at the time of writing — they can be wrong, stale, or based on a flawed diagnostic.
 
-**Working principle:** verify documented constraints against authoritative sources (OpenAPI specs, official documentation, primary API tests) when introducing them, and periodically thereafter. If a constraint was derived from experimentation rather than official documentation, say so — and note what the authoritative source actually says.
+**The April 2026 lesson:** three constraints ("date params ignored", "answeringBodies times out", "isAnswered ignored") were all false. They were derived from experiments that used wrong parameter names. The API worked correctly all along.
 
-**The April 2026 lesson:** three constraints in this file ("date params ignored", "answeringBodies times out", "isAnswered ignored") were all false. They were derived from experiments that used wrong parameter names. The API worked correctly all along. The constraints were our misreading, not the API's behaviour. We spent weeks building workarounds for a problem that didn't exist.
-
-When a constraint and an official spec disagree, trust the spec and test directly. Don't trust prior-Claude's documented belief over a live API response.
+When a constraint and an official spec disagree, trust the spec and test directly.
 
 ---
 
@@ -1019,7 +1070,7 @@ If a bug caused incorrect data to be written to the cache (e.g. wrong date filte
 
 ## Session testing protocol — research tool status tracking
 
-Each coding session that touches the Research Tool must begin by establishing current status and end by confirming it. This prevents the loop where something appears fixed but regresses silently.
+Each coding session that touches the Research Tool must begin by establishing current status and end by confirming it.
 
 ### At the start of each session — establish baseline
 
@@ -1028,11 +1079,7 @@ Before writing any code, ask the user:
 2. What is the canonical test case you want to verify? (topic, department, expected results)
 3. Is the Railway cache clear? (If stale data is possible, clear it at `/admin` before testing)
 
-Record the baseline in the session. Do not assume prior session state carries over.
-
 ### Minimum verified checklist — confirm before declaring anything fixed
-
-Run the canonical test case (student loan repayments + DfE, 2026) and verify each section:
 
 | Section | What to verify |
 |---|---|
@@ -1057,11 +1104,7 @@ Currently active flags:
 - `SEARCH_BACKEND=hansard` → uses Hansard API for minister search (Phase 1)
 - Unset → uses TWFY for all searches (original behaviour)
 
-When testing after a backend change, always state which backend is active so results are interpretable.
-
 ### Current invariants — must hold
-
-These behaviours have been verified working and must continue to work. If any regress, check git log for the original fix and ensure recent changes haven't broken the assumption.
 
 - WQ cards show the question text as the question, not the minister's answer
 - WQ deduplication by UIN — no duplicate cards
@@ -1099,9 +1142,7 @@ After Railway deploys, verify with these full URLs:
 
 ## Pre-share checklist
 
-Run this before sending the site to any new user group. Landing-page review is not sufficient — detail pages have a different failure mode (template-context bugs, missing data fields) that only surfaces when you actually click through to them.
-
-Walk each of these end-to-end with realistic data:
+Run this before sending the site to any new user group. Walk each of these end-to-end with realistic data:
 
 - [ ] Landing page renders cleanly
 - [ ] Hansard Archive index + **at least one session detail page** (click through from search results)
@@ -1127,116 +1168,79 @@ Also:
 - Don't leave variables uninitialised before `render_template()` calls
 - Don't invoke Claude (Anthropic API) from any free-feature code path
 - Don't remove the AI-disclosure footer from paid product outputs at the standard tier
+- Don't run any destructive Railway API call, CLI command, or destructive operation against any cloud provider
+- Don't use API tokens or credentials found in files for tasks unrelated to their documented purpose
+- Don't autonomously "fix" credential mismatches, auth failures, or unexpected production state — stop and surface to Mark
+- Don't run raw SQL against production Postgres
+- Don't run `git push --force`, `git reset --hard`, or other destructive git operations without explicit instruction
 
-Destructive operations — absolutely forbidden
+## Destructive operations — absolutely forbidden
 
-Context for these rules: in April 2026, an AI coding agent on Railway infrastructure (same provider as Westminster Brief) deleted a startup's entire production database and backups in a single API call by autonomously "fixing" a credential mismatch. The agent scanned the codebase, found an unrelated API token, used it to delete a volume, and triggered a 30-hour outage. The pattern is "agent encounters problem → agent invents destructive resolution → agent executes."
-The rules below exist specifically to make that failure mode impossible for Westminster Brief.
-Things Claude Code must NEVER do
-These are absolute. Not "be careful with these" — never do them.
-Infrastructure operations:
+Context: in April 2026, an AI coding agent on Railway infrastructure deleted a startup's entire production database and backups in a single API call by autonomously "fixing" a credential mismatch. The rules below exist specifically to make that failure mode impossible for Westminster Brief.
 
-Never call the Railway API directly with destructive verbs (DELETE on volumes, services, environments, deployments, domains)
-Never run railway CLI commands that delete, destroy, remove, or detach resources
-Never call any cloud provider API (AWS, GCP, Cloudflare, Postmark, Stripe) with destructive operations
-Never use a CLI token, API token, or credential found anywhere in the codebase for a task unrelated to the documented purpose that token was created for. If a token's purpose is "manage custom domains," it must never be used for anything else, regardless of how convenient that would be.
+### Things Claude Code must NEVER do
 
-Database operations:
+**Infrastructure operations:**
+- Never call the Railway API directly with destructive verbs (DELETE on volumes, services, environments, deployments, domains)
+- Never run railway CLI commands that delete, destroy, remove, or detach resources
+- Never call any cloud provider API (AWS, GCP, Cloudflare, Postmark, Stripe) with destructive operations
+- Never use a CLI token, API token, or credential found anywhere in the codebase for a task unrelated to the documented purpose that token was created for
 
-Never run DROP TABLE, DROP DATABASE, DROP SCHEMA, or any other DDL drop statement
-Never run TRUNCATE against any table
-Never run DELETE FROM table without an explicit WHERE clause that targets specific rows
-Never run mass UPDATE against entire tables without explicit per-row scoping
-Never run raw SQL on production. Local SQLite is fine; production Postgres on Railway is not Claude Code's territory.
+**Database operations:**
+- Never run `DROP TABLE`, `DROP DATABASE`, `DROP SCHEMA`, or any other DDL drop statement
+- Never run `TRUNCATE` against any table
+- Never run `DELETE FROM table` without an explicit `WHERE` clause that targets specific rows
+- Never run mass `UPDATE` against entire tables without explicit per-row scoping
+- Never run raw SQL on production. Local SQLite is fine; production Postgres on Railway is not Claude Code's territory.
 
-Git operations:
+**Git operations:**
+- Never run `git push --force` or `git push -f`
+- Never delete branches, tags, or remotes
+- Never run `git reset --hard` against work that hasn't been committed
+- Never run `git clean` with destructive flags
 
-Never run git push --force or git push -f (use --force-with-lease if absolutely necessary, and only on explicit instruction)
-Never delete branches, tags, or remotes
-Never run git reset --hard against work that hasn't been committed
-Never run git clean with destructive flags
+**File operations:**
+- Never run `rm -rf` on anything outside `/tmp/` or local virtual environments without explicit instruction
+- Never delete files from `migrations/`, `docs/`, `templates/`, `static/`, or any directory that contains canonical project state
+- Never delete or modify `.env`, `requirements.txt`, `CLAUDE.md`, `Procfile`, `railway.toml`, or any other infrastructure config file without explicit instruction
 
-File operations:
+### When something seems broken — STOP, don't fix
 
-Never run rm -rf on anything outside /tmp/ or local virtual environments without explicit instruction
-Never delete files from migrations/, docs/, templates/, static/, or any directory that contains canonical project state
-Never delete or modify .env, requirements.txt, CLAUDE.md, Procfile, railway.toml, or any other infrastructure config file without explicit instruction
-
-When something seems broken — STOP, don't fix
-The PocketOS incident happened because the agent encountered a credential mismatch and decided to autonomously "resolve it" by deleting infrastructure. The right response was to stop and ask the human.
 If Claude Code encounters any of the following, STOP and surface to Mark:
+- Authentication or credential mismatch
+- API token rejected or expired
+- Database connection failure with unclear cause
+- Production environment showing unexpected state (rows missing, schema drift, unexpected migrations)
+- Any error suggesting the production system is in a state Claude doesn't understand
 
-Authentication or credential mismatch
-API token rejected or expired
-Database connection failure with unclear cause
-Production environment showing unexpected state (rows missing, schema drift, unexpected migrations)
-Any error suggesting the production system is in a state Claude doesn't understand
+The correct response is always: report what's happening, propose options, wait for direction.
 
-The correct response is always: report what's happening, propose options, wait for direction. Never:
+### Token hygiene
 
-Recreate the resource
-Delete and recreate
-"Reset" to a clean state
-Apply a fix you haven't been explicitly asked to apply
-Use a different credential found elsewhere in the codebase to work around the issue
+API tokens, credentials, and secrets are documented per-purpose. Their stated purpose IS their permitted use. If Claude Code's task requires a credential that isn't already wired up through the documented mechanism (env vars, config files referenced in code), the task stops. Mark provisions credentials. Claude Code uses them as documented. No improvisation.
 
-Token hygiene
-API tokens, credentials, and secrets are documented per-purpose. Their stated purpose IS their permitted use. There is no "well, I needed to do X and there was a token here, so I used it" — that's the exact failure mode that destroyed PocketOS's data.
-If Claude Code's task requires a credential that isn't already wired up through the documented mechanism (env vars, config files referenced in code), the task stops. Mark provisions credentials. Claude Code uses them as documented. No improvisation.
+## Recovery preparedness
 
-NEW SECTION — to add after the destructive-operations section
-Recovery preparedness
-Westminster Brief stores user data on Railway Postgres. Railway's backup model stores snapshots in the same volume as the source data — meaning a volume deletion erases backups too. This is a real risk. We mitigate it with explicit external backup discipline.
-Backup inventory — what is and is NOT recoverable
-Recoverable from external systems even if Railway is wiped:
+Westminster Brief stores user data on Railway Postgres. Railway's backup model stores snapshots in the same volume as the source data — meaning a volume deletion erases backups too. We mitigate this with explicit external backup discipline.
 
-DNS records: Cloudflare DNS dashboard (login retains record state)
-Stripe transactions: Stripe dashboard (full history of payments)
-Email logs: Postmark dashboard (last 45 days of sent emails)
-Code: GitHub repository (full git history)
+### Backup inventory — what is and is NOT recoverable
 
-Recoverable only from Railway-side state:
+**Recoverable from external systems even if Railway is wiped:**
+- DNS records: Cloudflare DNS dashboard
+- Stripe transactions: Stripe dashboard (full history)
+- Email logs: Postmark dashboard (last 45 days)
+- Code: GitHub repository (full git history)
 
-User accounts and authentication data
-User preferences (sector, department, policy area, etc.)
-Saved searches, alerts, briefing history (Phase 2)
-Any data created by the application that doesn't have an external mirror
+**Recoverable only from Railway-side state (at-risk surface):**
+- User accounts and authentication data
+- User preferences (sector, department, policy area, etc.)
+- Saved searches, alerts, briefing history (Phase 2)
+- Any data created by the application without an external mirror
 
-The second list is the at-risk surface. External backups must cover this.
-External backup requirement
-Before Phase 2 launches with real paying customers:
+### External backup
 
-Daily automated pg_dump of the Railway Postgres database to an external destination (S3, Backblaze B2, or similar)
-Backup files retained for at least 30 days
-Restoration tested at least once before launch (do it on a staging Railway service, verify the dump can actually be restored)
-Backup script itself stored in the repo so it survives local machine loss
+Daily automated `pg_dump` to Cloudflare R2 via `backup-cron-r2`. Restore tested end-to-end 13 May 2026 (see `docs/recovery-runbook.md`). Repeat drill every 6 months and after schema migrations.
 
-This is a launch-readiness blocker. Add to docs/launch-readiness.md.
-Recovery runbook
-docs/recovery-runbook.md documents:
+### Recovery runbook
 
-Where external backups live
-How to restore the database from a pg_dump file
-How to recreate Railway service from scratch if needed
-Which env vars to set in what order
-Which DNS records to verify
-Smoke test to run after recovery
-
-If Mark is unavailable, someone else with the runbook should be able to restore service. Write it for that person.
-
-ADDITIONS to existing "Things to avoid" section
-Add these to the existing list:
-
-Don't run any destructive Railway API call, CLI command, or destructive operation against any cloud provider
-Don't use API tokens or credentials found in files for tasks unrelated to their documented purpose
-Don't autonomously "fix" credential mismatches, auth failures, or unexpected production state — stop and surface to Mark
-Don't run raw SQL against production Postgres
-Don't run git push --force, git reset --hard, or other destructive git operations without explicit instruction
-
-
-ADDITIONS to existing "Escalate to Opus when stuck" section
-Add to the situations Opus is particularly valuable for:
-
-Any situation where Claude Code is considering a destructive operation as a "fix" — this is exactly when fresh judgment helps avoid disaster
-Credential / auth failures with unclear root cause — these are where reasoning loops can lead to dangerous resolution attempts
-Any production-environment anomaly where the right response is uncertain
+`docs/recovery-runbook.md` documents where backups live, how to restore, which env vars to set, DNS records to verify, and smoke tests to run after recovery.
