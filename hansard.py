@@ -12,11 +12,29 @@ from extensions import db
 
 hansard_bp = Blueprint('hansard', __name__)
 
-DEPARTMENTS = {
+_DEPARTMENTS_FALLBACK = {
     "All Departments": "", "Department for Education": "60", "Department of Health and Social Care": "17",
     "HM Treasury": "14", "Home Office": "1", "Ministry of Defence": "11", "Ministry of Justice": "54",
     "Department for Science, Innovation and Technology": "216", "Cabinet Office": "53"
 }
+
+
+def _get_department_list():
+    """Return {dept_name: dept_id_str} from ha_pq, alphabetically sorted."""
+    from hansard_archive.models import HaPQ
+    try:
+        rows = (db.session.query(HaPQ.answering_body, HaPQ.answering_body_id)
+                .filter(HaPQ.answering_body.isnot(None), HaPQ.answering_body_id.isnot(None))
+                .distinct()
+                .order_by(HaPQ.answering_body)
+                .all())
+        depts = {"All Departments": ""}
+        for name, body_id in rows:
+            if name and body_id is not None:
+                depts[name] = str(body_id)
+        return depts if len(depts) > 1 else _DEPARTMENTS_FALLBACK
+    except Exception:
+        return _DEPARTMENTS_FALLBACK
 
 PARTY_COLOURS = {
     'Labour': '#E4003B',
@@ -219,6 +237,7 @@ def index():
     total_available = 0
     pre_filter_count = 0
     grouped_results = []
+    departments = _get_department_list()
 
     if request.method == 'POST':
         subject = request.form.get('subject', '').strip()
@@ -299,7 +318,7 @@ def index():
             grouped_results = sorted(heading_groups.items(), key=lambda x: len(x[1]), reverse=True)
 
             # Export metadata (shared by Word and CSV)
-            dept_label = next((k for k, v in DEPARTMENTS.items() if v == selected_dept_id), 'All Departments')
+            dept_label = next((k for k, v in departments.items() if v == selected_dept_id), 'All Departments')
             filename_ts = datetime.now().strftime('%Y%m%d_%H%M')
             meta_lines = [
                 f"Search: {subject or '(all)'}",
@@ -371,7 +390,7 @@ def index():
                            results=results,
                            grouped_results=grouped_results,
                            error_message=error_message,
-                           departments=DEPARTMENTS,
+                           departments=departments,
                            selected_dept=selected_dept_id,
                            selected_house=selected_house,
                            status_filter=status_filter,

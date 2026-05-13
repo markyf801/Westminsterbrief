@@ -155,13 +155,16 @@ def main():
         _pg_env = {**os.environ, "PGPASSWORD": _parsed.password or ""}
         log("Running psql restore (this may take a moment)...")
         result = subprocess.run(
-            [_PSQL, target_db_url, "-f", sql_path],
+            [_PSQL, "--echo-errors", target_db_url, "-f", sql_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=_pg_env,
         )
+        stderr_out = result.stderr.decode(errors="replace")
+        if stderr_out.strip():
+            log(f"psql stderr (first 3000 chars):\n{stderr_out[:3000]}")
         if result.returncode != 0:
-            die(f"psql restore failed:\n{result.stderr.decode()[:1000]}")
+            die(f"psql restore failed (exit {result.returncode})")
 
         log("Restore complete.")
         log("Next: run the smoke test against the restored database to verify.")
