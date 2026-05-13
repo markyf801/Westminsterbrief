@@ -238,6 +238,7 @@ Sequence after regenerating the Postgres password:
    - `pq-cron-afternoon`
    - `pq-cron-monday`
    - `backup-cron-r2`
+   - `member-cache-refresh`
 3. Verify Flask picked up the new credential: hit `/health` and confirm `status=ok`
 
 Variable References are not "live" — they resolve at deploy time only.
@@ -266,6 +267,14 @@ WMS are classified within the same Hansard ingestion — no separate cron. Theme
 **Timing rationale:** The `/questions` tool queries `ha_pq` (local DB), not Parliament's API directly (refactored at commit `57e7273`). The early + morning cron pair restores morning readiness: civil servants checking new PQs at 09:30–10:00 UK will see that day's questions already in the DB. In BST, `pq-cron-early` fires right at Parliament's publication window close. In GMT, `pq-cron-morning` becomes the effective first capture at 09:30 UK — marginally later but within the start-of-day window. Duplicate upserts across the two morning runs are silent (PQ table uses upsert-by-UIN).
 
 **Stakeholder directory**: No automated cron. Ministerial meetings loaded via CSV upload + `stakeholder_directory/pipeline.py` when GOV.UK publishes quarterly transparency data. Committee evidence triggered manually via `/admin` panel. Lobbying register also manual.
+
+**Member cache refresh** (`scripts/refresh_member_cache.py`):
+
+| Service | Cron (UTC) | Purpose |
+|---|---|---|
+| `member-cache-refresh` | `0 2 * * 0` | Sunday 02:00 UTC — bulk-refresh all current MPs + Lords into `cached_member` |
+
+Run once manually after initial deployment: `python scripts/refresh_member_cache.py`. After that, searches resolve member names/party/constituency entirely from the DB; no per-request Parliament API calls.
 
 **Other**:
 - `backup-cron-r2` — daily pg_dump to Cloudflare R2
