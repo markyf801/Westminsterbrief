@@ -105,21 +105,52 @@ The `is_holding` and `is_withdrawn` fields should be updated during the same pas
 2. ✅ `api_id = db.Column(db.Integer, index=True)` added to `HaPQ` model
 3. ✅ Ingestor updated: `api_id` stored from bulk response on insert and update; `_answer_truncated` dead code removed; `_fetch_full_answer()` removed (redundant)
 4. ✅ `scripts/backfill_pq_answers.py` written: Stage A (bulk re-pass for api_id), Stage B (individual fetch for truncated rows), `--test` flag (100 rows), 429 retry, progress logs every 200 rows, naturally resumable
-5. ⏳ Stage A running locally (bulk api_id re-pass, ~30 min)
-6. ⬜ Stage B test run (100 rows) — pending Stage A completion
-7. ⬜ Full Stage B overnight run (~10.4 hours at 0.5s delay)
-8. ⬜ Spot-check 20 random PQs post-backfill
+5. ✅ Stage A complete (13 May 2026, 57 min). 82,907/90,280 rows got api_id. 7,373 still null (mostly pre-window rows; 1 500-error from Parliament API on Nov 2025 skip=2000 missed ~500 rows)
+6. ✅ Stage B test (100 rows, 13 May 2026). 100/100 updated, 0 errors. Answers expanded 258 → 751-963 chars.
+7. ⏳ Full Stage B running overnight (~68,267 rows, ETA ~05:30 UTC 14 May 2026)
+8. ⬜ Final verification post-Stage B (see below)
 
 **No FTS migration needed**: `question_tsv` is a generated Postgres column; it auto-updates when `answer_text` changes.
 
-**Deployment note**: Do not push until Stage B verification complete. Bundle with other outstanding changes.
+**Pushed**: commits `073c393` (schema + ingestor + backfill script) + `273995d` (OPL attribution) deployed to Railway 13 May 2026.
 
 ---
 
-## Stage 2 (post-Stage 1) — Template and attribution
+## Stage 2 (completed 13 May 2026)
 
-- Add OPL attribution line to PQ detail template: *"Contains Parliamentary information licensed under the Open Parliament Licence v3.0."* with link
-- Confirm answer display handles multi-paragraph full answers cleanly (no runaway whitespace from stripped HTML)
-- Update methodology/about page if one exists
+- ✅ OPL attribution added to `archive_pq_detail.html` — *"Contains Parliamentary information licensed under the Open Parliament Licence v3.0."* with link. Committed `273995d`.
+- ✅ HTML residue check: 5 long-answer samples, 0 HTML tags found. Stripping is clean.
 
-*Stage 0 completed 13 May 2026. Stage 1 in progress.*
+---
+
+## Post-Stage B verification checklist (14 May 2026)
+
+Run after Stage B completes (~05:30 UTC):
+
+1. **Final population stats**
+   - `python -m scripts._pop_stats` (re-run after recreating the script, or inline query)
+   - Capture: updated count, still-truncated count, median/max answer length, is_holding count, is_withdrawn count
+   - If errors > 0 in Stage B output: capture UIN, error class, count before proceeding
+
+2. **Long-answer rendering** — pick 3–5 PQs from top of length distribution (>5k chars)
+   - Visit `/archive/pq/{uin}` for each
+   - Check: no runaway whitespace, text wraps correctly, no truncation in browser
+
+3. **VACUUM ANALYZE** (run in Railway Query console):
+   ```sql
+   VACUUM ANALYZE ha_pq;
+   ```
+   Updates query planner stats for full-text search. Do after backfill, not before.
+
+4. **Holding and withdrawn counts** — confirm is_holding and is_withdrawn now > 0 after Stage B updates these fields from the individual endpoint.
+
+5. **Referral pattern sanity** — "I refer the hon" answers render as plain one-line text (correct — no special processing needed, the referral IS the full answer).
+
+---
+
+## Optional follow-ups (not Phase 2A.5 scope)
+
+- **Inline referral resolution**: "I refer the Honourable Member to my answer of [date]" → display referenced answer inline. Complex, lower priority.
+- **Theme tagging on answer text** (Stage 4 in original plan): re-tag using heading + question + answer[:400] instead of question only. Would improve theme specificity for answers that diverge from question heading.
+
+*Stage 0 completed 13 May 2026. Stage 1 code complete, backfill running. Stage 2 complete. Verification pending.*

@@ -215,6 +215,26 @@ Recommended approach: Charity Commission + Companies House for registered entiti
 
 ---
 
+### £5/Month Subscription Tier Strategy
+
+Mark wants to return to this question in a separate session. Captured here as a reminder. The context is the broader pricing and positioning question — what a £5/month tier looks like, what it includes, and how it fits between the free toolkit and the paid stakeholder briefing pack. Separate from Phase 2A.5 work.
+
+**Revisit trigger:** Mark explicitly flags "subscription strategy" session; any pricing/monetisation conversation; post-launch when actual user behaviour informs what free users want to upgrade for.
+
+*Captured 13 May 2026 — deferred by Mark mid-session.*
+
+---
+
+### "Useful Tool Nobody's Built" — Competitive Landscape
+
+Mark wants to explore the question of what parliamentary intelligence tools exist, what gaps there are, and where Westminster Brief has genuine competitive differentiation. Separate session.
+
+**Revisit trigger:** Mark explicitly flags "landscape" or "competitive" session; any product strategy or positioning conversation; before writing the landing page or marketing copy.
+
+*Captured 13 May 2026 — deferred by Mark mid-session.*
+
+---
+
 ## Killed
 
 *(Nothing formally killed yet — this section is for ideas explicitly decided against, with reason recorded so they don't keep resurfacing.)*
