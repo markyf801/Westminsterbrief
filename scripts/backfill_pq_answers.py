@@ -30,6 +30,8 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 
+from sqlalchemy.exc import OperationalError
+
 # Allow running from project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,7 +51,6 @@ _log = logging.getLogger(__name__)
 WQ_API_BASE = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
 
 _PAGE_SIZE = 500
-_COMMIT_BATCH = 50        # commit after every N rows — limits rework on restart
 _PROGRESS_LOG_EVERY = 200
 _REQUEST_TIMEOUT = 60
 
@@ -160,24 +161,28 @@ def stage_a(db, HaPQ, months: int = 13):
 # Stage B — fetch full answer text via individual endpoint
 # ---------------------------------------------------------------------------
 
+_BATCH_SIZE = 100  # rows per DB round-trip — commit after each batch, no stale objects
+
+
 def stage_b(db, HaPQ, test_mode: bool = False):
     # Called from within app.app_context() in main() — do not create a nested context.
+    #
+    # Processes rows in small batches (query → process → commit → next batch).
+    # This avoids the Railway connection-timeout issue that arose when the old approach
+    # loaded all 68k rows upfront: after each 50-row commit SQLAlchemy expired ALL loaded
+    # objects, causing lazy-reload-triggered autoflushes on a dead connection.
+    # With batch-by-ID, each batch is freshly loaded, fully committed, then discarded.
     _log.info("=== Stage B: backfilling full answer text ===")
     if test_mode:
         _log.info("TEST MODE: processing first 100 rows only.")
 
-    q = (db.session.query(HaPQ)
-         .filter(
-             HaPQ.is_answered == True,
-             HaPQ.api_id != None,
-             func.length(HaPQ.answer_text) == 258,
-         )
-         .order_by(HaPQ.id))
-    if test_mode:
-        q = q.limit(100)
-    rows = q.all()
+    _BASE_FILTER = (
+        HaPQ.is_answered == True,
+        HaPQ.api_id != None,
+        func.length(HaPQ.answer_text) == 258,
+    )
 
-    total = len(rows)
+    total = db.session.query(func.count(HaPQ.id)).filter(*_BASE_FILTER).scalar()
     _log.info("Rows to process: %d", total)
     if total == 0:
         _log.info("Nothing to do.")
@@ -187,52 +192,83 @@ def stage_b(db, HaPQ, test_mode: bool = False):
               total * _BACKFILL_DELAY / 3600)
 
     updated = unchanged = errors = 0
-    pending = 0
+    processed = 0
+    last_id = 0
 
-    for i, row in enumerate(rows):
-        full_text, is_holding, is_withdrawn = _get_full_answer(row.api_id)
+    while True:
+        if test_mode and processed >= 100:
+            break
 
-        if full_text and len(full_text) > len(row.answer_text or ""):
-            row.answer_text = full_text
-            row.is_holding = is_holding
-            row.is_withdrawn = is_withdrawn
-            row.updated_at = datetime.utcnow()
-            updated += 1
-        elif full_text:
-            # Individual returned same or shorter — holding answer or genuinely short
-            row.is_holding = is_holding
-            row.is_withdrawn = is_withdrawn
-            row.updated_at = datetime.utcnow()
-            unchanged += 1
-        else:
-            errors += 1
+        fetch_limit = min(_BATCH_SIZE, 100 - processed) if test_mode else _BATCH_SIZE
 
-        pending += 1
-        if pending >= _COMMIT_BATCH:
+        try:
+            batch = (db.session.query(HaPQ)
+                     .filter(*_BASE_FILTER, HaPQ.id > last_id)
+                     .order_by(HaPQ.id)
+                     .limit(fetch_limit)
+                     .all())
+        except OperationalError as exc:
+            _log.warning("Connection error fetching batch (last_id=%d): %s — reconnecting.", last_id, exc)
+            db.session.rollback()
+            db.engine.dispose()
+            continue
+
+        if not batch:
+            break
+
+        for row in batch:
+            # Capture attributes before any modification — object is freshly loaded, not expired.
+            api_id = row.api_id
+            current_len = len(row.answer_text or "")
+            last_id = row.id
+
+            full_text, is_holding, is_withdrawn = _get_full_answer(api_id)
+
+            if full_text and len(full_text) > current_len:
+                row.answer_text = full_text
+                row.is_holding = is_holding
+                row.is_withdrawn = is_withdrawn
+                row.updated_at = datetime.utcnow()
+                updated += 1
+            elif full_text:
+                row.is_holding = is_holding
+                row.is_withdrawn = is_withdrawn
+                row.updated_at = datetime.utcnow()
+                unchanged += 1
+            else:
+                errors += 1
+
+            processed += 1
+            time.sleep(_BACKFILL_DELAY)
+
+            if processed % _PROGRESS_LOG_EVERY == 0:
+                pct = processed / total * 100
+                eta_s = (total - processed) * _BACKFILL_DELAY
+                _log.info("Progress: %d/%d (%.1f%%) — updated=%d unchanged=%d errors=%d — ETA %.1f min",
+                          processed, total, pct, updated, unchanged, errors, eta_s / 60)
+
+        # Commit the whole batch. Objects expire after this — but we never access them again.
+        try:
             db.session.commit()
-            pending = 0
-
-        if (i + 1) % _PROGRESS_LOG_EVERY == 0:
-            pct = (i + 1) / total * 100
-            eta_s = (total - i - 1) * _BACKFILL_DELAY
-            _log.info("Progress: %d/%d (%.1f%%) — updated=%d unchanged=%d errors=%d — ETA %.1f min",
-                      i + 1, total, pct, updated, unchanged, errors, eta_s / 60)
-
-        time.sleep(_BACKFILL_DELAY)
-
-    if pending:
-        db.session.commit()
+        except OperationalError as exc:
+            _log.warning("Connection error during commit: %s — reconnecting and retrying.", exc)
+            db.session.rollback()
+            db.engine.dispose()
+            try:
+                db.session.commit()
+            except Exception as exc2:
+                _log.error("Retry commit also failed: %s — some rows in this batch may be lost.", exc2)
+                db.session.rollback()
 
     _log.info("Stage B complete. updated=%d unchanged=%d errors=%d", updated, unchanged, errors)
 
     if test_mode:
-        # Spot-check: print 3 samples
         samples = (db.session.query(HaPQ.uin, HaPQ.answer_text)
                    .filter(HaPQ.api_id != None, func.length(HaPQ.answer_text) > 258)
                    .limit(3).all())
         _log.info("Sample updated rows:")
-        for uin, text in samples:
-            _log.info("  UIN=%s  len=%d  preview: %s", uin, len(text or ""), (text or "")[:100])
+        for uin, ans in samples:
+            _log.info("  UIN=%s  len=%d  preview: %s", uin, len(ans or ""), (ans or "")[:100])
 
 
 # ---------------------------------------------------------------------------
