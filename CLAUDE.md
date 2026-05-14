@@ -103,6 +103,36 @@ Always pass `--set ON_ERROR_STOP=1` when restoring via psql. Without it, psql re
 **PG17 backup → PG16 local restore:**
 Railway runs PG17. `SET transaction_timeout = 0;` in the dump is a PG17-only parameter. The restore script strips this line during decompression (`_PG17_ONLY` filter). Do not remove this filter.
 
+**Long-running scripts on Railway Postgres — batch-by-ID, not load-all-then-iterate:**
+Railway kills idle Postgres connections after a few hours. Scripts that load a large result set upfront and then iterate slowly will hit this. The failure mode is subtle: SQLAlchemy's default `expire_on_commit=True` expires ALL objects in the session on every commit — not just the committed ones. On the next attribute access of any expired object, SQLAlchemy triggers an autoflush (to flush pending dirty objects), which needs the now-dead connection, and crashes.
+
+**Do not do this:**
+```python
+rows = db.session.query(Model).filter(...).all()   # loads 68k objects
+for row in rows:
+    row.field = ...
+    if i % 50 == 0:
+        db.session.commit()  # expires ALL 68k objects; next attribute access lazy-reloads
+```
+
+**Do this instead — batch-by-ID:**
+```python
+last_id = 0
+while True:
+    batch = (db.session.query(Model)
+             .filter(..., Model.id > last_id)
+             .order_by(Model.id).limit(100).all())
+    if not batch:
+        break
+    for row in batch:
+        last_id = row.id
+        row.field = ...       # row is freshly loaded, not expired
+    db.session.commit()       # expires this batch's objects — we never touch them again
+                              # next query naturally gets a fresh connection
+```
+
+Also add `OperationalError` handling around the batch query and commit to call `db.engine.dispose()` and retry on connection drop. Reference implementation: `scripts/backfill_pq_answers.py` (commit `415382c`, 14 May 2026).
+
 ---
 
 ## Stack
