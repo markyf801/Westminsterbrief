@@ -34,6 +34,7 @@ from flask import Blueprint, abort, redirect, render_template, make_response, re
 from markupsafe import Markup
 from sqlalchemy import func, text as sqla_text
 
+from cache_models import CachedMember
 from extensions import db
 from hansard_archive.models import (
     HansardContribution,
@@ -1723,11 +1724,22 @@ def pq_detail(uin: str):
     policy_areas = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA})
     specific_topics = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_SPECIFIC})
 
+    # Enrich asking member with party + constituency from cached_member
+    asking_party = asking_role = None
+    if pq.asking_mnis_id:
+        cached = CachedMember.get(pq.asking_mnis_id)
+        if cached:
+            asking_party = cached.party
+            asking_role = ("Life Peer" if cached.house == "Lords"
+                           else f"MP for {cached.constituency}" if cached.constituency else None)
+
     seo_title = f"{pq.heading or pq.uin} — {pq.uin} — Westminster Brief"
 
     return render_template(
         "hansard_archive/archive_pq_detail.html",
         pq              = pq,
+        asking_party    = asking_party,
+        asking_role     = asking_role,
         policy_areas    = policy_areas,
         specific_topics = specific_topics,
         human_tabled    = _human_date(pq.tabled_date) if pq.tabled_date else "",

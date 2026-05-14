@@ -70,7 +70,12 @@
                 {% if pq.asking_member %}
                 <span class="sd-speaker-name">{{ pq.asking_member }}</span>
                 {% endif %}
-                <span class="sd-speaker-secondary">Question · Tabled {{ human_tabled }}{% if pq.uin %} · {{ pq.uin }}{% endif %}</span>
+                <span class="sd-speaker-secondary">
+                    {%- if asking_party or asking_role -%}
+                        {{ asking_party }}{% if asking_party and asking_role %}, {% endif %}{{ asking_role }} ·
+                    {%- endif %}
+                    Question · Tabled {{ human_tabled }}{% if pq.uin %} · {{ pq.uin }}{% endif %}
+                </span>
             </div>
             <div class="sd-contrib-text">{{ pq.question_text }}</div>
         </div>
