@@ -33,6 +33,8 @@ from dotenv import load_dotenv
 from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
 
+from hansard_archive.html_sanitizer import sanitize_answer_html
+
 load_dotenv()
 
 logging.basicConfig(
@@ -76,8 +78,8 @@ def _get_full_record(api_id: int):
                 return None, None, False, False
             v = resp.json().get("value") or {}
             q_text = _clean(_strip_html(v.get("questionText") or "")) or None
-            a_text = _clean(_strip_html(v.get("answerText") or "")) or None
-            return q_text, a_text, bool(v.get("answerIsHolding")), bool(v.get("isWithdrawn"))
+            a_html = sanitize_answer_html(v.get("answerText") or "")
+            return q_text, a_html, bool(v.get("answerIsHolding")), bool(v.get("isWithdrawn"))
         except Exception as exc:
             _log.warning("Fetch id=%s error (attempt %d): %s", api_id, attempt + 1, exc)
             if attempt < 2:
@@ -161,14 +163,16 @@ def stage_c(db, HaPQ, test_mode: bool = False):
             old_a_len = len(row.answer_text or "")
             last_id = row.id
 
-            q_text, a_text, is_holding, is_withdrawn = _get_full_record(api_id)
+            q_text, a_html, is_holding, is_withdrawn = _get_full_record(api_id)
 
             if q_text and len(q_text) != old_q_len:
                 row.question_text = q_text
                 updated_q += 1
 
-            if a_text and len(a_text) != old_a_len:
-                row.answer_text = a_text
+            # Always update answer_text with sanitised HTML regardless of
+            # length change — migrating from flat plain text to HTML storage.
+            if a_html:
+                row.answer_text = a_html
                 updated_a += 1
 
             # Always update these flags from the individual endpoint
@@ -176,7 +180,7 @@ def stage_c(db, HaPQ, test_mode: bool = False):
             row.is_withdrawn = is_withdrawn
             row.updated_at = datetime.utcnow()
 
-            if not q_text and not a_text:
+            if not q_text and not a_html:
                 errors += 1
 
             processed += 1

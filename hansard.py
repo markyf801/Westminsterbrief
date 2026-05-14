@@ -9,6 +9,7 @@ from datetime import datetime, date as date_type
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cache_models import CachedMember
 from extensions import db
+from hansard_archive.html_sanitizer import to_plain_text
 
 hansard_bp = Blueprint('hansard', __name__)
 
@@ -351,7 +352,7 @@ def index():
                     p.add_run(meta_run + "\n")
                     p.add_run(f"Question: {r['text']}\n")
                     if r['answer_text']:
-                        p.add_run(f"Answer: {r['answer_text']}\n")
+                        p.add_run(f"Answer: {to_plain_text(r['answer_text'])}\n")
                     p.add_run("Link: ")
                     add_hyperlink(p, r['url'], r['url'])
                 b = io.BytesIO()
@@ -377,7 +378,7 @@ def index():
                                     'ANSWERED' if r['answered'] else 'UNANSWERED')
                     cw.writerow([r['uin'], status_label, r['dept'], r['name'], r['party'],
                                  r['role'], r['date'], r['answering_minister'] or '',
-                                 r['date_answered'], r['text'], r['answer_text'], r['url']])
+                                 r['date_answered'], r['text'], to_plain_text(r['answer_text']), r['url']])
                 resp = make_response(si.getvalue())
                 resp.headers["Content-Disposition"] = f"attachment; filename=WQ_{filename_ts}.csv"
                 resp.headers["Content-type"] = "text/csv; charset=utf-8"
@@ -431,7 +432,7 @@ def download_selected():
                          r.get('name', ''), r.get('party', ''), r.get('role', ''),
                          r.get('date', ''), r.get('answering_minister') or '',
                          r.get('date_answered', ''), r.get('text', ''),
-                         r.get('answer_text', ''), r.get('url', '')])
+                         to_plain_text(r.get('answer_text', '')), r.get('url', '')])
         resp = make_response(si.getvalue())
         resp.headers["Content-Disposition"] = f"attachment; filename=WQ_selected_{filename_ts}.csv"
         resp.headers["Content-type"] = "text/csv; charset=utf-8"
@@ -456,7 +457,7 @@ def download_selected():
         p.add_run(meta + "\n")
         p.add_run(f"Question: {r.get('text', '')}\n")
         if r.get('answer_text'):
-            p.add_run(f"Answer: {r['answer_text']}\n")
+            p.add_run(f"Answer: {to_plain_text(r['answer_text'])}\n")
         p.add_run("Link: ")
         add_hyperlink(p, r.get('url', ''), r.get('url', ''))
     b = io.BytesIO()

@@ -23,6 +23,7 @@ import requests
 _log = logging.getLogger(__name__)
 
 from extensions import db
+from hansard_archive.html_sanitizer import sanitize_answer_html
 from hansard_archive.models import HaPQ, HaPQTheme
 
 WQ_API_BASE = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
@@ -78,7 +79,7 @@ def _extract_pq_fields(value: dict) -> dict | None:
         return None
 
     answer_raw = value.get("answerText") or ""
-    answer_text = _clean_whitespace(_strip_html(answer_raw)) or None
+    answer_text = sanitize_answer_html(answer_raw)  # stored as sanitised HTML
 
     # askingMember / answeringMember are sometimes null in the API response;
     # member IDs and body name/id are returned as flat fields.
@@ -178,7 +179,7 @@ def ingest_pq_date_range(
                     if full_q:
                         fields["question_text"] = full_q
                     if fields["is_answered"]:
-                        full_a = _clean_whitespace(_strip_html(full.get("answerText") or "")) or None
+                        full_a = sanitize_answer_html(full.get("answerText") or "")
                         if full_a:
                             fields["answer_text"] = full_a
                     fields["is_holding"]  = bool(full.get("answerIsHolding", False))

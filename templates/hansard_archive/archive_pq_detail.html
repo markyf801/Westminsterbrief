@@ -87,7 +87,7 @@
                 <span class="sd-speaker-secondary">Answer{% if human_answered %} · {{ human_answered }}{% endif %}</span>
                 {% endif %}
             </div>
-            <div class="sd-contrib-text">{{ pq.answer_text }}</div>
+            <div class="sd-contrib-text">{{ pq.answer_text | safe }}</div>
             {% else %}
             <div class="sd-contrib-speaker" style="border-left-color: #c0c8d4;">
                 <span class="sd-speaker-name" style="color:#8a96a4;">Awaiting answer</span>

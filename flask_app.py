@@ -979,14 +979,16 @@ def enforce_canonical_url():
 
 @app.before_request
 def _log_request():
+    from flask import g
     import time as _rt
-    _rt._req_start = _rt.monotonic()
+    g._req_start = _rt.monotonic()
     print(f'[REQ] {request.method} {request.path}', flush=True)
 
 @app.after_request
 def _log_response(response):
+    from flask import g
     import time as _rt
-    elapsed = _rt.monotonic() - getattr(_rt, '_req_start', _rt.monotonic())
+    elapsed = _rt.monotonic() - getattr(g, '_req_start', _rt.monotonic())
     print(f'[RES] {request.method} {request.path} -> {response.status_code} ({elapsed:.2f}s)', flush=True)
     return response
 

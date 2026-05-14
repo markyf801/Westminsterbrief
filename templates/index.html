@@ -33,7 +33,7 @@
         {% if r.answer_text %}
         <details class="wq-answer-details">
             <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
-            <div class="wq-answer-text">{{ r.answer_text }}</div>
+            <div class="wq-answer-text">{{ r.answer_text | safe }}</div>
         </details>
         {% elif r.answered %}
         <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
