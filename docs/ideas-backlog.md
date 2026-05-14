@@ -178,6 +178,22 @@ Silent backup failures went undetected for 13 days (29 April – 10 May 2026) be
 
 ---
 
+### Universal Source-Link Audit — Complete and Implement
+
+Westminster Brief links every piece of content to its canonical Parliament/GOV.UK source. The audit (14 May 2026) identified:
+- PQ detail: link exists but buried in small-print → promote to header
+- MP archive pages: no parliament.uk link (TWFY ID available; MNIS ID not stored → interim: add TWFY link, longer term: add `mnis_id` to `cached_member`)
+- Session detail: ✓ already has "View on Hansard ↗"
+- Bills, EDMs: not yet ingested (no action needed now)
+
+URL patterns documented in CLAUDE.md "Source attribution principle" section.
+
+**Revisit trigger:** Any session touching PQ detail pages, MP archive pages, or new content type detail pages. Implement PQ link promotion + MP TWFY link as next template-touch session.
+
+*Captured 14 May 2026 — audit done, implementation pending Mark review.*
+
+---
+
 ### Sitemap Caching for PQ Archive Scale
 
 Phase 2A.5 candidate. PQ archive adds ~90k URLs to the sitemap; per-request generation would take ~25s and risk Google's fetcher timing out. PQ URLs stripped from sitemap before Phase 2 deploy as interim fix.

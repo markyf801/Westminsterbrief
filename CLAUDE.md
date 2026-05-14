@@ -135,6 +135,28 @@ Also add `OperationalError` handling around the batch query and commit to call `
 
 ---
 
+## Source attribution principle
+
+Every piece of content on Westminster Brief links to its authoritative source. This is the substantive trust mechanism — not just a compliance requirement.
+
+Westminster Brief is a navigational and analytical layer over Parliament/GOV.UK sources. Every fact must be traceable to where it lives canonically. Source links should be visible and clear, not buried in attribution boilerplate.
+
+**Current state (14 May 2026):**
+
+| Content type | Source URL pattern | Link status |
+|---|---|---|
+| Hansard debates/sessions | `session.hansard_url` (stored in DB) | ✓ "View on Hansard ↗" in session header |
+| Written Questions | `https://questions-statements.parliament.uk/written-questions/detail/{tabled_date}/{uin}` | Present but in small-print — promote to header |
+| MP archive pages | `https://members.parliament.uk/member/{mnis_id}/` | ✗ Not linked — MNIS ID not in `cached_member` (uses TWFY ID) |
+| | `https://www.theyworkforyou.com/mp/?p={member_id}` | ✗ TWFY ID available — simpler interim option |
+| Theme/policy pages | Meta-pages — no single canonical source | N/A |
+| Bills | `https://bills.parliament.uk/bills/{bill_id}` | Not yet ingested |
+| EDMs | `https://edm.parliament.uk/early-day-motion/{edm_number}` | Not yet ingested |
+
+**Pending work (approved by Mark, 14 May 2026):** Promote PQ source link from small-print to session header (same treatment as Hansard "View on Hansard ↗"). MP pages: add TWFY link as interim; full parliament.uk link requires `mnis_id` added to `cached_member` schema.
+
+---
+
 ## Stack
 - **Backend:** Flask 3.0 with blueprints, deployed on Railway
 - **Database:** SQLite locally → PostgreSQL on Railway (auto-switched via `DATABASE_URL` env var)

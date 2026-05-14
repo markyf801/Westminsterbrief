@@ -166,17 +166,21 @@ def ingest_pq_date_range(
                 errors += 1
                 continue
 
-            # For answered rows, fetch the individual endpoint to get full answer
-            # text plus fields the bulk endpoint omits (answerIsHolding,
-            # isWithdrawn). skip_answer_fetch=True bypasses this for bulk passes
-            # where only api_id population is needed.
+            # Fetch individual endpoint for ALL new PQs (answered and unanswered).
+            # The bulk endpoint truncates questionText; the individual endpoint
+            # returns the full record. skip_answer_fetch=True bypasses this for
+            # bulk backfill passes where speed matters more than text quality.
             api_id = fields.get("api_id")
-            if not skip_answer_fetch and fields["is_answered"] and api_id:
+            if not skip_answer_fetch and api_id:
                 full = _fetch_individual(api_id)
                 if full:
-                    full_text = _clean_whitespace(_strip_html(full.get("answerText") or "")) or None
-                    if full_text:
-                        fields["answer_text"] = full_text
+                    full_q = _clean_whitespace(_strip_html(full.get("questionText") or "")) or None
+                    if full_q:
+                        fields["question_text"] = full_q
+                    if fields["is_answered"]:
+                        full_a = _clean_whitespace(_strip_html(full.get("answerText") or "")) or None
+                        if full_a:
+                            fields["answer_text"] = full_a
                     fields["is_holding"]  = bool(full.get("answerIsHolding", False))
                     fields["is_withdrawn"] = bool(full.get("isWithdrawn", False))
                 time.sleep(_INTER_REQUEST_DELAY)
@@ -184,6 +188,7 @@ def ingest_pq_date_range(
             try:
                 existing = db.session.query(HaPQ).filter_by(uin=fields["uin"]).first()
                 if existing:
+                    existing.question_text = fields["question_text"]   # full text from individual endpoint
                     existing.answer_text   = fields["answer_text"]
                     existing.answer_date   = fields["answer_date"]
                     existing.is_answered   = fields["is_answered"]
