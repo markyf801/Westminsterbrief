@@ -82,6 +82,24 @@ Each type has a predictable structure in TWFY data. Use these to tune both detec
 | 800–1500 words | Full ministerial statement, main debate speech |
 | 1500+ words | Major debate speech, Second Reading, Budget statement |
 
+## Ingestion skip policy — procedural items excluded from the archive
+
+These HRSTag values are in `_SKIP_HRS_TAGS` in `hansard_archive/ingestion.py` and are silently excluded from contribution ingestion. Policy is **(c) skip entirely** — they are not speech, carry no research value, and are excluded from search and theme tagging.
+
+| HRSTag | What it is | Rationale |
+|---|---|---|
+| `hs_columnumber` / `hs_columnnumber` | Column/page reference markers | Structural metadata, not text |
+| `hs_clheading` / `hs_clchairman` / `hs_clmember` / `hs_clstaff` / `hs_clclerks` | Committee membership rosters | Listing, not speech |
+| `hs_debatetype` | Section-type labels | Structural label, not content |
+| `hs_amendmentheading` / `hs_amendmentlevel0–3` | Amendment formal text | Legal text, not speech |
+| `hs_tabledby` | "Moved by" / "Asked by" annotations | Procedural annotation |
+| `hs_procedure` | Procedural outcomes ("Motion agreed.", "House resumed.") | Outcome record, not speech |
+| `hs_76fchair` | "[Name in the Chair]" annotation | Chair notation |
+| `hs_brev` / `err_tablewrapper` | Formal bill/motion text blocks | Legal text, not speech |
+| `hs_question` | Lords committee constitution motions (State Opening business): "That the Committee have power to send for persons, papers and records..." etc. | Formula procedural motions, not speech. One-off batch at State Opening — skip silently. |
+
+**Discovery hook:** `_flatten_items()` logs a WARN for any unattributed item whose HRSTag is outside both `_SKIP_HRS_TAGS` and `_KNOWN_SPEECH_HRS_TAGS`. This is intentional — it surfaces new patterns that need classification. Once classified and added to the appropriate set, the warning stops automatically. Do not suppress the WARN level; it is the signal that a new tag needs a policy decision.
+
 ## Title patterns to add if detection improves in future
 
 These debate types currently fall through to `💬 General Debate` but could be classified more precisely:

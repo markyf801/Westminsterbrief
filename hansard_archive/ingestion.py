@@ -334,6 +334,9 @@ _SKIP_HRS_TAGS = {
     "hs_amendmentlevel2",   # amendment formal text (sub-sub-clause)
     "hs_amendmentlevel3",   # amendment formal text (deepest level)
     "err_tablewrapper",     # unattributed formal bill text blocks (same class as hs_brev)
+    "hs_question",          # Lords committee constitution motions (State Opening business):
+                            # "That the Committee have power to send for persons..." etc.
+                            # Formula procedural motions — not speech, skip entirely (policy: (c))
 }
 
 # HRSTag values known to carry real speech text — used by the unknown-tag warning.
