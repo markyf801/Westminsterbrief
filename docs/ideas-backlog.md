@@ -208,26 +208,66 @@ Phase 2A.5 candidate. PQ archive adds ~90k URLs to the sitemap; per-request gene
 
 ---
 
-### Stakeholder Directory — Organisation Enrichment (Description, URL, Leadership)
+### Stakeholder Directory — Organisation Enrichment (Conditional)
 
-The 12,058 orgs in `sd_organisation` have `canonical_url` and `description` columns but both are empty for every org. Adding this data would make the directory pages meaningful rather than just engagement lists.
+**Design decision (16 May 2026):** conditional enrichment, not promised enrichment. Each org page renders what data is available — no placeholders for missing data, sections simply don't render when empty. Users see consistent, honest pages: rich where data exists, lean where it doesn't.
 
-**Description + URL (lower effort, high confidence):**
-Gemini Flash can generate a 2-sentence "who is this organisation" summary and canonical website URL for most UK policy orgs from training data. Batched overnight script, ~2–4 hours of API calls, a few pounds in API cost. Risk: URLs need verification (Gemini may hallucinate). Mitigation: store `url_verified = false` flag and surface unverified URLs as "unconfirmed" in the UI until spot-checked.
+**Data sources (priority order):**
+1. Wikipedia — descriptions + structured infobox data, CC-BY-SA with attribution
+2. Charity Commission — charity facts (registered charities only), free structured data
+3. Companies House — company facts (registered companies only), free structured data
+4. AI-generated — descriptions only, clearly labelled, for orgs not in above sources
 
-**Chair and CEO (harder, schema change needed):**
-No `chair` or `ceo` fields in the schema yet. Leadership changes frequently (quarterly for some orgs), so stale data is a real risk. Better data sources than website scraping:
-- Charity Commission API (free) — trustee data for ~170k UK charities
-- Companies House API (free) — directors for registered companies
-- Gemini with web search — covers remainder but accuracy is variable and goes stale
+**What renders only if data exists:** description, key facts panel (founded/type/HQ/size), CEO/Chief Executive (registry sources only), website link (verified or AI+validation flag), source attribution + last-refreshed date.
 
-Recommended approach: Charity Commission + Companies House for registered entities; Gemini as fallback for trade bodies, universities, and think tanks not in either registry.
+**What always renders:** organisation name, activity records (PQs, evidence, meetings).
 
-**Effort:** Description + URL: ~1 day. Chair/CEO with registry APIs: 3–5 days including schema migration, ingestor, staleness handling.
+**Build approach:** enrich incrementally starting with most-engaged organisations. Coverage grows over time without user-visible rollout.
 
-**Revisit trigger:** Directory is live and used; any "make org pages richer" session; Mark is thinking about what the org detail page should show.
+**Effort:** Wikipedia + Charity Commission + Companies House ingestors: ~3–4 days. AI fallback: ~1 day additional. Schema: `source_type`, `source_refreshed_at` fields on description/facts.
 
-*Captured 5 May 2026.*
+**Revisit trigger:** Post-Teams-share; Stage C polish complete; first major Phase 2A.5 enhancement candidate.
+
+*Captured 5 May 2026. Revised 16 May 2026 — conditional enrichment model confirmed.*
+
+---
+
+### Parliamentary Speaker Analysis + Predictive Engagement View
+
+Multi-phase build. Three pieces, two phases.
+
+**Piece 1 — Speaker analysis (Phase 2A.5, ~1 week)**
+Structured analytical view of each MP's parliamentary engagement patterns — contribution history, themes, frequency, debate types. Publishes to users when complete.
+
+**Piece 2 — What's on at Parliament (Phase 2A.5, ~1–2 weeks)**
+Live page showing upcoming parliamentary business. Publishes to users when complete.
+
+**Piece 3 — Predictive engagement analysis (multi-phase, ~9–12 months total)**
+
+*Stage A: Build prediction system (~4–6 weeks)*
+Pattern recognition for likely speakers and positions on upcoming debates. AI-driven, drawing on Pieces 1 + 2 plus historical contribution data.
+
+*Stage B: Silent run for accuracy measurement (~3–6 months)*
+System generates predictions but does not publish them. After each debate, compare predictions against actual outcomes. Measure: did predicted speakers speak? Did unpredicted speakers speak? Did positions match? Accuracy by debate type, theme, party, MP type.
+
+*Stage C: Decide based on data*
+If accuracy is genuinely useful: publish predictions with calibrated confidence levels based on measured accuracy. If weaker: reframe as "patterns that may inform" rather than predictions, or continue iterating.
+
+**Why silent-run-first:** generates credibility evidence before any public claim; calibrates confidence framing empirically; catches systematic biases before they're public; teaches which signals actually work.
+
+**Strategic significance:** distinguishes Westminster Brief from data-only parliamentary tools; creates moat (months of accuracy data competitors can't quickly match); provides Substack content (analytical posts about findings).
+
+**Risks acknowledged:** public predictions can be wrong (measurement is mitigation); politically sensitive surface (methodology must be transparent and evenhanded); multi-month timeline.
+
+**Build sequence:**
+- Pieces 1, 2: post-Teams-share, Phase 2A.5
+- Piece 3 Stage A: when Pieces 1+2 are stable
+- Piece 3 Stage B: runs silently in background, no user-facing change
+- Piece 3 Stage C: only after empirical accuracy data justifies publishing
+
+**Revisit trigger:** Pieces 1+2 complete and stable; any "what's next after directory enrichment" session; Substack content planning conversation.
+
+*Captured 16 May 2026 — substantive analytical capability, methodology refined.*
 
 ---
 
