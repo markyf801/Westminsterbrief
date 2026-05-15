@@ -42,6 +42,7 @@ from hansard_archive.models import (
     HansardSessionTheme,
     HaPQ,
     HaPQTheme,
+    MpAnalytics,
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
 )
@@ -1136,6 +1137,9 @@ def archive_mp(member_id: int):
     party     = member_attr["party"] or ""
     base_qs   = urlencode({"page": page}) if page > 1 else ""
 
+    # Load precomputed analytics (only populated for Commons MPs by compute job)
+    analytics = db.session.get(MpAnalytics, member_id)
+
     return render_template(
         "hansard_archive/archive_mp.html",
         member_id     = member_id,
@@ -1148,6 +1152,7 @@ def archive_mp(member_id: int):
         per_page      = _PER_PAGE,
         page          = page,
         base_qs       = base_qs,
+        analytics     = analytics,
         og_title      = f"{name} — Hansard Archive",
         meta_desc     = (
             f"Parliamentary contributions by {name}{' (' + party + ')' if party else ''} "
