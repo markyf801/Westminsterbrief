@@ -128,6 +128,60 @@ def add_hyperlink(paragraph, url, text):
     paragraph._p.append(hyperlink)
 
 
+def _add_html_table_to_doc(doc, table_html: str) -> None:
+    """Convert a single HTML <table> to a Word table with grid borders."""
+    row_matches = re.findall(r'<tr[^>]*>([\s\S]*?)</tr>', table_html, re.IGNORECASE)
+    if not row_matches:
+        return
+    grid = []
+    header_flags = []
+    for row_html in row_matches:
+        cells = re.findall(r'<(th|td)[^>]*>([\s\S]*?)</t[hd]>', row_html, re.IGNORECASE)
+        row_texts = [re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', content)).strip()
+                     for _, content in cells]
+        if any(row_texts):
+            grid.append(row_texts)
+            header_flags.append(bool(cells) and cells[0][0].lower() == 'th')
+    if not grid:
+        return
+    col_count = max(len(row) for row in grid)
+    table = doc.add_table(rows=len(grid), cols=col_count)
+    try:
+        table.style = 'Table Grid'
+    except Exception:
+        pass
+    for i, row_texts in enumerate(grid):
+        word_row = table.rows[i]
+        for j in range(col_count):
+            cell_text = row_texts[j] if j < len(row_texts) else ''
+            cell = word_row.cells[j]
+            cell.text = cell_text
+            if header_flags[i] and cell.paragraphs and cell.paragraphs[0].runs:
+                cell.paragraphs[0].runs[0].bold = True
+    doc.add_paragraph()  # spacing after table
+
+
+def _add_answer_to_doc(doc, answer_html: str) -> None:
+    """Add HTML answer content to a Word document.
+
+    Non-table segments are added as plain-text paragraphs.
+    <table> elements are added as proper Word tables.
+    """
+    if not answer_html:
+        return
+    parts = re.split(r'(<table[\s\S]*?</table>)', answer_html, flags=re.IGNORECASE)
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if re.match(r'<table', part, re.IGNORECASE):
+            _add_html_table_to_doc(doc, part)
+        else:
+            text = to_plain_text(part).strip()
+            if text:
+                doc.add_paragraph(text)
+
+
 def _oldest_pq_date() -> str:
     """Return human-readable oldest tabled_date in ha_pq (e.g. '30 Apr 2025'), or ''."""
     try:
@@ -350,11 +404,16 @@ def index():
                     if r['date_answered']:
                         meta_run += f" ({r['date_answered']})"
                     p.add_run(meta_run + "\n")
-                    p.add_run(f"Question: {r['text']}\n")
+                    p.add_run(f"Question: {r['text']}")
                     if r['answer_text']:
-                        p.add_run(f"Answer: {to_plain_text(r['answer_text'])}\n")
-                    p.add_run("Link: ")
-                    add_hyperlink(p, r['url'], r['url'])
+                        if '<table' in r['answer_text']:
+                            p.add_run("\nAnswer:")
+                            _add_answer_to_doc(doc, r['answer_text'])
+                        else:
+                            p.add_run(f"\nAnswer: {to_plain_text(r['answer_text'])}")
+                    p_link = doc.add_paragraph()
+                    p_link.add_run("Link: ")
+                    add_hyperlink(p_link, r['url'], r['url'])
                 b = io.BytesIO()
                 doc.save(b)
                 b.seek(0)
@@ -455,11 +514,17 @@ def download_selected():
         if r.get('date_answered'):
             meta += f" ({r['date_answered']})"
         p.add_run(meta + "\n")
-        p.add_run(f"Question: {r.get('text', '')}\n")
-        if r.get('answer_text'):
-            p.add_run(f"Answer: {to_plain_text(r['answer_text'])}\n")
-        p.add_run("Link: ")
-        add_hyperlink(p, r.get('url', ''), r.get('url', ''))
+        p.add_run(f"Question: {r.get('text', '')}")
+        answer_html = r.get('answer_text', '')
+        if answer_html:
+            if '<table' in answer_html:
+                p.add_run("\nAnswer:")
+                _add_answer_to_doc(doc, answer_html)
+            else:
+                p.add_run(f"\nAnswer: {to_plain_text(answer_html)}")
+        p_link = doc.add_paragraph()
+        p_link.add_run("Link: ")
+        add_hyperlink(p_link, r.get('url', ''), r.get('url', ''))
     b = io.BytesIO()
     doc.save(b)
     b.seek(0)

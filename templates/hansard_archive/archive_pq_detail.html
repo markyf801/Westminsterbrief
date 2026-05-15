@@ -86,7 +86,12 @@
             <div class="sd-contrib-speaker" style="border-left-color: #2e7d32;">
                 {% if pq.answering_member %}
                 <span class="sd-speaker-name">{{ pq.answering_member }}</span>
-                <span class="sd-speaker-secondary">Answer · {{ pq.answering_body }}{% if human_answered %} · {{ human_answered }}{% endif %}</span>
+                <span class="sd-speaker-secondary">
+                    {%- if answering_party or answering_role -%}
+                        {{ answering_party }}{% if answering_party and answering_role %}, {% endif %}{{ answering_role }} ·
+                    {%- endif %}
+                    Answer · {{ pq.answering_body }}{% if human_answered %} · {{ human_answered }}{% endif %}
+                </span>
                 {% else %}
                 <span class="sd-speaker-name">{{ pq.answering_body or 'Government' }}</span>
                 <span class="sd-speaker-secondary">Answer{% if human_answered %} · {{ human_answered }}{% endif %}</span>
