@@ -471,6 +471,15 @@ with app.app_context():
         _mig_log('ha_pq cols done')
     except Exception as _e:
         app.logger.warning('ha_pq migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE cached_member ADD COLUMN IF NOT EXISTS ministerial_role VARCHAR(500)"
+            ))
+            _conn.commit()
+        _mig_log('cached_member ministerial_role col done')
+    except Exception as _e:
+        app.logger.warning('cached_member ministerial_role migration failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records

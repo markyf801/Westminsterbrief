@@ -1738,8 +1738,12 @@ def pq_detail(uin: str):
         cached = CachedMember.get(pq.answering_mnis_id)
         if cached:
             answering_party = cached.party
-            answering_role = ("Life Peer" if cached.house == "Lords"
-                              else f"MP for {cached.constituency}" if cached.constituency else None)
+            if cached.ministerial_role:
+                answering_role = cached.ministerial_role
+            elif cached.house == "Lords":
+                answering_role = "Life Peer"
+            elif cached.constituency:
+                answering_role = f"MP for {cached.constituency}"
 
     seo_title = f"{pq.heading or pq.uin} — {pq.uin} — Westminster Brief"
 

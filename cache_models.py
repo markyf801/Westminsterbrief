@@ -240,6 +240,7 @@ class CachedMember(db.Model):
     constituency = db.Column(db.String(200))
     house = db.Column(db.String(20))
     image_url = db.Column(db.String(500))
+    ministerial_role = db.Column(db.String(500))  # current govt post, null if not a minister
     cached_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def is_fresh(self):
@@ -250,7 +251,7 @@ class CachedMember(db.Model):
         return CachedMember.query.filter_by(member_id=int(member_id)).first()
 
     @staticmethod
-    def store(member_id, name, party, constituency, house, image_url):
+    def store(member_id, name, party, constituency, house, image_url, ministerial_role=None):
         existing = CachedMember.query.filter_by(member_id=int(member_id)).first()
         if existing:
             existing.name = name
@@ -258,11 +259,14 @@ class CachedMember(db.Model):
             existing.constituency = constituency
             existing.house = house
             existing.image_url = image_url
+            if ministerial_role is not None:
+                existing.ministerial_role = ministerial_role
             existing.cached_at = datetime.utcnow()
         else:
             db.session.add(CachedMember(
                 member_id=int(member_id), name=name, party=party,
-                constituency=constituency, house=house, image_url=image_url
+                constituency=constituency, house=house, image_url=image_url,
+                ministerial_role=ministerial_role,
             ))
         try:
             db.session.commit()
