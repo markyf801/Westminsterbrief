@@ -1,4 +1,5 @@
 import requests, json, io, time, re, logging
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from flask import Blueprint, render_template, request, send_file, jsonify, copy_current_request_context
 from datetime import datetime, timedelta
@@ -188,13 +189,15 @@ def _fetch_profile_data(member_id: int) -> dict | None:
         return None
 
 
-def _fetch_speeches(member_id: int, is_lord: bool, dept: str = '') -> list:
+def _fetch_speeches(member_id: int, is_lord: bool, topic: str = '') -> list:  # noqa: ARG001
     """
-    Return up to 50 recent sessions where this member contributed, from local
-    ha_contribution + ha_session tables. Filtered by department ID when provided.
-    Cached 24h per (member_id, dept) pair.
+    Return up to 50 sessions where this member contributed.
+    When topic is provided: hybrid search on session title + MP speech text,
+    results include MP's contribution excerpts and preceding-speaker context.
+    Cached 24h per (member_id, topic) pair.
     """
-    cache_key = f'{member_id}_{dept}'
+    topic_clean = topic.strip().lower()
+    cache_key = f'{member_id}_{topic_clean}'
     cached = _cache_get(_speech_cache, cache_key, _TTL_24H)
     if cached is not None:
         return cached
@@ -203,35 +206,112 @@ def _fetch_speeches(member_id: int, is_lord: bool, dept: str = '') -> list:
         from extensions import db
         from hansard_archive.models import HansardContribution, HansardSession
 
-        subq = (
-            db.session.query(HansardContribution.session_id)
-            .filter(HansardContribution.member_id == member_id)
-            .distinct()
-            .subquery()
-        )
-        q = (
-            db.session.query(HansardSession)
-            .join(subq, HansardSession.id == subq.c.session_id)
-            .filter(HansardSession.is_container == False)  # noqa: E712
-        )
-        if dept:
-            dept_name = next((k for k, v in DEPARTMENTS.items() if v == dept and k != 'All Departments'), None)
-            if dept_name:
-                q = q.filter(HansardSession.department == dept_name)
-        sessions = q.order_by(HansardSession.date.desc()).limit(50).all()
         def _url_date(d):
             return f"{d.day}-{d.strftime('%B').lower()}-{d.year}" if d else ''
 
-        result = [
-            {
-                'date': s.date.isoformat() if s.date else '',
-                'subject': s.title,
-                'chamber': s.house,
-                'url': (f"/archive/debate/{_url_date(s.date)}/{s.slug}"
-                        if s.date and s.slug else ''),
+        if topic_clean:
+            t = f'%{topic_clean}%'
+
+            title_ids = {
+                r[0] for r in
+                db.session.query(HansardSession.id)
+                .join(HansardContribution, HansardContribution.session_id == HansardSession.id)
+                .filter(
+                    HansardContribution.member_id == member_id,
+                    HansardSession.is_container == False,  # noqa: E712
+                    HansardSession.title.ilike(t)
+                )
+                .distinct()
             }
-            for s in sessions
-        ]
+
+            speech_ids = {
+                r[0] for r in
+                db.session.query(HansardContribution.session_id)
+                .filter(
+                    HansardContribution.member_id == member_id,
+                    HansardContribution.speech_text.ilike(t)
+                )
+                .distinct()
+            }
+
+            all_ids = title_ids | speech_ids
+            if not all_ids:
+                _cache_set(_speech_cache, cache_key, [])
+                return []
+
+            sessions = (
+                db.session.query(HansardSession)
+                .filter(
+                    HansardSession.id.in_(all_ids),
+                    HansardSession.is_container == False  # noqa: E712
+                )
+                .order_by(HansardSession.date.desc())
+                .limit(50)
+                .all()
+            )
+
+            # Batch-fetch all contributions for matched sessions
+            session_ids = [s.id for s in sessions]
+            all_contribs = (
+                db.session.query(HansardContribution)
+                .filter(HansardContribution.session_id.in_(session_ids))
+                .order_by(HansardContribution.session_id, HansardContribution.speech_order)
+                .all()
+            )
+
+            by_key = {(c.session_id, c.speech_order): c for c in all_contribs}
+            mp_by_session: dict = defaultdict(list)
+            for c in all_contribs:
+                if c.member_id == member_id:
+                    mp_by_session[c.session_id].append(c)
+
+            result = []
+            for s in sessions:
+                contribs = []
+                for c in mp_by_session.get(s.id, []):
+                    preceding = by_key.get((s.id, c.speech_order - 1))
+                    contribs.append({
+                        'text': (c.speech_text or '')[:500],
+                        'preceding_name': preceding.member_name if preceding else None,
+                        'preceding_text': (preceding.speech_text or '')[:250] if preceding else None,
+                    })
+                result.append({
+                    'date': s.date.isoformat() if s.date else '',
+                    'subject': s.title,
+                    'chamber': s.house,
+                    'debate_type': s.debate_type or '',
+                    'url': (f"/archive/debate/{_url_date(s.date)}/{s.slug}"
+                            if s.date and s.slug else ''),
+                    'contributions': contribs,
+                })
+
+        else:
+            subq = (
+                db.session.query(HansardContribution.session_id)
+                .filter(HansardContribution.member_id == member_id)
+                .distinct()
+                .subquery()
+            )
+            sessions = (
+                db.session.query(HansardSession)
+                .join(subq, HansardSession.id == subq.c.session_id)
+                .filter(HansardSession.is_container == False)  # noqa: E712
+                .order_by(HansardSession.date.desc())
+                .all()
+            )
+            result = [
+                {
+                    'date': s.date.isoformat() if s.date else '',
+                    'subject': s.title,
+                    'chamber': s.house,
+                    'debate_type': s.debate_type or '',
+                    'url': (f"/archive/debate/{_url_date(s.date)}/{s.slug}"
+                            if s.date and s.slug else ''),
+                    'contributions': [],
+                }
+                for s in sessions
+            ]
+
     except Exception as e:
         logger.warning('[mp_research] DB speech fetch failed for %d: %s', member_id, e)
         result = []
@@ -240,7 +320,7 @@ def _fetch_speeches(member_id: int, is_lord: bool, dept: str = '') -> list:
     return result
 
 
-def _fetch_pqs(member_id: int, dept: str, start_date: str, end_date: str) -> list:
+def _fetch_pqs(member_id: int, dept: str, start_date: str, end_date: str, topic: str = '') -> list:
     """Written Questions for this member from local ha_pq DB."""
     try:
         from extensions import db
@@ -256,6 +336,11 @@ def _fetch_pqs(member_id: int, dept: str, start_date: str, end_date: str) -> lis
             q = q.filter(HaPQ.tabled_date >= start_date)
         if end_date:
             q = q.filter(HaPQ.tabled_date <= end_date)
+        if topic:
+            t = f'%{topic.strip()}%'
+            q = q.filter(
+                HaPQ.question_text.ilike(t) | HaPQ.heading.ilike(t)
+            )
         rows = q.order_by(HaPQ.tabled_date.desc()).limit(500).all()
         return [
             {
@@ -287,6 +372,7 @@ def search_mp_pqs():
     selected_dept = ''
     start_date = ''
     end_date = ''
+    contributions_topic = ''
     member_id_str = ''
 
     if request.method == 'POST':
@@ -294,6 +380,7 @@ def search_mp_pqs():
         selected_dept = (request.form.get('department') or '').strip()
         start_date = (request.form.get('start_date') or '').strip()
         end_date = (request.form.get('end_date') or '').strip()
+        contributions_topic = (request.form.get('contributions_topic') or '').strip()
 
         if not member_id_str:
             pq_error = 'Please select a member.'
@@ -305,17 +392,16 @@ def search_mp_pqs():
                     pq_error = 'Could not load member details — please try again.'
                 else:
                     is_lord = member_header.get('is_lord', False)
-                    member_name = member_header.get('name', '')
 
                     with ThreadPoolExecutor(max_workers=3) as ex:
                         f_profile = ex.submit(
                             copy_current_request_context(_fetch_profile_data), member_id)
                         f_pqs = ex.submit(
                             copy_current_request_context(_fetch_pqs),
-                            member_id, selected_dept, start_date, end_date)
+                            member_id, selected_dept, start_date, end_date, contributions_topic)
                         f_speeches = ex.submit(
                             copy_current_request_context(_fetch_speeches),
-                            member_id, is_lord, selected_dept)
+                            member_id, is_lord, contributions_topic)
 
                         try:
                             profile_data = f_profile.result(timeout=25)
@@ -348,6 +434,7 @@ def search_mp_pqs():
         departments=DEPARTMENTS,
         selected_dept=selected_dept,
         start_date=start_date, end_date=end_date,
+        contributions_topic=contributions_topic,
         member_id=member_id_str,
         is_post=(request.method == 'POST'),
     )

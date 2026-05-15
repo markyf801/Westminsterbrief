@@ -75,14 +75,22 @@
     </p>
 
     <form method="POST" id="mp-research-form" onsubmit="showLoadingState()">
-        <div class="form-row">
+        <div class="form-row" style="align-items:flex-end;">
             <div class="form-group" style="flex:2; min-width:220px;">
                 <label class="form-label" for="member-search">MP or Peer</label>
                 <select name="_member_display" id="member-search" style="width:100%;" required></select>
                 <input type="hidden" name="member_id" id="member_id_input" value="{{ member_id }}">
             </div>
+            <div style="padding-bottom:2px;">
+                <button type="submit" class="btn btn-primary" id="search-btn">Search</button>
+            </div>
+        </div>
+        <div class="form-row" style="margin-top:8px; padding-top:8px; border-top:1px solid #e8edf4;">
+            <div style="font-size:11px; color:#8a96a4; font-weight:600; text-transform:uppercase; letter-spacing:.04em; width:100%; margin-bottom:4px;">
+                Filter Written Questions &nbsp;·&nbsp; <span style="color:#b0bac5;">applies to WQ tab only</span>
+            </div>
             <div class="form-group" style="flex:1.5; min-width:180px;">
-                <label class="form-label">Filter PQs by department</label>
+                <label class="form-label">Department</label>
                 <select name="department">
                     {% for dname, did in departments.items() %}
                         <option value="{{ did }}" {% if selected_dept == did %}selected{% endif %}>{{ dname }}</option>
@@ -90,16 +98,14 @@
                 </select>
             </div>
             <div class="form-group" style="min-width:130px;">
-                <label class="form-label">PQs from</label>
+                <label class="form-label">From</label>
                 <input type="date" name="start_date" value="{{ start_date }}">
             </div>
             <div class="form-group" style="min-width:130px;">
-                <label class="form-label">PQs to</label>
+                <label class="form-label">To</label>
                 <input type="date" name="end_date" value="{{ end_date }}">
             </div>
-            <div style="padding-bottom:2px;">
-                <button type="submit" class="btn btn-primary" id="search-btn">Search</button>
-            </div>
+            <div style="flex:0.2;"></div>
         </div>
     </form>
 
@@ -294,11 +300,51 @@
             </div>
             {% elif speeches %}
             <p style="font-size:12px; color:#8a96a4; margin-bottom:12px;">
-                Parliamentary contributions — {{ speeches|length }} most recent sessions in Westminster Brief's Hansard archive
-                {% if hansard_archive_start %}(from {{ hansard_archive_start }}){% endif %}.
-                For full historical contributions, visit
-                <a href="https://hansard.parliament.uk/search/MemberContributions?memberId={{ member_id }}" target="_blank" style="color:#4a7fa5;">their Hansard page</a>.
+                {% if contributions_topic %}
+                    {{ speeches|length }} session{{ 's' if speeches|length != 1 else '' }} where <strong>{{ contributions_topic }}</strong> appears in the debate title or this MP's contributions.
+                    Excerpts shown with preceding-speaker context — click a session title for the full transcript.
+                {% else %}
+                    {{ speeches|length }} most recent sessions in Westminster Brief's Hansard archive{% if hansard_archive_start %} (from {{ hansard_archive_start }}){% endif %}.
+                    Use the topic filter above to search contributions by subject.
+                {% endif %}
+                &nbsp;·&nbsp;
+                <a href="https://hansard.parliament.uk/search/MemberContributions?memberId={{ member_id }}" target="_blank" style="color:#4a7fa5;">Full Hansard history ↗</a>
             </p>
+
+            {% if contributions_topic %}
+            {# ── Topic search: card view with excerpts ── #}
+            {% for s in speeches %}
+            <div class="speech-card" style="border-left:3px solid #1a4a6e; background:#fff; border-radius:0 6px 6px 0; padding:12px 14px; margin-bottom:12px; border:1px solid #e0e6ed;"
+                 data-date="{{ s.date }}" data-subject="{{ s.subject }}" data-chamber="{{ s.chamber }}" data-url="{{ s.url }}">
+                <div class="pq-card-meta" style="margin-bottom:6px;">
+                    <strong style="color:#1a2332;">
+                        {% if s.url %}<a href="{{ s.url }}" style="color:#1a2332; text-decoration:none;">{{ s.subject }}</a>{% else %}{{ s.subject }}{% endif %}
+                    </strong>
+                    <span style="float:right; color:#8a96a4;">{{ s.date }}{% if s.chamber %} · {{ s.chamber }}{% endif %}{% if s.debate_type %} · {{ s.debate_type }}{% endif %}</span>
+                </div>
+                {% for c in s.contributions %}
+                <div style="margin-top:8px; padding-top:8px; border-top:1px solid #f0f2f5;">
+                    {% if c.preceding_name %}
+                    <div style="font-size:12px; color:#8a96a4; margin-bottom:4px; padding-left:10px; border-left:2px solid #e0e6ed;">
+                        <strong>{{ c.preceding_name }}:</strong>
+                        <em>{{ c.preceding_text }}{% if c.preceding_text and c.preceding_text|length == 250 %}…{% endif %}</em>
+                    </div>
+                    {% endif %}
+                    <div style="font-size:13px; color:#2d3748; padding-left:10px;">
+                        {{ c.text }}{% if c.text|length == 500 %}…{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% if s.url %}
+                <div style="margin-top:8px;">
+                    <a href="{{ s.url }}" class="pq-card-link">View full session →</a>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+
+            {% else %}
+            {# ── No topic: simple table ── #}
             <table class="speeches-table">
                 <thead>
                     <tr>
@@ -323,9 +369,16 @@
                 {% endfor %}
                 </tbody>
             </table>
+            {% endif %}
+
             {% elif is_post %}
             <p style="color:#8a96a4; font-size:13px; padding:8px 0;">
-                No recent speeches found in Hansard for this member.
+                {% if contributions_topic %}
+                    No contributions found matching <strong>{{ contributions_topic }}</strong> in the Hansard archive.
+                {% else %}
+                    No recent contributions found in the Hansard archive for this member.
+                    Use the topic filter above to search by subject.
+                {% endif %}
             </p>
             {% endif %}
         </div>
@@ -458,9 +511,17 @@ function buildAndDownload() {
         });
     });
 
-    // Collect speech data from DOM
+    // Collect speech data from DOM (table rows for browse, cards for topic search)
     var speeches = [];
     document.querySelectorAll('.speeches-table tbody tr').forEach(function(el) {
+        speeches.push({
+            date:    el.getAttribute('data-date'),
+            subject: el.getAttribute('data-subject'),
+            chamber: el.getAttribute('data-chamber'),
+            url:     el.getAttribute('data-url')
+        });
+    });
+    document.querySelectorAll('.speech-card').forEach(function(el) {
         speeches.push({
             date:    el.getAttribute('data-date'),
             subject: el.getAttribute('data-subject'),
