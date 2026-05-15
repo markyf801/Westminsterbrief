@@ -412,16 +412,18 @@ def ingest_committee_evidence(
     internal_govt_variants = load_internal_government()
     committee_meta_map = _fetch_committees(committee_ids)
 
-    for pub_type, endpoint in [
-        ('oral_evidence', _ORAL_ENDPOINT),
-        ('written_evidence', _WRITTEN_ENDPOINT),
-    ]:
-        for committee_id in committee_ids:
-            committee_meta = committee_meta_map.get(committee_id, {})
-            cid_start = (
-                per_committee_start_dates.get(committee_id, start_date)
-                if per_committee_start_dates else start_date
-            )
+    # Loop committee-first so a mid-run container death only loses the current
+    # committee, not all written evidence (which previously ran as a second full pass).
+    for committee_id in committee_ids:
+        committee_meta = committee_meta_map.get(committee_id, {})
+        cid_start = (
+            per_committee_start_dates.get(committee_id, start_date)
+            if per_committee_start_dates else start_date
+        )
+        for pub_type, endpoint in [
+            ('oral_evidence', _ORAL_ENDPOINT),
+            ('written_evidence', _WRITTEN_ENDPOINT),
+        ]:
             try:
                 publications = _fetch_all_publications(
                     endpoint, committee_id, cid_start, end_date,
@@ -450,8 +452,9 @@ def ingest_committee_evidence(
                     result.errors.append(msg)
                     logger.exception("Error processing %s publication %s", pub_type, pub_id)
 
-    if not dry_run:
-        from extensions import db
-        db.session.commit()
+        # Commit after each committee so a mid-run death preserves completed work.
+        if not dry_run:
+            from extensions import db
+            db.session.commit()
 
     return result
