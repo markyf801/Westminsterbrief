@@ -2,6 +2,95 @@
    Westminster Brief — Stakeholder Directory CSS
    ============================================= */
 
+/* --- Committee evidence accordion --- */
+.dir-committee-block {
+    border: 1px solid #e0e6ed;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    background: #fff;
+}
+.dir-committee-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a2332;
+}
+.dir-committee-summary::-webkit-details-marker { display: none; }
+.dir-committee-name { flex: 1; }
+.dir-committee-count {
+    font-weight: 400;
+    color: #8a96a4;
+    font-size: 12px;
+    white-space: nowrap;
+}
+.dir-inquiry-group {
+    padding: 10px 16px 10px 24px;
+    border-top: 1px solid #f0f2f5;
+}
+.dir-inquiry-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #4a7fa5;
+    margin-bottom: 8px;
+}
+.dir-inquiry-title a { color: #4a7fa5; text-decoration: none; }
+.dir-inquiry-title a:hover { text-decoration: underline; }
+.dir-evidence-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+.dir-evidence-date { color: #6a7888; }
+.dir-evidence-link { color: #4a7fa5; text-decoration: none; font-size: 12px; }
+.dir-evidence-link:hover { text-decoration: underline; }
+.dir-evidence-excerpt { width: 100%; margin-top: 4px; }
+.dir-evidence-quote {
+    font-size: 13px;
+    color: #444;
+    font-style: italic;
+    border-left: 3px solid #c5d5e4;
+    margin: 0 0 4px 0;
+    padding: 4px 10px;
+    background: #f8fafc;
+    border-radius: 0 4px 4px 0;
+}
+.dir-evidence-wordcount { font-size: 11px; color: #9a9fa8; }
+.dir-evidence-urls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    margin-top: 2px;
+}
+.dir-evidence-urls-label {
+    font-size: 11px;
+    color: #9a9fa8;
+    font-style: italic;
+}
+.dir-evidence-ext-url {
+    font-size: 11px;
+    color: #888;
+    background: #f5f7fa;
+    border: 1px solid #e0e6ed;
+    border-radius: 3px;
+    padding: 2px 6px;
+    text-decoration: none;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dir-evidence-ext-url:hover { color: #4a7fa5; border-color: #4a7fa5; }
+
 /* --- Source type badges --- */
 .badge-st {
     display: inline-block;
