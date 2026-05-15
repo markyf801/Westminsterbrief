@@ -16,6 +16,17 @@ body {
     color: #2d3748;
 }
 
+/* --- BETA ENVIRONMENT BANNER --- */
+.beta-env-banner {
+    background: #f59e0b;
+    color: #fff;
+    text-align: center;
+    padding: 7px 20px;
+    font-size: 0.8rem;
+    letter-spacing: 0.01em;
+}
+.beta-env-banner strong { font-weight: 700; margin-right: 4px; }
+
 /* --- NAVIGATION --- */
 .navbar {
     background: #0d1117;

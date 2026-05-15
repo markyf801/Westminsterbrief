@@ -237,11 +237,13 @@ _mig_t0 = _mig_time.monotonic()
 def _mig_log(phase):
     print(f'[STARTUP] {phase} +{_mig_time.monotonic() - _mig_t0:.1f}s', flush=True)
 
-_mig_log('begin')
+_SKIP_MIGS = bool(os.environ.get('SKIP_MIGRATIONS'))
+_mig_log('begin' if not _SKIP_MIGS else 'SKIP_MIGRATIONS=1 — read-only mode, skipping DDL and seeds')
 with app.app_context():
     _mig_log('app_context entered')
-    db.create_all()
-    _mig_log('db.create_all done')
+    if not _SKIP_MIGS:
+        db.create_all()
+        _mig_log('db.create_all done')
     # Add has_completed_onboarding to existing user tables that predate this column
     try:
         with db.engine.connect() as conn:
@@ -516,17 +518,18 @@ with app.app_context():
          'house': 'Commons', 'twfy_person_id': '26321',
          'twfy_name': 'Josh MacAlister', 'resolution_method': 'seeded'},
     ]
-    _mig_log('starting MemberLink seeds')
-    for s in _SEEDS:
-        if not MemberLink.get_by_parliament_id(s['parliament_id']):
-            MemberLink.upsert(**s)
-    _mig_log('MemberLink seeds done')
-    if not User.query.filter_by(email='joe@university.ac.uk').first():
-        joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
-        joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
-        db.session.add(joe)
-        db.session.commit()
-    _mig_log('user seed done')
+    if not _SKIP_MIGS:
+        _mig_log('starting MemberLink seeds')
+        for s in _SEEDS:
+            if not MemberLink.get_by_parliament_id(s['parliament_id']):
+                MemberLink.upsert(**s)
+        _mig_log('MemberLink seeds done')
+        if not User.query.filter_by(email='joe@university.ac.uk').first():
+            joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
+            joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
+            db.session.add(joe)
+            db.session.commit()
+        _mig_log('user seed done')
 
     # Seed education stakeholder orgs (run once — skipped if any orgs already exist)
     _mig_log('checking StakeholderOrg count')
@@ -608,12 +611,13 @@ with app.app_context():
     _mig_log('StakeholderOrg seed done')
     _mig_log('app_context block complete')
 
-# Kick off background minister link seeding after app context is established
-_mig_log('importing debate_scanner for seed_all_minister_links')
-from debate_scanner import seed_all_minister_links
-_mig_log('debate_scanner imported')
-seed_all_minister_links(app)
-_mig_log('seed_all_minister_links started')
+if not _SKIP_MIGS:
+    # Kick off background minister link seeding after app context is established
+    _mig_log('importing debate_scanner for seed_all_minister_links')
+    from debate_scanner import seed_all_minister_links
+    _mig_log('debate_scanner imported')
+    seed_all_minister_links(app)
+    _mig_log('seed_all_minister_links started')
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
@@ -1062,6 +1066,33 @@ def ratelimit_handler(e):
         return jsonify(error="Too many requests. Please try again in a moment."), 429
     return render_template('429.html'), 429
 
+
+_BETA_ENV = os.environ.get('ENVIRONMENT') == 'beta'
+_BETA_PASSWORD = os.environ.get('BETA_PASSWORD', '')
+
+@app.before_request
+def _beta_auth_gate():
+    """Block all routes on the beta service unless the visitor has authenticated."""
+    if not _BETA_ENV:
+        return
+    exempt = {'/beta-login'}
+    if request.path in exempt or request.path.startswith('/static/'):
+        return
+    if not session.get('beta_authenticated'):
+        return redirect(url_for('beta_login', next=request.path))
+
+@app.route('/beta-login', methods=['GET', 'POST'])
+def beta_login():
+    if not _BETA_ENV:
+        abort(404)
+    error = None
+    if request.method == 'POST':
+        pw = request.form.get('password', '')
+        if pw and pw == _BETA_PASSWORD:
+            session['beta_authenticated'] = True
+            return redirect(request.args.get('next') or '/')
+        error = 'Incorrect password.'
+    return render_template('beta_login.html', error=error)
 
 @app.before_request
 def _enforce_feature_flags():
@@ -2038,6 +2069,10 @@ def inject_version():
 def inject_admin_auth():
     from flask import session as flask_session
     return {'admin_authenticated': flask_session.get('admin_authenticated', False)}
+
+@app.context_processor
+def inject_beta_flag():
+    return {'is_beta': _BETA_ENV}
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
