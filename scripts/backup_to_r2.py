@@ -21,6 +21,7 @@ import tempfile
 from datetime import datetime, timezone
 
 import boto3
+import psycopg2
 
 
 def log(msg):
@@ -108,6 +109,25 @@ def main():
         s3.upload_file(enc_path, r2_bucket, object_key)
 
     log(f"Backup complete: s3://{r2_bucket}/{object_key}")
+
+    # Record successful run in ha_cron_run so /health can check backup freshness
+    try:
+        conn = psycopg2.connect(database_url)
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            cur.execute(
+                """
+                INSERT INTO ha_cron_run
+                    (service_name, started_at, finished_at, days_window, status)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                ("backup-r2", now, now, 1, "ok"),
+            )
+        conn.close()
+        log("Recorded run in ha_cron_run")
+    except Exception as exc:
+        log(f"WARNING: could not record run in ha_cron_run: {exc}")
 
 
 if __name__ == "__main__":

@@ -684,6 +684,22 @@ def health():
     gemini_key = os.environ.get('GEMINI_API_KEY')
     checks['gemini_api'] = 'ok' if gemini_key else 'FAIL: key not configured'
 
+    # Backup freshness — last successful backup-r2 run must be within 26h
+    try:
+        from hansard_archive.models import HaCronRun
+        from sqlalchemy import desc as _desc
+        last_backup = (HaCronRun.query
+                       .filter_by(service_name='backup-r2', status='ok')
+                       .order_by(_desc(HaCronRun.finished_at))
+                       .first())
+        if last_backup and last_backup.finished_at:
+            age_h = (datetime.utcnow() - last_backup.finished_at).total_seconds() / 3600
+            checks['backup'] = 'ok' if age_h < 26 else f'STALE: last backup {age_h:.0f}h ago'
+        else:
+            checks['backup'] = 'WARN: no backup record found'
+    except Exception as e:
+        checks['backup'] = f'FAIL: {e}'
+
     # Git version
     checks['version'] = os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:7]
 
