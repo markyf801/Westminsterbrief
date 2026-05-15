@@ -337,6 +337,8 @@ _SKIP_HRS_TAGS = {
     "hs_question",          # Lords committee constitution motions (State Opening business):
                             # "That the Committee have power to send for persons..." etc.
                             # Formula procedural motions — not speech, skip entirely (policy: (c))
+    "hs_debateheading",     # debate/committee section title labels ("International Agreements
+                            # Committee" etc.) — structural headers, never attributed speech
 }
 
 # HRSTag values known to carry real speech text — used by the unknown-tag warning.
