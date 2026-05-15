@@ -1252,6 +1252,7 @@ details[open] > .debate-speeches-summary::before { content: '▼'; }
 .wq-answer-summary::-webkit-details-marker { display: none; }
 .wq-answer-summary::before { content: "▶"; font-size: 10px; color: #005a8f; }
 details[open] .wq-answer-summary::before { content: "▼"; }
+.wq-minister-role { font-weight: 400; color: #5a6a7a; }
 
 .wq-answer-text {
     font-size: 13px;

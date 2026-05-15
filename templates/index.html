@@ -11,7 +11,7 @@
 <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
     <div class="result-card-header" style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
         <input type="checkbox" class="wq-select"
-               data-wq='{{ {"uin": r.uin, "dept": r.dept, "name": r.name, "party": r.party, "role": r.role, "date": r.date, "text": r.text, "heading": r.heading, "answered": r.answered, "is_holding": r.is_holding, "is_withdrawn": r.is_withdrawn, "answer_text": r.answer_text, "answering_minister": r.answering_minister, "date_answered": r.date_answered, "url": r.url} | tojson }}'
+               data-wq='{{ {"uin": r.uin, "dept": r.dept, "name": r.name, "party": r.party, "role": r.role, "date": r.date, "text": r.text, "heading": r.heading, "answered": r.answered, "is_holding": r.is_holding, "is_withdrawn": r.is_withdrawn, "answer_text": r.answer_text, "answering_minister": r.answering_minister, "answering_minister_role": r.answering_minister_role, "date_answered": r.date_answered, "url": r.url} | tojson }}'
                onchange="updateSelectionBar()"
                onclick="event.stopPropagation()"
                style="cursor:pointer; flex-shrink:0; width:15px; height:15px;">
@@ -32,11 +32,11 @@
         <p class="result-card-quote">"{{ r.text }}"</p>
         {% if r.answer_text %}
         <details class="wq-answer-details">
-            <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
+            <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
             <div class="wq-answer-text">{{ r.answer_text | safe }}</div>
         </details>
         {% elif r.answered %}
-        <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
+        <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
         {% endif %}
         <a href="{{ r.url }}" target="_blank" class="result-card-link">View on Parliament.uk &rarr;</a>
     </div>

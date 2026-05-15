@@ -341,24 +341,32 @@ def index():
                 )
 
                 house = pq.chamber or actual_house
+
+                answering_role = None
+                if pq.answering_mnis_id:
+                    ans_cached = CachedMember.get(pq.answering_mnis_id)
+                    if ans_cached:
+                        answering_role = ans_cached.ministerial_role
+
                 results.append({
-                    'uin':                pq.uin,
-                    'url':                question_url,
-                    'dept':               pq.answering_body or '',
-                    'name':               pq.asking_member or api_name or 'Unknown',
-                    'party':              party,
-                    'role':               "Life Peer" if house == "Lords" else f"MP for {constituency}",
-                    'date':               f_date,
-                    'text':               pq.question_text or '',
-                    'heading':            pq.heading or '',
-                    'party_colour':       PARTY_COLOURS.get(party, '#888888'),
-                    'answered':           pq.is_answered,
-                    'is_holding':         pq.is_holding,
-                    'is_withdrawn':       pq.is_withdrawn,
-                    'answer_text':        pq.answer_text or '',
-                    'answering_minister': pq.answering_member or '',
-                    'date_answered':      date_answered,
-                    '_sort_date':         tabled_str,
+                    'uin':                    pq.uin,
+                    'url':                    question_url,
+                    'dept':                   pq.answering_body or '',
+                    'name':                   pq.asking_member or api_name or 'Unknown',
+                    'party':                  party,
+                    'role':                   "Life Peer" if house == "Lords" else f"MP for {constituency}",
+                    'date':                   f_date,
+                    'text':                   pq.question_text or '',
+                    'heading':                pq.heading or '',
+                    'party_colour':           PARTY_COLOURS.get(party, '#888888'),
+                    'answered':               pq.is_answered,
+                    'is_holding':             pq.is_holding,
+                    'is_withdrawn':           pq.is_withdrawn,
+                    'answer_text':            pq.answer_text or '',
+                    'answering_minister':     pq.answering_member or '',
+                    'answering_minister_role': answering_role or '',
+                    'date_answered':          date_answered,
+                    '_sort_date':             tabled_str,
                 })
 
             results.sort(key=lambda r: r.get('_sort_date', ''), reverse=True)
@@ -401,8 +409,10 @@ def index():
                     meta_run = f"UIN: {r['uin']}  ·  Date Asked: {r['date']}"
                     if r['answering_minister']:
                         meta_run += f"  ·  Answered by: {r['answering_minister']}"
+                        if r.get('answering_minister_role'):
+                            meta_run += f" ({r['answering_minister_role']})"
                     if r['date_answered']:
-                        meta_run += f" ({r['date_answered']})"
+                        meta_run += f"  ·  {r['date_answered']}"
                     p.add_run(meta_run + "\n")
                     p.add_run(f"Question: {r['text']}")
                     if r['answer_text']:
@@ -511,6 +521,8 @@ def download_selected():
         meta = f"UIN: {r.get('uin', '')}  ·  Date Asked: {r.get('date', '')}"
         if r.get('answering_minister'):
             meta += f"  ·  Answered by: {r['answering_minister']}"
+            if r.get('answering_minister_role'):
+                meta += f" ({r['answering_minister_role']})"
         if r.get('date_answered'):
             meta += f" ({r['date_answered']})"
         p.add_run(meta + "\n")
