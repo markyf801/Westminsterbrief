@@ -700,6 +700,20 @@ def health():
     except Exception as e:
         checks['backup'] = f'FAIL: {e}'
 
+    # Committee evidence freshness — weekly cron, stale after 8 days (192h)
+    try:
+        last_ce = (HaCronRun.query
+                   .filter_by(service_name='committee-evidence-cron', status='ok')
+                   .order_by(_desc(HaCronRun.finished_at))
+                   .first())
+        if last_ce and last_ce.finished_at:
+            age_h = (datetime.utcnow() - last_ce.finished_at).total_seconds() / 3600
+            checks['committee_evidence'] = 'ok' if age_h < 192 else f'STALE: last run {age_h:.0f}h ago'
+        else:
+            checks['committee_evidence'] = 'WARN: no run record yet'
+    except Exception as e:
+        checks['committee_evidence'] = f'FAIL: {e}'
+
     # Git version
     checks['version'] = os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:7]
 
