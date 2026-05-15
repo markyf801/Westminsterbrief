@@ -188,15 +188,14 @@ def _fetch_profile_data(member_id: int) -> dict | None:
         return None
 
 
-def _fetch_speeches(member_id: int, is_lord: bool) -> list:
+def _fetch_speeches(member_id: int, is_lord: bool, dept: str = '') -> list:
     """
     Return up to 50 recent sessions where this member contributed, from local
-    ha_contribution + ha_session tables. Cached 24h.
-
-    Replaces the old external Hansard API call which was capped at take=50
-    and filtered to ≥50 words, causing 30x undercounts for active members.
+    ha_contribution + ha_session tables. Filtered by department ID when provided.
+    Cached 24h per (member_id, dept) pair.
     """
-    cached = _cache_get(_speech_cache, member_id, _TTL_24H)
+    cache_key = f'{member_id}_{dept}'
+    cached = _cache_get(_speech_cache, cache_key, _TTL_24H)
     if cached is not None:
         return cached
 
@@ -210,20 +209,26 @@ def _fetch_speeches(member_id: int, is_lord: bool) -> list:
             .distinct()
             .subquery()
         )
-        sessions = (
+        q = (
             db.session.query(HansardSession)
             .join(subq, HansardSession.id == subq.c.session_id)
             .filter(HansardSession.is_container == False)  # noqa: E712
-            .order_by(HansardSession.date.desc())
-            .limit(50)
-            .all()
         )
+        if dept:
+            dept_name = next((k for k, v in DEPARTMENTS.items() if v == dept and k != 'All Departments'), None)
+            if dept_name:
+                q = q.filter(HansardSession.department == dept_name)
+        sessions = q.order_by(HansardSession.date.desc()).limit(50).all()
+        def _url_date(d):
+            return f"{d.day}-{d.strftime('%B').lower()}-{d.year}" if d else ''
+
         result = [
             {
                 'date': s.date.isoformat() if s.date else '',
                 'subject': s.title,
                 'chamber': s.house,
-                'url': s.hansard_url or '',
+                'url': (f"/archive/debate/{_url_date(s.date)}/{s.slug}"
+                        if s.date and s.slug else ''),
             }
             for s in sessions
         ]
@@ -231,47 +236,40 @@ def _fetch_speeches(member_id: int, is_lord: bool) -> list:
         logger.warning('[mp_research] DB speech fetch failed for %d: %s', member_id, e)
         result = []
 
-    _cache_set(_speech_cache, member_id, result)
+    _cache_set(_speech_cache, cache_key, result)
     return result
 
 
 def _fetch_pqs(member_id: int, dept: str, start_date: str, end_date: str) -> list:
-    """Written Questions for this member. No caching — user expects fresh results."""
-    params = {'askingMemberId': member_id, 'take': 500}
-    if dept:
-        params['answeringBodies'] = [int(dept)]
-    if start_date:
-        params['tabledWhenFrom'] = start_date
-    if end_date:
-        params['tabledWhenTo'] = end_date
+    """Written Questions for this member from local ha_pq DB."""
     try:
-        resp = requests.get(
-            "https://questions-statements-api.parliament.uk/api/writtenquestions/questions",
-            params=params, timeout=30
-        )
-        if resp.status_code != 200:
-            return []
-        results = []
-        for item in (resp.json().get('results') or []):
-            val = item.get('value', {})
-            # Client-side dept filter as belt-and-braces
-            if dept and str(val.get('answeringBodyId', '')) != dept:
-                continue
-            raw_date = val.get('dateTabled', '')
-            date_str = raw_date.split('T')[0] if raw_date else ''
-            is_answered = bool(val.get('answerText') or val.get('dateAnswered'))
-            uin = str(val.get('uin', ''))
-            results.append({
-                'uin': uin,
-                'dept': val.get('answeringBodyName', 'Unknown Dept'),
-                'text': re.sub(r'<[^>]+>', '', val.get('questionText', '')).strip(),
-                'date': date_str,
-                'status': 'ANSWERED' if is_answered else 'UNANSWERED',
-                'link': f"https://questions-statements.parliament.uk/written-questions?SearchTerm={uin}",
-            })
-        return results
+        from extensions import db
+        from hansard_archive.models import HaPQ
+
+        q = db.session.query(HaPQ).filter(HaPQ.asking_mnis_id == member_id)
+        if dept:
+            try:
+                q = q.filter(HaPQ.answering_body_id == int(dept))
+            except (ValueError, TypeError):
+                pass
+        if start_date:
+            q = q.filter(HaPQ.tabled_date >= start_date)
+        if end_date:
+            q = q.filter(HaPQ.tabled_date <= end_date)
+        rows = q.order_by(HaPQ.tabled_date.desc()).limit(500).all()
+        return [
+            {
+                'uin': pq.uin,
+                'dept': pq.answering_body or 'Unknown Dept',
+                'text': pq.question_text or '',
+                'date': pq.tabled_date.isoformat() if pq.tabled_date else '',
+                'status': 'ANSWERED' if pq.is_answered else 'UNANSWERED',
+                'link': f"/archive/pq/{pq.uin}",
+            }
+            for pq in rows
+        ]
     except Exception as e:
-        logger.warning('[mp_research] PQ fetch failed: %s', e)
+        logger.warning('[mp_research] PQ DB fetch failed: %s', e)
         return []
 
 
@@ -317,7 +315,7 @@ def search_mp_pqs():
                             member_id, selected_dept, start_date, end_date)
                         f_speeches = ex.submit(
                             copy_current_request_context(_fetch_speeches),
-                            member_id, is_lord)
+                            member_id, is_lord, selected_dept)
 
                         try:
                             profile_data = f_profile.result(timeout=25)

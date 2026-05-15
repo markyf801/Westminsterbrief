@@ -274,7 +274,7 @@
                     <span style="float:right; color:#8a96a4;">{{ r.date }}{% if r.uin %} · {{ r.uin }}{% endif %}</span>
                 </div>
                 <p class="pq-card-text">"{{ r.text }}"</p>
-                <a href="{{ r.link }}" target="_blank" class="pq-card-link">View on Parliament.uk &rarr;</a>
+                <a href="{{ r.link }}" class="pq-card-link">View in archive &rarr;</a>
             </div>
             {% endfor %}
             {% elif is_post %}
@@ -313,7 +313,7 @@
                     <td>{{ s.date }}</td>
                     <td>
                         {% if s.url %}
-                        <a href="{{ s.url }}" target="_blank" style="color:#4a7fa5; text-decoration:none;">{{ s.subject }}</a>
+                        <a href="{{ s.url }}" style="color:#4a7fa5; text-decoration:none;">{{ s.subject }}</a>
                         {% else %}
                         {{ s.subject }}
                         {% endif %}
