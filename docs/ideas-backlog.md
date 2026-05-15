@@ -163,18 +163,18 @@ Railway's Nixpacks build passes env vars (including `BACKUP_ENCRYPTION_KEY`, `R2
 
 ---
 
-### Backup Monitoring — Railway Alert + /health Freshness Check
+### Backup Monitoring — Railway Alert
 
-Silent backup failures went undetected for 13 days (29 April – 10 May 2026) because the cron service exited non-zero but nothing surfaced the failure. Two small items to prevent a repeat:
+~~Silent backup failures went undetected for 13 days (29 April – 10 May 2026) because the cron service exited non-zero but nothing surfaced the failure. Two small items to prevent a repeat:~~
 
 1. **Railway cron alert on non-zero exit** — investigate Railway's notification options (dashboard alerts or webhook). Objective: if `backup-cron-r2` exits non-zero, Mark gets notified same day rather than discovering it weeks later.
-2. **`/health` backup-freshness check** — add a check to the `/health` endpoint that queries R2 (or a local timestamp written by the backup script) and flags `backup_fresh: false` if the most recent backup is older than 25 hours. Makes freshness visible without needing to open Railway or R2.
+2. ~~**`/health` backup-freshness check**~~ — ✓ Done 15 May 2026. `/health` now reports `backup: ok/STALE`; `backup_to_r2.py` records to `ha_cron_run` after each successful run.
 
-**Effort:** ~30–45 min combined. No schema change, no new infrastructure.
+**Remaining:** Railway notification config only (item 1).
 
-**Revisit trigger:** Any session touching the backup pipeline or `/health`; before Phase 2 launch; any infrastructure review session.
+**Revisit trigger:** Any session touching the backup pipeline or Railway notification settings; before Phase 2 launch.
 
-*Captured 12 May 2026 — from backup gap diagnosis (29 Apr–10 May 2026 gap hidden by silent cron failures).*
+*Captured 12 May 2026. Partially complete 15 May 2026.*
 
 ---
 
