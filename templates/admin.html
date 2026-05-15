@@ -1,12 +1,36 @@
 {% extends "base.html" %}
-{% block title %}Cache Admin{% endblock %}
+{% block title %}Admin — Westminster Brief{% endblock %}
 {% block content %}
 <div style="max-width:1100px; margin:40px auto; padding:0 20px;">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
-    <h2 style="font-size:1.3rem; margin:0;">Cache Administration</h2>
+    <h2 style="font-size:1.3rem; margin:0;">Admin</h2>
     <a href="/admin/logout" style="font-size:0.8rem; color:#8a96a4; text-decoration:none;">Sign out</a>
   </div>
   <p style="color:#8a96a4; font-size:0.85rem; margin-bottom:24px;">Session expires after 2 hours of inactivity.</p>
+
+  <!-- System status -->
+  <div style="border:1px solid #e0e6ed; border-radius:8px; padding:16px 20px; background:#f7f9fc; margin-bottom:20px; display:flex; align-items:center; gap:24px; flex-wrap:wrap;">
+    <div>
+      <span style="font-size:0.8rem; font-weight:600; color:#5a6878; text-transform:uppercase; letter-spacing:.04em;">Last backup</span><br>
+      {% if backup_status.get('error') %}
+        <span style="color:#c62828; font-size:0.85rem;">Error: {{ backup_status.error }}</span>
+      {% elif backup_status.get('last_run') %}
+        <span style="font-size:0.9rem; font-weight:600; color:{{ '#2e7d32' if backup_status.ok else '#c62828' }};">
+          {{ backup_status.last_run }} ({{ backup_status.age_h }}h ago)
+        </span>
+        {% if not backup_status.ok %}
+          <span style="color:#c62828; font-size:0.8rem; margin-left:6px;">⚠ STALE</span>
+        {% endif %}
+      {% else %}
+        <span style="color:#8a96a4; font-size:0.85rem;">No backup record yet — runs tonight at 03:00 UTC</span>
+      {% endif %}
+    </div>
+    <div style="margin-left:auto;">
+      <a href="/health" target="_blank" style="font-size:0.85rem; color:#1a4a6e; text-decoration:none; border:1px solid #c8d8e8; border-radius:5px; padding:6px 12px;">
+        Full health check ↗
+      </a>
+    </div>
+  </div>
 
   {% if message %}
   <div style="background:#f0faf3; border:1px solid #86efac; border-radius:6px; padding:12px 16px; margin-bottom:20px; font-size:0.9rem; color:#166534;">

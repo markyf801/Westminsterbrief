@@ -1927,6 +1927,27 @@ def admin_panel():
     except Exception as e:
         archive_stats['error'] = str(e)
 
+    # --- Backup status ---
+    backup_status = {}
+    try:
+        from hansard_archive.models import HaCronRun as _HaCronRun
+        from sqlalchemy import desc as _desc2
+        last_bk = (_HaCronRun.query
+                   .filter_by(service_name='backup-r2', status='ok')
+                   .order_by(_desc2(_HaCronRun.finished_at))
+                   .first())
+        if last_bk and last_bk.finished_at:
+            age_h = (datetime.utcnow() - last_bk.finished_at).total_seconds() / 3600
+            backup_status = {
+                'last_run': last_bk.finished_at.strftime('%Y-%m-%d %H:%M') + ' UTC',
+                'age_h': round(age_h, 1),
+                'ok': age_h < 26,
+            }
+        else:
+            backup_status = {'last_run': None, 'ok': None}
+    except Exception as e:
+        backup_status = {'error': str(e)}
+
     # Show background ingestion status as the message if no other message and job ran/is running
     if not message and _committee_ingest_status['message']:
         message = _committee_ingest_status['message']
@@ -1941,7 +1962,8 @@ def admin_panel():
                            twfy_keyword=twfy_keyword,
                            member_link_stats=member_link_stats,
                            dir_stats=dir_stats,
-                           archive_stats=archive_stats)
+                           archive_stats=archive_stats,
+                           backup_status=backup_status)
 
 
 # ==========================================
