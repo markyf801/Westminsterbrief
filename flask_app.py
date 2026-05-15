@@ -480,6 +480,31 @@ with app.app_context():
         _mig_log('cached_member ministerial_role col done')
     except Exception as _e:
         app.logger.warning('cached_member ministerial_role migration failed: %s', _e)
+    # ha_mp_analytics table — precomputed speaker analytics (Phase 2A.5)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ha_mp_analytics (
+                    member_id        INTEGER PRIMARY KEY,
+                    computed_at      TIMESTAMP NOT NULL,
+                    sessions_12m     INTEGER NOT NULL DEFAULT 0,
+                    sessions_3m      INTEGER NOT NULL DEFAULT 0,
+                    commons_rank_12m INTEGER,
+                    commons_total    INTEGER,
+                    commons_pct_12m  FLOAT,
+                    top_policy_areas JSON,
+                    recent_shifts    JSON,
+                    debate_type_dist JSON,
+                    specialism_score FLOAT,
+                    specialism_label VARCHAR(200),
+                    thin_data        BOOLEAN NOT NULL DEFAULT FALSE,
+                    tagged_pct       FLOAT
+                )
+            """))
+            _conn.commit()
+        _mig_log('ha_mp_analytics table done')
+    except Exception as _e:
+        app.logger.warning('ha_mp_analytics migration failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
@@ -1799,6 +1824,20 @@ def admin_panel():
                     else:
                         message = f'Ingestion started for {len(committee_ids)} committees ({start_date} → {end_date}). Refresh this page in a few minutes to see results.'
                         _admin_log(f'ingest_committee_evidence full | {len(committee_ids)} committees | {start_date} → {end_date}')
+
+        elif action == 'fetch_evidence_content':
+            from stakeholder_directory.ingesters.evidence_content import run_fetch
+            import threading as _threading
+            _threading.Thread(
+                target=run_fetch,
+                args=(app,),
+                daemon=True,
+            ).start()
+            message = (
+                'Evidence content fetch started in background (max 100 URLs per run). '
+                'Check back in a few minutes — progress is logged to the app log.'
+            )
+            _admin_log('fetch_evidence_content')
 
         elif action == 'clear_directory_data':
             try:

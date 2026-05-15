@@ -2321,6 +2321,133 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
     font-style: italic;
 }
 
+/* MP analytics panel */
+.amp-analytics {
+    background: #fff;
+    border: 1px solid #e0e6ed;
+    border-radius: 6px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+}
+.amp-analytics-thin {
+    background: #f8fafb;
+    border-color: #e8edf2;
+    padding: 10px 14px;
+}
+.amp-analytics-thin-note {
+    font-size: 12px;
+    color: #8a96a4;
+    margin: 0;
+}
+
+/* Activity stats row */
+.amp-stats-row {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.amp-stat {
+    display: flex;
+    flex-direction: column;
+    min-width: 90px;
+}
+.amp-stat-wide { min-width: 200px; }
+.amp-stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1a2332;
+    line-height: 1.1;
+}
+.amp-stat-label {
+    font-size: 11px;
+    color: #8a96a4;
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.amp-stat-sub {
+    font-size: 11px;
+    color: #4a7fa5;
+    margin-top: 3px;
+    font-weight: 500;
+}
+.amp-stat-focus {
+    font-size: 13px;
+    color: #2d3e50;
+    margin-top: 4px;
+    font-weight: 500;
+}
+
+/* Analytics sections */
+.amp-section { margin-bottom: 14px; }
+.amp-section:last-of-type { margin-bottom: 0; }
+.amp-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #8a96a4;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0 0 8px;
+}
+
+/* Policy area distribution bars */
+.amp-pa-list { display: flex; flex-direction: column; gap: 5px; }
+.amp-pa-row {
+    display: grid;
+    grid-template-columns: 220px 1fr 36px auto;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+}
+.amp-pa-name { color: #2d3e50; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amp-pa-track {
+    background: #eef1f5;
+    border-radius: 3px;
+    height: 8px;
+    overflow: hidden;
+}
+.amp-pa-bar {
+    background: #4a7fa5;
+    height: 100%;
+    border-radius: 3px;
+    min-width: 4px;
+    transition: width 0.2s;
+}
+.amp-pa-count { color: #5a6878; text-align: right; font-weight: 500; }
+.amp-pa-rank {
+    font-size: 11px;
+    color: #2e7d5a;
+    font-weight: 600;
+    white-space: nowrap;
+    background: #edf7f2;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+/* Recent shifts */
+.amp-section-shifts { margin-top: 10px; }
+.amp-shifts { display: flex; flex-wrap: wrap; gap: 6px; }
+.amp-shift-tag {
+    font-size: 11px;
+    background: #f0f5fa;
+    color: #3a6d93;
+    border: 1px solid #ccd9e6;
+    border-radius: 3px;
+    padding: 2px 8px;
+}
+
+/* Analytics footnote */
+.amp-analytics-note {
+    font-size: 11px;
+    color: #9aa4b0;
+    margin: 12px 0 0;
+    line-height: 1.5;
+    border-top: 1px solid #eef1f5;
+    padding-top: 10px;
+}
+
 /* Search page */
 .as-form { margin-bottom: 12px; }
 .as-hint { font-size: 12px; color: #9aa4b0; margin: 6px 0 0; }

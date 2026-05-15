@@ -6,11 +6,14 @@ Routes:
     GET /directory/search       — search results (paginated, 25 per page)
     GET /directory/org/<id>     — organisation detail page
 """
+import json as _json
 import re
+from collections import defaultdict
+from datetime import date
 from flask import Blueprint, render_template, request, abort
 from sqlalchemy import func, case
 from extensions import db
-from stakeholder_directory.models import Organisation, Alias, Engagement, Flag
+from stakeholder_directory.models import Organisation, Alias, Engagement, Flag, CommitteeEvidenceContent
 
 directory_bp = Blueprint('directory', __name__, url_prefix='/directory')
 
@@ -258,6 +261,53 @@ def organisation(org_id):
         .all()
     )
 
+    # Build committee evidence accordion groups
+    committee_engs = [
+        e for e in all_engs
+        if e.source_type in ('oral_evidence_committee', 'written_evidence_committee')
+    ]
+    content_map = {}
+    if committee_engs:
+        urls = [e.source_url for e in committee_engs if e.source_url]
+        content_map = {
+            r.source_url: r for r in
+            db.session.query(CommitteeEvidenceContent)
+            .filter(CommitteeEvidenceContent.source_url.in_(urls)).all()
+        }
+
+    _groups: dict = defaultdict(lambda: defaultdict(list))
+    for e in committee_engs:
+        cname = e.committee_name or 'Unknown committee'
+        inquiry = e.engagement_subject or 'General evidence'
+        content = content_map.get(e.source_url)
+        _groups[cname][inquiry].append({
+            'eng': e,
+            'content': content,
+            'org_urls': _json.loads(content.external_urls)
+                        if content and content.external_urls else [],
+        })
+
+    committee_groups: dict = {}
+    for cname in sorted(_groups):
+        inq_sorted = sorted(
+            _groups[cname].items(),
+            key=lambda kv: max(
+                (i['eng'].engagement_date or date.min) for i in kv[1]
+            ),
+            reverse=True,
+        )
+        committee_groups[cname] = dict(inq_sorted)
+
+    # Build flat engagement list excluding committee evidence (shown in accordion)
+    non_committee_engs = [
+        e for e in all_engs
+        if e.source_type not in ('oral_evidence_committee', 'written_evidence_committee')
+    ]
+    non_committee_total = len(non_committee_engs)
+    nc_pages = max(1, (non_committee_total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = min(page, max(nc_pages, 1))
+    engs_page = non_committee_engs[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+
     # Parse possible_duplicate flag details to build "may be related to" list
     related_orgs = []
     for flag in flags:
@@ -281,11 +331,12 @@ def organisation(org_id):
         org=org,
         engagements=engs_page,
         total_engs=total_engs,
-        eng_pages=eng_pages,
+        eng_pages=nc_pages,
         eng_page=page,
         source_breakdown=source_breakdown,
         flags=flags,
         related_orgs=related_orgs,
+        committee_groups=committee_groups,
         source_labels=SOURCE_TYPE_LABELS,
         source_color=SOURCE_TYPE_COLOR,
     )
