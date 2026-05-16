@@ -1368,6 +1368,10 @@ def archive_theme(theme_slug: str):
 _FTS_HEADLINE_OPTS = (
     "MaxFragments=1,StartSel=<mark>,StopSel=</mark>,MaxWords=35,MinWords=15"
 )
+# WQ question text should show in full — questions are typically 40-120 words
+_FTS_PQ_HEADLINE_OPTS = (
+    "MaxFragments=1,StartSel=<mark>,StopSel=</mark>,MaxWords=200,MinWords=40"
+)
 
 
 def _fts_search(
@@ -1540,9 +1544,10 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
             p.tabled_date, p.is_answered,
             ts_rank(p.question_tsv, {ts_func}('english', :q)) AS rank,
             ts_headline('english',
-                coalesce(p.heading, '') || ' ' || coalesce(p.question_text, ''),
+                coalesce(p.question_text, ''),
                 {ts_func}('english', :q),
-                :hl_opts) AS snippet
+                :hl_opts) AS snippet,
+            p.question_text
         FROM ha_pq p
         {policy_join}
         WHERE p.question_tsv @@ {ts_func}('english', :q)
@@ -1550,7 +1555,7 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
         LIMIT :lim
     """)
 
-    sql_params = {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS, "lim": limit}
+    sql_params = {"q": q_clean, "hl_opts": _FTS_PQ_HEADLINE_OPTS, "lim": limit}
     if policy_filter:
         sql_params["policy"] = policy_filter
 
@@ -1558,7 +1563,7 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
 
     results = []
     for row in rows:
-        pq_id, uin, heading, asking, answering, tabled, is_answered, rank, snippet = row
+        pq_id, uin, heading, asking, answering, tabled, is_answered, rank, snippet, question_text = row
         results.append({
             "result_type":   "pq",
             "uin":           uin,
@@ -1570,6 +1575,7 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
             "url":           f"/archive/pq/{uin}",
             "human_date":    _human_date(tabled) if tabled else "",
             "snippet":       Markup(snippet) if snippet else None,
+            "question_text": question_text or "",
         })
     return results
 
