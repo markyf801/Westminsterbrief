@@ -358,10 +358,10 @@ Clear mapping to avoid confusion when discussing issues:
 - Entry point: `gunicorn flask_app:app` (see `Procfile` and `railway.toml`)
 - **Railway project:** `invigorating-joy` — service name: `Westminsterbrief`
 - **Production URL:** `westminsterbrief-production.up.railway.app`
-- **Custom domain:** `westminsterbrief.co.uk` (GoDaddy DNS → Railway)
+- **Custom domain:** `westminsterbrief.co.uk` (domain registered at GoDaddy, nameservers point to Cloudflare — all DNS managed in Cloudflare)
   - `www` CNAME → `5jac57s9.up.railway.app`
   - `_railway-verify` TXT record added for domain verification
-  - Root `@` A record: update or forward to www once GoDaddy allows
+  - Root `@` A record managed in Cloudflare
 - HTTPS is handled automatically by Railway (Let's Encrypt) once DNS verifies
 - Add a **PostgreSQL plugin** in Railway — it sets `DATABASE_URL` automatically
 - Set all env vars in Railway dashboard (see API table above)
@@ -1168,6 +1168,65 @@ Currently active flags:
 - Minister-led search via Hansard backend works for canonical test case (DfE + student loan repayments)
 
 ---
+
+## Beta environment
+
+A private beta Railway service (`wb-beta`) runs alongside production. It shares the production Postgres database via a read-only user, points at the `beta` git branch, and sits behind a simple password gate. It serves as a preview layer for new features before they ship to production.
+
+### Branch workflow
+
+```
+feature/xxx  →  beta  →  master
+```
+
+- Feature branches merge into `beta` for preview
+- Once validated on beta, merge `beta` → `master` (and Railway auto-deploys production)
+- `beta` branch must always be a superset of `master` — never merge master back to beta selectively
+
+### Railway service configuration (set once in Railway dashboard)
+
+| Variable | Value |
+|---|---|
+| `ENVIRONMENT` | `beta` |
+| `BETA_PASSWORD` | *(chosen password — keep in 1Password)* |
+| `SKIP_MIGRATIONS` | `1` |
+| `DATABASE_URL` | `postgresql://wb_beta:<password>@hopper.proxy.rlwy.net:50798/railway` |
+| `SECRET_KEY` | *(separate random string — not the same as production)* |
+| All other API keys | Same as production |
+
+**Branch:** set Railway service source to the `beta` branch.
+
+### Read-only DB user
+
+SQL to create the read-only `wb_beta` user lives at `docs/beta-readonly-user.sql`. Run it once in the Railway Postgres console (Query tab). The password goes into the `DATABASE_URL` env var above.
+
+### What `SKIP_MIGRATIONS=1` does
+
+When set, the startup block skips:
+- `db.create_all()` — would fail with a read-only user
+- MemberLink and User dev seeds — writes that would fail
+- `seed_all_minister_links` background thread — writes that would fail
+
+All ALTER TABLE migration blocks already have `try/except`, so they are silently no-ops.
+
+### Beta auth gate
+
+All routes on the beta service redirect to `/beta-login` (a simple password form) unless the visitor has a valid `beta_authenticated` session cookie. No Flask-Login dependency — it's a separate lightweight gate.
+
+### URL
+
+`beta.westminsterbrief.co.uk` — CNAME in Cloudflare DNS pointing to the Railway beta service hostname. Add with DNS-only (grey cloud) initially so Railway can verify the domain and provision SSL; proxy can be enabled after verification.
+
+### BETA banner
+
+When `ENVIRONMENT=beta`, a yellow banner appears at the top of every page (injected via `is_beta` context processor in `flask_app.py`, rendered in `base.html`).
+
+### When NOT to touch beta
+
+Beta is only a preview layer — it does not have its own data, its own users, or its own state. Don't:
+- Run write scripts against beta (its DB user is read-only)
+- Use beta as a staging environment for schema migrations (apply to production directly)
+- Push directly to `beta` branch for production-bound changes — go through `feature/* → beta → master`
 
 ## Git and pushing
 
