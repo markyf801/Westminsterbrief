@@ -103,6 +103,21 @@ Always pass `--set ON_ERROR_STOP=1` when restoring via psql. Without it, psql re
 **PG17 backup → PG16 local restore:**
 Railway runs PG17. `SET transaction_timeout = 0;` in the dump is a PG17-only parameter. The restore script strips this line during decompression (`_PG17_ONLY` filter). Do not remove this filter.
 
+**Long-running backfill scripts — never run in an interactive terminal:**
+Stage C (May 2026) was interrupted twice because the terminal session was killed overnight. Any script expected to run for more than ~30 minutes must be started with `nohup` or inside `tmux`/`screen` so it survives terminal disconnection. Pattern:
+```powershell
+# Windows: use Start-Process to detach (logs to file)
+Start-Process python -ArgumentList "scripts/my_script.py" `
+    -RedirectStandardOutput "scripts/my_script.log" `
+    -RedirectStandardError "scripts/my_script_err.log" `
+    -WindowStyle Hidden
+```
+```bash
+# Linux/Railway shell: use nohup
+nohup python scripts/my_script.py >> scripts/my_script.log 2>&1 &
+```
+Always implement a checkpoint file so interrupted scripts resume cleanly rather than starting over. See `scripts/backfill_pq_questions.py` for the reference pattern.
+
 **Long-running scripts on Railway Postgres — batch-by-ID, not load-all-then-iterate:**
 Railway kills idle Postgres connections after a few hours. Scripts that load a large result set upfront and then iterate slowly will hit this. The failure mode is subtle: SQLAlchemy's default `expire_on_commit=True` expires ALL objects in the session on every commit — not just the committed ones. On the next attribute access of any expired object, SQLAlchemy triggers an autoflush (to flush pending dirty objects), which needs the now-dead connection, and crashes.
 
