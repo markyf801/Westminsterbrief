@@ -1480,7 +1480,7 @@ def _fts_search(
         WHERE s.is_container = false
           AND ({f"tm.session_id IS NOT NULL" if title_only else "bc.session_id IS NOT NULL OR tm.session_id IS NOT NULL"})
           {extra_where_sql}
-        ORDER BY final_rank DESC
+        ORDER BY final_rank DESC, s.date DESC
         LIMIT :lim OFFSET :off
     """)
 
