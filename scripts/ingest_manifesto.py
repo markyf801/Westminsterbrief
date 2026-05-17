@@ -76,9 +76,34 @@ VALID_SLUGS = {
     "reform-uk", "green", "plaid-cymru", "democratic-unionist-party",
 }
 
-_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 _REQUEST_TIMEOUT = 60
 _INTER_REQUEST_DELAY = 0.5
+_MODEL_CACHE: dict[str, str] = {}
+
+
+def _detect_model(api_key: str) -> str:
+    if api_key in _MODEL_CACHE:
+        return _MODEL_CACHE[api_key]
+    try:
+        resp = requests.get(
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            available = [
+                m["name"] for m in resp.json().get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+            ]
+            for prefix in ["models/gemini-2.5-flash-lite", "models/gemini-2.5-flash"]:
+                match = next((m for m in available if m.startswith(prefix)), None)
+                if match:
+                    _MODEL_CACHE[api_key] = match.removeprefix("models/")
+                    return _MODEL_CACHE[api_key]
+    except Exception:
+        pass
+    _MODEL_CACHE[api_key] = "gemini-2.5-flash-lite"
+    return _MODEL_CACHE[api_key]
 
 # ---------------------------------------------------------------------------
 # Response schema for Gemini structured output
@@ -129,8 +154,33 @@ Rules:
 - If the section contains no substantive policy content, return an empty chunks array"""
 
 
+def _extract_pdf(path: str) -> str:
+    """Extract text from a PDF using pdfplumber. Returns plain text."""
+    try:
+        import pdfplumber
+    except ImportError:
+        print("Error: pdfplumber is not installed. Run: pip install pdfplumber")
+        sys.exit(1)
+
+    pages = []
+    with pdfplumber.open(path) as pdf:
+        total = len(pdf.pages)
+        print(f"Extracting text from {total} pages…")
+        for i, page in enumerate(pdf.pages, 1):
+            text = page.extract_text(x_tolerance=2, y_tolerance=2)
+            if text:
+                pages.append(text.strip())
+            if i % 20 == 0:
+                print(f"  {i}/{total} pages done")
+
+    raw = "\n\n".join(pages)
+    print(f"Extracted {len(raw):,} characters from {len(pages)} pages.")
+    return raw
+
+
 def _call_gemini(api_key: str, section_text: str, party_name: str) -> list[dict]:
     """Call Gemini Flash-Lite and return list of {chunk_text, policy_areas} dicts."""
+    model = _detect_model(api_key)
     prompt = f"""Party: {party_name}
 Manifesto section:
 
@@ -148,12 +198,8 @@ Extract verbatim policy chunks from this section and tag each to GOV.UK policy a
         },
     }
 
-    resp = requests.post(
-        _GEMINI_URL,
-        params={"key": api_key},
-        json=payload,
-        timeout=_REQUEST_TIMEOUT,
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    resp = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
 
@@ -249,8 +295,11 @@ def main():
 
     # Read input
     if args.file:
-        with open(args.file, encoding="utf-8") as f:
-            raw = f.read()
+        if args.file.lower().endswith(".pdf"):
+            raw = _extract_pdf(args.file)
+        else:
+            with open(args.file, encoding="utf-8") as f:
+                raw = f.read()
     else:
         print("Reading from stdin (paste text, then Ctrl+Z / Ctrl+D to finish):")
         raw = sys.stdin.read()
@@ -273,7 +322,7 @@ def main():
         print(f"\n[{i}/{len(sections)}] {preview}…")
 
         chunks = _call_gemini(api_key, section, party_display)
-        print(f"  → {len(chunks)} chunk(s) extracted")
+        print(f"  -> {len(chunks)} chunk(s) extracted")
 
         for chunk in chunks:
             text = chunk.get("chunk_text", "")[:80].replace("\n", " ")
@@ -290,7 +339,7 @@ def main():
                 execute=True,
             )
             total_written += written
-            print(f"  → {written} written to DB as pending")
+            print(f"  -> {written} written to DB as pending")
 
         time.sleep(_INTER_REQUEST_DELAY)
 
