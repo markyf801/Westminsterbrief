@@ -36,9 +36,6 @@ import sys
 import time
 from datetime import datetime
 
-# Allow running from project root
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import requests
 
 # ---------------------------------------------------------------------------
@@ -222,56 +219,106 @@ Extract verbatim policy chunks from this section and tag each to GOV.UK policy a
         return []
 
 
+def _load_database_url() -> str:
+    """Read DATABASE_URL from .env in the project root."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if os.path.exists(env_path):
+        for line in open(env_path, encoding="utf-8"):
+            line = line.strip()
+            if line.startswith("DATABASE_URL="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return os.environ.get("DATABASE_URL", "")
+
+
+def _ensure_tables(db_url: str) -> None:
+    """Create manifesto tables if they don't exist."""
+    import psycopg2
+    conn = psycopg2.connect(db_url)
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS manifesto_chunk (
+                        id             SERIAL PRIMARY KEY,
+                        party_slug     TEXT NOT NULL,
+                        manifesto_year INTEGER NOT NULL DEFAULT 2024,
+                        source_section TEXT,
+                        source_url     TEXT,
+                        chunk_text     TEXT NOT NULL,
+                        ingested_at    TIMESTAMP NOT NULL,
+                        review_status  TEXT NOT NULL DEFAULT 'pending',
+                        CONSTRAINT uq_manifesto_chunk
+                            UNIQUE (party_slug, manifesto_year, chunk_text)
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS manifesto_chunk_tag (
+                        chunk_id    INTEGER NOT NULL
+                                        REFERENCES manifesto_chunk(id) ON DELETE CASCADE,
+                        policy_area TEXT NOT NULL,
+                        is_primary  BOOLEAN NOT NULL DEFAULT FALSE,
+                        PRIMARY KEY (chunk_id, policy_area)
+                    )
+                """)
+        print("Tables ready (manifesto_chunk, manifesto_chunk_tag).")
+    finally:
+        conn.close()
+
+
 def _write_chunks(party_slug: str, source_url: str, section_title: str,
                   chunks: list[dict], execute: bool) -> int:
-    """Write approved chunks to DB as 'pending'. Returns count written."""
-    from flask_app import app
-    from hansard_archive.models import ManifestoChunk, ManifestoChunkTag
-    from extensions import db
+    """Write chunks to DB as 'pending' using psycopg2 directly (no flask_app import)."""
+    import psycopg2
+    import psycopg2.extras
 
+    db_url = _load_database_url()
+    if not db_url:
+        print("Error: DATABASE_URL not found in .env")
+        return 0
+
+    conn = psycopg2.connect(db_url)
     written = 0
-    with app.app_context():
-        for chunk_data in chunks:
-            text = chunk_data.get("chunk_text", "").strip()
-            areas = chunk_data.get("policy_areas", [])
-            if not text or not areas:
-                continue
 
-            if execute:
-                existing = ManifestoChunk.query.filter_by(
-                    party_slug=party_slug,
-                    manifesto_year=2024,
-                    chunk_text=text,
-                ).first()
-                if existing:
-                    print(f"  [SKIP] Already exists: {text[:60]}…")
-                    continue
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                for chunk_data in chunks:
+                    text = chunk_data.get("chunk_text", "").strip()
+                    areas = chunk_data.get("policy_areas", [])
+                    if not text or not areas:
+                        continue
 
-                chunk = ManifestoChunk(
-                    party_slug=party_slug,
-                    manifesto_year=2024,
-                    source_section=section_title or None,
-                    source_url=source_url or None,
-                    chunk_text=text,
-                    ingested_at=datetime.utcnow(),
-                    review_status="pending",
-                )
-                db.session.add(chunk)
-                db.session.flush()
+                    # Check for duplicate
+                    cur.execute(
+                        "SELECT id FROM manifesto_chunk WHERE party_slug=%s AND manifesto_year=%s AND chunk_text=%s",
+                        (party_slug, 2024, text),
+                    )
+                    if cur.fetchone():
+                        print(f"  [SKIP] Already exists: {text[:60].encode('ascii','replace').decode('ascii')}...")
+                        continue
 
-                for i, area in enumerate(areas):
-                    if area in POLICY_AREAS:
-                        tag = ManifestoChunkTag(
-                            chunk_id=chunk.id,
-                            policy_area=area,
-                            is_primary=(i == 0),
-                        )
-                        db.session.add(tag)
+                    cur.execute(
+                        """INSERT INTO manifesto_chunk
+                               (party_slug, manifesto_year, source_section, source_url,
+                                chunk_text, ingested_at, review_status)
+                           VALUES (%s, %s, %s, %s, %s, NOW(), 'pending')
+                           RETURNING id""",
+                        (party_slug, 2024, section_title[:200] if section_title else None,
+                         source_url or None, text),
+                    )
+                    chunk_id = cur.fetchone()[0]
 
-                written += 1
-
-        if execute:
-            db.session.commit()
+                    for i, area in enumerate(areas):
+                        if area in POLICY_AREAS:
+                            cur.execute(
+                                """INSERT INTO manifesto_chunk_tag (chunk_id, policy_area, is_primary)
+                                   VALUES (%s, %s, %s)
+                                   ON CONFLICT DO NOTHING""",
+                                (chunk_id, area, i == 0),
+                            )
+                    written += 1
+    finally:
+        conn.close()
 
     return written
 
@@ -323,6 +370,13 @@ def main():
     print(f"Source URL: {args.url}")
     print(f"Mode: {'EXECUTE (writing to DB)' if args.execute else 'DRY RUN (no writes)'}")
     print("-" * 60)
+
+    if args.execute:
+        db_url = _load_database_url()
+        if not db_url:
+            print("Error: DATABASE_URL not found in .env")
+            sys.exit(1)
+        _ensure_tables(db_url)
 
     total_chunks = 0
     total_written = 0
