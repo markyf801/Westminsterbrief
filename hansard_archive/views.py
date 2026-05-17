@@ -1070,6 +1070,8 @@ def archive_mp(member_id: int):
     except (ValueError, TypeError):
         page = 1
 
+    policy_filter = request.args.get("policy", "").strip()
+
     # Representative name row
     name_row = (
         HansardContribution.query
@@ -1095,8 +1097,21 @@ def archive_mp(member_id: int):
         .distinct()
         .order_by(HansardSession.date.desc())
     )
+
+    if policy_filter:
+        tagged_sids = (
+            db.session.query(HansardSessionTheme.session_id)
+            .filter(
+                HansardSessionTheme.theme == policy_filter,
+                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+            )
+        )
+        session_ids_q = session_ids_q.filter(
+            HansardContribution.session_id.in_(tagged_sids)
+        )
+
     total = session_ids_q.count()
-    if total == 0:
+    if total == 0 and not policy_filter:
         abort(404)
 
     total_pages  = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
@@ -1133,9 +1148,12 @@ def archive_mp(member_id: int):
         if sid in sessions_by_id
     ]
 
-    name      = member_attr["name"]
-    party     = member_attr["party"] or ""
-    base_qs   = urlencode({"page": page}) if page > 1 else ""
+    name  = member_attr["name"]
+    party = member_attr["party"] or ""
+    qs_params: dict[str, str] = {}
+    if policy_filter:
+        qs_params["policy"] = policy_filter
+    base_qs = urlencode(qs_params)
 
     # Load precomputed analytics (only populated for Commons MPs by compute job)
     analytics = db.session.get(MpAnalytics, member_id)
@@ -1153,6 +1171,7 @@ def archive_mp(member_id: int):
         per_page      = _PER_PAGE,
         page          = page,
         base_qs       = base_qs,
+        policy_filter = policy_filter,
         analytics     = analytics,
         og_title      = f"{name} — Hansard Archive",
         meta_desc     = (

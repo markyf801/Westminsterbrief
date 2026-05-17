@@ -2411,7 +2411,14 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
     align-items: center;
     gap: 10px;
     font-size: 12px;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin: 0 -4px;
+    transition: background 0.1s;
 }
+.amp-pa-row:hover { background: #f0f5fa; }
 .amp-pa-name { color: #2d3e50; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .amp-pa-track {
     background: #eef1f5;
@@ -2447,7 +2454,10 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
     border: 1px solid #ccd9e6;
     border-radius: 3px;
     padding: 2px 8px;
+    text-decoration: none;
+    transition: background 0.1s, border-color 0.1s;
 }
+.amp-shift-tag:hover { background: #ddeaf5; border-color: #a8c4db; }
 
 /* Analytics footnote */
 .amp-analytics-note {

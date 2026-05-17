@@ -99,7 +99,7 @@
             <h3 class="amp-section-title">Top policy areas (12 months)</h3>
             <div class="amp-pa-list">
             {% for pa in analytics.top_policy_areas %}
-            <div class="amp-pa-row">
+            <a class="amp-pa-row" href="/archive/mp/{{ member_id }}?policy={{ pa.theme|urlencode }}">
                 <span class="amp-pa-name">{{ pa.theme }}</span>
                 <div class="amp-pa-track">
                     <div class="amp-pa-bar" style="width:{{ ((pa.sessions / max_sessions) * 100) | round | int }}%"></div>
@@ -108,7 +108,7 @@
                 {% if pa.surface_rank %}
                 <span class="amp-pa-rank">{{ pa.rank_ordinal }} of {{ pa.contributor_count }} members</span>
                 {% endif %}
-            </div>
+            </a>
             {% endfor %}
             </div>
         </div>
@@ -120,7 +120,7 @@
             <h3 class="amp-section-title">New areas of engagement (last 3 months)</h3>
             <div class="amp-shifts">
             {% for shift in analytics.recent_shifts %}
-            <span class="amp-shift-tag">{{ shift.theme }}</span>
+            <a class="amp-shift-tag" href="/archive/mp/{{ member_id }}?policy={{ shift.theme|urlencode }}">{{ shift.theme }}</a>
             {% endfor %}
             </div>
         </div>
@@ -145,7 +145,10 @@
     {# --- Results bar --- #}
     <div class="ah-results-bar">
         <span class="ah-results-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
-        {% if total_pages > 1 %}
+        {% if policy_filter %}
+        <span class="ah-results-range">filtered by: <strong>{{ policy_filter }}</strong></span>
+        <a href="/archive/mp/{{ member_id }}" class="ah-clear-link">Clear</a>
+        {% elif total_pages > 1 %}
         <span class="ah-results-range">page {{ page }} of {{ total_pages }}</span>
         {% endif %}
     </div>
@@ -189,13 +192,13 @@
     {% if total_pages > 1 %}
     <nav class="ah-pagination" aria-label="Results pages">
         {% if page > 1 %}
-        <a href="/archive/mp/{{ member_id }}?page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        <a href="/archive/mp/{{ member_id }}?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
         {% endif %}
         <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="/archive/mp/{{ member_id }}?page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        <a href="/archive/mp/{{ member_id }}?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
         {% endif %}
