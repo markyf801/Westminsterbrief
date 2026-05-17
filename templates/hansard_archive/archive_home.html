@@ -82,6 +82,27 @@
         </div>
     </form>
 
+    {# --- Browse by party --- #}
+    <div class="party-browse-row">
+        {% set _parties = [
+            ("Labour",                   "labour",                   "#E4003B"),
+            ("Conservative",             "conservative",             "#0087DC"),
+            ("Liberal Democrats",        "liberal-democrat",         "#FAA61A"),
+            ("SNP",                      "scottish-national-party",  "#c9a800"),
+            ("Reform UK",                "reform-uk",                "#12B6CF"),
+            ("Green",                    "green",                    "#02A95B"),
+            ("Plaid Cymru",              "plaid-cymru",              "#005B54"),
+            ("DUP",                      "democratic-unionist-party","#CF1F25"),
+            ("Sinn Féin",                "sinn-fein",                "#326760"),
+        ] %}
+        {% for label, slug, colour in _parties %}
+        <a class="party-browse-chip" href="/archive/party/{{ slug }}">
+            <span class="party-browse-chip-dot" style="background:{{ colour }};"></span>
+            {{ label }}
+        </a>
+        {% endfor %}
+    </div>
+
     {# --- Results bar --- #}
     <div class="ah-results-bar">
         {% if grouped %}

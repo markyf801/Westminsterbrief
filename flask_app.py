@@ -507,6 +507,15 @@ with app.app_context():
         _mig_log('ha_mp_analytics table done')
     except Exception as _e:
         app.logger.warning('ha_mp_analytics migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_ha_contribution_party ON ha_contribution (party)"
+            ))
+            _conn.commit()
+        _mig_log('ha_contribution party index done')
+    except Exception as _e:
+        app.logger.warning('ha_contribution party index migration failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records

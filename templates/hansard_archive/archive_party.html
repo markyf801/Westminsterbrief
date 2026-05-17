@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}{{ party_name }} — Hansard Archive — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/archive/party/{{ party_slug }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": {{ party_name|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk/archive/party/{{ party_slug }}"
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    {# --- Breadcrumb --- #}
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/archive">Hansard Archive</a>
+        <span class="ac-breadcrumb-sep">›</span>
+        <span>{{ party_name }}</span>
+    </nav>
+
+    {# --- Party header --- #}
+    <div class="ac-header party-header">
+        <h1 class="ac-title party-title" style="border-left: 4px solid {{ party_colour }}; padding-left: 12px;">
+            {{ party_name }}
+        </h1>
+        <p class="ac-desc">{{ party_desc }}</p>
+        <div class="party-header-meta">
+            {% if commons_count or lords_count %}
+            <span class="party-stat">
+                {% if commons_count %}<strong>{{ commons_count }}</strong> MP{{ 's' if commons_count != 1 else '' }}{% endif %}
+                {% if commons_count and lords_count %} &nbsp;·&nbsp; {% endif %}
+                {% if lords_count %}<strong>{{ lords_count }}</strong> Lord{{ 's' if lords_count != 1 else '' }}{% endif %}
+            </span>
+            {% endif %}
+            <a class="party-website-link" href="{{ party_website }}" target="_blank" rel="noopener">Official website ↗</a>
+        </div>
+    </div>
+
+    {# --- Sinn Féin empty-state note --- #}
+    {% if sinn_fein_note %}
+    <div class="party-sinn-fein-note">
+        Sinn Féin MPs do not take their seats in the House of Commons. The archive shows no parliamentary contributions for this reason.
+    </div>
+    {% endif %}
+
+    {% if not sinn_fein_note %}
+
+    {# --- Activity summary --- #}
+    {% if total_contributions %}
+    <div class="party-section">
+        <h2 class="party-section-title">Activity in this archive</h2>
+        <div class="party-stats-row">
+            <div class="party-stat-block">
+                <span class="party-stat-number">{{ "{:,}".format(total_contributions) }}</span>
+                <span class="party-stat-label">contributions</span>
+            </div>
+            {% if commons_count or lords_count %}
+            <div class="party-stat-block">
+                <span class="party-stat-number">{{ commons_count + lords_count }}</span>
+                <span class="party-stat-label">current members</span>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if dtype_breakdown %}
+        <div class="party-dtype-breakdown">
+            {% for item in dtype_breakdown %}
+            {% if item.count %}
+            <div class="party-dtype-row">
+                <span class="party-dtype-label">{{ item.label }}</span>
+                <span class="party-dtype-count">{{ "{:,}".format(item.count) }}</span>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# --- Monthly activity chart --- #}
+    {% if monthly_data %}
+    <div class="party-section">
+        <h2 class="party-section-title">Monthly activity (last 12 months)</h2>
+        <div class="party-timeline">
+            {% for item in monthly_data %}
+            <div class="party-timeline-col" title="{{ item.label }}: {{ item.count }} contribution{{ 's' if item.count != 1 else '' }}">
+                <div class="party-timeline-bar" style="height: {{ item.pct }}%; background: {{ party_colour }};"></div>
+                <span class="party-timeline-month">{{ item.month_abbr }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Top policy areas --- #}
+    {% if top_policy_areas %}
+    <div class="party-section">
+        <h2 class="party-section-title">Top policy areas</h2>
+        <p class="party-section-note">Sessions in the archive where {{ party_name }} members contributed, by GOV.UK policy area.</p>
+        <div class="party-policy-list">
+            {% for item in top_policy_areas %}
+            <a class="party-policy-item" href="/archive/policy/{{ item.slug }}">
+                <span class="party-policy-name">{{ item.theme }}</span>
+                <span class="party-policy-count">{{ item.count }} session{{ 's' if item.count != 1 else '' }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Most active voices --- #}
+    {% if top_voices %}
+    <div class="party-section">
+        <h2 class="party-section-title">Most active voices</h2>
+        <p class="party-section-note">By number of contributions in the archive. Includes all parliamentary roles.</p>
+        <div class="party-voices-list">
+            {% for voice in top_voices %}
+            <a class="party-voice-item" href="/archive/mp/{{ voice.member_id }}">
+                <span class="party-voice-name">{{ voice.name }}</span>
+                <span class="party-voice-count">{{ "{:,}".format(voice.count) }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Recent activity --- #}
+    {% if recent_activity %}
+    <div class="party-section">
+        <h2 class="party-section-title">Recent contributions</h2>
+        <div class="ah-results-list">
+            {% for item in recent_activity %}
+            <div class="ah-card party-contrib-card">
+                <div class="ah-card-meta">
+                    <span class="party-contrib-speaker">{{ item.name }}</span>
+                    <span class="ah-card-date">{{ item.human_date }}</span>
+                    <span class="archive-dtype-badge archive-dtype-{{ item.debate_type_label|lower|replace(' ', '_') }}">{{ item.debate_type_label }}</span>
+                </div>
+                <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ item.session_slug }}">{{ item.session_title }}</a>
+                {% if item.speech_preview %}
+                <div class="party-contrib-excerpt">{{ item.speech_preview }}{% if item.speech_truncated %}…{% endif %}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% endif %}{# /not sinn_fein_note #}
+
+    {# --- Recent written questions --- #}
+    {% if recent_pqs %}
+    <div class="party-section">
+        <h2 class="party-section-title">Recent written questions</h2>
+        <div class="ah-results-list">
+            {% for pq in recent_pqs %}
+            <div class="ah-card">
+                <div class="ah-card-meta">
+                    <span class="party-contrib-speaker">{{ pq.asking_member }}</span>
+                    <span class="ah-card-date">{{ pq.human_date }}</span>
+                    {% if pq.answering_body %}<span class="archive-dept-badge">{{ pq.answering_body }}</span>{% endif %}
+                    {% if pq.is_answered %}<span class="ah-card-contribs">Answered</span>{% endif %}
+                </div>
+                <a class="ah-card-title" href="/archive/pq/{{ pq.uin }}">{{ pq.heading }}</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Empty state (no contributions, no PQs, not Sinn Féin) --- #}
+    {% if not sinn_fein_note and not total_contributions and not recent_pqs %}
+    <div class="empty-state ac-empty">
+        <p>No parliamentary activity found for {{ party_name }} in the archive.</p>
+    </div>
+    {% endif %}
+
+    {# --- Source note --- #}
+    <p class="ah-source-note">
+        Parliamentary information from
+        <a href="https://hansard.parliament.uk" target="_blank" rel="noopener">Hansard</a>
+        and the
+        <a href="https://questions-statements.parliament.uk" target="_blank" rel="noopener">Parliament Written Questions API</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Member data from the
+        <a href="https://members-api.parliament.uk" target="_blank" rel="noopener">Parliament Members API</a>.
+    </p>
+
+</div>{# /.ac-inner #}
+</div>{# /.ac-page #}
+{% endblock %}

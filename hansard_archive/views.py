@@ -1142,10 +1142,11 @@ def archive_mp(member_id: int):
 
     return render_template(
         "hansard_archive/archive_mp.html",
-        member_id     = member_id,
-        member_name   = name,
-        member_party  = party,
-        member_colour = member_attr["party_colour"],
+        member_id          = member_id,
+        member_name        = name,
+        member_party       = party,
+        member_party_slug  = _CONTRIB_CODE_TO_SLUG.get(party) if party else None,
+        member_colour      = member_attr["party_colour"],
         items         = items,
         total         = total,
         total_pages   = total_pages,
@@ -1485,7 +1486,7 @@ def _fts_search(
         WHERE s.is_container = false
           AND ({f"tm.session_id IS NOT NULL" if title_only else "bc.session_id IS NOT NULL OR tm.session_id IS NOT NULL"})
           {extra_where_sql}
-        ORDER BY final_rank DESC
+        ORDER BY final_rank DESC, s.date DESC
         LIMIT :lim OFFSET :off
     """)
 
@@ -1776,4 +1777,391 @@ def pq_detail(uin: str):
             f"tabled by {pq.asking_member or 'an MP'} to {pq.answering_body or 'a department'}."
         ),
         canonical_path  = f"/archive/pq/{pq.uin}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Party page — /archive/party/<slug>
+# ---------------------------------------------------------------------------
+
+_PARTY_SLUG_MAP: dict[str, dict] = {
+    "labour": {
+        "full_name": "Labour",
+        "description": "UK political party, currently in government following the July 2024 general election. Founded 1900.",
+        "contrib_codes": {"Lab", "Lab/Co-op", "Lab Co-op", "Lab/ Co-op"},
+        "cached_names": {"Labour", "Labour (Co-op)"},
+        "website": "https://labour.org.uk",
+        "sinn_fein_note": False,
+    },
+    "conservative": {
+        "full_name": "Conservative",
+        "description": "UK political party, currently the official opposition following the July 2024 general election. Founded 1834.",
+        "contrib_codes": {"Con"},
+        "cached_names": {"Conservative"},
+        "website": "https://www.conservatives.com",
+        "sinn_fein_note": False,
+    },
+    "liberal-democrat": {
+        "full_name": "Liberal Democrats",
+        "description": "UK political party, founded 1988.",
+        "contrib_codes": {"LD"},
+        "cached_names": {"Liberal Democrat"},
+        "website": "https://www.libdems.org.uk",
+        "sinn_fein_note": False,
+    },
+    "scottish-national-party": {
+        "full_name": "Scottish National Party",
+        "description": "Scottish political party advocating Scottish independence, standing candidates only in Scottish constituencies. Founded 1934.",
+        "contrib_codes": {"SNP"},
+        "cached_names": {"Scottish National Party"},
+        "website": "https://www.snp.org",
+        "sinn_fein_note": False,
+    },
+    "reform-uk": {
+        "full_name": "Reform UK",
+        "description": "UK political party, founded 2021.",
+        "contrib_codes": {"Reform"},
+        "cached_names": {"Reform UK"},
+        "website": "https://www.reformparty.uk",
+        "sinn_fein_note": False,
+    },
+    "green": {
+        "full_name": "Green Party",
+        "description": "UK political party prioritising environmental policy, founded 1990.",
+        "contrib_codes": {"Green"},
+        "cached_names": {"Green Party"},
+        "website": "https://www.greenparty.org.uk",
+        "sinn_fein_note": False,
+    },
+    "plaid-cymru": {
+        "full_name": "Plaid Cymru",
+        "description": "Welsh political party advocating Welsh independence, standing candidates only in Welsh constituencies. Founded 1925.",
+        "contrib_codes": {"PC"},
+        "cached_names": {"Plaid Cymru"},
+        "website": "https://www.plaid.cymru",
+        "sinn_fein_note": False,
+    },
+    "democratic-unionist-party": {
+        "full_name": "Democratic Unionist Party",
+        "description": "Northern Irish political party advocating Northern Ireland's continued union with the United Kingdom. Founded 1971.",
+        "contrib_codes": {"DUP"},
+        "cached_names": {"Democratic Unionist Party"},
+        "website": "https://www.mydup.com",
+        "sinn_fein_note": False,
+    },
+    "sinn-fein": {
+        "full_name": "Sinn Féin",
+        "description": "Irish republican party with seats across Northern Ireland constituencies. Founded 1905.",
+        "contrib_codes": set(),
+        "cached_names": {"Sinn Féin"},
+        "website": "https://www.sinnfein.ie",
+        "sinn_fein_note": True,
+    },
+}
+
+_CONTRIB_CODE_TO_SLUG: dict[str, str] = {
+    code: slug
+    for slug, cfg in _PARTY_SLUG_MAP.items()
+    for code in cfg["contrib_codes"]
+}
+
+_PARTY_SLUG_COLOURS: dict[str, str] = {
+    "labour":                   "#E4003B",
+    "conservative":             "#0087DC",
+    "liberal-democrat":         "#FAA61A",
+    "scottish-national-party":  "#c9a800",
+    "reform-uk":                "#12B6CF",
+    "green":                    "#02A95B",
+    "plaid-cymru":              "#005B54",
+    "democratic-unionist-party":"#CF1F25",
+    "sinn-fein":                "#326760",
+}
+
+_party_data_cache: dict[str, tuple[dict, float]] = {}
+_PARTY_CACHE_TTL = 3600  # 1 hour
+
+
+def _compute_party_data(slug: str) -> dict | None:
+    cfg = _PARTY_SLUG_MAP.get(slug)
+    if cfg is None:
+        return None
+
+    contrib_codes = list(cfg["contrib_codes"])
+    cached_names  = list(cfg["cached_names"])
+
+    # Member counts from cached_member (current members only)
+    member_counts: dict[str, int] = {}
+    for house, count in (
+        db.session.query(CachedMember.house, func.count(CachedMember.id))
+        .filter(CachedMember.party.in_(cached_names))
+        .group_by(CachedMember.house)
+        .all()
+    ):
+        member_counts[house] = count
+
+    total_contributions = 0
+    dtype_breakdown:    list[dict] = []
+    monthly_data:       list[dict] = []
+    top_policy_areas:   list[dict] = []
+    top_voices:         list[dict] = []
+    recent_activity:    list[dict] = []
+
+    if contrib_codes:
+        # Total contributions
+        total_contributions = (
+            db.session.query(func.count(HansardContribution.id))
+            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+            .filter(
+                HansardSession.is_container == False,
+                HansardContribution.party.in_(contrib_codes),
+            )
+            .scalar()
+        ) or 0
+
+        # Debate type breakdown
+        dtype_rows = (
+            db.session.query(
+                HansardSession.debate_type,
+                func.count(HansardContribution.id).label("n"),
+            )
+            .join(HansardContribution, HansardContribution.session_id == HansardSession.id)
+            .filter(
+                HansardSession.is_container == False,
+                HansardContribution.party.in_(contrib_codes),
+            )
+            .group_by(HansardSession.debate_type)
+            .order_by(func.count(HansardContribution.id).desc())
+            .all()
+        )
+        dtype_breakdown = [
+            {
+                "debate_type": row.debate_type,
+                "label":       _DEBATE_TYPE_LABELS.get(row.debate_type, "Proceedings"),
+                "count":       row.n,
+            }
+            for row in dtype_rows
+        ]
+
+        # Monthly activity timeline — Postgres only
+        if _is_postgres():
+            twelve_months_ago = (date_type.today().replace(day=1) - timedelta(days=365))
+            monthly_sql = sqla_text("""
+                SELECT DATE_TRUNC('month', s.date) AS mo, COUNT(c.id) AS n
+                FROM ha_contribution c
+                JOIN ha_session s ON s.id = c.session_id
+                WHERE s.is_container = FALSE
+                  AND c.party = ANY(:codes)
+                  AND s.date >= :cutoff
+                GROUP BY mo
+                ORDER BY mo
+            """)
+            monthly_rows = db.session.execute(monthly_sql, {
+                "codes": contrib_codes,
+                "cutoff": twelve_months_ago,
+            }).fetchall()
+            if monthly_rows:
+                max_n = max(r[1] for r in monthly_rows) or 1
+                monthly_data = [
+                    {
+                        "month":       r[0],
+                        "label":       r[0].strftime("%b %Y") if r[0] else "",
+                        "month_abbr":  r[0].strftime("%b") if r[0] else "",
+                        "count":       r[1],
+                        "pct":         round(r[1] / max_n * 100),
+                    }
+                    for r in monthly_rows
+                ]
+
+        # Top policy areas — count distinct sessions with party contributions
+        contrib_session_q = (
+            db.session.query(HansardContribution.session_id)
+            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+            .filter(
+                HansardSession.is_container == False,
+                HansardContribution.party.in_(contrib_codes),
+            )
+        )
+        policy_rows = (
+            db.session.query(
+                HansardSessionTheme.theme,
+                func.count(HansardSessionTheme.session_id).label("n"),
+            )
+            .filter(
+                HansardSessionTheme.session_id.in_(contrib_session_q),
+                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+            )
+            .group_by(HansardSessionTheme.theme)
+            .order_by(func.count(HansardSessionTheme.session_id).desc())
+            .limit(8)
+            .all()
+        )
+        top_policy_areas = [
+            {
+                "theme": row.theme,
+                "slug":  slugify_theme(row.theme),
+                "count": row.n,
+            }
+            for row in policy_rows
+        ]
+
+        # Most active voices — top 10 contributors by contribution count
+        voice_rows = (
+            db.session.query(
+                HansardContribution.member_id,
+                func.max(HansardContribution.member_name).label("member_name"),
+                func.count(HansardContribution.id).label("n"),
+            )
+            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+            .filter(
+                HansardSession.is_container == False,
+                HansardContribution.party.in_(contrib_codes),
+                HansardContribution.member_id.isnot(None),
+            )
+            .group_by(HansardContribution.member_id)
+            .order_by(func.count(HansardContribution.id).desc())
+            .limit(10)
+            .all()
+        )
+        voice_member_ids = [r.member_id for r in voice_rows]
+        cached_voice_members = {
+            cm.member_id: cm
+            for cm in CachedMember.query.filter(
+                CachedMember.member_id.in_(voice_member_ids)
+            ).all()
+        } if voice_member_ids else {}
+        for row in voice_rows:
+            cm = cached_voice_members.get(row.member_id)
+            display_name = cm.name if cm else _parse_attribution(row.member_name)["name"]
+            top_voices.append({
+                "member_id": row.member_id,
+                "name":      display_name,
+                "count":     row.n,
+            })
+
+        # Recent activity — 20 most recent contributions
+        recent_rows = (
+            db.session.query(HansardContribution, HansardSession)
+            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+            .filter(
+                HansardSession.is_container == False,
+                HansardContribution.party.in_(contrib_codes),
+                HansardContribution.member_name.isnot(None),
+            )
+            .order_by(HansardSession.date.desc(), HansardContribution.speech_order)
+            .limit(20)
+            .all()
+        )
+        for contrib, hs in recent_rows:
+            attr = _parse_attribution(contrib.member_name)
+            text = contrib.speech_text or ""
+            recent_activity.append({
+                "contribution_id":  contrib.id,
+                "member_id":        contrib.member_id,
+                "name":             attr["name"],
+                "speech_preview":   text[:280],
+                "speech_truncated": len(text) > 280,
+                "session_title":    hs.title,
+                "session_slug":     hs.slug,
+                "human_date":       _human_date(hs.date),
+                "url_date":         _url_date(hs.date),
+                "debate_type_label": _DEBATE_TYPE_LABELS.get(hs.debate_type, "Proceedings"),
+            })
+
+    # Written Questions — via cached_member member_id lookup
+    recent_pqs: list[dict] = []
+    if cached_names:
+        member_ids = [
+            r[0] for r in
+            db.session.query(CachedMember.member_id)
+            .filter(CachedMember.party.in_(cached_names))
+            .all()
+        ]
+        if member_ids:
+            pq_rows = (
+                HaPQ.query
+                .filter(HaPQ.asking_mnis_id.in_(member_ids))
+                .order_by(HaPQ.tabled_date.desc())
+                .limit(10)
+                .all()
+            )
+            recent_pqs = [
+                {
+                    "uin":           pq.uin,
+                    "heading":       pq.heading or pq.uin,
+                    "asking_member": pq.asking_member or "",
+                    "answering_body":pq.answering_body or "",
+                    "human_date":    _human_date(pq.tabled_date) if pq.tabled_date else "",
+                    "is_answered":   pq.is_answered,
+                }
+                for pq in pq_rows
+            ]
+
+    return {
+        "slug":               slug,
+        "cfg":                cfg,
+        "colour":             _PARTY_SLUG_COLOURS.get(slug, _DEFAULT_PARTY_COLOUR),
+        "member_counts":      member_counts,
+        "total_contributions":total_contributions,
+        "dtype_breakdown":    dtype_breakdown,
+        "monthly_data":       monthly_data,
+        "top_policy_areas":   top_policy_areas,
+        "top_voices":         top_voices,
+        "recent_activity":    recent_activity,
+        "recent_pqs":         recent_pqs,
+    }
+
+
+def _get_party_data(slug: str) -> dict | None:
+    now = time.monotonic()
+    cached = _party_data_cache.get(slug)
+    if cached and (now - cached[1]) < _PARTY_CACHE_TTL:
+        return cached[0]
+    data = _compute_party_data(slug)
+    if data is not None:
+        _party_data_cache[slug] = (data, now)
+    return data
+
+
+@archive_bp.route("/party/<string:party_slug>")
+def archive_party(party_slug: str):
+    data = _get_party_data(party_slug)
+    if data is None:
+        abort(404)
+
+    cfg  = data["cfg"]
+    name = cfg["full_name"]
+
+    commons_count = data["member_counts"].get("Commons", 0)
+    lords_count   = data["member_counts"].get("Lords", 0)
+
+    member_summary_parts = []
+    if commons_count:
+        member_summary_parts.append(f"{commons_count} MP{'s' if commons_count != 1 else ''}")
+    if lords_count:
+        member_summary_parts.append(f"{lords_count} Lord{'s' if lords_count != 1 else ''}")
+    member_summary = " · ".join(member_summary_parts) if member_summary_parts else "No current members"
+
+    return render_template(
+        "hansard_archive/archive_party.html",
+        party_slug      = party_slug,
+        party_name      = name,
+        party_desc      = cfg["description"],
+        party_website   = cfg["website"],
+        party_colour    = data["colour"],
+        sinn_fein_note  = cfg["sinn_fein_note"],
+        member_summary  = member_summary,
+        commons_count   = commons_count,
+        lords_count     = lords_count,
+        total_contributions = data["total_contributions"],
+        dtype_breakdown = data["dtype_breakdown"],
+        monthly_data    = data["monthly_data"],
+        top_policy_areas= data["top_policy_areas"],
+        top_voices      = data["top_voices"],
+        recent_activity = data["recent_activity"],
+        recent_pqs      = data["recent_pqs"],
+        og_title        = f"{name} — Hansard Archive — Westminster Brief",
+        meta_desc       = (
+            f"{name} parliamentary activity in the Westminster Brief Hansard Archive. "
+            f"{cfg['description']}"
+        ),
     )
