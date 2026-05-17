@@ -333,3 +333,70 @@ class ManifestoChunkTag(db.Model):
 
     def __repr__(self):
         return f"<ManifestoChunkTag chunk={self.chunk_id} area={self.policy_area} primary={self.is_primary}>"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Cross-government statistics
+# ---------------------------------------------------------------------------
+
+class HeadlineStat(db.Model):
+    """
+    One statistic row per theme (v1). source_id is a stable slug independent
+    of URL — source_url can be updated when gov.uk moves bulletins without
+    breaking row identity.
+
+    source_type: 'ons_timeseries' | 'govuk_bulletin' | 'manual'
+    display_hint: 'raw' | 'borrowing' | 'surplus_deficit'
+    """
+
+    __tablename__ = "headline_stat"
+    __table_args__ = (
+        db.UniqueConstraint("theme_slug", "source_id", name="uq_headline_stat"),
+    )
+
+    id               = db.Column(db.Integer,   primary_key=True)
+    theme_slug       = db.Column(db.Text,      nullable=False, index=True)
+    source_type      = db.Column(db.Text,      nullable=False)
+    source_id        = db.Column(db.Text,      nullable=False)
+    display_label    = db.Column(db.Text,      nullable=False)
+    display_hint     = db.Column(db.Text,      nullable=False, default="raw")
+    geography        = db.Column(db.Text,      nullable=False, default="UK")
+    latest_value     = db.Column(db.Text,      nullable=True)
+    unit             = db.Column(db.Text,      nullable=True)
+    period_label     = db.Column(db.Text,      nullable=True)
+    release_date     = db.Column(db.Date,      nullable=True)
+    source_url       = db.Column(db.Text,      nullable=False)
+    source_wording   = db.Column(db.Text,      nullable=True)
+    plain_english    = db.Column(db.Text,      nullable=True)
+    plain_english_generated_at = db.Column(db.DateTime, nullable=True)
+    rewrite_model    = db.Column(db.Text,      nullable=True)
+    extraction_config = db.Column(db.Text,     nullable=True)   # JSON stored as text (SQLite compat)
+    last_refreshed   = db.Column(db.DateTime,  nullable=False)
+    last_success     = db.Column(db.DateTime,  nullable=False)
+
+    issue_reports = db.relationship("StatIssueReport", back_populates="stat",
+                                    cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<HeadlineStat id={self.id} theme={self.theme_slug} source={self.source_id}>"
+
+
+class StatIssueReport(db.Model):
+    """User-submitted issue reports against a specific stat card."""
+
+    __tablename__ = "stat_issue_report"
+
+    id               = db.Column(db.Integer, primary_key=True)
+    headline_stat_id = db.Column(db.Integer, db.ForeignKey("headline_stat.id", ondelete="SET NULL"),
+                                 nullable=True)
+    theme_slug       = db.Column(db.Text,    nullable=False)
+    source_id        = db.Column(db.Text,    nullable=False)
+    user_message     = db.Column(db.Text,    nullable=False)
+    user_email       = db.Column(db.Text,    nullable=True)
+    created_at       = db.Column(db.DateTime, nullable=False)
+    reviewed         = db.Column(db.Boolean, nullable=False, default=False)
+
+    stat = db.relationship("HeadlineStat", back_populates="issue_reports")
+
+    def __repr__(self):
+        return f"<StatIssueReport id={self.id} theme={self.theme_slug} reviewed={self.reviewed}>"

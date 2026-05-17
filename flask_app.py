@@ -54,7 +54,7 @@ def _validate_external_url(url: str) -> str:
 # Import existing blueprints
 from hansard import hansard_bp
 from biography import biography_bp
-from hansard_archive.views import archive_bp
+from hansard_archive.views import archive_bp, brief_bp
 from hansard_archive.slugs import slugify_theme as _slugify_theme
 from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
@@ -172,6 +172,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(200), nullable=False)
     has_completed_onboarding = db.Column(db.Boolean, default=False, nullable=False)
     access_tier = db.Column(db.String(20), nullable=False, default='standard')
+    is_govuk_email = db.Column(db.Boolean, nullable=False, default=False)
     reset_token = db.Column(db.String(100), nullable=True)
     reset_token_expiry = db.Column(db.DateTime, nullable=True)
     deletion_requested_at = db.Column(db.DateTime, nullable=True)
@@ -252,6 +253,14 @@ with app.app_context():
     except Exception:
         pass  # Column already exists — nothing to do
     _mig_log('onboarding col done')
+    # Add is_govuk_email flag (Phase 2 — stored for future free-tier auto-grant)
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_govuk_email BOOLEAN NOT NULL DEFAULT FALSE'))
+            conn.commit()
+    except Exception:
+        pass
+    _mig_log('is_govuk_email col done')
     # Rename cached_twfy_search.query → search_query (query shadows SQLAlchemy's .query interface)
     try:
         with db.engine.connect() as conn:
@@ -670,6 +679,11 @@ def ping():
     return 'ok', 200
 
 @app.route('/')
+@app.route('/about/statistics')
+def about_statistics():
+    return render_template('about_statistics.html')
+
+
 @app.route('/home')
 def home():
     from sqlalchemy import func as sql_func
@@ -845,7 +859,7 @@ def _build_sitemap_core_xml() -> str:
                               .group_by(HansardSessionTheme.theme)
                               .having(sqlfunc.count(HansardSessionTheme.session_id) >= 5)
                               .all()):
-        urls.append((f"{BASE}/archive/theme/{_slugify_theme(theme)}",
+        urls.append((f"{BASE}/brief/{_slugify_theme(theme)}",
                      max_d.isoformat() if max_d else ""))
 
     # Session detail pages — non-container sessions with a slug
@@ -1162,7 +1176,8 @@ def register():
             flash('An account with that email already exists.')
         else:
             tier = 'public_sector' if _is_approved_email(email) else 'standard'
-            user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'), access_tier=tier)
+            govuk = email.endswith('.gov.uk') or '@gov.uk' in email
+            user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'), access_tier=tier, is_govuk_email=govuk)
             db.session.add(user)
             db.session.commit()
             login_user(user)
@@ -2156,6 +2171,10 @@ app.register_blueprint(debate_scanner_bp)
 app.register_blueprint(mp_search_bp)
 app.register_blueprint(directory_bp)
 app.register_blueprint(archive_bp)
+app.register_blueprint(brief_bp)
+
+from stats_refresh import register_stats_cli
+register_stats_cli(app)
 
 @app.context_processor
 def inject_version():

@@ -51,6 +51,7 @@ from hansard_archive.models import (
 from hansard_archive.slugs import slugify_theme
 
 archive_bp = Blueprint("archive", __name__, url_prefix="/archive")
+brief_bp   = Blueprint("brief",   __name__, url_prefix="/brief")
 
 # ---------------------------------------------------------------------------
 # Party colours + attribution parsing
@@ -1303,12 +1304,12 @@ def archive_policy(policy_slug: str):
 
 
 # ---------------------------------------------------------------------------
-# Specific theme page — /archive/theme/<slug>
+# Topic brief page — /brief/<slug>   (canonical)
+# Archive theme page — /archive/theme/<slug>  →  301 → /brief/<slug>
 # ---------------------------------------------------------------------------
 
-@archive_bp.route("/theme/<string:theme_slug>")
-def archive_theme(theme_slug: str):
-    # Reverse-lookup: find theme whose slugified name matches
+def _brief_theme_response(theme_slug: str, canonical_prefix: str):
+    """Shared render logic for /brief/<slug> and the legacy /archive/theme/<slug>."""
     rows = (
         db.session.query(HansardSessionTheme.theme)
         .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
@@ -1317,7 +1318,6 @@ def archive_theme(theme_slug: str):
     )
     theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
     if not theme_name:
-        # Slug not in DB — show friendly empty page rather than 404
         display_name = theme_slug.replace("-", " ")
         return render_template(
             "hansard_archive/archive_collection.html",
@@ -1330,9 +1330,9 @@ def archive_theme(theme_slug: str):
             total_pages    = 1,
             total          = 0,
             base_qs        = "",
-            canonical_path = f"/archive/theme/{theme_slug}",
-            og_title       = f"{display_name} — Hansard Archive",
-            meta_desc      = f"No sessions found in the Westminster Brief Hansard archive for {display_name}.",
+            canonical_path = f"{canonical_prefix}/{theme_slug}",
+            og_title       = f"{display_name} — Westminster Brief",
+            meta_desc      = f"No sessions found in the Westminster Brief archive for {display_name}.",
             json_ld_type   = "CollectionPage",
         )
 
@@ -1378,14 +1378,30 @@ def archive_theme(theme_slug: str):
         total          = total,
         per_page       = _PER_PAGE,
         base_qs        = base_qs,
-        canonical_path = f"/archive/theme/{theme_slug}",
-        og_title       = f"{theme_name} — Hansard Archive",
+        canonical_path = f"{canonical_prefix}/{theme_slug}",
+        og_title       = f"{theme_name} — Westminster Brief",
         meta_desc      = (
             f"UK parliamentary debates on {theme_name}. "
             f"{total} Hansard session{'s' if total != 1 else ''} tagged with this topic."
         ),
         json_ld_type   = "CollectionPage",
     )
+
+
+@brief_bp.route("/<string:theme_slug>")
+def brief_theme(theme_slug: str):
+    return _brief_theme_response(theme_slug, canonical_prefix="/brief")
+
+
+# ---------------------------------------------------------------------------
+# Specific theme page — /archive/theme/<slug>  →  301 → /brief/<slug>
+# ---------------------------------------------------------------------------
+
+@archive_bp.route("/theme/<string:theme_slug>")
+def archive_theme(theme_slug: str):
+    """301: /archive/theme/<slug> → /brief/<slug>"""
+    qs = ('?' + request.query_string.decode()) if request.query_string else ''
+    return redirect(f"/brief/{theme_slug}{qs}", code=301)
 
 
 # ---------------------------------------------------------------------------
