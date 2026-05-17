@@ -298,20 +298,26 @@ def fetch_ons_statistics(query, limit=4):
     try:
         resp = requests.get(
             ONS_SEARCH_API,
-            params={'q': query, 'content_type': 'dataset', 'limit': limit},
+            params={'q': query, 'limit': limit * 3},
             timeout=8,
         )
         if resp.status_code != 200:
             return []
         items = resp.json().get('items') or []
+        cutoff_year = datetime.utcnow().year - 7
         results = []
-        for item in items[:limit]:
+        for item in items:
+            if len(results) >= limit:
+                break
+            release = (item.get('release_date') or '')[:10]
+            if release and int(release[:4]) < cutoff_year:
+                continue
             uri = item.get('uri', '')
             results.append({
                 'title':        item.get('title', ''),
                 'summary':      item.get('summary') or item.get('meta_description', ''),
                 'url':          f"{ONS_BASE_URL}{uri}" if uri else ONS_BASE_URL,
-                'release_date': (item.get('release_date') or '')[:10],
+                'release_date': release,
             })
         try:
             CachedTWFYSearch.store(cache_key, '_ons', results)
