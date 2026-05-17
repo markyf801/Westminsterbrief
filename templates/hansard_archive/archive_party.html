@@ -195,10 +195,14 @@ body { background: #f0f2f5; }
                 {% for chunk in pos.chunks %}
                 <p class="pp-excerpt">"{{ chunk.text }}"</p>
                 <p class="pp-source">
-                    {% if chunk.source_url %}
-                    <a href="{{ chunk.source_url }}" target="_blank" rel="noopener">{{ manifesto_label }}{% if chunk.source_section %} — {{ chunk.source_section[:80] }}{% endif %} ↗</a>
+                    {% set deep_link = (chunk.pdf_url ~ '#page=' ~ chunk.source_page) if (chunk.pdf_url and chunk.source_page) else chunk.source_url %}
+                    {% set link_label = manifesto_label %}
+                    {% if chunk.source_section %}{% set link_label = link_label ~ ' — ' ~ chunk.source_section[:80] %}{% endif %}
+                    {% if chunk.source_page %}{% set link_label = link_label ~ ' (p.' ~ chunk.source_page ~ ')' %}{% endif %}
+                    {% if deep_link %}
+                    <a href="{{ deep_link }}" target="_blank" rel="noopener">{{ link_label }} ↗</a>
                     {% else %}
-                    {{ manifesto_label }}{% if chunk.source_section %} — {{ chunk.source_section[:80] }}{% endif %}
+                    {{ link_label }}
                     {% endif %}
                 </p>
                 {% endfor %}

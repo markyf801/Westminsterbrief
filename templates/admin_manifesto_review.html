@@ -187,9 +187,10 @@
             <span class="mr-id">#{{ chunk.id }}</span>
             <span class="mr-status-badge {{ chunk.review_status }}">{{ chunk.review_status }}</span>
         </div>
-        {% if chunk.source_section %}
-        <div class="mr-source" title="{{ chunk.source_section }}">
-            From: {{ chunk.source_section[:120] }}{% if chunk.source_section|length > 120 %}…{% endif %}
+        {% if chunk.source_section or chunk.source_page %}
+        <div class="mr-source" title="{{ chunk.source_section or '' }}">
+            {% if chunk.source_section %}From: {{ chunk.source_section[:100] }}{% if chunk.source_section|length > 100 %}…{% endif %}{% endif %}
+            {% if chunk.source_page %}<span style="color:#bbb;"> · p.{{ chunk.source_page }}</span>{% endif %}
         </div>
         {% endif %}
         <p class="mr-text">"{{ chunk.chunk_text }}"</p>

@@ -151,28 +151,84 @@ Rules:
 - If the section contains no substantive policy content, return an empty chunks array"""
 
 
-def _extract_pdf(path: str) -> str:
-    """Extract text from a PDF using pdfplumber. Returns plain text."""
+def _extract_section_title(text: str) -> str:
+    """
+    Heuristically extract a section heading from the start of a text block.
+    Returns the first line if it looks like a heading (short, not mid-sentence),
+    otherwise returns an empty string.
+    """
+    lines = text.strip().splitlines()
+    if not lines:
+        return ""
+    first = lines[0].strip()
+    # Heading: short, doesn't end with comma/semicolon/lowercase continuation
+    if len(first) <= 100 and not first.endswith((",", ";", ":")):
+        last_char = first[-1] if first else ""
+        # Reject if it ends mid-sentence (ends with lowercase letter or digit)
+        if last_char and (last_char.isdigit() or (last_char.isalpha() and last_char == last_char.lower() and last_char != last_char.upper())):
+            return ""
+        return first
+    return ""
+
+
+def _extract_pdf(path: str) -> list[tuple[str, int, str]]:
+    """
+    Extract text from a PDF using pdfplumber.
+    Returns list of (section_text, page_number, section_title) tuples.
+    Each page is joined with '\\n\\n' separators; sections are split on that
+    boundary. page_number is 1-indexed (the page where the section starts).
+    """
     try:
         import pdfplumber
     except ImportError:
         print("Error: pdfplumber is not installed. Run: pip install pdfplumber")
         sys.exit(1)
 
-    pages = []
+    # Extract per-page texts and build a character-offset -> page-number index
+    page_texts: list[str] = []
+    page_start_offsets: list[tuple[int, int]] = []  # (char_offset, page_no)
+    cumulative = 0
+
     with pdfplumber.open(path) as pdf:
         total = len(pdf.pages)
-        print(f"Extracting text from {total} pages…")
+        print(f"Extracting text from {total} pages...")
         for i, page in enumerate(pdf.pages, 1):
             text = page.extract_text(x_tolerance=2, y_tolerance=2)
-            if text:
-                pages.append(text.strip())
+            if text and text.strip():
+                t = text.strip()
+                page_start_offsets.append((cumulative, i))
+                page_texts.append(t)
+                cumulative += len(t) + 2  # +2 for the \n\n separator we'll add
             if i % 20 == 0:
                 print(f"  {i}/{total} pages done")
 
-    raw = "\n\n".join(pages)
-    print(f"Extracted {len(raw):,} characters from {len(pages)} pages.")
-    return raw
+    print(f"Extracted text from {len(page_texts)} pages.")
+
+    full_text = "\n\n".join(page_texts)
+
+    def _page_for_offset(offset: int) -> int:
+        """Return the page number that contains this character offset."""
+        result = page_start_offsets[0][1] if page_start_offsets else 1
+        for start, page_no in page_start_offsets:
+            if start <= offset:
+                result = page_no
+            else:
+                break
+        return result
+
+    # Split on double-newlines and attribute each section to its starting page
+    sections: list[tuple[str, int, str]] = []
+    pos = 0
+    for raw in full_text.split("\n\n"):
+        block = raw.strip()
+        if block and len(block) > 60:
+            page_no = _page_for_offset(pos)
+            title = _extract_section_title(block)
+            sections.append((block, page_no, title))
+        pos += len(raw) + 2
+
+    print(f"Split into {len(sections)} sections.")
+    return sections
 
 
 def _call_gemini(api_key: str, section_text: str, party_name: str) -> list[dict]:
@@ -231,7 +287,7 @@ def _load_database_url() -> str:
 
 
 def _ensure_tables(db_url: str) -> None:
-    """Create manifesto tables if they don't exist."""
+    """Create manifesto tables if they don't exist, and add any missing columns."""
     import psycopg2
     conn = psycopg2.connect(db_url)
     try:
@@ -244,6 +300,8 @@ def _ensure_tables(db_url: str) -> None:
                         manifesto_year INTEGER NOT NULL DEFAULT 2024,
                         source_section TEXT,
                         source_url     TEXT,
+                        source_page    INTEGER,
+                        pdf_url        TEXT,
                         chunk_text     TEXT NOT NULL,
                         ingested_at    TIMESTAMP NOT NULL,
                         review_status  TEXT NOT NULL DEFAULT 'pending',
@@ -251,6 +309,12 @@ def _ensure_tables(db_url: str) -> None:
                             UNIQUE (party_slug, manifesto_year, chunk_text)
                     )
                 """)
+                # Add columns added after initial release (safe to run on existing tables)
+                for col_sql in [
+                    "ALTER TABLE manifesto_chunk ADD COLUMN IF NOT EXISTS source_page INTEGER",
+                    "ALTER TABLE manifesto_chunk ADD COLUMN IF NOT EXISTS pdf_url TEXT",
+                ]:
+                    cur.execute(col_sql)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS manifesto_chunk_tag (
                         chunk_id    INTEGER NOT NULL
@@ -265,11 +329,21 @@ def _ensure_tables(db_url: str) -> None:
         conn.close()
 
 
-def _write_chunks(party_slug: str, source_url: str, section_title: str,
-                  chunks: list[dict], execute: bool) -> int:
+def _delete_party_chunks(party_slug: str, manifesto_year: int, conn) -> int:
+    """Delete all existing chunks for a party/year. Returns count deleted."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM manifesto_chunk WHERE party_slug=%s AND manifesto_year=%s",
+            (party_slug, manifesto_year),
+        )
+        return cur.rowcount
+
+
+def _write_chunks(party_slug: str, source_url: str, pdf_url: str,
+                  section_title: str, source_page: int,
+                  chunks: list[dict], manifesto_year: int = 2024) -> int:
     """Write chunks to DB as 'pending' using psycopg2 directly (no flask_app import)."""
     import psycopg2
-    import psycopg2.extras
 
     db_url = _load_database_url()
     if not db_url:
@@ -291,7 +365,7 @@ def _write_chunks(party_slug: str, source_url: str, section_title: str,
                     # Check for duplicate
                     cur.execute(
                         "SELECT id FROM manifesto_chunk WHERE party_slug=%s AND manifesto_year=%s AND chunk_text=%s",
-                        (party_slug, 2024, text),
+                        (party_slug, manifesto_year, text),
                     )
                     if cur.fetchone():
                         print(f"  [SKIP] Already exists: {text[:60].encode('ascii','replace').decode('ascii')}...")
@@ -300,11 +374,15 @@ def _write_chunks(party_slug: str, source_url: str, section_title: str,
                     cur.execute(
                         """INSERT INTO manifesto_chunk
                                (party_slug, manifesto_year, source_section, source_url,
-                                chunk_text, ingested_at, review_status)
-                           VALUES (%s, %s, %s, %s, %s, NOW(), 'pending')
+                                source_page, pdf_url, chunk_text, ingested_at, review_status)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), 'pending')
                            RETURNING id""",
-                        (party_slug, 2024, section_title[:200] if section_title else None,
-                         source_url or None, text),
+                        (party_slug, manifesto_year,
+                         section_title[:200] if section_title else None,
+                         source_url or None,
+                         source_page or None,
+                         pdf_url or None,
+                         text),
                     )
                     chunk_id = cur.fetchone()[0]
 
@@ -326,9 +404,15 @@ def _write_chunks(party_slug: str, source_url: str, section_title: str,
 def main():
     parser = argparse.ArgumentParser(description="Ingest party manifesto chunks into Westminster Brief.")
     parser.add_argument("--party",   required=True, help="Party slug (e.g. labour, conservative)")
-    parser.add_argument("--file",    required=False, help="Path to plain-text manifesto file")
-    parser.add_argument("--url",     required=True, help="Canonical source URL for this manifesto")
+    parser.add_argument("--file",    required=False, help="Path to manifesto file (PDF or plain text)")
+    parser.add_argument("--url",     required=True, help="HTML manifesto page URL (for attribution)")
+    parser.add_argument("--pdf-url", required=False, default="",
+                        help="Direct PDF URL (for #page=N deep links, e.g. https://party.org/manifesto.pdf)")
+    parser.add_argument("--year",    required=False, type=int, default=2024,
+                        help="Manifesto year (default: 2024)")
     parser.add_argument("--execute", action="store_true", help="Write to DB (default: dry run)")
+    parser.add_argument("--replace", action="store_true",
+                        help="Delete existing chunks for this party/year before ingesting")
     args = parser.parse_args()
 
     if args.party not in VALID_SLUGS:
@@ -337,7 +421,6 @@ def main():
 
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY_PROD")
     if not api_key:
-        # Try loading from .env
         env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
         if os.path.exists(env_path):
             for line in open(env_path):
@@ -350,42 +433,70 @@ def main():
         print("Error: GEMINI_API_KEY not set.")
         sys.exit(1)
 
-    # Read input
+    # Read input — PDF returns list of (text, page_no, title) tuples
+    is_pdf = False
     if args.file:
         if args.file.lower().endswith(".pdf"):
-            raw = _extract_pdf(args.file)
+            is_pdf = True
+            sections = _extract_pdf(args.file)  # list of (text, page_no, title)
         else:
             with open(args.file, encoding="utf-8") as f:
                 raw = f.read()
+            sections = [
+                (s.strip(), None, "")
+                for s in raw.split("\n\n")
+                if s.strip() and len(s.strip()) > 60
+            ]
     else:
         print("Reading from stdin (paste text, then Ctrl+Z / Ctrl+D to finish):")
         raw = sys.stdin.read()
+        sections = [
+            (s.strip(), None, "")
+            for s in raw.split("\n\n")
+            if s.strip() and len(s.strip()) > 60
+        ]
 
-    # Split into sections on blank lines
-    sections = [s.strip() for s in raw.split("\n\n") if s.strip() and len(s.strip()) > 60]
     party_display = args.party.replace("-", " ").title()
+    pdf_url = args.pdf_url.strip()
 
-    print(f"\nParty: {party_display}")
-    print(f"Sections found: {len(sections)}")
-    print(f"Source URL: {args.url}")
-    print(f"Mode: {'EXECUTE (writing to DB)' if args.execute else 'DRY RUN (no writes)'}")
+    print(f"\nParty:       {party_display}")
+    print(f"Year:        {args.year}")
+    print(f"Sections:    {len(sections)}")
+    print(f"Source URL:  {args.url}")
+    print(f"PDF URL:     {pdf_url or '(none — page numbers stored but no deep links)'}")
+    print(f"Mode:        {'EXECUTE (writing to DB)' if args.execute else 'DRY RUN (no writes)'}")
+    if args.replace:
+        print(f"Replace:     YES — existing {args.year} chunks for {args.party} will be deleted first")
     print("-" * 60)
 
     if args.execute:
+        import psycopg2
         db_url = _load_database_url()
         if not db_url:
             print("Error: DATABASE_URL not found in .env")
             sys.exit(1)
         _ensure_tables(db_url)
 
+        if args.replace:
+            conn = psycopg2.connect(db_url)
+            try:
+                with conn:
+                    deleted = _delete_party_chunks(args.party, args.year, conn)
+                print(f"Deleted {deleted} existing chunks for {args.party} {args.year}.")
+            finally:
+                conn.close()
+
     total_chunks = 0
     total_written = 0
 
-    for i, section in enumerate(sections, 1):
-        preview = section[:80].replace("\n", " ").encode("ascii", errors="replace").decode("ascii")
-        print(f"\n[{i}/{len(sections)}] {preview}...")
+    for i, (section_text, page_no, section_title) in enumerate(sections, 1):
+        preview = section_text[:80].replace("\n", " ").encode("ascii", errors="replace").decode("ascii")
+        page_tag = f" [p.{page_no}]" if page_no else ""
+        title_tag = f" | {section_title[:40]}" if section_title else ""
+        print(f"\n[{i}/{len(sections)}]{page_tag}{title_tag}")
+        print(f"  {preview}...")
 
-        chunks = _call_gemini(api_key, section, party_display)
+        chunks = _call_gemini(api_key, section_text, party_display)
         print(f"  -> {len(chunks)} chunk(s) extracted")
 
         for chunk in chunks:
@@ -398,9 +509,11 @@ def main():
             written = _write_chunks(
                 party_slug=args.party,
                 source_url=args.url,
-                section_title=section[:200],
+                pdf_url=pdf_url,
+                section_title=section_title,
+                source_page=page_no,
                 chunks=chunks,
-                execute=True,
+                manifesto_year=args.year,
             )
             total_written += written
             print(f"  -> {written} written to DB as pending")

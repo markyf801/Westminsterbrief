@@ -299,8 +299,10 @@ class ManifestoChunk(db.Model):
     id             = db.Column(db.Integer, primary_key=True)
     party_slug     = db.Column(db.String(80),  nullable=False, index=True)
     manifesto_year = db.Column(db.Integer,     nullable=False, default=2024)
-    source_section = db.Column(db.Text,        nullable=True)   # original section title
-    source_url     = db.Column(db.Text,        nullable=True)   # URL to section on party website
+    source_section = db.Column(db.Text,        nullable=True)   # section heading
+    source_url     = db.Column(db.Text,        nullable=True)   # HTML manifesto page URL
+    source_page    = db.Column(db.Integer,     nullable=True)   # PDF page number (1-indexed)
+    pdf_url        = db.Column(db.Text,        nullable=True)   # direct PDF URL for #page=N links
     chunk_text     = db.Column(db.Text,        nullable=False)
     ingested_at    = db.Column(db.DateTime,    nullable=False)
     review_status  = db.Column(db.String(20),  nullable=False, default="pending")

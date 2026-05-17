@@ -2030,6 +2030,8 @@ def _compute_party_policy_positions(
                     "text":           c.chunk_text,
                     "source_section": c.source_section or "",
                     "source_url":     c.source_url or "",
+                    "source_page":    c.source_page,
+                    "pdf_url":        c.pdf_url or "",
                 }
                 for c in all_chunks
             ],
