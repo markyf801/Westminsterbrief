@@ -42,6 +42,8 @@ from hansard_archive.models import (
     HansardSessionTheme,
     HaPQ,
     HaPQTheme,
+    ManifestoChunk,
+    ManifestoChunkTag,
     MpAnalytics,
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
@@ -1810,6 +1812,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"Lab", "Lab/Co-op", "Lab Co-op", "Lab/ Co-op"},
         "cached_names": {"Labour", "Labour (Co-op)"},
         "website": "https://labour.org.uk",
+        "manifesto_label": "Labour Party General Election Manifesto 2024",
+        "is_government": True,
         "sinn_fein_note": False,
     },
     "conservative": {
@@ -1818,6 +1822,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"Con"},
         "cached_names": {"Conservative"},
         "website": "https://www.conservatives.com",
+        "manifesto_label": "Conservative Party General Election Manifesto 2024",
+        "is_government": False,
         "sinn_fein_note": False,
     },
     "liberal-democrat": {
@@ -1826,6 +1832,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"LD"},
         "cached_names": {"Liberal Democrat"},
         "website": "https://www.libdems.org.uk",
+        "manifesto_label": "Liberal Democrat General Election Manifesto 2024",
+        "is_government": False,
         "sinn_fein_note": False,
     },
     "scottish-national-party": {
@@ -1834,6 +1842,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"SNP"},
         "cached_names": {"Scottish National Party"},
         "website": "https://www.snp.org",
+        "manifesto_label": "SNP General Election Manifesto 2024",
+        "is_government": False,
         "sinn_fein_note": False,
     },
     "reform-uk": {
@@ -1842,6 +1852,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"Reform"},
         "cached_names": {"Reform UK"},
         "website": "https://www.reformparty.uk",
+        "manifesto_label": "Reform UK Contract with the People 2024",
+        "is_government": False,
         "sinn_fein_note": False,
     },
     "green": {
@@ -1850,6 +1862,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"Green"},
         "cached_names": {"Green Party"},
         "website": "https://www.greenparty.org.uk",
+        "manifesto_label": "Green Party of England and Wales General Election Manifesto 2024",
+        "is_government": False,
         "sinn_fein_note": False,
     },
     "plaid-cymru": {
@@ -1858,6 +1872,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"PC"},
         "cached_names": {"Plaid Cymru"},
         "website": "https://www.plaid.cymru",
+        "manifesto_label": "Plaid Cymru General Election Manifesto 2024",
+        "is_government": False,
         "sinn_fein_note": False,
     },
     "democratic-unionist-party": {
@@ -1866,6 +1882,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": {"DUP"},
         "cached_names": {"Democratic Unionist Party"},
         "website": "https://www.mydup.com",
+        "manifesto_label": "Democratic Unionist Party General Election Manifesto 2024",
+        "is_government": False,
         "sinn_fein_note": False,
     },
     "sinn-fein": {
@@ -1874,6 +1892,8 @@ _PARTY_SLUG_MAP: dict[str, dict] = {
         "contrib_codes": set(),
         "cached_names": {"Sinn Féin"},
         "website": "https://www.sinnfein.ie",
+        "manifesto_label": None,
+        "is_government": False,
         "sinn_fein_note": True,
     },
 }
@@ -1898,6 +1918,122 @@ _PARTY_SLUG_COLOURS: dict[str, str] = {
 
 _party_data_cache: dict[str, tuple[dict, float]] = {}
 _PARTY_CACHE_TTL = 3600  # 1 hour
+
+
+def _compute_party_policy_positions(
+    party_slug: str,
+    contrib_codes: list[str],
+    is_government: bool,
+) -> list[dict]:
+    """
+    For each approved manifesto chunk, return a per-policy-area record with:
+    - the representative chunk text (shortest chunk where this area is primary)
+    - up to 3 recent parliamentary sessions where the party contributed
+    - up to 2 recent ministerial statements (Labour only)
+    Sorted alphabetically by policy_area.
+    """
+    chunk_rows = (
+        db.session.query(ManifestoChunk, ManifestoChunkTag.policy_area)
+        .join(
+            ManifestoChunkTag,
+            (ManifestoChunkTag.chunk_id == ManifestoChunk.id) &
+            (ManifestoChunkTag.is_primary == True),
+        )
+        .filter(
+            ManifestoChunk.party_slug == party_slug,
+            ManifestoChunk.review_status == "approved",
+        )
+        .all()
+    )
+
+    if not chunk_rows:
+        return []
+
+    area_chunks: dict[str, list] = defaultdict(list)
+    for chunk, policy_area in chunk_rows:
+        area_chunks[policy_area].append(chunk)
+
+    positions = []
+    for policy_area in sorted(area_chunks):
+        all_chunks = area_chunks[policy_area]
+        rep = min(all_chunks, key=lambda c: len(c.chunk_text))
+
+        sessions: list[dict] = []
+        if contrib_codes:
+            contrib_sids = (
+                db.session.query(HansardContribution.session_id)
+                .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+                .filter(
+                    HansardSession.is_container == False,
+                    HansardContribution.party.in_(contrib_codes),
+                )
+            )
+            tagged_sids = (
+                db.session.query(HansardSessionTheme.session_id)
+                .filter(
+                    HansardSessionTheme.theme == policy_area,
+                    HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+                )
+            )
+            session_rows = (
+                HansardSession.query
+                .filter(
+                    HansardSession.is_container == False,
+                    HansardSession.id.in_(contrib_sids),
+                    HansardSession.id.in_(tagged_sids),
+                )
+                .order_by(HansardSession.date.desc())
+                .limit(3)
+                .all()
+            )
+            for s in session_rows:
+                sessions.append({
+                    "title":             s.title,
+                    "slug":              s.slug,
+                    "human_date":        _human_date(s.date),
+                    "url_date":          _url_date(s.date),
+                    "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+                })
+
+        wms: list[dict] = []
+        if is_government:
+            wms_tagged = (
+                db.session.query(HansardSessionTheme.session_id)
+                .filter(
+                    HansardSessionTheme.theme == policy_area,
+                    HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+                )
+            )
+            wms_rows = (
+                HansardSession.query
+                .filter(
+                    HansardSession.debate_type == "wms",
+                    HansardSession.id.in_(wms_tagged),
+                )
+                .order_by(HansardSession.date.desc())
+                .limit(2)
+                .all()
+            )
+            for s in wms_rows:
+                wms.append({
+                    "title":      s.title,
+                    "slug":       s.slug,
+                    "human_date": _human_date(s.date),
+                    "url_date":   _url_date(s.date),
+                })
+
+        positions.append({
+            "policy_area":   policy_area,
+            "slug":          slugify_theme(policy_area),
+            "chunk_count":   len(all_chunks),
+            "chunk_text":    rep.chunk_text,
+            "source_section": rep.source_section or "",
+            "source_url":    rep.source_url or "",
+            "sessions":      sessions,
+            "wms":           wms,
+        })
+
+    return positions
 
 
 def _compute_party_data(slug: str) -> dict | None:
@@ -2115,6 +2251,12 @@ def _compute_party_data(slug: str) -> dict | None:
                 for pq in pq_rows
             ]
 
+    policy_positions = _compute_party_policy_positions(
+        party_slug=slug,
+        contrib_codes=contrib_codes,
+        is_government=cfg.get("is_government", False),
+    )
+
     return {
         "slug":               slug,
         "cfg":                cfg,
@@ -2127,6 +2269,7 @@ def _compute_party_data(slug: str) -> dict | None:
         "top_voices":         top_voices,
         "recent_activity":    recent_activity,
         "recent_pqs":         recent_pqs,
+        "policy_positions":   policy_positions,
     }
 
 
@@ -2178,6 +2321,9 @@ def archive_party(party_slug: str):
         top_voices      = data["top_voices"],
         recent_activity = data["recent_activity"],
         recent_pqs      = data["recent_pqs"],
+        policy_positions= data["policy_positions"],
+        manifesto_label = cfg.get("manifesto_label") or "",
+        is_government   = cfg.get("is_government", False),
         og_title        = f"{name} — Hansard Archive — Westminster Brief",
         meta_desc       = (
             f"{name} parliamentary activity in the Westminster Brief Hansard Archive. "
