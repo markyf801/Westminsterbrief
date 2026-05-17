@@ -1,59 +1,146 @@
 {% extends "base.html" %}
 {% block title %}Manifesto Review — Admin{% endblock %}
 
+{% block extra_head %}
+<style>
+.mr-page { max-width: 1200px; margin: 0 auto; padding: 20px 16px; font-family: sans-serif; }
+.mr-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.mr-header h1 { font-size: 18px; margin: 0; }
+.mr-sub { color: #666; font-size: 12px; margin-bottom: 16px; }
+
+/* Summary table */
+.mr-summary { margin-bottom: 18px; }
+.mr-summary table { font-size: 12px; border-collapse: collapse; width: 100%; max-width: 680px; }
+.mr-summary th { padding: 5px 12px; text-align: left; background: #f0f2f5; font-weight: 600; }
+.mr-summary td { padding: 5px 12px; border-bottom: 1px solid #eef; }
+.mr-summary .n-pending { color: #c0392b; font-weight: 600; }
+.mr-summary .n-approved { color: #27ae60; font-weight: 600; }
+.mr-summary .n-zero { color: #bbb; }
+
+/* Filters */
+.mr-filters { font-size: 12px; margin-bottom: 14px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.mr-filters a { color: #4a7fa5; }
+.mr-filters a.active { font-weight: 700; color: #1a2a3a; }
+
+/* Flash message */
+.mr-msg { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 4px; padding: 8px 12px; margin-bottom: 14px; font-size: 12px; }
+
+/* Chunk cards — side by side */
+.mr-card {
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    gap: 0;
+    border: 1px solid #dde3ed;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    background: #fff;
+    overflow: hidden;
+}
+.mr-card.status-approved { border-color: #a5d6a7; background: #f6fdf7; }
+.mr-card.status-rejected { border-color: #ef9a9a; background: #fdf6f6; opacity: 0.7; }
+
+.mr-card-left {
+    padding: 12px 16px;
+    border-right: 1px solid #eef;
+}
+.mr-card-right {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #fafbfc;
+}
+
+/* Meta row */
+.mr-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+.mr-party { font-size: 11px; font-weight: 700; color: #2d3e50; background: #eef1f5; padding: 1px 7px; border-radius: 3px; }
+.mr-id { font-size: 10px; color: #aaa; }
+.mr-status-badge {
+    font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
+}
+.mr-status-badge.pending  { background: #fff3e0; color: #e65100; }
+.mr-status-badge.approved { background: #e8f5e9; color: #2e7d32; }
+.mr-status-badge.rejected { background: #ffebee; color: #c62828; }
+
+/* Source section snippet */
+.mr-source {
+    font-size: 10px; color: #999; margin-bottom: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Chunk text */
+.mr-text {
+    font-size: 13px; line-height: 1.65; color: #1a2a3a;
+    margin: 0;
+}
+
+/* Tags */
+.mr-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.mr-tag {
+    font-size: 10px; padding: 2px 7px; border-radius: 3px; border: 1px solid #ccd9e6;
+    background: #f0f5fa; color: #3a6d93;
+}
+.mr-tag.primary { background: #ddeaf5; font-weight: 700; }
+
+/* Action buttons */
+.mr-actions { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
+.mr-btn {
+    width: 100%; padding: 7px 0; font-size: 12px; font-weight: 600;
+    border: none; border-radius: 4px; cursor: pointer; text-align: center;
+}
+.mr-btn-approve { background: #27ae60; color: #fff; }
+.mr-btn-approve:hover { background: #219a52; }
+.mr-btn-reject  { background: #fff; color: #c0392b; border: 1px solid #ef9a9a; }
+.mr-btn-reject:hover  { background: #ffebee; }
+
+/* Source link */
+.mr-srclink { font-size: 10px; color: #4a7fa5; text-align: center; }
+
+/* Empty state */
+.mr-empty { color: #888; font-size: 13px; padding: 32px; text-align: center; }
+</style>
+{% endblock %}
+
 {% block content %}
-<div style="max-width:960px; margin:0 auto; padding:24px 16px; font-family:sans-serif;">
+<div class="mr-page">
 
-<h1 style="font-size:20px; margin-bottom:4px;">Manifesto Chunk Review</h1>
-<p style="color:#666; font-size:13px; margin-bottom:16px;">
-    Review AI-extracted chunks before they appear on party pages.
-    Only <strong>approved</strong> chunks are displayed to users.
-    &nbsp;·&nbsp; <a href="/admin">← Admin</a>
-</p>
-
-{% if message %}
-<div style="background:#e8f5e9; border:1px solid #a5d6a7; border-radius:4px; padding:10px 14px; margin-bottom:16px; font-size:13px;">
-    {{ message }}
+<div class="mr-header">
+    <h1>Manifesto Chunk Review</h1>
+    <a href="/admin" style="font-size:12px; color:#8a96a4;">← Admin</a>
 </div>
-{% endif %}
+<p class="mr-sub">Only <strong>approved</strong> chunks appear on party pages. Chunk text is AI-extracted — verify against the PDF before approving.</p>
+
+{% if message %}<div class="mr-msg">{{ message }}</div>{% endif %}
 
 {# --- Party summary --- #}
 {% if party_summary %}
-<div style="margin-bottom:20px;">
-    <table style="font-size:12px; border-collapse:collapse;">
+<div class="mr-summary">
+    <table>
         <thead>
-            <tr style="background:#f0f2f5;">
-                <th style="padding:6px 12px; text-align:left;">Party</th>
-                <th style="padding:6px 12px;">Pending</th>
-                <th style="padding:6px 12px;">Approved</th>
-                <th style="padding:6px 12px;">Rejected</th>
-                <th style="padding:6px 12px;"></th>
+            <tr>
+                <th>Party</th>
+                <th>Pending</th>
+                <th>Approved</th>
+                <th>Rejected</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
         {% for slug in party_summary|sort %}
         {% set counts = party_summary[slug] %}
-        <tr style="border-bottom:1px solid #e8eaed;">
-            <td style="padding:6px 12px; font-weight:600;">{{ slug }}</td>
-            <td style="padding:6px 12px; text-align:center; color:{{ '#c0392b' if counts.get('pending',0) else '#999' }};">
-                {{ counts.get('pending', 0) }}
-            </td>
-            <td style="padding:6px 12px; text-align:center; color:{{ '#27ae60' if counts.get('approved',0) else '#999' }};">
-                {{ counts.get('approved', 0) }}
-            </td>
-            <td style="padding:6px 12px; text-align:center; color:#999;">
-                {{ counts.get('rejected', 0) }}
-            </td>
-            <td style="padding:6px 12px;">
-                <a href="/admin/manifesto-review?party={{ slug }}&status=pending"
-                   style="font-size:11px; color:#4a7fa5;">view pending</a>
+        <tr>
+            <td><strong>{{ slug }}</strong></td>
+            <td class="{{ 'n-pending' if counts.get('pending',0) else 'n-zero' }}">{{ counts.get('pending', 0) }}</td>
+            <td class="{{ 'n-approved' if counts.get('approved',0) else 'n-zero' }}">{{ counts.get('approved', 0) }}</td>
+            <td class="n-zero">{{ counts.get('rejected', 0) }}</td>
+            <td style="display:flex; gap:8px; align-items:center;">
+                <a href="/admin/manifesto-review?party={{ slug }}&status=pending" style="font-size:11px;">view pending</a>
                 {% if counts.get('pending', 0) > 0 %}
-                <form method="post" style="display:inline; margin-left:8px;">
+                <form method="post" style="display:inline;">
                     <input type="hidden" name="action" value="approve_all_party">
                     <input type="hidden" name="party_slug" value="{{ slug }}">
-                    <button type="submit"
-                            style="font-size:11px; background:#27ae60; color:#fff; border:none; border-radius:3px; padding:2px 8px; cursor:pointer;"
-                            onclick="return confirm('Approve all pending chunks for {{ slug }}?')">
+                    <button type="submit" class="mr-btn mr-btn-approve" style="width:auto; padding:2px 10px; font-size:11px;"
+                            onclick="return confirm('Approve all {{ counts.get('pending',0) }} pending chunks for {{ slug }}?')">
                         Approve all ({{ counts.get('pending', 0) }})
                     </button>
                 </form>
@@ -67,88 +154,87 @@
 {% endif %}
 
 {# --- Filters --- #}
-<div style="margin-bottom:16px; font-size:13px;">
-    Filter:
+<div class="mr-filters">
+    <span>Status:</span>
     {% for status in ['pending', 'approved', 'rejected'] %}
     <a href="/admin/manifesto-review?party={{ party_filter }}&status={{ status }}"
-       style="margin-left:8px; {% if status_filter == status %}font-weight:700;{% endif %}">
-        {{ status }}
-    </a>
+       class="{{ 'active' if status_filter == status else '' }}">{{ status }}</a>
     {% endfor %}
     &nbsp;|&nbsp;
-    <a href="/admin/manifesto-review?status={{ status_filter }}">All parties</a>
+    <span>Party:</span>
+    <a href="/admin/manifesto-review?status={{ status_filter }}" class="{{ 'active' if not party_filter else '' }}">all</a>
+    {% for slug in party_summary|sort %}
+    <a href="/admin/manifesto-review?party={{ slug }}&status={{ status_filter }}"
+       class="{{ 'active' if party_filter == slug else '' }}">{{ slug }}</a>
+    {% endfor %}
 </div>
 
-{# --- Chunk list --- #}
-{% if chunks %}
-<div>
-{% for chunk in chunks %}
-<div style="border:1px solid #dde; border-radius:6px; padding:14px 16px; margin-bottom:14px;
-            background:{% if chunk.review_status == 'approved' %}#f0faf4{% elif chunk.review_status == 'rejected' %}#fdf0f0{% else %}#fff{% endif %};">
+<p style="font-size:12px; color:#888; margin-bottom:12px;">
+    {{ chunks|length }} chunk{{ 's' if chunks|length != 1 else '' }} shown
+    {% if party_filter %} · {{ party_filter }}{% endif %}
+    · {{ status_filter }}
+</p>
 
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
-        <div style="font-size:12px; color:#666;">
-            <strong style="color:#2d3e50;">{{ chunk.party_slug }}</strong>
-            &nbsp;·&nbsp; {{ chunk.manifesto_year }}
-            &nbsp;·&nbsp; ID {{ chunk.id }}
-            &nbsp;·&nbsp;
-            <span style="color:{% if chunk.review_status == 'approved' %}#27ae60{% elif chunk.review_status == 'rejected' %}#c0392b{% else %}#e67e22{% endif %}; font-weight:600;">
-                {{ chunk.review_status }}
-            </span>
+{# --- Chunk cards --- #}
+{% if chunks %}
+{% for chunk in chunks %}
+<div class="mr-card status-{{ chunk.review_status }}">
+
+    {# Left: text content #}
+    <div class="mr-card-left">
+        <div class="mr-meta">
+            <span class="mr-party">{{ chunk.party_slug }}</span>
+            <span class="mr-id">#{{ chunk.id }}</span>
+            <span class="mr-status-badge {{ chunk.review_status }}">{{ chunk.review_status }}</span>
         </div>
-        <div style="display:flex; gap:6px; flex-shrink:0;">
+        {% if chunk.source_section %}
+        <div class="mr-source" title="{{ chunk.source_section }}">
+            From: {{ chunk.source_section[:120] }}{% if chunk.source_section|length > 120 %}…{% endif %}
+        </div>
+        {% endif %}
+        <p class="mr-text">"{{ chunk.chunk_text }}"</p>
+    </div>
+
+    {# Right: tags + actions #}
+    <div class="mr-card-right">
+        <div class="mr-tags">
+            {% for tag in chunk.tags %}
+            <span class="mr-tag {{ 'primary' if tag.is_primary else '' }}">{{ tag.policy_area }}</span>
+            {% endfor %}
+        </div>
+
+        <div class="mr-actions">
             {% if chunk.review_status != 'approved' %}
             <form method="post">
                 <input type="hidden" name="action" value="approve">
                 <input type="hidden" name="chunk_id" value="{{ chunk.id }}">
-                <button type="submit" style="font-size:12px; background:#27ae60; color:#fff; border:none; border-radius:3px; padding:3px 10px; cursor:pointer;">
-                    Approve
-                </button>
+                <button type="submit" class="mr-btn mr-btn-approve">Approve</button>
             </form>
             {% endif %}
             {% if chunk.review_status != 'rejected' %}
             <form method="post">
                 <input type="hidden" name="action" value="reject">
                 <input type="hidden" name="chunk_id" value="{{ chunk.id }}">
-                <button type="submit" style="font-size:12px; background:#c0392b; color:#fff; border:none; border-radius:3px; padding:3px 10px; cursor:pointer;">
-                    Reject
-                </button>
+                <button type="submit" class="mr-btn mr-btn-reject">Reject</button>
             </form>
             {% endif %}
         </div>
-    </div>
 
-    {% if chunk.source_section %}
-    <div style="font-size:11px; color:#888; margin-bottom:6px;">
-        Section: {{ chunk.source_section[:120] }}{% if chunk.source_section|length > 120 %}…{% endif %}
-    </div>
-    {% endif %}
-
-    <p style="font-size:13px; line-height:1.6; margin:0 0 10px 0; color:#1a2a3a;">
-        "{{ chunk.chunk_text }}"
-    </p>
-
-    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-        {% for tag in chunk.tags %}
-        <span style="font-size:11px; background:{% if tag.is_primary %}#ddeaf5{% else %}#f0f2f5{% endif %};
-                     color:#3a6d93; border:1px solid #ccd9e6; border-radius:3px; padding:1px 7px;">
-            {% if tag.is_primary %}<strong>{{ tag.policy_area }}</strong>{% else %}{{ tag.policy_area }}{% endif %}
-        </span>
-        {% endfor %}
         {% if chunk.source_url %}
-        <a href="{{ chunk.source_url }}" target="_blank" rel="noopener"
-           style="font-size:11px; color:#4a7fa5; margin-left:4px;">source ↗</a>
+        <div class="mr-srclink">
+            <a href="{{ chunk.source_url }}" target="_blank" rel="noopener">source ↗</a>
+        </div>
         {% endif %}
     </div>
+
 </div>
 {% endfor %}
-</div>
 
 {% else %}
-<div style="color:#666; font-size:13px; padding:20px; text-align:center;">
-    No chunks found for the current filters.
+<div class="mr-empty">
+    No chunks found.
     {% if not party_summary %}
-    <br><br>No manifesto chunks have been ingested yet. Run <code>scripts/ingest_manifesto.py</code> to add content.
+    Run <code>scripts/ingest_manifesto.py --execute</code> to add content.
     {% endif %}
 </div>
 {% endif %}
