@@ -199,12 +199,22 @@ Extract verbatim policy chunks from this section and tag each to GOV.UK policy a
     }
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    resp = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
-    resp.raise_for_status()
-    data = resp.json()
+
+    for attempt in range(3):
+        resp = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
+        if resp.status_code == 503:
+            wait = 2 ** attempt  # 1s, 2s, 4s
+            print(f"  [RETRY] 503 from Gemini — waiting {wait}s (attempt {attempt + 1}/3)…")
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        break
+    else:
+        print("  [WARN] Gemini returned 503 after 3 attempts — skipping section.")
+        return []
 
     try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(text)
         return parsed.get("chunks", [])
     except (KeyError, IndexError, json.JSONDecodeError) as e:
@@ -318,16 +328,16 @@ def main():
     total_written = 0
 
     for i, section in enumerate(sections, 1):
-        preview = section[:80].replace("\n", " ")
-        print(f"\n[{i}/{len(sections)}] {preview}…")
+        preview = section[:80].replace("\n", " ").encode("ascii", errors="replace").decode("ascii")
+        print(f"\n[{i}/{len(sections)}] {preview}...")
 
         chunks = _call_gemini(api_key, section, party_display)
         print(f"  -> {len(chunks)} chunk(s) extracted")
 
         for chunk in chunks:
-            text = chunk.get("chunk_text", "")[:80].replace("\n", " ")
+            text = chunk.get("chunk_text", "")[:80].replace("\n", " ").encode("ascii", errors="replace").decode("ascii")
             areas = chunk.get("policy_areas", [])
-            print(f"     · [{', '.join(areas)}] {text}…")
+            print(f"     * [{', '.join(areas)}] {text}...")
             total_chunks += 1
 
         if args.execute and chunks:
