@@ -1955,8 +1955,7 @@ def _compute_party_policy_positions(
 
     positions = []
     for policy_area in sorted(area_chunks):
-        all_chunks = area_chunks[policy_area]
-        rep = min(all_chunks, key=lambda c: len(c.chunk_text))
+        all_chunks = sorted(area_chunks[policy_area], key=lambda c: c.id)
 
         sessions: list[dict] = []
         if contrib_codes:
@@ -2026,9 +2025,14 @@ def _compute_party_policy_positions(
             "policy_area":   policy_area,
             "slug":          slugify_theme(policy_area),
             "chunk_count":   len(all_chunks),
-            "chunk_text":    rep.chunk_text,
-            "source_section": rep.source_section or "",
-            "source_url":    rep.source_url or "",
+            "chunks": [
+                {
+                    "text":           c.chunk_text,
+                    "source_section": c.source_section or "",
+                    "source_url":     c.source_url or "",
+                }
+                for c in all_chunks
+            ],
             "sessions":      sessions,
             "wms":           wms,
         })

@@ -192,14 +192,16 @@ body { background: #f0f2f5; }
                 <span class="pp-area-chevron">▶</span>
             </div>
             <div class="pp-area-body">
-                <p class="pp-excerpt">"{{ pos.chunk_text }}"</p>
+                {% for chunk in pos.chunks %}
+                <p class="pp-excerpt">"{{ chunk.text }}"</p>
                 <p class="pp-source">
-                    {% if pos.source_url %}
-                    <a href="{{ pos.source_url }}" target="_blank" rel="noopener">{{ manifesto_label }}{% if pos.source_section %} — {{ pos.source_section[:80] }}{% endif %} ↗</a>
+                    {% if chunk.source_url %}
+                    <a href="{{ chunk.source_url }}" target="_blank" rel="noopener">{{ manifesto_label }}{% if chunk.source_section %} — {{ chunk.source_section[:80] }}{% endif %} ↗</a>
                     {% else %}
-                    {{ manifesto_label }}{% if pos.source_section %} — {{ pos.source_section[:80] }}{% endif %}
+                    {{ manifesto_label }}{% if chunk.source_section %} — {{ chunk.source_section[:80] }}{% endif %}
                     {% endif %}
                 </p>
+                {% endfor %}
 
                 {% if pos.sessions %}
                 <div class="pp-activity-label">Recent parliamentary activity</div>
