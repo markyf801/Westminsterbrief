@@ -279,3 +279,55 @@ class MpAnalytics(db.Model):
 
     def __repr__(self):
         return f"<MpAnalytics member={self.member_id} computed={self.computed_at}>"
+
+
+class ManifestoChunk(db.Model):
+    """
+    A short excerpt (2-5 sentences) from a party's 2024 general election manifesto,
+    tagged to one or more GOV.UK policy areas.
+
+    Chunks are AI-generated (Gemini Flash-Lite) and must be reviewed by Mark
+    (review_status='approved') before they render on party pages.
+    """
+
+    __tablename__ = "manifesto_chunk"
+    __table_args__ = (
+        db.UniqueConstraint("party_slug", "manifesto_year", "chunk_text",
+                            name="uq_manifesto_chunk"),
+    )
+
+    id             = db.Column(db.Integer, primary_key=True)
+    party_slug     = db.Column(db.String(80),  nullable=False, index=True)
+    manifesto_year = db.Column(db.Integer,     nullable=False, default=2024)
+    source_section = db.Column(db.Text,        nullable=True)   # original section title
+    source_url     = db.Column(db.Text,        nullable=True)   # URL to section on party website
+    chunk_text     = db.Column(db.Text,        nullable=False)
+    ingested_at    = db.Column(db.DateTime,    nullable=False)
+    review_status  = db.Column(db.String(20),  nullable=False, default="pending")
+    # 'pending' | 'approved' | 'rejected'
+
+    tags = db.relationship("ManifestoChunkTag", back_populates="chunk",
+                           cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<ManifestoChunk id={self.id} party={self.party_slug} status={self.review_status}>"
+
+
+class ManifestoChunkTag(db.Model):
+    """
+    Many-to-many: one chunk tagged to one policy area.
+    is_primary=True marks the best-fit area for display when multiple chunks
+    share the same party+policy_area combination.
+    """
+
+    __tablename__ = "manifesto_chunk_tag"
+
+    chunk_id    = db.Column(db.Integer, db.ForeignKey("manifesto_chunk.id", ondelete="CASCADE"),
+                            primary_key=True)
+    policy_area = db.Column(db.String(100), primary_key=True)
+    is_primary  = db.Column(db.Boolean, nullable=False, default=False)
+
+    chunk = db.relationship("ManifestoChunk", back_populates="tags")
+
+    def __repr__(self):
+        return f"<ManifestoChunkTag chunk={self.chunk_id} area={self.policy_area} primary={self.is_primary}>"

@@ -2059,6 +2059,76 @@ def admin_panel():
                            backup_status=backup_status)
 
 
+# ---------------------------------------------------------------------------
+# Manifesto chunk review — /admin/manifesto-review
+# ---------------------------------------------------------------------------
+
+@app.route('/admin/manifesto-review', methods=['GET', 'POST'])
+def admin_manifesto_review():
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+
+    from hansard_archive.models import ManifestoChunk
+
+    message = None
+
+    if request.method == 'POST':
+        action     = request.form.get('action')
+        chunk_id   = request.form.get('chunk_id', type=int)
+        chunk      = db.session.get(ManifestoChunk, chunk_id) if chunk_id else None
+
+        if chunk:
+            if action == 'approve':
+                chunk.review_status = 'approved'
+                db.session.commit()
+                message = f'Chunk {chunk_id} approved.'
+                _admin_log(f'manifesto approve chunk={chunk_id}')
+            elif action == 'reject':
+                chunk.review_status = 'rejected'
+                db.session.commit()
+                message = f'Chunk {chunk_id} rejected.'
+                _admin_log(f'manifesto reject chunk={chunk_id}')
+            elif action == 'approve_all_party':
+                party_slug = request.form.get('party_slug', '')
+                n = ManifestoChunk.query.filter_by(
+                    party_slug=party_slug, review_status='pending'
+                ).update({'review_status': 'approved'})
+                db.session.commit()
+                message = f'Approved all {n} pending chunks for {party_slug}.'
+                _admin_log(f'manifesto approve_all party={party_slug} n={n}')
+
+    party_filter = request.args.get('party', '')
+    status_filter = request.args.get('status', 'pending')
+
+    q = ManifestoChunk.query
+    if party_filter:
+        q = q.filter_by(party_slug=party_filter)
+    if status_filter:
+        q = q.filter_by(review_status=status_filter)
+    chunks = q.order_by(ManifestoChunk.party_slug, ManifestoChunk.id).all()
+
+    # Summary counts per party
+    from sqlalchemy import func
+    summary = db.session.query(
+        ManifestoChunk.party_slug,
+        ManifestoChunk.review_status,
+        func.count(ManifestoChunk.id).label('n'),
+    ).group_by(ManifestoChunk.party_slug, ManifestoChunk.review_status).all()
+
+    party_summary: dict[str, dict[str, int]] = {}
+    for row in summary:
+        party_summary.setdefault(row.party_slug, {})[row.review_status] = row.n
+
+    return render_template(
+        'admin_manifesto_review.html',
+        chunks=chunks,
+        party_filter=party_filter,
+        status_filter=status_filter,
+        party_summary=party_summary,
+        message=message,
+    )
+
+
 # ==========================================
 # 7. BLUEPRINTS
 # ==========================================
