@@ -2080,10 +2080,10 @@ def admin_manifesto_review():
             party_slug = request.form.get('party_slug', '')
             n = ManifestoChunk.query.filter_by(
                 party_slug=party_slug, review_status='pending'
-            ).update({'review_status': 'approved'})
+            ).update({'review_status': 'approved'}, synchronize_session=False)
             db.session.commit()
             _admin_log(f'manifesto approve_all party={party_slug} n={n}')
-            return redirect(f'/admin/manifesto-review?party={party_slug}&status=approved&msg=approved+{n}')
+            return redirect(f'/admin/manifesto-review?party={party_slug}&status=approved')
 
         chunk = db.session.get(ManifestoChunk, chunk_id) if chunk_id else None
         if chunk:
