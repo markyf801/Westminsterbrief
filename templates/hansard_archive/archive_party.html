@@ -174,18 +174,18 @@ body { background: #f0f2f5; }
     {# ═══════════════════════════════════════════════════════ #}
     {# --- POLICY POSITIONS (Tier 3 — headline section) --- #}
     {# ═══════════════════════════════════════════════════════ #}
-    {% if policy_positions %}
+    {% for year_group in policy_year_groups %}
     <div class="party-section pp-section">
-        <h2 class="pp-section-title">Manifesto commitments — 2024 general election</h2>
+        <h2 class="pp-section-title">Manifesto commitments — {{ year_group.heading }}</h2>
         <p class="pp-section-sub">
-            Verbatim excerpts from the {{ manifesto_label }}, organised by GOV.UK policy area.
-            Each excerpt is linked to recent parliamentary activity in the archive.
+            Verbatim excerpts organised by GOV.UK policy area,
+            linked to recent parliamentary activity in the archive.
         </p>
 
         {% set ns = namespace(shown=0) %}
-        {% for pos in policy_positions %}
+        {% for pos in year_group.positions %}
         {% set is_extra = ns.shown >= 6 %}
-        <div class="pp-area{% if is_extra %} pp-hidden-area{% endif %}" id="pa-{{ pos.slug }}">
+        <div class="pp-area{% if is_extra %} pp-hidden-area{% endif %}" id="pa-{{ year_group.year }}-{{ pos.slug }}">
             <div class="pp-area-header" onclick="togglePpArea(this)">
                 <span class="pp-area-name">{{ pos.policy_area }}</span>
                 <span class="pp-area-count">{{ pos.chunk_count }} excerpt{{ 's' if pos.chunk_count != 1 else '' }}</span>
@@ -196,7 +196,7 @@ body { background: #f0f2f5; }
                 <p class="pp-excerpt">"{{ chunk.text }}"</p>
                 <p class="pp-source">
                     {% set deep_link = (chunk.pdf_url ~ '#page=' ~ chunk.source_page) if (chunk.pdf_url and chunk.source_page) else chunk.source_url %}
-                    {% set link_label = manifesto_label %}
+                    {% set link_label = chunk.year_label %}
                     {% if chunk.source_section %}{% set link_label = link_label ~ ' — ' ~ chunk.source_section[:80] %}{% endif %}
                     {% if chunk.source_page %}{% set link_label = link_label ~ ' (p.' ~ chunk.source_page ~ ')' %}{% endif %}
                     {% if deep_link %}
@@ -240,13 +240,13 @@ body { background: #f0f2f5; }
         {% set ns.shown = ns.shown + 1 %}
         {% endfor %}
 
-        {% if policy_positions|length > 6 %}
-        <div class="pp-show-toggle" id="pp-toggle" onclick="revealAllAreas()">
-            Show all {{ policy_positions|length }} policy areas ↓
+        {% if year_group.positions|length > 6 %}
+        <div class="pp-show-toggle" id="pp-toggle-{{ year_group.year }}" onclick="revealAllAreas('{{ year_group.year }}')">
+            Show all {{ year_group.positions|length }} policy areas ↓
         </div>
         {% endif %}
     </div>
-    {% endif %}
+    {% endfor %}
 
     {# --- Activity summary --- #}
     {% if total_contributions %}
@@ -372,7 +372,7 @@ body { background: #f0f2f5; }
     {% endif %}
 
     {# --- Empty state (no contributions, no PQs, not Sinn Féin) --- #}
-    {% if not sinn_fein_note and not total_contributions and not recent_pqs and not policy_positions %}
+    {% if not sinn_fein_note and not total_contributions and not recent_pqs and not policy_year_groups %}
     <div class="empty-state ac-empty">
         <p>No parliamentary activity found for {{ party_name }} in the archive.</p>
     </div>
@@ -380,7 +380,7 @@ body { background: #f0f2f5; }
 
     {# --- Source note --- #}
     <p class="ah-source-note">
-        {% if policy_positions %}
+        {% if policy_year_groups %}
         Manifesto commitments reflect each party's 2024 general election manifesto. Manifestos are published at general elections and do not update during a Parliament.
         &nbsp;·&nbsp;
         {% endif %}
@@ -403,12 +403,12 @@ function togglePpArea(header) {
     card.classList.toggle('open');
 }
 
-function revealAllAreas() {
-    document.querySelectorAll('.pp-hidden-area').forEach(function(el) {
+function revealAllAreas(year) {
+    var section = document.getElementById('pp-toggle-' + year).closest('.pp-section');
+    section.querySelectorAll('.pp-hidden-area').forEach(function(el) {
         el.classList.add('pp-revealed');
     });
-    var toggle = document.getElementById('pp-toggle');
-    if (toggle) toggle.style.display = 'none';
+    document.getElementById('pp-toggle-' + year).style.display = 'none';
 }
 
 // Auto-open if URL has #pa-* anchor
