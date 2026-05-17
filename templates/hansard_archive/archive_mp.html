@@ -37,7 +37,13 @@
             {{ member_name }}
         </h1>
         {% if member_party %}
-        <p class="ac-desc">{{ member_party }}</p>
+        <p class="ac-desc">
+            {% if member_party_slug %}
+            <a href="/archive/party/{{ member_party_slug }}" style="color:inherit; text-decoration:none; border-bottom: 1px dotted #9aa4b0;">{{ member_party }}</a>
+            {% else %}
+            {{ member_party }}
+            {% endif %}
+        </p>
         {% endif %}
         <p class="ac-desc" style="margin-top:4px;">
             {{ total }} parliamentary session{{ 's' if total != 1 else '' }} on record in this archive

@@ -96,7 +96,7 @@ class HansardContribution(db.Model):
 
     member_id = db.Column(db.Integer, nullable=True, index=True)
     member_name = db.Column(db.String(300), nullable=True)
-    party = db.Column(db.String(100), nullable=True)
+    party = db.Column(db.String(100), nullable=True, index=True)
 
     speech_text = db.Column(db.Text, nullable=False)
     speech_order = db.Column(db.Integer, nullable=False, default=0)

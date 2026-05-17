@@ -2458,3 +2458,208 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
 @media (max-width: 560px) {
     .fb-field-row { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   Party pages — /archive/party/<slug>
+   ============================================================ */
+
+/* Header */
+.party-header { margin-bottom: 4px; }
+.party-title { font-size: 22px; margin-bottom: 4px; }
+.party-header-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+.party-stat { font-size: 13px; color: #4a5a6a; }
+.party-stat strong { color: #1a2332; }
+.party-website-link {
+    font-size: 12px;
+    color: #6a96b8;
+    text-decoration: none;
+}
+.party-website-link:hover { text-decoration: underline; }
+
+/* Sinn Féin note */
+.party-sinn-fein-note {
+    background: #f5f7fa;
+    border: 1px solid #d8e2ec;
+    border-radius: 6px;
+    padding: 14px 16px;
+    font-size: 13px;
+    color: #4a5a6a;
+    margin: 16px 0;
+    line-height: 1.5;
+}
+
+/* Section containers */
+.party-section {
+    background: #fff;
+    border: 1px solid #d8e2ec;
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+}
+.party-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a2332;
+    margin: 0 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.party-section-note {
+    font-size: 12px;
+    color: #8a96a4;
+    margin: 0 0 12px;
+}
+
+/* Activity stats row */
+.party-stats-row {
+    display: flex;
+    gap: 32px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+.party-stat-block { display: flex; flex-direction: column; }
+.party-stat-number {
+    font-size: 28px;
+    font-weight: 700;
+    color: #1a2332;
+    line-height: 1.1;
+}
+.party-stat-label {
+    font-size: 12px;
+    color: #8a96a4;
+    margin-top: 2px;
+}
+
+/* Debate type breakdown */
+.party-dtype-breakdown { margin-top: 4px; }
+.party-dtype-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid #f0f2f5;
+    font-size: 13px;
+}
+.party-dtype-row:last-child { border-bottom: none; }
+.party-dtype-label { color: #4a5a6a; }
+.party-dtype-count { color: #1a2332; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Monthly activity chart */
+.party-timeline {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 80px;
+    padding-top: 8px;
+}
+.party-timeline-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    height: 100%;
+    cursor: default;
+}
+.party-timeline-bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 2px 2px 0 0;
+    transition: opacity 0.15s;
+}
+.party-timeline-col:hover .party-timeline-bar { opacity: 0.75; }
+.party-timeline-month {
+    font-size: 9px;
+    color: #9aa4b0;
+    margin-top: 3px;
+    white-space: nowrap;
+}
+
+/* Top policy areas */
+.party-policy-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.party-policy-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 10px;
+    border-radius: 5px;
+    text-decoration: none;
+    transition: background 0.1s;
+}
+.party-policy-item:hover { background: #f5f7fa; }
+.party-policy-name { font-size: 13px; color: #1a4a6e; }
+.party-policy-count { font-size: 12px; color: #8a96a4; white-space: nowrap; }
+
+/* Most active voices */
+.party-voices-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.party-voice-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 10px;
+    border-radius: 5px;
+    text-decoration: none;
+    transition: background 0.1s;
+}
+.party-voice-item:hover { background: #f5f7fa; }
+.party-voice-name { font-size: 13px; color: #1a4a6e; }
+.party-voice-count { font-size: 12px; color: #8a96a4; font-variant-numeric: tabular-nums; }
+
+/* Contribution card */
+.party-contrib-card { flex-direction: column; align-items: flex-start; }
+.party-contrib-speaker {
+    font-size: 12px;
+    font-weight: 600;
+    color: #1a2332;
+}
+.party-contrib-excerpt {
+    font-size: 12px;
+    color: #5a6878;
+    line-height: 1.55;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: #f8fafb;
+    border-left: 3px solid #d0dae5;
+}
+
+/* Browse by party — archive home chips */
+.party-browse-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 16px 0 8px;
+}
+.party-browse-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid #d0dae8;
+    background: #fff;
+    font-size: 12px;
+    color: #1a2332;
+    text-decoration: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+.party-browse-chip:hover { border-color: #9aa4b0; background: #f5f7fa; }
+.party-browse-chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
