@@ -2073,32 +2073,33 @@ def admin_manifesto_review():
     message = None
 
     if request.method == 'POST':
-        action     = request.form.get('action')
-        chunk_id   = request.form.get('chunk_id', type=int)
-        chunk      = db.session.get(ManifestoChunk, chunk_id) if chunk_id else None
+        action   = request.form.get('action')
+        chunk_id = request.form.get('chunk_id', type=int)
 
+        if action == 'approve_all_party':
+            party_slug = request.form.get('party_slug', '')
+            n = ManifestoChunk.query.filter_by(
+                party_slug=party_slug, review_status='pending'
+            ).update({'review_status': 'approved'})
+            db.session.commit()
+            _admin_log(f'manifesto approve_all party={party_slug} n={n}')
+            return redirect(f'/admin/manifesto-review?party={party_slug}&status=approved&msg=approved+{n}')
+
+        chunk = db.session.get(ManifestoChunk, chunk_id) if chunk_id else None
         if chunk:
             if action == 'approve':
                 chunk.review_status = 'approved'
                 db.session.commit()
-                message = f'Chunk {chunk_id} approved.'
                 _admin_log(f'manifesto approve chunk={chunk_id}')
             elif action == 'reject':
                 chunk.review_status = 'rejected'
                 db.session.commit()
-                message = f'Chunk {chunk_id} rejected.'
                 _admin_log(f'manifesto reject chunk={chunk_id}')
-            elif action == 'approve_all_party':
-                party_slug = request.form.get('party_slug', '')
-                n = ManifestoChunk.query.filter_by(
-                    party_slug=party_slug, review_status='pending'
-                ).update({'review_status': 'approved'})
-                db.session.commit()
-                message = f'Approved all {n} pending chunks for {party_slug}.'
-                _admin_log(f'manifesto approve_all party={party_slug} n={n}')
+        return redirect(request.referrer or '/admin/manifesto-review')
 
-    party_filter = request.args.get('party', '')
+    party_filter  = request.args.get('party', '')
     status_filter = request.args.get('status', 'pending')
+    message       = request.args.get('msg', '')
 
     q = ManifestoChunk.query
     if party_filter:

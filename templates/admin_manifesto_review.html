@@ -140,7 +140,7 @@
                     <input type="hidden" name="action" value="approve_all_party">
                     <input type="hidden" name="party_slug" value="{{ slug }}">
                     <button type="submit" class="mr-btn mr-btn-approve" style="width:auto; padding:2px 10px; font-size:11px;"
-                            onclick="return confirm('Approve all {{ counts.get('pending',0) }} pending chunks for {{ slug }}?')">
+                            onclick="return confirm('Approve all pending chunks for {{ slug }}?')">
                         Approve all ({{ counts.get('pending', 0) }})
                     </button>
                 </form>
