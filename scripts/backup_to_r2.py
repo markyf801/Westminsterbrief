@@ -3,6 +3,7 @@ Backup Westminster Brief Postgres database to Cloudflare R2.
 
 Run by the Railway cron service daily at 03:00 UTC.
 Exits non-zero on any failure so Railway marks the cron run as failed.
+Sends a Postmark failure alert email on any fatal error.
 
 Required env vars:
   DATABASE_URL           — set automatically by Railway when DB is attached
@@ -11,6 +12,8 @@ Required env vars:
   R2_SECRET_ACCESS_KEY
   R2_ENDPOINT_URL        — https://<account-id>.r2.cloudflarestorage.com
   R2_BUCKET_NAME         — defaults to westminsterbrief-backups
+  POSTMARK_SERVER_TOKEN  — for failure alert emails (optional: logs if unset)
+  ADMIN_EMAIL            — alert recipient (optional: logs if unset)
 """
 
 import gzip
@@ -28,8 +31,43 @@ def log(msg):
     print(f"[backup] {msg}", flush=True)
 
 
+def _send_failure_alert(error_msg: str) -> None:
+    """Send a Postmark email on backup failure. Logs to stdout if sending fails."""
+    token = os.environ.get("POSTMARK_SERVER_TOKEN", "")
+    to_addr = os.environ.get("ADMIN_EMAIL", "")
+    from_addr = os.environ.get("EMAIL_FROM_ADDRESS", "hello@westminsterbrief.co.uk")
+
+    if not token or not to_addr:
+        log(f"ALERT: backup failed — no email sent (POSTMARK_SERVER_TOKEN or ADMIN_EMAIL not set). Error: {error_msg}")
+        return
+
+    subject = f"[Westminster Brief] Backup failed — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    body = (
+        f"The daily Westminster Brief database backup failed.\n\n"
+        f"Error: {error_msg}\n\n"
+        f"Check Railway deployment logs for backup-cron-r2 for full details.\n"
+        f"The /health endpoint will report backup as STALE within 26 hours if not resolved."
+    )
+
+    try:
+        from postmarker.core import PostmarkClient
+        client = PostmarkClient(server_token=token)
+        client.emails.send(
+            From=f"Westminster Brief <{from_addr}>",
+            To=to_addr,
+            Subject=subject,
+            TextBody=body,
+            MessageStream="outbound",
+        )
+        log(f"Failure alert sent to {to_addr}")
+    except Exception as exc:
+        # Alert send failed — log clearly so Railway deployment logs capture it
+        log(f"ALERT: backup failed AND failure email could not be sent ({exc}). Error was: {error_msg}")
+
+
 def die(msg):
     print(f"[backup] ERROR: {msg}", file=sys.stderr, flush=True)
+    _send_failure_alert(msg)
     sys.exit(1)
 
 

@@ -2080,7 +2080,7 @@ def admin_manifesto_review():
     if not session.get('admin_authenticated'):
         return redirect('/admin')
 
-    from hansard_archive.models import ManifestoChunk
+    from hansard_archive.models import ManifestoChunk, ManifestoChunkTag  # noqa: F401
 
     message = None
 
@@ -2113,24 +2113,28 @@ def admin_manifesto_review():
     status_filter = request.args.get('status', 'pending')
     message       = request.args.get('msg', '')
 
-    q = ManifestoChunk.query
-    if party_filter:
-        q = q.filter_by(party_slug=party_filter)
-    if status_filter:
-        q = q.filter_by(review_status=status_filter)
-    chunks = q.order_by(ManifestoChunk.party_slug, ManifestoChunk.id).all()
+    try:
+        q = ManifestoChunk.query.options(db.joinedload(ManifestoChunk.tags))
+        if party_filter:
+            q = q.filter_by(party_slug=party_filter)
+        if status_filter:
+            q = q.filter_by(review_status=status_filter)
+        chunks = q.order_by(ManifestoChunk.party_slug, ManifestoChunk.id).all()
 
-    # Summary counts per party
-    from sqlalchemy import func
-    summary = db.session.query(
-        ManifestoChunk.party_slug,
-        ManifestoChunk.review_status,
-        func.count(ManifestoChunk.id).label('n'),
-    ).group_by(ManifestoChunk.party_slug, ManifestoChunk.review_status).all()
+        from sqlalchemy import func
+        summary = db.session.query(
+            ManifestoChunk.party_slug,
+            ManifestoChunk.review_status,
+            func.count(ManifestoChunk.id).label('n'),
+        ).group_by(ManifestoChunk.party_slug, ManifestoChunk.review_status).all()
 
-    party_summary: dict[str, dict[str, int]] = {}
-    for row in summary:
-        party_summary.setdefault(row.party_slug, {})[row.review_status] = row.n
+        party_summary: dict[str, dict[str, int]] = {}
+        for row in summary:
+            party_summary.setdefault(row.party_slug, {})[row.review_status] = row.n
+
+    except Exception as _e:
+        app.logger.exception('admin_manifesto_review GET failed')
+        return f"<pre style='color:red;padding:20px'>Error loading manifesto review:\n{_e}\n\nCheck Railway logs for full traceback.</pre>", 500
 
     return render_template(
         'admin_manifesto_review.html',

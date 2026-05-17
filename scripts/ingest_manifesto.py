@@ -74,7 +74,7 @@ VALID_SLUGS = {
 }
 
 _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-_REQUEST_TIMEOUT = 60
+_REQUEST_TIMEOUT = 120
 _INTER_REQUEST_DELAY = 0.5
 _MODEL_CACHE: dict[str, str] = {}
 
@@ -254,16 +254,22 @@ Extract verbatim policy chunks from this section and tag each to GOV.UK policy a
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     for attempt in range(3):
-        resp = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
+        try:
+            resp = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
+        except requests.exceptions.Timeout:
+            wait = 2 ** attempt
+            print(f"  [RETRY] Timeout from Gemini — waiting {wait}s (attempt {attempt + 1}/3)...")
+            time.sleep(wait)
+            continue
         if resp.status_code == 503:
-            wait = 2 ** attempt  # 1s, 2s, 4s
-            print(f"  [RETRY] 503 from Gemini — waiting {wait}s (attempt {attempt + 1}/3)…")
+            wait = 2 ** attempt
+            print(f"  [RETRY] 503 from Gemini — waiting {wait}s (attempt {attempt + 1}/3)...")
             time.sleep(wait)
             continue
         resp.raise_for_status()
         break
     else:
-        print("  [WARN] Gemini returned 503 after 3 attempts — skipping section.")
+        print("  [WARN] Gemini did not respond after 3 attempts — skipping section.")
         return []
 
     try:
