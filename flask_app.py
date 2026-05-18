@@ -1694,7 +1694,8 @@ ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '').strip()
 TOTP_SECRET = os.environ.get('TOTP_SECRET', '').strip()
 
 # Background job status for long-running admin operations
-_committee_ingest_status = {'running': False, 'message': None, 'started_at': None}
+_committee_ingest_status  = {'running': False, 'message': None, 'started_at': None}
+_upcoming_refresh_status  = {'running': False, 'message': None}
 
 def _admin_log(action):
     app.logger.info('ADMIN | ip=%s | %s', request.remote_addr, action)
@@ -1796,6 +1797,33 @@ def admin_panel():
             except Exception as e:
                 db.session.rollback()
                 message = f'Error resetting failed links: {e}'
+
+        elif action == 'refresh_upcoming':
+            import threading as _threading
+            if _upcoming_refresh_status['running']:
+                message = 'Refresh already running — check back in a few minutes.'
+            else:
+                org_slug = request.form.get('org_slug') or None
+
+                def _run_upcoming(slug):
+                    from upcoming_refresh import run_refresh
+                    _upcoming_refresh_status['running'] = True
+                    _upcoming_refresh_status['message'] = (
+                        f'Refreshing {slug}…' if slug else 'Refreshing all orgs…'
+                    )
+                    try:
+                        run_refresh(org_slug=slug)
+                        _upcoming_refresh_status['message'] = (
+                            f'Refresh of {slug} complete.' if slug else 'Refresh of all orgs complete.'
+                        )
+                    except Exception as e:
+                        _upcoming_refresh_status['message'] = f'Refresh error: {e}'
+                    finally:
+                        _upcoming_refresh_status['running'] = False
+
+                _threading.Thread(target=_run_upcoming, args=(org_slug,), daemon=True).start()
+                message = f'Upcoming refresh started in background — {"org: " + org_slug if org_slug else "all orgs"}.'
+                _admin_log(f'refresh_upcoming | {org_slug or "all"}')
 
         elif action == 'ingest_committee_evidence':
             import threading, requests as _requests
@@ -2068,7 +2096,21 @@ def admin_panel():
     except Exception as e:
         backup_status = {'error': str(e)}
 
+    # --- Upcoming releases stats ---
+    upcoming_stats = {}
+    try:
+        from hansard_archive.models import UpcomingRelease as _UR
+        upcoming_stats['total'] = _UR.query.count()
+        from datetime import date as _date_today
+        upcoming_stats['future'] = _UR.query.filter(_UR.release_date >= _date_today.today()).count()
+    except Exception as e:
+        upcoming_stats['error'] = str(e)
+
     # Show background ingestion status as the message if no other message and job ran/is running
+    if not message and _upcoming_refresh_status['message']:
+        message = _upcoming_refresh_status['message']
+        if _upcoming_refresh_status['running']:
+            message = '⏳ ' + message
     if not message and _committee_ingest_status['message']:
         message = _committee_ingest_status['message']
         if _committee_ingest_status['running']:
@@ -2083,7 +2125,8 @@ def admin_panel():
                            member_link_stats=member_link_stats,
                            dir_stats=dir_stats,
                            archive_stats=archive_stats,
-                           backup_status=backup_status)
+                           backup_status=backup_status,
+                           upcoming_stats=upcoming_stats)
 
 
 # ---------------------------------------------------------------------------
