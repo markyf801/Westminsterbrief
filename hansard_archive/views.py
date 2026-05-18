@@ -1309,42 +1309,89 @@ def archive_policy(policy_slug: str):
 # Archive theme page — /archive/theme/<slug>  →  301 → /brief/<slug>
 # ---------------------------------------------------------------------------
 
+# Westminster Brief brief slugs → actual Hansard DB policy area name(s).
+# The two taxonomies differ (e.g. "education" ≠ "Education, training and skills"),
+# so we bridge them statically rather than relying on slugify round-trips.
+_BRIEF_SLUG_TO_POLICY_AREAS: dict[str, list[str]] = {
+    "economy":                                   ["Economy"],
+    "employment-and-labour-market":              ["Employment and labour market"],
+    "finance-and-taxation":                      ["Finance and taxation"],
+    "government-and-public-administration":      ["Government and public administration"],
+    "business-and-industry":                     ["Business and industry"],
+    "education":                                 ["Education, training and skills", "Children and families"],
+    "health-and-social-care":                    ["Health and social care"],
+    "housing-and-planning":                      ["Housing and planning"],
+    "transport":                                 ["Transport"],
+    "crime-justice-and-law":                     ["Crime, justice and law"],
+    "welfare-and-social-security":               ["Welfare and benefits"],
+    "immigration-and-asylum":                    ["Immigration and borders"],
+    "environment-and-climate-change":            ["Environment"],
+    "defence-and-national-security":             ["Defence and armed forces"],
+    "international-affairs":                     ["International development", "Foreign affairs and diplomacy"],
+    "science-technology-and-innovation":         ["Science and technology"],
+    "energy-and-utilities":                      ["Energy"],
+    "work-and-pensions":                         ["Welfare and benefits", "Employment and labour market"],
+    "agriculture-environment-and-rural-affairs": ["Environment"],
+    "culture-media-and-sport":                   ["Society and culture"],
+    "constitutional-affairs":                    ["Parliament and constitution"],
+    "foreign-affairs":                           ["Foreign affairs and diplomacy"],
+    "parliamentary-affairs":                     ["Parliament and constitution"],
+}
+
+# Headings for slugs where slug→title-case produces awkward punctuation.
+_BRIEF_SLUG_HEADING: dict[str, str] = {
+    "crime-justice-and-law":                     "Crime, Justice and Law",
+    "science-technology-and-innovation":         "Science, Technology and Innovation",
+    "agriculture-environment-and-rural-affairs": "Agriculture, Environment and Rural Affairs",
+    "culture-media-and-sport":                   "Culture, Media and Sport",
+}
+
+
 def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     """
     Render /brief/<slug> pages.
 
     Lookup order:
-    1. Policy area match (THEME_TYPE_POLICY_AREA) — primary path. Stats and
-       upcoming releases are keyed by policy area slug, so /brief/education
-       should show the "Education" policy area page.
-    2. Specific topic match (THEME_TYPE_SPECIFIC) — fallback for 301 redirects
-       from /archive/theme/<slug> where the slug is a free-text topic.
+    0. Bridge mapping (_BRIEF_SLUG_TO_POLICY_AREAS) — resolves the mismatch
+       between brief page slugs and Hansard DB policy area taxonomy strings.
+    1. Policy area slug reverse-lookup — catches any policy areas not in the map.
+    2. Specific topic match (THEME_TYPE_SPECIFIC) — fallback for /archive/theme/ redirects.
     """
-    # ── 1. Try policy area match ──────────────────────────────────────────────
-    all_policies = _all_policy_areas()
-    policy_name  = next((p for p in all_policies if slugify_theme(p) == theme_slug), None)
-
-    if policy_name:
-        theme_name     = policy_name
+    # ── 0. Bridge mapping: brief slug → DB policy area name(s) ───────────────
+    policy_names = _BRIEF_SLUG_TO_POLICY_AREAS.get(theme_slug)
+    if policy_names:
+        theme_name      = _BRIEF_SLUG_HEADING.get(theme_slug) or theme_slug.replace("-", " ").title()
         theme_type_used = THEME_TYPE_POLICY_AREA
         session_filter  = (
-            HansardSessionTheme.theme == theme_name,
+            HansardSessionTheme.theme.in_(policy_names),
             HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
         )
     else:
-        # ── 2. Fallback: specific topic match ─────────────────────────────────
-        rows = (
-            db.session.query(HansardSessionTheme.theme)
-            .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
-            .distinct()
-            .all()
-        )
-        theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
-        theme_type_used = THEME_TYPE_SPECIFIC
-        session_filter  = (
-            HansardSessionTheme.theme == theme_name,
-            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
-        ) if theme_name else None
+        # ── 1. Try policy area match via slug reverse-lookup ──────────────────
+        all_policies = _all_policy_areas()
+        policy_name  = next((p for p in all_policies if slugify_theme(p) == theme_slug), None)
+
+        if policy_name:
+            theme_name      = policy_name
+            theme_type_used = THEME_TYPE_POLICY_AREA
+            session_filter  = (
+                HansardSessionTheme.theme == theme_name,
+                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+            )
+        else:
+            # ── 2. Fallback: specific topic match ─────────────────────────────
+            rows = (
+                db.session.query(HansardSessionTheme.theme)
+                .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
+                .distinct()
+                .all()
+            )
+            theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
+            theme_type_used = THEME_TYPE_SPECIFIC
+            session_filter  = (
+                HansardSessionTheme.theme == theme_name,
+                HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
+            ) if theme_name else None
 
     if not theme_name:
         display_name = theme_slug.replace("-", " ").title()
