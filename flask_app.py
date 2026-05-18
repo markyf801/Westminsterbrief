@@ -679,6 +679,9 @@ def ping():
     return 'ok', 200
 
 @app.route('/')
+def root():
+    return redirect('/home')
+
 @app.route('/about/statistics')
 def about_statistics():
     return render_template('about_statistics.html')
