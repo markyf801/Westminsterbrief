@@ -57,7 +57,7 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "UK",
         "unit":          "%",
-        "source_url":    "https://www.ons.gov.uk/economy/grossdomesticproductgdp/timeseries/IHYQ",
+        "source_url":    "https://www.ons.gov.uk/economy/grossdomesticproductgdp/timeseries/ihyq/pn2",
     },
     {
         "theme_slug":    "employment-and-labour-market",
@@ -67,7 +67,7 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "UK",
         "unit":          "%",
-        "source_url":    "https://www.ons.gov.uk/employmentandlabourmarket/peoplenotinwork/unemployment/timeseries/MGSX",
+        "source_url":    "https://www.ons.gov.uk/employmentandlabourmarket/peoplenotinwork/unemployment/timeseries/mgsx/lms",
     },
     {
         "theme_slug":    "finance-and-taxation",
@@ -77,7 +77,7 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "UK",
         "unit":          "%",
-        "source_url":    "https://www.ons.gov.uk/economy/inflationandpriceindices/timeseries/L55O",
+        "source_url":    "https://www.ons.gov.uk/economy/inflationandpriceindices/timeseries/l55o/mm23",
     },
     {
         "theme_slug":    "government-and-public-administration",
@@ -87,7 +87,7 @@ ROWS = [
         "display_hint":  "borrowing",
         "geography":     "UK",
         "unit":          "£m",
-        "source_url":    "https://www.ons.gov.uk/economy/governmentpublicsectorandtaxes/publicsectorfinance/timeseries/DZLS",
+        "source_url":    "https://www.ons.gov.uk/economy/governmentpublicsectorandtaxes/publicsectorfinance/timeseries/dzls/pusf",
     },
     {
         "theme_slug":    "business-and-industry",
@@ -97,23 +97,22 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "UK",
         "unit":          "index (2022=100)",
-        "source_url":    "https://www.ons.gov.uk/economy/economicoutputandproductivity/output/timeseries/K22A",
+        "source_url":    "https://www.ons.gov.uk/economy/economicoutputandproductivity/output/timeseries/k22a/diop",
     },
 
-    # ── GOV.UK BULLETIN ROWS — DRAFT FOR REVIEW ──────────────────────────────
-    # Mark: review each URL. If a URL is wrong or the theme should be skipped,
-    # comment out the row or replace the URL before seeding with --execute.
-    # Bulletin URLs point to the stable landing page (not a dated version URL).
+    # ── GOV.UK BULLETIN ROWS ─────────────────────────────────────────────────
+    # URLs verified May 2026. Use stable collection/landing pages where possible
+    # to avoid 404s as individual edition URLs change with each release.
 
     {
         "theme_slug":    "education",
         "source_type":   "govuk_bulletin",
         "source_id":     "dfe-gcse-results",
-        "display_label": "GCSE grade 4+ pass rate (English and maths)",
+        "display_label": "GCSE results (Key Stage 4)",
         "display_hint":  "raw",
         "geography":     "England",
         "unit":          "%",
-        "source_url":    "https://explore-education-statistics.service.gov.uk/find-statistics/gcse-and-equivalent-results",
+        "source_url":    "https://www.gov.uk/government/collections/statistics-gcses-key-stage-4",
     },
     {
         "theme_slug":    "health-and-social-care",
@@ -133,7 +132,7 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "England",
         "unit":          "dwellings",
-        "source_url":    "https://www.gov.uk/government/collections/house-building-new-build-dwellings",
+        "source_url":    "https://www.gov.uk/government/statistics/housing-supply-net-additional-dwellings-england-2023-to-2024",
     },
     {
         "theme_slug":    "transport",
@@ -143,7 +142,7 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "Great Britain",
         "unit":          "people",
-        "source_url":    "https://www.gov.uk/government/collections/reported-road-casualties-great-britain",
+        "source_url":    "https://www.gov.uk/government/statistics/reported-road-casualties-great-britain-annual-report-2023",
     },
     {
         "theme_slug":    "crime-justice-and-law",
@@ -165,9 +164,10 @@ ROWS = [
         "unit":          "claimants",
         "source_url":    "https://www.gov.uk/government/collections/benefit-expenditure-and-caseload-tables",
     },
+    # immigration: specific ONS edition URLs change each quarter — set to manual
     {
         "theme_slug":    "immigration-and-asylum",
-        "source_type":   "govuk_bulletin",
+        "source_type":   "manual",
         "source_id":     "ho-migration-statistics",
         "display_label": "Long-term net migration",
         "display_hint":  "raw",
@@ -183,7 +183,7 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "UK",
         "unit":          "%",
-        "source_url":    "https://www.gov.uk/government/statistics/renewable-sources-of-energy",
+        "source_url":    "https://www.gov.uk/government/statistics/energy-trends-section-6-renewables",
     },
     {
         "theme_slug":    "defence-and-national-security",
@@ -202,18 +202,19 @@ ROWS = [
         "display_label": "UK official development assistance (ODA)",
         "display_hint":  "raw",
         "geography":     "UK",
-        "unit":          "£m",
-        "source_url":    "https://www.gov.uk/government/statistics/statistics-on-international-development",
+        "unit":          "£bn",
+        "source_url":    "https://www.gov.uk/government/statistics/statistics-on-international-development-final-uk-aid-spend-2022",
     },
+    # science/R&D: no stable URL found for R&D intensity — set to manual
     {
         "theme_slug":    "science-technology-and-innovation",
-        "source_type":   "govuk_bulletin",
+        "source_type":   "manual",
         "source_id":     "dsit-rd-intensity",
         "display_label": "R&D expenditure as share of GDP",
         "display_hint":  "raw",
         "geography":     "UK",
         "unit":          "% of GDP",
-        "source_url":    "https://www.gov.uk/government/statistics/ukis-2024-summary-report",
+        "source_url":    "https://www.gov.uk/government/collections/gross-domestic-expenditure-on-research-and-development",
     },
     {
         "theme_slug":    "energy-and-utilities",
@@ -225,15 +226,16 @@ ROWS = [
         "unit":          "£/year",
         "source_url":    "https://www.ofgem.gov.uk/check-if-energy-price-cap-affects-you",
     },
+    # pension credit: specific edition URLs all 404 — set to manual
     {
         "theme_slug":    "work-and-pensions",
-        "source_type":   "govuk_bulletin",
+        "source_type":   "manual",
         "source_id":     "dwp-pension-credit-take-up",
         "display_label": "Pension Credit take-up rate",
         "display_hint":  "raw",
         "geography":     "Great Britain",
         "unit":          "%",
-        "source_url":    "https://www.gov.uk/government/statistics/pension-credit-take-up",
+        "source_url":    "https://www.gov.uk/government/collections/pension-credit-take-up",
     },
     {
         "theme_slug":    "agriculture-environment-and-rural-affairs",
@@ -243,37 +245,36 @@ ROWS = [
         "display_hint":  "raw",
         "geography":     "England",
         "unit":          "£/farm",
-        "source_url":    "https://www.gov.uk/government/statistics/farm-business-survey-england-farm-business-income",
+        "source_url":    "https://www.gov.uk/government/collections/farm-business-survey",
     },
+    # culture/DCMS: Taking Part collection page has no extractable headline — manual
     {
         "theme_slug":    "culture-media-and-sport",
-        "source_type":   "govuk_bulletin",
+        "source_type":   "manual",
         "source_id":     "dcms-taking-part",
         "display_label": "Adults engaging in arts activities in last 12 months",
         "display_hint":  "raw",
         "geography":     "England",
         "unit":          "%",
-        "source_url":    "https://www.gov.uk/government/statistics/taking-part-survey",
+        "source_url":    "https://www.gov.uk/government/collections/taking-part-survey",
     },
+    # constitutional: Electoral Commission blocks scrapers (403) — manual
     {
         "theme_slug":    "constitutional-affairs",
-        "source_type":   "govuk_bulletin",
+        "source_type":   "manual",
         "source_id":     "electoral-commission-turnout",
         "display_label": "General election turnout",
         "display_hint":  "raw",
         "geography":     "UK",
         "unit":          "%",
-        "source_url":    "https://www.electoralcommission.org.uk/who-we-are-and-what-we-do/elections-and-referendums/past-elections-and-referendums/uk-general-elections",
+        "source_url":    "https://www.electoralcommission.org.uk/research-reports-and-data/electoral-data/electoral-data-files-and-reports/results-and-turnout-data-gb-general-elections",
     },
 
     # NO SOURCE: foreign-affairs — ONS/gov.uk don't publish a single headline
-    #   statistic for "foreign affairs" as a policy area. International trade
-    #   figures exist (ONS Pink Book) but overlap with economy. Deferred to
-    #   Phase 3 review.
+    #   statistic for "foreign affairs" as a policy area. Deferred Phase 3.
 
-    # NO SOURCE: parliamentary-affairs — no single national statistic. Possible
-    #   candidates (turnout, number of sitting days) are episodic or too narrow.
-    #   Deferred to Phase 3 review.
+    # NO SOURCE: parliamentary-affairs — no single national statistic.
+    #   Deferred Phase 3.
 
 ]
 
