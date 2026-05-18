@@ -2209,6 +2209,93 @@ def admin_manifesto_review():
     )
 
 
+# ---------------------------------------------------------------------------
+# Admin: Statistics quality review  /admin/stats
+# ---------------------------------------------------------------------------
+
+def _stat_is_suspect(row) -> bool:
+    """Return True if latest_value looks like bad AI extraction (year, 'None', no digits)."""
+    v = (row.latest_value or "").strip()
+    if not v or v == "-":
+        return False
+    import re as _re
+    if "None" in v:
+        return True
+    if _re.match(r"^\d{4}$", v):          # bare 4-digit year
+        return True
+    if _re.match(r"^\d{4}-\d{2}-\d{2}$", v):  # date string
+        return True
+    if not _re.search(r"\d", v):           # no digits at all
+        return True
+    if "words" in v.lower():               # "7306 words" (word count)
+        return True
+    return False
+
+
+@app.route('/admin/stats', methods=['GET'])
+def admin_stats_list():
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import HeadlineStat
+    rows = HeadlineStat.query.order_by(HeadlineStat.theme_slug).all()
+    return render_template('admin_stats_list.html', rows=rows, suspect=_stat_is_suspect)
+
+
+@app.route('/admin/stats/<int:stat_id>', methods=['GET', 'POST'])
+def admin_stats_edit(stat_id):
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import HeadlineStat
+    from datetime import datetime, timezone
+
+    row = HeadlineStat.query.get_or_404(stat_id)
+
+    if request.method == 'POST':
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        old_plain = row.plain_english
+
+        row.source_type    = request.form.get('source_type', row.source_type)
+        row.display_label  = request.form.get('display_label', row.display_label).strip() or row.display_label
+        row.display_hint   = request.form.get('display_hint', row.display_hint)
+        row.latest_value   = request.form.get('latest_value', '').strip() or None
+        row.unit           = request.form.get('unit', '').strip() or None
+        row.period_label   = request.form.get('period_label', '').strip() or None
+        row.source_wording = request.form.get('source_wording', '').strip() or None
+        row.plain_english  = request.form.get('plain_english', '').strip() or None
+        row.source_url     = request.form.get('source_url', row.source_url).strip() or row.source_url
+
+        release_raw = request.form.get('release_date', '').strip()
+        if release_raw:
+            try:
+                from datetime import date as _date
+                row.release_date = _date.fromisoformat(release_raw)
+            except ValueError:
+                pass
+        else:
+            row.release_date = None
+
+        row.last_refreshed = now
+        row.last_success   = now
+        row.rewrite_model  = 'manual'
+        if row.plain_english != old_plain:
+            row.plain_english_generated_at = now
+
+        db.session.commit()
+
+        changed_fields = [
+            f for f in ('source_type', 'latest_value', 'unit', 'period_label',
+                        'source_wording', 'plain_english', 'source_url', 'release_date',
+                        'display_label', 'display_hint')
+        ]
+        _admin_log(f'stats_edit | id={stat_id} theme={row.theme_slug} source_id={row.source_id} '
+                   f'fields={",".join(changed_fields)} value={row.latest_value!r}')
+
+        return redirect('/admin/stats')
+
+    return render_template('admin_stats_edit.html', row=row)
+
+
 # ==========================================
 # 7. BLUEPRINTS
 # ==========================================
