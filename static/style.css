@@ -2488,7 +2488,7 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
     transition: border-color 0.15s, box-shadow 0.15s;
 }
 .hh-browse-card:hover { border-color: #3b7dd8; box-shadow: 0 2px 8px rgba(59,125,216,0.1); }
-.hh-browse-icon { font-size: 20px; }
+.hh-browse-icon { display: flex; color: #3b7dd8; }
 .hh-browse-label { font-size: 13px; font-weight: 600; color: #1a2b45; }
 .hh-browse-sub { font-size: 12px; color: #8a96a4; }
 .ah-card-snippet {
