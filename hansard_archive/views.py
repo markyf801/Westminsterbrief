@@ -45,6 +45,7 @@ from hansard_archive.models import (
     ManifestoChunk,
     ManifestoChunkTag,
     MpAnalytics,
+    UpcomingRelease,
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
 )
@@ -1366,25 +1367,45 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
     base_qs = urlencode({"page": page}) if page > 1 else ""
 
+    # Upcoming releases panel
+    today = date_type.today()
+    upcoming = (
+        UpcomingRelease.query
+        .filter_by(theme_slug=theme_slug)
+        .filter(UpcomingRelease.release_date >= today)
+        .order_by(UpcomingRelease.release_date.asc())
+        .limit(5)
+        .all()
+    )
+    # Build GOV.UK calendar URL from org slugs found in DB rows
+    org_slugs = list(dict.fromkeys(r.organisation_slug for r in upcoming))
+    govuk_calendar_url = (
+        "https://www.gov.uk/search/statistics-announcements?"
+        + "&".join(f"organisations[]={s}" for s in org_slugs)
+        if org_slugs else ""
+    )
+
     return render_template(
-        "hansard_archive/archive_collection.html",
-        page_type      = "theme",
-        heading        = theme_name,
-        subtitle       = f"{total} session{'s' if total != 1 else ''} on this topic",
-        breadcrumb     = [("Hansard Archive", "/archive"), (theme_name, None)],
-        items          = items,
-        page           = page,
-        total_pages    = total_pages,
-        total          = total,
-        per_page       = _PER_PAGE,
-        base_qs        = base_qs,
-        canonical_path = f"{canonical_prefix}/{theme_slug}",
-        og_title       = f"{theme_name} — Westminster Brief",
-        meta_desc      = (
+        "hansard_archive/brief_theme.html",
+        page_type         = "theme",
+        heading           = theme_name,
+        subtitle          = f"{total} session{'s' if total != 1 else ''} on this topic",
+        breadcrumb        = [("Hansard Archive", "/archive"), (theme_name, None)],
+        items             = items,
+        page              = page,
+        total_pages       = total_pages,
+        total             = total,
+        per_page          = _PER_PAGE,
+        base_qs           = base_qs,
+        canonical_path    = f"{canonical_prefix}/{theme_slug}",
+        og_title          = f"{theme_name} — Westminster Brief",
+        meta_desc         = (
             f"UK parliamentary debates on {theme_name}. "
             f"{total} Hansard session{'s' if total != 1 else ''} tagged with this topic."
         ),
-        json_ld_type   = "CollectionPage",
+        json_ld_type      = "CollectionPage",
+        upcoming          = upcoming,
+        govuk_calendar_url = govuk_calendar_url,
     )
 
 
