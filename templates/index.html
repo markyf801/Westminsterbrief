@@ -44,7 +44,7 @@
         {% elif r.answered %}
         <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
         {% endif %}
-        <a href="/archive/pq/{{ r.uin }}" class="result-card-link">View question &rarr;</a>
+        <a href="/archive/pq/{{ r.uin }}" target="_blank" class="result-card-link">View question &rarr;</a>
         <a href="{{ r.url }}" target="_blank" class="result-card-source-link">Source on Parliament.uk &rarr;</a>
     </div>
 </div>
