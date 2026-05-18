@@ -1776,69 +1776,69 @@ def _compute_party_policy_positions(
         for policy_area in sorted(area_chunks):
             all_chunks = sorted(area_chunks[policy_area], key=lambda c: c.id)
 
-        sessions: list[dict] = []
-        if contrib_codes:
-            contrib_sids = (
-                db.session.query(HansardContribution.session_id)
-                .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-                .filter(
-                    HansardSession.is_container == False,
-                    HansardContribution.party.in_(contrib_codes),
+            sessions: list[dict] = []
+            if contrib_codes:
+                contrib_sids = (
+                    db.session.query(HansardContribution.session_id)
+                    .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+                    .filter(
+                        HansardSession.is_container == False,
+                        HansardContribution.party.in_(contrib_codes),
+                    )
                 )
-            )
-            tagged_sids = (
-                db.session.query(HansardSessionTheme.session_id)
-                .filter(
-                    HansardSessionTheme.theme == policy_area,
-                    HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+                tagged_sids = (
+                    db.session.query(HansardSessionTheme.session_id)
+                    .filter(
+                        HansardSessionTheme.theme == policy_area,
+                        HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+                    )
                 )
-            )
-            session_rows = (
-                HansardSession.query
-                .filter(
-                    HansardSession.is_container == False,
-                    HansardSession.id.in_(contrib_sids),
-                    HansardSession.id.in_(tagged_sids),
+                session_rows = (
+                    HansardSession.query
+                    .filter(
+                        HansardSession.is_container == False,
+                        HansardSession.id.in_(contrib_sids),
+                        HansardSession.id.in_(tagged_sids),
+                    )
+                    .order_by(HansardSession.date.desc())
+                    .limit(3)
+                    .all()
                 )
-                .order_by(HansardSession.date.desc())
-                .limit(3)
-                .all()
-            )
-            for s in session_rows:
-                sessions.append({
-                    "title":             s.title,
-                    "slug":              s.slug,
-                    "human_date":        _human_date(s.date),
-                    "url_date":          _url_date(s.date),
-                    "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
-                })
+                for s in session_rows:
+                    sessions.append({
+                        "title":             s.title,
+                        "slug":              s.slug,
+                        "human_date":        _human_date(s.date),
+                        "url_date":          _url_date(s.date),
+                        "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+                    })
 
-        wms: list[dict] = []
-        if is_government:
-            wms_tagged = (
-                db.session.query(HansardSessionTheme.session_id)
-                .filter(
-                    HansardSessionTheme.theme == policy_area,
-                    HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+            wms: list[dict] = []
+            if is_government:
+                wms_tagged = (
+                    db.session.query(HansardSessionTheme.session_id)
+                    .filter(
+                        HansardSessionTheme.theme == policy_area,
+                        HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+                    )
                 )
-            )
-            wms_rows = (
-                HansardSession.query
-                .filter(
-                    HansardSession.debate_type == "wms",
-                    HansardSession.id.in_(wms_tagged),
+                wms_rows = (
+                    HansardSession.query
+                    .filter(
+                        HansardSession.debate_type == "wms",
+                        HansardSession.id.in_(wms_tagged),
+                    )
+                    .order_by(HansardSession.date.desc())
+                    .limit(2)
+                    .all()
                 )
-                .order_by(HansardSession.date.desc())
-                .limit(2)
-                .all()
-            )
-            for s in wms_rows:
-                wms.append({
-                    "title":      s.title,
-                    "slug":       s.slug,
-                    "human_date": _human_date(s.date),
-                    "url_date":   _url_date(s.date),
-                })
+                for s in wms_rows:
+                    wms.append({
+                        "title":      s.title,
+                        "slug":       s.slug,
+                        "human_date": _human_date(s.date),
+                        "url_date":   _url_date(s.date),
+                    })
 
             positions.append({
                 "policy_area":   policy_area,
