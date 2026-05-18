@@ -2528,13 +2528,20 @@ def debates_topic():
                         'Ulster Unionist Party', 'Social Democratic and Labour Party',
                         'Sinn Féin', 'Alliance Party of Northern Ireland', 'Alba Party',
                     }
+                    # Hard 6-month floor for the AI briefing payload — ensures key questions,
+                    # ministerial statements, and opposition analysis reflect recent activity
+                    # only, regardless of whether the user set a wider date range.
+                    from datetime import timedelta
+                    _six_months_ago = (datetime.utcnow() - timedelta(days=182)).strftime('%Y-%m-%d')
+                    _briefing_cutoff = max(start_date, _six_months_ago) if start_date else _six_months_ago
+                    briefing_rows = [r for r in topic_rows if r.get('hdate', '') >= _briefing_cutoff]
                     import logging as _dlog2
-                    _dlog2.warning(f"[briefing_diag] topic_rows_at_briefing={len(topic_rows)} minister_flags={sum(1 for r in topic_rows if r.get('is_minister'))}")
+                    _dlog2.warning(f"[briefing_diag] topic_rows_at_briefing={len(topic_rows)} briefing_rows(6mo)={len(briefing_rows)} minister_flags={sum(1 for r in briefing_rows if r.get('is_minister'))}")
                     minister_rows = sorted(
-                        [r for r in topic_rows if r.get('is_minister')],
+                        [r for r in briefing_rows if r.get('is_minister')],
                         key=lambda x: -x.get('relevance', 0)
                     )[:15]
-                    non_minister_rows = [r for r in topic_rows if not r.get('is_minister')]
+                    non_minister_rows = [r for r in briefing_rows if not r.get('is_minister')]
                     # opp_rows: formal opposition parties — prioritised in payload ordering
                     opp_rows = sorted(
                         [r for r in non_minister_rows if r.get('speaker_party', '') in _OPPOSITION_PARTIES],
