@@ -2243,8 +2243,8 @@ def written_questions():
 def written_questions_today():
     from flask import g as _g
     _g.wq_tab = 'today'
-    from tracker import morning_tracker as _tracker
-    return _tracker()
+    from tracker import _tracker_view
+    return _tracker_view()
 
 
 @app.route('/tracker', methods=['GET', 'POST'])
