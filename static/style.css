@@ -482,6 +482,15 @@ input:focus, select:focus, textarea:focus {
 
 .result-card-link:hover { text-decoration: underline; }
 
+.result-card-source-link {
+    display: inline-block;
+    margin-top: 10px;
+    margin-left: 12px;
+    color: #888;
+    font-size: 12px;
+}
+.result-card-source-link:hover { text-decoration: underline; color: #555; }
+
 /* --- PAGE DESCRIPTION (purpose/usage line below page heading) --- */
 .page-desc {
     color: #5a6878;
