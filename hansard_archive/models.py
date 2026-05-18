@@ -400,3 +400,35 @@ class StatIssueReport(db.Model):
 
     def __repr__(self):
         return f"<StatIssueReport id={self.id} theme={self.theme_slug} reviewed={self.reviewed}>"
+
+
+class UpcomingRelease(db.Model):
+    """
+    Cached upcoming official statistics from the GOV.UK release calendar.
+    Refreshed daily via the upcoming_refresh.py CLI job.
+
+    release_date_confirmed: True = confirmed date, False = provisional.
+    Cancelled releases are excluded at refresh time and never stored.
+    """
+
+    __tablename__ = "upcoming_release"
+    __table_args__ = (
+        db.UniqueConstraint("govuk_content_id", "theme_slug", name="uq_upcoming_release_content_theme"),
+        db.Index("idx_upcoming_release_theme_date", "theme_slug", "release_date"),
+    )
+
+    id                     = db.Column(db.Integer,  primary_key=True)
+    govuk_content_id       = db.Column(db.Text,     nullable=False)
+    theme_slug             = db.Column(db.Text,     nullable=False)
+    organisation_slug      = db.Column(db.Text,     nullable=False)
+    organisation_name      = db.Column(db.Text,     nullable=False)
+    title                  = db.Column(db.Text,     nullable=False)
+    summary                = db.Column(db.Text,     nullable=True)
+    release_date           = db.Column(db.Date,     nullable=False)
+    release_date_confirmed = db.Column(db.Boolean,  nullable=False)
+    publication_url        = db.Column(db.Text,     nullable=False)
+    document_type          = db.Column(db.Text,     nullable=True)
+    last_refreshed         = db.Column(db.DateTime, nullable=False)
+
+    def __repr__(self):
+        return f"<UpcomingRelease id={self.id} theme={self.theme_slug} title={self.title[:40]!r}>"

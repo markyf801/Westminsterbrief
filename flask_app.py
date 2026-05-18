@@ -2179,6 +2179,9 @@ app.register_blueprint(brief_bp)
 from stats_refresh import register_stats_cli
 register_stats_cli(app)
 
+from upcoming_refresh import register_upcoming_cli
+register_upcoming_cli(app)
+
 @app.context_processor
 def inject_version():
     return {'app_version': APP_VERSION}
