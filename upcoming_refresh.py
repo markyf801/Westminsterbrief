@@ -73,29 +73,48 @@ ORG_TO_THEMES: dict[str, list[str]] = {
 
 def _fetch_announcement_paths(org_slug: str, today: str) -> list[str]:
     """
-    Request /search/statistics-announcements?organisations[]={org}&release_date_after={today}
-    and parse the base_path of each result link.
+    Paginate /search/statistics-announcements for one org, returning every
+    upcoming release path.  Stops when a page yields no new links.
     Returns a list of paths like ['/government/statistics/announcements/foo', ...].
     """
-    try:
-        r = requests.get(
-            _SEARCH_URL,
-            params={"organisations[]": org_slug, "release_date_after": today},
-            timeout=_TIMEOUT,
-            headers={"User-Agent": "WestminsterBrief/2 (+https://westminsterbrief.co.uk)"},
-        )
-        r.raise_for_status()
-    except Exception as exc:
-        log.warning("HTML fetch failed for org %s: %s", org_slug, exc)
-        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    page = 1
 
-    soup = BeautifulSoup(r.text, "html.parser")
-    paths = []
-    for a in soup.find_all("a", href=re.compile(r"^/government/statistics/announcements/")):
-        path = a["href"].split("?")[0]   # strip any query string
-        if path not in paths:
-            paths.append(path)
-    log.info("  %s: found %d announcement paths", org_slug, len(paths))
+    while True:
+        try:
+            r = requests.get(
+                _SEARCH_URL,
+                params={
+                    "organisations[]":    org_slug,
+                    "release_date_after": today,
+                    "page":               page,
+                },
+                timeout=_TIMEOUT,
+                headers={"User-Agent": "WestminsterBrief/2 (+https://westminsterbrief.co.uk)"},
+            )
+            r.raise_for_status()
+        except Exception as exc:
+            log.warning("HTML fetch failed for org %s page %d: %s", org_slug, page, exc)
+            break
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        new_on_page = 0
+        for a in soup.find_all("a", href=re.compile(r"^/government/statistics/announcements/")):
+            path = a["href"].split("?")[0]
+            if path not in seen:
+                seen.add(path)
+                paths.append(path)
+                new_on_page += 1
+
+        log.info("  %s page %d: %d new paths", org_slug, page, new_on_page)
+        if new_on_page == 0:
+            break   # last page reached
+
+        page += 1
+        time.sleep(0.25)   # polite delay between page fetches
+
+    log.info("  %s: %d total announcement paths", org_slug, len(paths))
     return paths
 
 
