@@ -678,15 +678,12 @@ SECTOR_LABELS = dict(SECTOR_OPTIONS)
 def ping():
     return 'ok', 200
 
-@app.route('/')
-def root():
-    return redirect('/home')
-
 @app.route('/about/statistics')
 def about_statistics():
     return render_template('about_statistics.html')
 
 
+@app.route('/')
 @app.route('/home')
 def home():
     from sqlalchemy import func as sql_func
