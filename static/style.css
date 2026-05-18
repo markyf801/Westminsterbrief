@@ -1207,6 +1207,26 @@ details[open] > .debate-speeches-summary::before { content: '▼'; }
 .sel-bar-clear { background: rgba(255,255,255,0.15); color: #fff; }
 .sel-bar-clear:hover { background: rgba(255,255,255,0.25); }
 
+/* WQ / Tracker tab bar */
+.wq-tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid #dde3ec;
+    margin-bottom: 0;
+}
+.wq-tab {
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #5a6878;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.15s;
+}
+.wq-tab:hover { color: #1a2b45; }
+.wq-tab-active { color: #1a4a6e; border-bottom-color: #1a4a6e; font-weight: 600; }
+
 /* --- WRITTEN QUESTIONS SCANNER ENHANCEMENTS --- */
 .wq-status-badge {
     font-size: 11px;
@@ -2376,6 +2396,122 @@ details[open] > .ah-bill-group-header::before { transform: rotate(90deg); }
     text-decoration: none;
 }
 .ur-calendar-link:hover { text-decoration: underline; }
+
+/* Stats index table */
+.stats-index-table-wrap { overflow-x: auto; margin-bottom: 8px; }
+.stats-index-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    background: #fff;
+    border: 1px solid #e0e6ed;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.stats-index-table thead tr { background: #f0f2f5; }
+.stats-index-table th {
+    padding: 9px 14px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    color: #5a6878;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    border-bottom: 1px solid #e0e6ed;
+}
+.stats-index-table td { padding: 9px 14px; border-bottom: 1px solid #f0f2f5; vertical-align: top; }
+.stats-index-table tbody tr:last-child td { border-bottom: none; }
+.stats-index-table tbody tr:hover { background: #f7f9fc; }
+.sit-theme a { color: #1a4a6e; font-weight: 500; text-decoration: none; }
+.sit-theme a:hover { text-decoration: underline; }
+.sit-figure { font-variant-numeric: tabular-nums; }
+.sit-source a { color: #4a7fa5; text-decoration: none; font-size: 12px; }
+.sit-source a:hover { text-decoration: underline; }
+.sit-period { color: #8a96a4; font-size: 12px; white-space: nowrap; }
+.sit-no-stat { color: #aaa; font-style: italic; font-size: 12px; }
+
+/* Stat card — /stats/<slug> */
+.stat-card {
+    background: #fff;
+    border: 1px solid #e0e6ed;
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+}
+.stat-card-empty { color: #888; }
+.stat-card-figure { margin-bottom: 12px; }
+.stat-card-label { display: block; font-size: 12px; color: #8a96a4; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+.stat-card-value { display: block; font-size: 28px; font-weight: 700; color: #1a2a3a; line-height: 1.1; }
+.stat-card-period { display: block; font-size: 12px; color: #8a96a4; margin-top: 4px; }
+.stat-card-plain { font-size: 14px; color: #2a3a4a; line-height: 1.6; margin-bottom: 4px; }
+.stat-card-ai-label { font-size: 11px; color: #aaa; margin-bottom: 12px; }
+.stat-card-source-details { margin-bottom: 14px; }
+.stat-card-source-details summary { font-size: 12px; color: #8a96a4; cursor: pointer; }
+.stat-card-source-text { font-size: 12px; color: #555; line-height: 1.6; margin-top: 6px; font-style: italic; }
+.stat-card-footer { display: flex; gap: 16px; align-items: center; padding-top: 14px; border-top: 1px solid #f0f2f5; }
+.stat-card-source-link { font-size: 13px; color: #1a4a6e; font-weight: 500; text-decoration: none; }
+.stat-card-source-link:hover { text-decoration: underline; }
+.stat-card-report-link { font-size: 12px; color: #8a96a4; text-decoration: none; }
+.stat-card-report-link:hover { text-decoration: underline; color: #c62828; }
+
+/* Brief page stat teaser */
+.brief-stat-teaser {
+    font-size: 13px;
+    color: #5a6878;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: #f7f9fc;
+    border-left: 3px solid #c8d8e8;
+    border-radius: 0 4px 4px 0;
+}
+.brief-stat-teaser a { color: #1a4a6e; text-decoration: none; font-weight: 500; }
+.brief-stat-teaser a:hover { text-decoration: underline; }
+
+/* Hansard home — /hansard */
+.hh-browse-row {
+    display: flex;
+    gap: 12px;
+    margin: 20px 0;
+    flex-wrap: wrap;
+}
+.hh-browse-card {
+    flex: 1 1 140px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: #fff;
+    border: 1px solid #dde3ec;
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.hh-browse-card:hover { border-color: #3b7dd8; box-shadow: 0 2px 8px rgba(59,125,216,0.1); }
+.hh-browse-icon { font-size: 20px; }
+.hh-browse-label { font-size: 13px; font-weight: 600; color: #1a2b45; }
+.hh-browse-sub { font-size: 12px; color: #8a96a4; }
+.ah-card-snippet {
+    font-size: 12px;
+    color: #5a6878;
+    margin: 4px 0 0;
+    line-height: 1.5;
+}
+.ah-card-snippet b { color: #1a2b45; font-weight: 600; }
+.hh-pq-section { margin-top: 28px; }
+.hh-pq-heading { font-size: 14px; font-weight: 600; color: #3b4a5c; margin-bottom: 10px; }
+.hh-pq-more { font-size: 13px; margin-top: 10px; }
+.hh-pq-more a { color: #1a4a6e; }
+.hh-escalation {
+    margin-top: 24px;
+    padding: 14px 16px;
+    background: #f7f9fc;
+    border: 1px solid #dde3ec;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #5a6878;
+}
+.hh-escalation a { color: #1a4a6e; font-weight: 500; }
 
 /* MP page — contribution excerpts */
 .amp-card { flex-direction: column; align-items: flex-start; }

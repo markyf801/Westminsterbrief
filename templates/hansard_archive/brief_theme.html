@@ -39,30 +39,12 @@
         <p class="ac-desc">Parliamentary debates, questions and statements on this topic</p>
     </div>
 
-    {# --- Upcoming official statistics panel --- #}
-    {% if upcoming %}
-    <div class="ur-panel">
-        <h2 class="ur-heading">Upcoming official statistics</h2>
-        <ul class="ur-list">
-            {% for r in upcoming %}
-            <li class="ur-item">
-                <span class="ur-date">
-                    {{ r.release_date.strftime('%d %B %Y').lstrip('0') }}
-                    {% if not r.release_date_confirmed %}
-                    <span class="ur-provisional">Provisional date</span>
-                    {% endif %}
-                </span>
-                <a class="ur-title" href="{{ r.publication_url }}" target="_blank" rel="noopener">{{ r.title }}</a>
-                <span class="ur-org">{{ r.organisation_name }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% if govuk_calendar_url %}
-        <a class="ur-calendar-link" href="{{ govuk_calendar_url }}" target="_blank" rel="noopener">
-            View full GOV.UK release calendar &#8594;
-        </a>
-        {% endif %}
-    </div>
+    {# --- Headline stat teaser (one line, links to /stats/<slug>) --- #}
+    {% if headline_stat and headline_stat.latest_value %}
+    <p class="brief-stat-teaser">
+        Latest: {{ headline_stat.display_label }} {{ headline_stat.latest_value }}{% if headline_stat.unit %} {{ headline_stat.unit }}{% endif %}{% if headline_stat.period_label %} ({{ headline_stat.period_label }}){% endif %}
+        &nbsp;&#8594;&nbsp;<a href="/stats/{{ theme_slug }}">See all {{ heading }} statistics</a>
+    </p>
     {% endif %}
 
     {# --- Results bar --- #}

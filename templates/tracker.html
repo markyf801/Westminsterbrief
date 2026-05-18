@@ -5,6 +5,13 @@
 {% block og_description %}All Written Questions tabled in Parliament today, categorised by policy theme and department. Updated each sitting day.{% endblock %}
 
 {% block content %}
+
+{# ── Tab bar ── #}
+<div class="wq-tab-bar">
+    <a href="/written-questions" class="wq-tab {% if request.path == ‘/written-questions’ or request.path == ‘/questions’ %}wq-tab-active{% endif %}">Written Questions</a>
+    <a href="/written-questions/today" class="wq-tab {% if request.path == ‘/written-questions/today’ or request.path == ‘/tracker’ %}wq-tab-active{% endif %}">Today’s PQs</a>
+</div>
+
 <div class="box">
     <h2>Today’s PQs Tracker</h2>
 

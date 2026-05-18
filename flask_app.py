@@ -54,7 +54,7 @@ def _validate_external_url(url: str) -> str:
 # Import existing blueprints
 from hansard import hansard_bp
 from biography import biography_bp
-from hansard_archive.views import archive_bp, brief_bp
+from hansard_archive.views import archive_bp, brief_bp, stats_bp, hansard_bp2
 from hansard_archive.slugs import slugify_theme as _slugify_theme
 from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
@@ -828,10 +828,15 @@ def _build_sitemap_core_xml() -> str:
     archive_lastmod = max_date.isoformat() if max_date else ""
 
     # Static tool pages (content changes via deployments, not DB; omit lastmod)
-    for path in ('/', '/questions', '/tracker', '/mp_search', '/biography',
-                 '/debates', '/archive', '/directory', '/terms', '/privacy',
-                 '/history-of-hansard'):
-        urls.append((f"{BASE}{path}", archive_lastmod if path == '/archive' else ""))
+    for path in ('/', '/hansard', '/written-questions', '/written-questions/today',
+                 '/mp_search', '/biography', '/debates', '/stats',
+                 '/directory', '/terms', '/privacy', '/history-of-hansard'):
+        urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
+
+    # Stats theme pages
+    from hansard_archive.views import _STATS_THEME_ORDER as _sto
+    for slug, _ in _sto:
+        urls.append((f"{BASE}/stats/{slug}", ""))
 
     # Date browse — one URL per distinct date with sessions
     for (d,) in (db.session.query(HansardSession.date)
@@ -2215,6 +2220,45 @@ app.register_blueprint(mp_search_bp)
 app.register_blueprint(directory_bp)
 app.register_blueprint(archive_bp)
 app.register_blueprint(brief_bp)
+app.register_blueprint(stats_bp)
+app.register_blueprint(hansard_bp2)
+
+
+# ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
+# /written-questions → Written Questions scanner (Search tab)
+# /written-questions/today → Today's PQs tracker (Today's PQs tab)
+# /tracker → 301 → /written-questions/today
+# /questions → 301 → /written-questions  (old WQ scanner URL)
+
+@app.route('/written-questions', methods=['GET', 'POST'])
+def written_questions():
+    from flask import g as _g
+    _g.wq_tab = 'search'
+    from hansard import index as _wq_index
+    return _wq_index()
+
+
+@app.route('/written-questions/today', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 100 per day", methods=["POST"])
+def written_questions_today():
+    from flask import g as _g
+    _g.wq_tab = 'today'
+    from tracker import morning_tracker as _tracker
+    return _tracker()
+
+
+@app.route('/tracker', methods=['GET', 'POST'])
+def tracker_redirect():
+    if request.method == 'POST':
+        return redirect('/written-questions/today', 308)
+    return redirect('/written-questions/today', 301)
+
+
+@app.route('/questions', methods=['GET', 'POST'])
+def questions_redirect():
+    if request.method == 'POST':
+        return redirect('/written-questions', 308)
+    return redirect('/written-questions', 301)
 
 from stats_refresh import register_stats_cli
 register_stats_cli(app)
