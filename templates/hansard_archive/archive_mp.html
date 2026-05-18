@@ -37,118 +37,17 @@
             {{ member_name }}
         </h1>
         {% if member_party %}
-        <p class="ac-desc">
-            {% if member_party_slug %}
-            <a href="/archive/party/{{ member_party_slug }}" style="color:inherit; text-decoration:none; border-bottom: 1px dotted #9aa4b0;">{{ member_party }}</a>
-            {% else %}
-            {{ member_party }}
-            {% endif %}
-        </p>
+        <p class="ac-desc">{{ member_party }}</p>
         {% endif %}
         <p class="ac-desc" style="margin-top:4px;">
             {{ total }} parliamentary session{{ 's' if total != 1 else '' }} on record in this archive
         </p>
     </div>
 
-    {# --- Analytics panel (Commons MPs with precomputed data only) --- #}
-    {% if analytics %}
-
-    {% if analytics.thin_data %}
-    {# Thin data: show a minimal note rather than empty stats #}
-    <div class="amp-analytics amp-analytics-thin">
-        <p class="amp-analytics-thin-note">Activity analysis is available once a member has a more substantial
-        parliamentary record on file. This archive currently holds {{ total }} session{{ 's' if total != 1 else '' }}
-        for {{ member_name }}.</p>
-    </div>
-
-    {% else %}
-    {# Full analytics panel #}
-    <div class="amp-analytics">
-
-        {# Activity summary row #}
-        <div class="amp-stats-row">
-            <div class="amp-stat">
-                <span class="amp-stat-value">{{ analytics.sessions_12m }}</span>
-                <span class="amp-stat-label">sessions in 12 months</span>
-                {% if analytics.commons_pct_12m is not none %}
-                <span class="amp-stat-sub">
-                    {%- set pct = analytics.commons_pct_12m | round | int -%}
-                    {%- if pct >= 90 %}top {{ 100 - pct + 1 }}% of Commons
-                    {%- elif pct >= 50 %}above Commons median
-                    {%- else %}below Commons median
-                    {%- endif -%}
-                </span>
-                {% endif %}
-            </div>
-            <div class="amp-stat">
-                <span class="amp-stat-value">{{ analytics.sessions_3m }}</span>
-                <span class="amp-stat-label">sessions last 3 months</span>
-            </div>
-            {% if analytics.specialism_label %}
-            <div class="amp-stat amp-stat-wide">
-                <span class="amp-stat-label">Parliamentary focus</span>
-                <span class="amp-stat-focus">{{ analytics.specialism_label }}</span>
-            </div>
-            {% endif %}
-        </div>
-
-        {# Policy area distribution #}
-        {% if analytics.top_policy_areas %}
-        {% set max_sessions = analytics.top_policy_areas[0].sessions %}
-        <div class="amp-section">
-            <h3 class="amp-section-title">Top policy areas (12 months)</h3>
-            <div class="amp-pa-list">
-            {% for pa in analytics.top_policy_areas %}
-            <a class="amp-pa-row" href="/archive/mp/{{ member_id }}?policy={{ pa.theme|urlencode }}">
-                <span class="amp-pa-name">{{ pa.theme }}</span>
-                <div class="amp-pa-track">
-                    <div class="amp-pa-bar" style="width:{{ ((pa.sessions / max_sessions) * 100) | round | int }}%"></div>
-                </div>
-                <span class="amp-pa-count">{{ pa.sessions }}</span>
-                {% if pa.surface_rank %}
-                <span class="amp-pa-rank">{{ pa.rank_ordinal }} of {{ pa.contributor_count }} members</span>
-                {% endif %}
-            </a>
-            {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-
-        {# Recent policy area shifts — only if there are any #}
-        {% if analytics.recent_shifts and analytics.recent_shifts | length > 0 %}
-        <div class="amp-section amp-section-shifts">
-            <h3 class="amp-section-title">New areas of engagement (last 3 months)</h3>
-            <div class="amp-shifts">
-            {% for shift in analytics.recent_shifts %}
-            <a class="amp-shift-tag" href="/archive/mp/{{ member_id }}?policy={{ shift.theme|urlencode }}">{{ shift.theme }}</a>
-            {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-
-        {# Coverage footnote #}
-        <p class="amp-analytics-note">
-            Analysis based on {{ analytics.sessions_12m }} session{{ 's' if analytics.sessions_12m != 1 else '' }}
-            in the past 12 months.
-            {%- if analytics.tagged_pct is not none and analytics.tagged_pct < 95 %}
-            Approximately {{ analytics.tagged_pct | round | int }}% of sessions are theme-tagged;
-            untagged sessions are not reflected in the policy area breakdown.
-            {%- endif %}
-            Rankings compare against all parliamentary members who contributed to sessions on each policy area.
-        </p>
-
-    </div>{# /.amp-analytics #}
-    {% endif %}{# endif not thin_data #}
-
-    {% endif %}{# endif analytics #}
-
     {# --- Results bar --- #}
     <div class="ah-results-bar">
         <span class="ah-results-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
-        {% if policy_filter %}
-        <span class="ah-results-range">filtered by: <strong>{{ policy_filter }}</strong></span>
-        <a href="/archive/mp/{{ member_id }}" class="ah-clear-link">Clear</a>
-        {% elif total_pages > 1 %}
+        {% if total_pages > 1 %}
         <span class="ah-results-range">page {{ page }} of {{ total_pages }}</span>
         {% endif %}
     </div>
@@ -192,13 +91,13 @@
     {% if total_pages > 1 %}
     <nav class="ah-pagination" aria-label="Results pages">
         {% if page > 1 %}
-        <a href="/archive/mp/{{ member_id }}?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        <a href="/archive/mp/{{ member_id }}?page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
         {% endif %}
         <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="/archive/mp/{{ member_id }}?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        <a href="/archive/mp/{{ member_id }}?page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
         {% endif %}

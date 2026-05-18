@@ -170,27 +170,6 @@ class Flag(db.Model):
     resolved_at = db.Column(db.DateTime, nullable=True)
 
 
-class CommitteeEvidenceContent(db.Model):
-    """
-    Short excerpt + metadata from Parliament committee evidence pages.
-
-    Stores a 3-5 sentence excerpt (60-120 words) under CDPA s.30(1A) fair
-    dealing for quotation, with attribution and a prominent Parliament source
-    link. Full submission text is never stored. See plan file for locked
-    decision rationale (16 May 2026).
-    """
-    __tablename__ = 'sd_evidence_content'
-
-    id               = db.Column(db.Integer, primary_key=True)
-    source_url       = db.Column(db.String(500), unique=True, nullable=False, index=True)
-    fetched_at       = db.Column(db.DateTime, default=datetime.utcnow)
-    fetch_status     = db.Column(db.String(20), default='pending')  # pending/fetched/blocked/failed
-    excerpt_text     = db.Column(db.Text)           # 3-5 sentences, 60-120 words
-    excerpt_source   = db.Column(db.String(100))    # position note, e.g. "opening paragraph"
-    word_count_original = db.Column(db.Integer)     # word count of full submission (not stored)
-    external_urls    = db.Column(db.Text)           # JSON list of extracted non-Parliament URLs
-
-
 class IngestionRun(db.Model):
     """Audit log — one row per end-to-end pipeline execution."""
     __tablename__ = 'sd_ingestion_run'

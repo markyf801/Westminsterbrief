@@ -1,10 +1,10 @@
-﻿"""
-Hansard Archive â€” public-facing routes (Phase 2A Week 3).
+"""
+Hansard Archive — public-facing routes (Phase 2A Week 3).
 
 Blueprint: archive_bp, url_prefix=/archive
 
 Routes:
-  GET /archive                               browse/home â€” recent sessions + filters
+  GET /archive                               browse/home — recent sessions + filters
   GET /archive/search                        FTS text search (noindex)
   GET /archive/debate/<date>/<slug>          session detail + full transcript
   GET /archive/debate/<date>/<slug>/word     Word export of session transcript
@@ -15,7 +15,7 @@ Routes:
   GET /archive/theme/<slug>                  sessions by specific theme tag
   GET /archive/pq/<uin>                      Written Question detail page
 
-URL conventions (locked â€” do not change after indexing):
+URL conventions (locked — do not change after indexing):
   date format: 22-july-2025  (day no leading zero, lowercase full month, 4-digit year)
   slug format: {title-slug}-{4-char-hex}
 """
@@ -42,19 +42,12 @@ from hansard_archive.models import (
     HansardSessionTheme,
     HaPQ,
     HaPQTheme,
-    ManifestoChunk,
-    ManifestoChunkTag,
-    MpAnalytics,
-    UpcomingRelease,
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
 )
 from hansard_archive.slugs import slugify_theme
 
-archive_bp  = Blueprint("archive",  __name__, url_prefix="/archive")
-brief_bp    = Blueprint("brief",    __name__, url_prefix="/brief")
-stats_bp    = Blueprint("stats",    __name__, url_prefix="/stats")
-hansard_bp2 = Blueprint("hansard2", __name__, url_prefix="/hansard")
+archive_bp = Blueprint("archive", __name__, url_prefix="/archive")
 
 # ---------------------------------------------------------------------------
 # Party colours + attribution parsing
@@ -94,10 +87,10 @@ def _parse_attribution(raw: str | None) -> dict:
     Parse raw member_name into display-ready fields.
 
     Handles:
-      "Name (Constituency) (Party)"  â€” standard Commons
-      "Name (Party)"                 â€” standard Lords
-      "The [Role] (Name)"            â€” ministerial proxy format
-      "Name"                         â€” short reference form
+      "Name (Constituency) (Party)"  — standard Commons
+      "Name (Party)"                 — standard Lords
+      "The [Role] (Name)"            — ministerial proxy format
+      "Name"                         — short reference form
     """
     if not raw:
         return {"name": "Speaker", "role": "", "party": None,
@@ -117,7 +110,7 @@ def _parse_attribution(raw: str | None) -> dict:
     groups = re.findall(r'\(([^)]+)\)', raw)
     base = re.sub(r'\s*\([^)]+\)', '', raw).strip()
 
-    # Strip leading salutation (Mr/Mrs etc â€” not Lord/Baroness which are titles)
+    # Strip leading salutation (Mr/Mrs etc — not Lord/Baroness which are titles)
     parts = base.split(None, 1)
     if parts and parts[0] in _STRIP_PREFIXES:
         base = parts[1] if len(parts) > 1 else base
@@ -155,17 +148,17 @@ _DEBATE_TYPE_LABELS = {
 
 
 def _human_date(d) -> str:
-    """date â†’ '27 April 2026'"""
+    """date → '27 April 2026'"""
     return f"{d.day} {_MONTH_NAMES[d.month]} {d.year}"
 
 
 def _url_date(d) -> str:
-    """date â†’ '27-april-2026'"""
+    """date → '27-april-2026'"""
     return f"{d.day}-{_MONTH_NAMES[d.month].lower()}-{d.year}"
 
 
 def _parse_url_date(date_str: str) -> date_type | None:
-    """Parse '27-april-2026' â†’ date object, or None if invalid."""
+    """Parse '27-april-2026' → date object, or None if invalid."""
     parts = date_str.split('-')
     if len(parts) != 3:
         return None
@@ -269,9 +262,9 @@ def _normalise_title(title: str) -> str:
 
     Handles two legislative patterns:
       - SI pattern: strips 'Draft ' prefix
-        ("Draft Warm Home Discount Regulations" â†’ "Warm Home Discount Regulations")
+        ("Draft Warm Home Discount Regulations" → "Warm Home Discount Regulations")
       - Lords Bill pattern: strips '[Lords]' suffix
-        ("Finance Bill [Lords]" â†’ "Finance Bill")
+        ("Finance Bill [Lords]" → "Finance Bill")
       - Whitespace: collapses double-spaces (seen in some Hansard API titles)
     """
     t = title.strip()
@@ -284,8 +277,8 @@ def _normalise_title(title: str) -> str:
 # Procedural titles that recur constantly with no relationship between instances.
 # A denylist is more precise than a frequency threshold: high-frequency Bills
 # (Crime and Policing Bill: 48 sessions) are genuine related stages and must
-# NOT be suppressed. Only titles that are the same event repeated â€” not stages
-# of one legislative item â€” belong here.
+# NOT be suppressed. Only titles that are the same event repeated — not stages
+# of one legislative item — belong here.
 _PROCEDURAL_TITLE_NOISE: frozenset[str] = frozenset({
     "Topical Questions",
     "Arrangement of Business",
@@ -294,7 +287,7 @@ _PROCEDURAL_TITLE_NOISE: frozenset[str] = frozenset({
     "Business of the House",
     "Engagements",
     "Speaker's Statement",
-    "Speakerâ€™s Statement",   # curly apostrophe variant
+    "Speaker’s Statement",   # curly apostrophe variant
     "Business without Debate",
     "Retirements of Members",
     "Retirement of a Member",
@@ -313,25 +306,25 @@ def _related_sessions(session: HansardSession) -> dict:
     """
     Find sessions related to the given one by normalised title match.
 
-    Matching strategy (exact normalised title only â€” no fuzzy matching):
-      - Exact match covers: Lords SI GCâ†’Chamber (identical title), cross-house
+    Matching strategy (exact normalised title only — no fuzzy matching):
+      - Exact match covers: Lords SI GC→Chamber (identical title), cross-house
         Bill stages where title is unchanged, topical recurrences.
       - 'Draft X' normalisation covers: SI draft laid before passage vs
         approved instrument (SI-specific pattern).
       - '[Lords]' normalisation covers: Lords-originated Bills whose Commons
         title drops the '[Lords]' suffix.
 
-    Window: 365 days â€” Bill stages span Commons Second Reading (Oct) to Lords
+    Window: 365 days — Bill stages span Commons Second Reading (Oct) to Lords
     Third Reading (Mar); SIs typically resolve within days.
 
     Noise guard: denylist of known procedural titles that recur constantly with
     no relationship between instances (PMQs 'Engagements', 'Business of the
-    House', etc.). Bills with 48+ stages are NOT noise â€” they're genuine related
+    House', etc.). Bills with 48+ stages are NOT noise — they're genuine related
     stages and must not be suppressed by a frequency threshold.
 
     Returns dict:
-      items      â€” up to _RELATED_PANEL_MAX cards, sorted by date proximity
-      total      â€” total related sessions found (for overflow badge)
+      items      — up to _RELATED_PANEL_MAX cards, sorted by date proximity
+      total      — total related sessions found (for overflow badge)
     """
     if _is_procedural_noise(session.title):
         return {"items": [], "total": 0}
@@ -368,7 +361,7 @@ def _related_sessions(session: HansardSession) -> dict:
     if not related:
         return {"items": [], "total": 0}
 
-    # Chronological ascending â€” shows parliamentary journey oldest-to-newest.
+    # Chronological ascending — shows parliamentary journey oldest-to-newest.
     related.sort(key=lambda c: c.date)
     total = len(related)
     display = related[:_RELATED_PANEL_MAX]
@@ -490,7 +483,7 @@ def _session_context(session: HansardSession) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Archive home â€” search and browse
+# Archive home — search and browse
 # ---------------------------------------------------------------------------
 
 _PER_PAGE       = 25
@@ -500,12 +493,12 @@ _GROUPS_PER_PAGE = 7   # groups shown per page in grouped OQ / PMQs view
 def _build_oq_group_header(dtype_filter: str, date, house: str, dept: str) -> str:
     ds = _human_date(date)
     if dtype_filter == "pmqs":
-        return f"{ds} â€” Prime Minister's Questions"
+        return f"{ds} — Prime Minister's Questions"
     if house == "Lords":
-        return f"{ds} â€” Lords Oral Questions"
+        return f"{ds} — Lords Oral Questions"
     if dept:
-        return f"{ds} â€” {dept} Oral Questions"
-    return f"{ds} â€” Oral Questions"
+        return f"{ds} — {dept} Oral Questions"
+    return f"{ds} — Oral Questions"
 
 
 def _last_ingested_label() -> str:
@@ -532,8 +525,8 @@ def _archive_start_label() -> str:
     return _human_date(row)
 
 
-_VOCAB_CACHE_TTL  = 300   # 5 minutes â€” refreshed after each ingest cycle
-_RECENT_CACHE_TTL = 900   # 15 minutes â€” recent-additions widget
+_VOCAB_CACHE_TTL  = 300   # 5 minutes — refreshed after each ingest cycle
+_RECENT_CACHE_TTL = 900   # 15 minutes — recent-additions widget
 _policy_area_cache: tuple[list, float] | None = None
 _dept_cache: tuple[list, float] | None = None
 _recent_additions_cache: tuple[dict, float] | None = None
@@ -572,7 +565,7 @@ def _all_departments() -> list[str]:
 def _recent_additions() -> dict:
     """
     Count of non-container sessions ingested in the last 24 hours and the
-    most recent ingestion timestamp. Cached for 15 minutes â€” no need for
+    most recent ingestion timestamp. Cached for 15 minutes — no need for
     real-time freshness on the browse page.
     """
     global _recent_additions_cache
@@ -601,11 +594,328 @@ def _recent_additions() -> dict:
 
 @archive_bp.route("")
 def archive_home():
-    # /archive (root) is now merged into /hansard. 301 everything there.
-    qs = request.query_string.decode()
-    target = f"/hansard?{qs}" if qs else "/hansard"
-    return redirect(target, 301)
+    q = request.args.get("q", "").strip()
+    # Text search lives at /archive/search (noindex); browse stays at /archive (indexed).
+    if q:
+        fwd: dict = {"q": q}
+        for k in ("policy", "house", "dtype", "from", "to"):
+            v = request.args.get(k, "").strip()
+            if v:
+                fwd[k] = v
+        if request.args.get("title_only") == "1":
+            fwd["title_only"] = "1"
+        return redirect(f"/archive/search?{urlencode(fwd)}", code=302)
 
+    house_filter  = request.args.get("house", "")
+    dtype_filter  = request.args.get("dtype", "")
+    policy_filter = request.args.get("policy", "")
+    date_from     = request.args.get("from", "")
+    date_to       = request.args.get("to", "")
+    title_only    = request.args.get("title_only") == "1"
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
+
+    # Counts for the search affordance line — queried once, passed to all render paths
+    try:
+        _sc = db.session.query(func.count(HansardSession.id)).filter(HansardSession.is_container == False).scalar() or 0
+        _pqc = db.session.query(func.count(HaPQ.id)).scalar() or 0
+        archive_session_count = f"{_sc:,}" if _sc else ""
+        archive_pq_count = f"{(_pqc // 10000) * 10000:,}+" if _pqc else ""
+    except Exception:
+        archive_session_count = ""
+        archive_pq_count = ""
+
+    stmt = HansardSession.query.filter_by(is_container=False)
+
+    if house_filter in ("Commons", "Lords"):
+        stmt = stmt.filter(HansardSession.house == house_filter)
+
+    if dtype_filter and dtype_filter in _DEBATE_TYPE_LABELS:
+        stmt = stmt.filter(HansardSession.debate_type == dtype_filter)
+
+    if policy_filter:
+        policy_sub = (
+            db.session.query(HansardSessionTheme.session_id)
+            .filter(
+                HansardSessionTheme.theme == policy_filter,
+                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+            )
+            .subquery()
+        )
+        stmt = stmt.filter(HansardSession.id.in_(policy_sub))
+
+    if date_from:
+        try:
+            stmt = stmt.filter(HansardSession.date >= date_type.fromisoformat(date_from))
+        except ValueError:
+            date_from = ""
+
+    if date_to:
+        try:
+            stmt = stmt.filter(HansardSession.date <= date_type.fromisoformat(date_to))
+        except ValueError:
+            date_to = ""
+
+    # Build base query string and flags (needed in both grouped and flat paths)
+    filter_params = {k: v for k, v in {
+        "house":      house_filter,
+        "dtype":      dtype_filter,
+        "policy":     policy_filter,
+        "from":       date_from,
+        "to":         date_to,
+        "title_only": "1" if title_only else "",
+    }.items() if v}
+    base_qs    = urlencode(filter_params)
+    has_filters = bool(house_filter or dtype_filter or policy_filter or date_from or date_to)
+
+    # --- Grouped view: oral_questions or pmqs ---
+    grouped = dtype_filter in ("oral_questions", "pmqs")
+
+    if grouped:
+        # Lightweight pass: fetch only grouping fields for all matching sessions
+        lite_rows = (
+            stmt
+            .with_entities(
+                HansardSession.id,
+                HansardSession.date,
+                HansardSession.house,
+                HansardSession.department,
+            )
+            .order_by(HansardSession.date.desc(), HansardSession.id)
+            .all()
+        )
+
+        groups_dict: dict[tuple, list[int]] = defaultdict(list)
+        for sid, row_date, row_house, row_dept in lite_rows:
+            key = (row_date, row_house, row_dept or "")
+            groups_dict[key].append(sid)
+
+        # Sort groups: newest date first; within same date Commons before Lords
+        sorted_keys = sorted(
+            groups_dict,
+            key=lambda k: (-k[0].toordinal(), 0 if k[1] == "Commons" else 1),
+        )
+        total_groups   = len(sorted_keys)
+        total_sessions = sum(len(v) for v in groups_dict.values())
+        total_pages    = max(1, (total_groups + _GROUPS_PER_PAGE - 1) // _GROUPS_PER_PAGE)
+        page_keys      = sorted_keys[(page - 1) * _GROUPS_PER_PAGE : page * _GROUPS_PER_PAGE]
+
+        page_session_ids = [sid for key in page_keys for sid in groups_dict[key]]
+
+        sessions_full  = (
+            HansardSession.query.filter(HansardSession.id.in_(page_session_ids)).all()
+            if page_session_ids else []
+        )
+        sessions_by_id = {s.id: s for s in sessions_full}
+
+        g_contrib_counts = _batch_load_contrib_counts(page_session_ids)
+        g_policy_areas, g_specific_topics = _batch_load_tags(page_session_ids)
+
+        def _make_item(s):
+            return {
+                "session":           s,
+                "human_date":        _human_date(s.date),
+                "url_date":          _url_date(s.date),
+                "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+                "contrib_count":     g_contrib_counts.get(s.id, 0),
+                "policy_areas":      sorted(g_policy_areas.get(s.id, [])),
+                "specific_topics":   sorted(g_specific_topics.get(s.id, [])),
+                "department":        s.department or "",
+            }
+
+        group_items = []
+        for key in page_keys:
+            row_date, row_house, row_dept = key
+            sids = sorted(groups_dict[key])  # session ID order = Hansard chain order
+            group_sessions = [sessions_by_id[sid] for sid in sids if sid in sessions_by_id]
+            group_items.append({
+                "date":          row_date,
+                "house":         row_house,
+                "dept":          row_dept,
+                "header":        _build_oq_group_header(dtype_filter, row_date, row_house, row_dept),
+                "session_count": len(sids),
+                "sessions":      [_make_item(s) for s in group_sessions],
+            })
+
+        return render_template(
+            "hansard_archive/archive_home.html",
+            grouped=True,
+            bill_grouped=False,
+            bill_group_items=[],
+            group_items=group_items,
+            total_groups=total_groups,
+            total_sessions=total_sessions,
+            session_items=[],
+            total=total_groups,
+            total_pages=total_pages,
+            per_page=_GROUPS_PER_PAGE,
+            page=page,
+            q="",
+            house_filter=house_filter,
+            dtype_filter=dtype_filter,
+            policy_filter=policy_filter,
+            date_from=date_from,
+            date_to=date_to,
+            title_only=title_only,
+            all_policy_areas=_all_policy_areas(),
+            debate_type_labels=_DEBATE_TYPE_LABELS,
+            base_qs=base_qs,
+            has_filters=has_filters,
+            last_ingested=_last_ingested_label(),
+            archive_start=_archive_start_label(),
+            today_str=date_type.today().isoformat(),
+            recent_additions=_recent_additions(),
+            archive_session_count=archive_session_count,
+            archive_pq_count=archive_pq_count,
+        )
+
+    # --- Bill-grouped view: committee_stage (no search query) ---
+    _BILL_GROUPS_PER_PAGE = 20
+    bill_grouped = dtype_filter == "committee_stage" and not q
+
+    if bill_grouped:
+        all_sessions = (
+            stmt
+            .with_entities(
+                HansardSession.id,
+                HansardSession.title,
+                HansardSession.date,
+                HansardSession.house,
+                HansardSession.debate_type,
+                HansardSession.slug,
+            )
+            .order_by(HansardSession.date)
+            .all()
+        )
+
+        # Group by normalised title
+        from collections import defaultdict
+        groups_dict: dict = defaultdict(list)
+        for row in all_sessions:
+            norm = _normalise_title(row.title) or row.title
+            groups_dict[norm].append(row)
+
+        # Sort groups by most recent session date desc
+        sorted_groups = sorted(
+            groups_dict.items(),
+            key=lambda kv: max(r.date for r in kv[1]),
+            reverse=True,
+        )
+
+        total_bill_groups = len(sorted_groups)
+        total_pages_bill  = max(1, (total_bill_groups + _BILL_GROUPS_PER_PAGE - 1) // _BILL_GROUPS_PER_PAGE)
+        page_groups = sorted_groups[(page - 1) * _BILL_GROUPS_PER_PAGE : page * _BILL_GROUPS_PER_PAGE]
+
+        # Fetch full session objects and contrib counts for page only
+        page_session_ids = [r.id for _, rows in page_groups for r in rows]
+        sessions_full = (
+            HansardSession.query.filter(HansardSession.id.in_(page_session_ids)).all()
+            if page_session_ids else []
+        )
+        sessions_by_id = {s.id: s for s in sessions_full}
+        bg_contrib_counts = _batch_load_contrib_counts(page_session_ids)
+        bg_policy_areas, bg_specific_topics = _batch_load_tags(page_session_ids)
+
+        def _bill_item(row):
+            s = sessions_by_id.get(row.id)
+            if not s:
+                return None
+            return {
+                "session":           s,
+                "human_date":        _human_date(s.date),
+                "url_date":          _url_date(s.date),
+                "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+                "contrib_count":     bg_contrib_counts.get(s.id, 0),
+                "policy_areas":      sorted(bg_policy_areas.get(s.id, [])),
+                "specific_topics":   sorted(bg_specific_topics.get(s.id, [])),
+            }
+
+        bill_group_items = []
+        for norm_title, rows in page_groups:
+            items = [i for i in (_bill_item(r) for r in rows) if i]
+            if items:
+                bill_group_items.append({
+                    "title":         items[0]["session"].title,  # use actual title from first session
+                    "session_count": len(items),
+                    "sessions":      items,  # already sorted chronologically (asc) from query
+                })
+
+        return render_template(
+            "hansard_archive/archive_home.html",
+            grouped=False,
+            bill_grouped=True,
+            bill_group_items=bill_group_items,
+            group_items=[],
+            session_items=[],
+            total=total_bill_groups,
+            total_pages=total_pages_bill,
+            per_page=_BILL_GROUPS_PER_PAGE,
+            page=page,
+            q="",
+            house_filter=house_filter,
+            dtype_filter=dtype_filter,
+            policy_filter=policy_filter,
+            date_from=date_from,
+            date_to=date_to,
+            title_only=title_only,
+            all_policy_areas=_all_policy_areas(),
+            debate_type_labels=_DEBATE_TYPE_LABELS,
+            base_qs=base_qs,
+            has_filters=has_filters,
+            last_ingested=_last_ingested_label(),
+            archive_start=_archive_start_label(),
+            today_str=date_type.today().isoformat(),
+            recent_additions=_recent_additions(),
+            archive_session_count=archive_session_count,
+            archive_pq_count=archive_pq_count,
+        )
+
+    # --- Flat list (default) ---
+    stmt = stmt.order_by(HansardSession.date.desc())
+
+    total       = stmt.count()
+    sessions    = stmt.offset((page - 1) * _PER_PAGE).limit(_PER_PAGE).all()
+    total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
+
+    session_ids     = [s.id for s in sessions]
+    contrib_counts  = _batch_load_contrib_counts(session_ids)
+    policy_areas, specific_topics = _batch_load_tags(session_ids)
+    session_items   = _build_session_items(sessions, contrib_counts, policy_areas, specific_topics)
+
+    last_ingested = _last_ingested_label()
+    today_str     = date_type.today().isoformat()
+
+    return render_template(
+        "hansard_archive/archive_home.html",
+        grouped=False,
+        bill_grouped=False,
+        bill_group_items=[],
+        group_items=[],
+        session_items=session_items,
+        q=q,
+        house_filter=house_filter,
+        dtype_filter=dtype_filter,
+        policy_filter=policy_filter,
+        date_from=date_from,
+        date_to=date_to,
+        title_only=title_only,
+        page=page,
+        total=total,
+        total_pages=total_pages,
+        per_page=_PER_PAGE,
+        all_policy_areas=_all_policy_areas(),
+        debate_type_labels=_DEBATE_TYPE_LABELS,
+        base_qs=base_qs,
+        has_filters=has_filters,
+        last_ingested=last_ingested,
+        archive_start=_archive_start_label(),
+        today_str=today_str,
+        recent_additions=_recent_additions(),
+        archive_session_count=archive_session_count,
+        archive_pq_count=archive_pq_count,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +932,7 @@ def session_detail(date_str: str, slug: str):
 
 
 # ---------------------------------------------------------------------------
-# Word export â€” session transcript
+# Word export — session transcript
 # ---------------------------------------------------------------------------
 
 @archive_bp.route("/debate/<string:date_str>/<string:slug>/word")
@@ -640,7 +950,7 @@ def session_word(date_str: str, slug: str):
 
     # Metadata line
     meta = doc.add_paragraph()
-    meta.add_run(f"{ctx['human_date']}  Â·  {session.house}  Â·  {ctx['debate_type_label']}").font.size = Pt(10)
+    meta.add_run(f"{ctx['human_date']}  ·  {session.house}  ·  {ctx['debate_type_label']}").font.size = Pt(10)
 
     if ctx["policy_areas"]:
         pa = doc.add_paragraph()
@@ -683,7 +993,7 @@ def session_word(date_str: str, slug: str):
     footer = doc.add_paragraph()
     footer.add_run(
         f"Source: Hansard (Parliament Open Parliament Licence v3.0). "
-        f"Exported from Westminster Brief â€” westminsterbrief.co.uk"
+        f"Exported from Westminster Brief — westminsterbrief.co.uk"
     ).font.size = Pt(9)
 
     buf = BytesIO()
@@ -702,7 +1012,7 @@ def session_word(date_str: str, slug: str):
 
 
 # ---------------------------------------------------------------------------
-# Date browse â€” /archive/date/<date_str>
+# Date browse — /archive/date/<date_str>
 # ---------------------------------------------------------------------------
 
 @archive_bp.route("/date/<string:date_str>")
@@ -738,7 +1048,7 @@ def archive_date(date_str: str):
         total          = len(items),
         per_page       = len(items),
         canonical_path = f"/archive/date/{date_str}",
-        og_title       = f"{human} â€” Hansard Archive",
+        og_title       = f"{human} — Hansard Archive",
         meta_desc      = (
             f"Parliamentary debates from {human}. "
             f"{len(items)} Hansard session{'s' if len(items) != 1 else ''} including "
@@ -749,7 +1059,7 @@ def archive_date(date_str: str):
 
 
 # ---------------------------------------------------------------------------
-# MP page â€” /archive/mp/<member_id>
+# MP page — /archive/mp/<member_id>
 # ---------------------------------------------------------------------------
 
 @archive_bp.route("/mp/<int:member_id>")
@@ -758,8 +1068,6 @@ def archive_mp(member_id: int):
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
         page = 1
-
-    policy_filter = request.args.get("policy", "").strip()
 
     # Representative name row
     name_row = (
@@ -786,21 +1094,8 @@ def archive_mp(member_id: int):
         .distinct()
         .order_by(HansardSession.date.desc())
     )
-
-    if policy_filter:
-        tagged_sids = (
-            db.session.query(HansardSessionTheme.session_id)
-            .filter(
-                HansardSessionTheme.theme == policy_filter,
-                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-            )
-        )
-        session_ids_q = session_ids_q.filter(
-            HansardContribution.session_id.in_(tagged_sids)
-        )
-
     total = session_ids_q.count()
-    if total == 0 and not policy_filter:
+    if total == 0:
         abort(404)
 
     total_pages  = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
@@ -837,32 +1132,23 @@ def archive_mp(member_id: int):
         if sid in sessions_by_id
     ]
 
-    name  = member_attr["name"]
-    party = member_attr["party"] or ""
-    qs_params: dict[str, str] = {}
-    if policy_filter:
-        qs_params["policy"] = policy_filter
-    base_qs = urlencode(qs_params)
-
-    # Load precomputed analytics (only populated for Commons MPs by compute job)
-    analytics = db.session.get(MpAnalytics, member_id)
+    name      = member_attr["name"]
+    party     = member_attr["party"] or ""
+    base_qs   = urlencode({"page": page}) if page > 1 else ""
 
     return render_template(
         "hansard_archive/archive_mp.html",
-        member_id          = member_id,
-        member_name        = name,
-        member_party       = party,
-        member_party_slug  = _CONTRIB_CODE_TO_SLUG.get(party) if party else None,
-        member_colour      = member_attr["party_colour"],
+        member_id     = member_id,
+        member_name   = name,
+        member_party  = party,
+        member_colour = member_attr["party_colour"],
         items         = items,
         total         = total,
         total_pages   = total_pages,
         per_page      = _PER_PAGE,
         page          = page,
         base_qs       = base_qs,
-        policy_filter = policy_filter,
-        analytics     = analytics,
-        og_title      = f"{name} â€” Hansard Archive",
+        og_title      = f"{name} — Hansard Archive",
         meta_desc     = (
             f"Parliamentary contributions by {name}{' (' + party + ')' if party else ''} "
             f"in the Hansard Archive. {total} session{'s' if total != 1 else ''} on record."
@@ -871,7 +1157,7 @@ def archive_mp(member_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Department page â€” /archive/department/<slug>
+# Department page — /archive/department/<slug>
 # ---------------------------------------------------------------------------
 
 @archive_bp.route("/department/<string:dept_slug>")
@@ -916,7 +1202,7 @@ def archive_department(dept_slug: str):
         per_page       = _PER_PAGE,
         base_qs        = base_qs,
         canonical_path = f"/archive/department/{dept_slug}",
-        og_title       = f"{dept_name} â€” Hansard Archive",
+        og_title       = f"{dept_name} — Hansard Archive",
         meta_desc      = (
             f"Parliamentary questions and debates answered by the {dept_name}. "
             f"{total} Hansard session{'s' if total != 1 else ''} in the archive."
@@ -926,7 +1212,7 @@ def archive_department(dept_slug: str):
 
 
 # ---------------------------------------------------------------------------
-# Policy area page â€” /archive/policy/<slug>
+# Policy area page — /archive/policy/<slug>
 # ---------------------------------------------------------------------------
 
 @archive_bp.route("/policy/<string:policy_slug>")
@@ -980,7 +1266,7 @@ def archive_policy(policy_slug: str):
         per_page       = _PER_PAGE,
         base_qs        = base_qs,
         canonical_path = f"/archive/policy/{policy_slug}",
-        og_title       = f"{policy_name} â€” Hansard Archive",
+        og_title       = f"{policy_name} — Hansard Archive",
         meta_desc      = (
             f"UK parliamentary debates on {policy_name}. "
             f"{total} Hansard session{'s' if total != 1 else ''} tagged with this GOV.UK policy area."
@@ -990,112 +1276,37 @@ def archive_policy(policy_slug: str):
 
 
 # ---------------------------------------------------------------------------
-# Topic brief page â€” /brief/<slug>   (canonical)
-# Archive theme page â€” /archive/theme/<slug>  â†’  301 â†’ /brief/<slug>
+# Specific theme page — /archive/theme/<slug>
 # ---------------------------------------------------------------------------
 
-# Westminster Brief brief slugs â†’ actual Hansard DB policy area name(s).
-# The two taxonomies differ (e.g. "education" â‰  "Education, training and skills"),
-# so we bridge them statically rather than relying on slugify round-trips.
-_BRIEF_SLUG_TO_POLICY_AREAS: dict[str, list[str]] = {
-    "economy":                                   ["Economy"],
-    "employment-and-labour-market":              ["Employment and labour market"],
-    "finance-and-taxation":                      ["Finance and taxation"],
-    "government-and-public-administration":      ["Government and public administration"],
-    "business-and-industry":                     ["Business and industry"],
-    "education":                                 ["Education, training and skills", "Children and families"],
-    "health-and-social-care":                    ["Health and social care"],
-    "housing-and-planning":                      ["Housing and planning"],
-    "transport":                                 ["Transport"],
-    "crime-justice-and-law":                     ["Crime, justice and law"],
-    "welfare-and-social-security":               ["Welfare and benefits"],
-    "immigration-and-asylum":                    ["Immigration and borders"],
-    "environment-and-climate-change":            ["Environment"],
-    "defence-and-national-security":             ["Defence and armed forces"],
-    "international-affairs":                     ["International development", "Foreign affairs and diplomacy"],
-    "science-technology-and-innovation":         ["Science and technology"],
-    "energy-and-utilities":                      ["Energy"],
-    "work-and-pensions":                         ["Welfare and benefits", "Employment and labour market"],
-    "agriculture-environment-and-rural-affairs": ["Environment"],
-    "culture-media-and-sport":                   ["Society and culture"],
-    "constitutional-affairs":                    ["Parliament and constitution"],
-    "foreign-affairs":                           ["Foreign affairs and diplomacy"],
-    "parliamentary-affairs":                     ["Parliament and constitution"],
-}
-
-# Headings for slugs where slugâ†’title-case produces awkward punctuation.
-_BRIEF_SLUG_HEADING: dict[str, str] = {
-    "crime-justice-and-law":                     "Crime, Justice and Law",
-    "science-technology-and-innovation":         "Science, Technology and Innovation",
-    "agriculture-environment-and-rural-affairs": "Agriculture, Environment and Rural Affairs",
-    "culture-media-and-sport":                   "Culture, Media and Sport",
-}
-
-
-def _brief_theme_response(theme_slug: str, canonical_prefix: str):
-    """
-    Render /brief/<slug> pages.
-
-    Lookup order:
-    0. Bridge mapping (_BRIEF_SLUG_TO_POLICY_AREAS) â€” resolves the mismatch
-       between brief page slugs and Hansard DB policy area taxonomy strings.
-    1. Policy area slug reverse-lookup â€” catches any policy areas not in the map.
-    2. Specific topic match (THEME_TYPE_SPECIFIC) â€” fallback for /archive/theme/ redirects.
-    """
-    # â”€â”€ 0. Bridge mapping: brief slug â†’ DB policy area name(s) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    policy_names = _BRIEF_SLUG_TO_POLICY_AREAS.get(theme_slug)
-    if policy_names:
-        theme_name      = _BRIEF_SLUG_HEADING.get(theme_slug) or theme_slug.replace("-", " ").title()
-        theme_type_used = THEME_TYPE_POLICY_AREA
-        session_filter  = (
-            HansardSessionTheme.theme.in_(policy_names),
-            HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-        )
-    else:
-        # â”€â”€ 1. Try policy area match via slug reverse-lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        all_policies = _all_policy_areas()
-        policy_name  = next((p for p in all_policies if slugify_theme(p) == theme_slug), None)
-
-        if policy_name:
-            theme_name      = policy_name
-            theme_type_used = THEME_TYPE_POLICY_AREA
-            session_filter  = (
-                HansardSessionTheme.theme == theme_name,
-                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-            )
-        else:
-            # â”€â”€ 2. Fallback: specific topic match â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            rows = (
-                db.session.query(HansardSessionTheme.theme)
-                .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
-                .distinct()
-                .all()
-            )
-            theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
-            theme_type_used = THEME_TYPE_SPECIFIC
-            session_filter  = (
-                HansardSessionTheme.theme == theme_name,
-                HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
-            ) if theme_name else None
-
+@archive_bp.route("/theme/<string:theme_slug>")
+def archive_theme(theme_slug: str):
+    # Reverse-lookup: find theme whose slugified name matches
+    rows = (
+        db.session.query(HansardSessionTheme.theme)
+        .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
+        .distinct()
+        .all()
+    )
+    theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
     if not theme_name:
-        display_name = theme_slug.replace("-", " ").title()
+        # Slug not in DB — show friendly empty page rather than 404
+        display_name = theme_slug.replace("-", " ")
         return render_template(
-            "hansard_archive/brief_theme.html",
-            page_type         = "theme",
-            heading           = display_name,
-            subtitle          = "No sessions on this topic in the archive",
-            breadcrumb        = [("Hansard Archive", "/archive"), (display_name, None)],
-            items             = [],
-            page              = 1,
-            total_pages       = 1,
-            total             = 0,
-            base_qs           = "",
-            canonical_path    = f"{canonical_prefix}/{theme_slug}",
-            og_title          = f"{display_name} â€” Westminster Brief",
-            meta_desc         = f"No sessions found in the Westminster Brief archive for {display_name}.",
-            json_ld_type      = "CollectionPage",
-            headline_stat     = None,
+            "hansard_archive/archive_collection.html",
+            page_type      = "theme",
+            heading        = display_name,
+            subtitle       = "No sessions on this topic in the archive",
+            breadcrumb     = [("Hansard Archive", "/archive"), (display_name, None)],
+            items          = [],
+            page           = 1,
+            total_pages    = 1,
+            total          = 0,
+            base_qs        = "",
+            canonical_path = f"/archive/theme/{theme_slug}",
+            og_title       = f"{display_name} — Hansard Archive",
+            meta_desc      = f"No sessions found in the Westminster Brief Hansard archive for {display_name}.",
+            json_ld_type   = "CollectionPage",
         )
 
     try:
@@ -1105,7 +1316,10 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
     theme_sub = (
         db.session.query(HansardSessionTheme.session_id)
-        .filter(*session_filter)
+        .filter(
+            HansardSessionTheme.theme == theme_name,
+            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
+        )
         .subquery()
     )
     stmt = (
@@ -1125,71 +1339,36 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
     base_qs = urlencode({"page": page}) if page > 1 else ""
 
-    subtitle = (
-        f"{total} session{'s' if total != 1 else ''} tagged with this policy area"
-        if theme_type_used == THEME_TYPE_POLICY_AREA
-        else f"{total} session{'s' if total != 1 else ''} on this topic"
-    )
-
-    # Headline stat teaser â€” shown as one-line link to /stats/<slug>
-    headline_stat = None
-    if theme_type_used == THEME_TYPE_POLICY_AREA and theme_slug in _BRIEF_SLUG_TO_POLICY_AREAS:
-        from hansard_archive.models import HeadlineStat as _HeadlineStat
-        headline_stat = (
-            _HeadlineStat.query
-            .filter_by(theme_slug=theme_slug)
-            .filter(_HeadlineStat.latest_value.isnot(None))
-            .first()
-        )
-
     return render_template(
-        "hansard_archive/brief_theme.html",
-        page_type         = "policy" if theme_type_used == THEME_TYPE_POLICY_AREA else "theme",
-        heading           = theme_name,
-        subtitle          = subtitle,
-        breadcrumb        = [("Hansard Archive", "/archive"), (theme_name, None)],
-        items             = items,
-        page              = page,
-        total_pages       = total_pages,
-        total             = total,
-        per_page          = _PER_PAGE,
-        base_qs           = base_qs,
-        canonical_path    = f"{canonical_prefix}/{theme_slug}",
-        og_title          = f"{theme_name} â€” Westminster Brief",
-        meta_desc         = (
+        "hansard_archive/archive_collection.html",
+        page_type      = "theme",
+        heading        = theme_name,
+        subtitle       = f"{total} session{'s' if total != 1 else ''} on this topic",
+        breadcrumb     = [("Hansard Archive", "/archive"), (theme_name, None)],
+        items          = items,
+        page           = page,
+        total_pages    = total_pages,
+        total          = total,
+        per_page       = _PER_PAGE,
+        base_qs        = base_qs,
+        canonical_path = f"/archive/theme/{theme_slug}",
+        og_title       = f"{theme_name} — Hansard Archive",
+        meta_desc      = (
             f"UK parliamentary debates on {theme_name}. "
             f"{total} Hansard session{'s' if total != 1 else ''} tagged with this topic."
         ),
-        json_ld_type      = "CollectionPage",
-        headline_stat     = headline_stat,
-        theme_slug        = theme_slug,
+        json_ld_type   = "CollectionPage",
     )
 
 
-@brief_bp.route("/<string:theme_slug>")
-def brief_theme(theme_slug: str):
-    return _brief_theme_response(theme_slug, canonical_prefix="/brief")
-
-
 # ---------------------------------------------------------------------------
-# Specific theme page â€” /archive/theme/<slug>  â†’  301 â†’ /brief/<slug>
-# ---------------------------------------------------------------------------
-
-@archive_bp.route("/theme/<string:theme_slug>")
-def archive_theme(theme_slug: str):
-    """301: /archive/theme/<slug> â†’ /brief/<slug>"""
-    qs = ('?' + request.query_string.decode()) if request.query_string else ''
-    return redirect(f"/brief/{theme_slug}{qs}", code=301)
-
-
-# ---------------------------------------------------------------------------
-# FTS search â€” /archive/search  (noindex)
+# FTS search — /archive/search  (noindex)
 # ---------------------------------------------------------------------------
 
 _FTS_HEADLINE_OPTS = (
     "MaxFragments=1,StartSel=<mark>,StopSel=</mark>,MaxWords=35,MinWords=15"
 )
-# WQ question text should show in full â€” questions are typically 40-120 words
+# WQ question text should show in full — questions are typically 40-120 words
 _FTS_PQ_HEADLINE_OPTS = (
     "MaxFragments=1,StartSel=<mark>,StopSel=</mark>,MaxWords=200,MinWords=40"
 )
@@ -1211,7 +1390,7 @@ def _fts_search(
 
     Each result dict contains:
       session_id, title, date, house, debate_type, slug, department,
-      snippet (Markup â€” safe HTML with <mark> highlights), final_rank
+      snippet (Markup — safe HTML with <mark> highlights), final_rank
     """
     # Detect phrase query (user wrapped in double quotes)
     if q_raw.startswith('"') and q_raw.endswith('"') and len(q_raw) > 2:
@@ -1535,7 +1714,7 @@ def archive_search():
 
 
 # ---------------------------------------------------------------------------
-# Written Question detail â€” /archive/pq/<uin>
+# Written Question detail — /archive/pq/<uin>
 # ---------------------------------------------------------------------------
 
 @archive_bp.route("/pq/<string:uin>")
@@ -1572,7 +1751,7 @@ def pq_detail(uin: str):
             elif cached.constituency:
                 answering_role = f"MP for {cached.constituency}"
 
-    seo_title = f"{pq.heading or pq.uin} â€” {pq.uin} â€” Westminster Brief"
+    seo_title = f"{pq.heading or pq.uin} — {pq.uin} — Westminster Brief"
 
     return render_template(
         "hansard_archive/archive_pq_detail.html",
@@ -1588,760 +1767,8 @@ def pq_detail(uin: str):
         human_updated   = _human_date(pq.updated_at.date()) if pq.updated_at else "",
         seo_title       = seo_title,
         meta_desc       = (
-            f"Written Question {pq.uin} â€” {pq.heading or 'Written Question'} "
+            f"Written Question {pq.uin} — {pq.heading or 'Written Question'} "
             f"tabled by {pq.asking_member or 'an MP'} to {pq.answering_body or 'a department'}."
         ),
         canonical_path  = f"/archive/pq/{pq.uin}",
     )
-
-
-# ---------------------------------------------------------------------------
-# Party page â€” /archive/party/<slug>
-# ---------------------------------------------------------------------------
-
-_PARTY_SLUG_MAP: dict[str, dict] = {
-    "labour": {
-        "full_name": "Labour",
-        "description": "UK political party, currently in government following the July 2024 general election. Founded 1900.",
-        "contrib_codes": {"Lab", "Lab/Co-op", "Lab Co-op", "Lab/ Co-op"},
-        "cached_names": {"Labour", "Labour (Co-op)"},
-        "website": "https://labour.org.uk",
-        "manifesto_labels": {
-            2024: {"label": "Labour Party General Election Manifesto 2024", "heading": "2024 general election"},
-        },
-        "is_government": True,
-        "sinn_fein_note": False,
-    },
-    "conservative": {
-        "full_name": "Conservative",
-        "description": "UK political party, currently the official opposition following the July 2024 general election. Founded 1834.",
-        "contrib_codes": {"Con"},
-        "cached_names": {"Conservative"},
-        "website": "https://www.conservatives.com",
-        "manifesto_labels": {
-            2024: {"label": "Conservative Party General Election Manifesto 2024", "heading": "2024 general election"},
-        },
-        "is_government": False,
-        "sinn_fein_note": False,
-    },
-    "liberal-democrat": {
-        "full_name": "Liberal Democrats",
-        "description": "UK political party, founded 1988.",
-        "contrib_codes": {"LD"},
-        "cached_names": {"Liberal Democrat"},
-        "website": "https://www.libdems.org.uk",
-        "manifesto_labels": {
-            2024: {"label": "Liberal Democrat General Election Manifesto 2024", "heading": "2024 general election"},
-        },
-        "is_government": False,
-        "sinn_fein_note": False,
-    },
-    "scottish-national-party": {
-        "full_name": "Scottish National Party",
-        "description": "Scottish political party advocating Scottish independence, standing candidates only in Scottish constituencies. Founded 1934.",
-        "contrib_codes": {"SNP"},
-        "cached_names": {"Scottish National Party"},
-        "website": "https://www.snp.org",
-        "manifesto_labels": {
-            2024: {"label": "SNP General Election Manifesto 2024", "heading": "2024 general election"},
-        },
-        "is_government": False,
-        "sinn_fein_note": False,
-    },
-    "reform-uk": {
-        "full_name": "Reform UK",
-        "description": "UK political party, founded 2021.",
-        "contrib_codes": {"Reform"},
-        "cached_names": {"Reform UK"},
-        "website": "https://www.reformparty.uk",
-        "manifesto_labels": {
-            2024: {"label": "Reform UK Contract with the People 2024", "heading": "2024 general election"},
-        },
-        "is_government": False,
-        "sinn_fein_note": False,
-    },
-    "green": {
-        "full_name": "Green Party",
-        "description": "UK political party prioritising environmental policy, founded 1990.",
-        "contrib_codes": {"Green"},
-        "cached_names": {"Green Party"},
-        "website": "https://www.greenparty.org.uk",
-        "manifesto_labels": {
-            2024: {"label": "Green Party of England and Wales General Election Manifesto 2024", "heading": "2024 general election"},
-        },
-        "is_government": False,
-        "sinn_fein_note": False,
-    },
-    "plaid-cymru": {
-        "full_name": "Plaid Cymru",
-        "description": "Welsh political party advocating Welsh independence, standing candidates only in Welsh constituencies. Founded 1925.",
-        "contrib_codes": {"PC"},
-        "cached_names": {"Plaid Cymru"},
-        "website": "https://www.plaid.cymru",
-        "manifesto_labels": {
-            2026: {"label": "Plaid Cymru Senedd Election Manifesto 2026", "heading": "2026 Senedd election"},
-        },
-        "is_government": False,
-        "sinn_fein_note": False,
-    },
-    "democratic-unionist-party": {
-        "full_name": "Democratic Unionist Party",
-        "description": "Northern Irish political party advocating Northern Ireland's continued union with the United Kingdom. Founded 1971.",
-        "contrib_codes": {"DUP"},
-        "cached_names": {"Democratic Unionist Party"},
-        "website": "https://www.mydup.com",
-        "manifesto_labels": {
-            2024: {"label": "Democratic Unionist Party General Election Manifesto 2024", "heading": "2024 general election"},
-        },
-        "is_government": False,
-        "sinn_fein_note": False,
-    },
-    "sinn-fein": {
-        "full_name": "Sinn FÃ©in",
-        "description": "Irish republican party with seats across Northern Ireland constituencies. Founded 1905.",
-        "contrib_codes": set(),
-        "cached_names": {"Sinn FÃ©in"},
-        "website": "https://www.sinnfein.ie",
-        "manifesto_labels": {},
-        "is_government": False,
-        "sinn_fein_note": True,
-    },
-}
-
-_CONTRIB_CODE_TO_SLUG: dict[str, str] = {
-    code: slug
-    for slug, cfg in _PARTY_SLUG_MAP.items()
-    for code in cfg["contrib_codes"]
-}
-
-_PARTY_SLUG_COLOURS: dict[str, str] = {
-    "labour":                   "#E4003B",
-    "conservative":             "#0087DC",
-    "liberal-democrat":         "#FAA61A",
-    "scottish-national-party":  "#c9a800",
-    "reform-uk":                "#12B6CF",
-    "green":                    "#02A95B",
-    "plaid-cymru":              "#005B54",
-    "democratic-unionist-party":"#CF1F25",
-    "sinn-fein":                "#326760",
-}
-
-_party_data_cache: dict[str, tuple[dict, float]] = {}
-_PARTY_CACHE_TTL = 3600  # 1 hour
-
-
-def _compute_party_policy_positions(
-    party_slug: str,
-    contrib_codes: list[str],
-    is_government: bool,
-    manifesto_labels: dict,
-) -> list[dict]:
-    """
-    Return a list of year-groups, each containing per-policy-area records:
-    - chunk texts (all approved chunks where this area is primary)
-    - up to 3 recent sessions where the party contributed on that area
-    - up to 2 WMS (Labour only)
-    Groups are sorted newest-year-first; policy areas alphabetical within each group.
-    """
-    chunk_rows = (
-        db.session.query(ManifestoChunk, ManifestoChunkTag.policy_area)
-        .join(
-            ManifestoChunkTag,
-            (ManifestoChunkTag.chunk_id == ManifestoChunk.id) &
-            (ManifestoChunkTag.is_primary == True),
-        )
-        .filter(
-            ManifestoChunk.party_slug == party_slug,
-            ManifestoChunk.review_status == "approved",
-        )
-        .all()
-    )
-
-    if not chunk_rows:
-        return []
-
-    # Group by (year, policy_area)
-    year_area_chunks: dict[int, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-    for chunk, policy_area in chunk_rows:
-        year_area_chunks[chunk.manifesto_year][policy_area].append(chunk)
-
-    year_groups = []
-    for year in sorted(year_area_chunks, reverse=True):  # newest year first
-        area_chunks = year_area_chunks[year]
-        year_meta = manifesto_labels.get(year, {})
-        year_label = year_meta.get("label", f"{party_slug.replace('-', ' ').title()} {year} Manifesto")
-        year_heading = year_meta.get("heading", f"{year} election")
-
-        positions = []
-        for policy_area in sorted(area_chunks):
-            all_chunks = sorted(area_chunks[policy_area], key=lambda c: c.id)
-
-        sessions: list[dict] = []
-        if contrib_codes:
-            contrib_sids = (
-                db.session.query(HansardContribution.session_id)
-                .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-                .filter(
-                    HansardSession.is_container == False,
-                    HansardContribution.party.in_(contrib_codes),
-                )
-            )
-            tagged_sids = (
-                db.session.query(HansardSessionTheme.session_id)
-                .filter(
-                    HansardSessionTheme.theme == policy_area,
-                    HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-                )
-            )
-            session_rows = (
-                HansardSession.query
-                .filter(
-                    HansardSession.is_container == False,
-                    HansardSession.id.in_(contrib_sids),
-                    HansardSession.id.in_(tagged_sids),
-                )
-                .order_by(HansardSession.date.desc())
-                .limit(3)
-                .all()
-            )
-            for s in session_rows:
-                sessions.append({
-                    "title":             s.title,
-                    "slug":              s.slug,
-                    "human_date":        _human_date(s.date),
-                    "url_date":          _url_date(s.date),
-                    "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
-                })
-
-        wms: list[dict] = []
-        if is_government:
-            wms_tagged = (
-                db.session.query(HansardSessionTheme.session_id)
-                .filter(
-                    HansardSessionTheme.theme == policy_area,
-                    HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-                )
-            )
-            wms_rows = (
-                HansardSession.query
-                .filter(
-                    HansardSession.debate_type == "wms",
-                    HansardSession.id.in_(wms_tagged),
-                )
-                .order_by(HansardSession.date.desc())
-                .limit(2)
-                .all()
-            )
-            for s in wms_rows:
-                wms.append({
-                    "title":      s.title,
-                    "slug":       s.slug,
-                    "human_date": _human_date(s.date),
-                    "url_date":   _url_date(s.date),
-                })
-
-            positions.append({
-                "policy_area":   policy_area,
-                "slug":          slugify_theme(policy_area),
-                "chunk_count":   len(all_chunks),
-                "chunks": [
-                    {
-                        "text":           c.chunk_text,
-                        "source_section": c.source_section or "",
-                        "source_url":     c.source_url or "",
-                        "source_page":    c.source_page,
-                        "pdf_url":        c.pdf_url or "",
-                        "year_label":     year_label,
-                    }
-                    for c in all_chunks
-                ],
-                "sessions":      sessions,
-                "wms":           wms,
-            })
-
-        year_groups.append({
-            "year":     year,
-            "heading":  year_heading,
-            "positions": positions,
-        })
-
-    return year_groups
-
-
-def _compute_party_data(slug: str) -> dict | None:
-    cfg = _PARTY_SLUG_MAP.get(slug)
-    if cfg is None:
-        return None
-
-    contrib_codes = list(cfg["contrib_codes"])
-    cached_names  = list(cfg["cached_names"])
-
-    # Member counts from cached_member (current members only)
-    member_counts: dict[str, int] = {}
-    for house, count in (
-        db.session.query(CachedMember.house, func.count(CachedMember.id))
-        .filter(CachedMember.party.in_(cached_names))
-        .group_by(CachedMember.house)
-        .all()
-    ):
-        member_counts[house] = count
-
-    total_contributions = 0
-    dtype_breakdown:    list[dict] = []
-    monthly_data:       list[dict] = []
-    top_policy_areas:   list[dict] = []
-    top_voices:         list[dict] = []
-    recent_activity:    list[dict] = []
-
-    if contrib_codes:
-        # Total contributions
-        total_contributions = (
-            db.session.query(func.count(HansardContribution.id))
-            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-            .filter(
-                HansardSession.is_container == False,
-                HansardContribution.party.in_(contrib_codes),
-            )
-            .scalar()
-        ) or 0
-
-        # Debate type breakdown
-        dtype_rows = (
-            db.session.query(
-                HansardSession.debate_type,
-                func.count(HansardContribution.id).label("n"),
-            )
-            .join(HansardContribution, HansardContribution.session_id == HansardSession.id)
-            .filter(
-                HansardSession.is_container == False,
-                HansardContribution.party.in_(contrib_codes),
-            )
-            .group_by(HansardSession.debate_type)
-            .order_by(func.count(HansardContribution.id).desc())
-            .all()
-        )
-        dtype_breakdown = [
-            {
-                "debate_type": row.debate_type,
-                "label":       _DEBATE_TYPE_LABELS.get(row.debate_type, "Proceedings"),
-                "count":       row.n,
-            }
-            for row in dtype_rows
-        ]
-
-        # Monthly activity timeline â€” Postgres only
-        if _is_postgres():
-            twelve_months_ago = (date_type.today().replace(day=1) - timedelta(days=365))
-            monthly_sql = sqla_text("""
-                SELECT DATE_TRUNC('month', s.date) AS mo, COUNT(c.id) AS n
-                FROM ha_contribution c
-                JOIN ha_session s ON s.id = c.session_id
-                WHERE s.is_container = FALSE
-                  AND c.party = ANY(:codes)
-                  AND s.date >= :cutoff
-                GROUP BY mo
-                ORDER BY mo
-            """)
-            monthly_rows = db.session.execute(monthly_sql, {
-                "codes": contrib_codes,
-                "cutoff": twelve_months_ago,
-            }).fetchall()
-            if monthly_rows:
-                max_n = max(r[1] for r in monthly_rows) or 1
-                monthly_data = [
-                    {
-                        "month":       r[0],
-                        "label":       r[0].strftime("%b %Y") if r[0] else "",
-                        "month_abbr":  r[0].strftime("%b") if r[0] else "",
-                        "count":       r[1],
-                        "pct":         round(r[1] / max_n * 100),
-                    }
-                    for r in monthly_rows
-                ]
-
-        # Top policy areas â€” count distinct sessions with party contributions
-        contrib_session_q = (
-            db.session.query(HansardContribution.session_id)
-            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-            .filter(
-                HansardSession.is_container == False,
-                HansardContribution.party.in_(contrib_codes),
-            )
-        )
-        policy_rows = (
-            db.session.query(
-                HansardSessionTheme.theme,
-                func.count(HansardSessionTheme.session_id).label("n"),
-            )
-            .filter(
-                HansardSessionTheme.session_id.in_(contrib_session_q),
-                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-            )
-            .group_by(HansardSessionTheme.theme)
-            .order_by(func.count(HansardSessionTheme.session_id).desc())
-            .limit(8)
-            .all()
-        )
-        top_policy_areas = [
-            {
-                "theme": row.theme,
-                "slug":  slugify_theme(row.theme),
-                "count": row.n,
-            }
-            for row in policy_rows
-        ]
-
-        # Most active voices â€” top 10 contributors by contribution count
-        voice_rows = (
-            db.session.query(
-                HansardContribution.member_id,
-                func.max(HansardContribution.member_name).label("member_name"),
-                func.count(HansardContribution.id).label("n"),
-            )
-            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-            .filter(
-                HansardSession.is_container == False,
-                HansardContribution.party.in_(contrib_codes),
-                HansardContribution.member_id.isnot(None),
-            )
-            .group_by(HansardContribution.member_id)
-            .order_by(func.count(HansardContribution.id).desc())
-            .limit(10)
-            .all()
-        )
-        voice_member_ids = [r.member_id for r in voice_rows]
-        cached_voice_members = {
-            cm.member_id: cm
-            for cm in CachedMember.query.filter(
-                CachedMember.member_id.in_(voice_member_ids)
-            ).all()
-        } if voice_member_ids else {}
-        for row in voice_rows:
-            cm = cached_voice_members.get(row.member_id)
-            display_name = cm.name if cm else _parse_attribution(row.member_name)["name"]
-            top_voices.append({
-                "member_id": row.member_id,
-                "name":      display_name,
-                "count":     row.n,
-            })
-
-        # Recent activity â€” 20 most recent contributions
-        recent_rows = (
-            db.session.query(HansardContribution, HansardSession)
-            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-            .filter(
-                HansardSession.is_container == False,
-                HansardContribution.party.in_(contrib_codes),
-                HansardContribution.member_name.isnot(None),
-            )
-            .order_by(HansardSession.date.desc(), HansardContribution.speech_order)
-            .limit(20)
-            .all()
-        )
-        for contrib, hs in recent_rows:
-            attr = _parse_attribution(contrib.member_name)
-            text = contrib.speech_text or ""
-            recent_activity.append({
-                "contribution_id":  contrib.id,
-                "member_id":        contrib.member_id,
-                "name":             attr["name"],
-                "speech_preview":   text[:280],
-                "speech_truncated": len(text) > 280,
-                "session_title":    hs.title,
-                "session_slug":     hs.slug,
-                "human_date":       _human_date(hs.date),
-                "url_date":         _url_date(hs.date),
-                "debate_type_label": _DEBATE_TYPE_LABELS.get(hs.debate_type, "Proceedings"),
-            })
-
-    # Written Questions â€” via cached_member member_id lookup
-    recent_pqs: list[dict] = []
-    if cached_names:
-        member_ids = [
-            r[0] for r in
-            db.session.query(CachedMember.member_id)
-            .filter(CachedMember.party.in_(cached_names))
-            .all()
-        ]
-        if member_ids:
-            pq_rows = (
-                HaPQ.query
-                .filter(HaPQ.asking_mnis_id.in_(member_ids))
-                .order_by(HaPQ.tabled_date.desc())
-                .limit(10)
-                .all()
-            )
-            recent_pqs = [
-                {
-                    "uin":           pq.uin,
-                    "heading":       pq.heading or pq.uin,
-                    "asking_member": pq.asking_member or "",
-                    "answering_body":pq.answering_body or "",
-                    "human_date":    _human_date(pq.tabled_date) if pq.tabled_date else "",
-                    "is_answered":   pq.is_answered,
-                }
-                for pq in pq_rows
-            ]
-
-    policy_positions = _compute_party_policy_positions(
-        party_slug=slug,
-        contrib_codes=contrib_codes,
-        is_government=cfg.get("is_government", False),
-        manifesto_labels=cfg.get("manifesto_labels", {}),
-    )
-
-    return {
-        "slug":               slug,
-        "cfg":                cfg,
-        "colour":             _PARTY_SLUG_COLOURS.get(slug, _DEFAULT_PARTY_COLOUR),
-        "member_counts":      member_counts,
-        "total_contributions":total_contributions,
-        "dtype_breakdown":    dtype_breakdown,
-        "monthly_data":       monthly_data,
-        "top_policy_areas":   top_policy_areas,
-        "top_voices":         top_voices,
-        "recent_activity":    recent_activity,
-        "recent_pqs":         recent_pqs,
-        "policy_positions":   policy_positions,
-    }
-
-
-def _get_party_data(slug: str) -> dict | None:
-    now = time.monotonic()
-    cached = _party_data_cache.get(slug)
-    if cached and (now - cached[1]) < _PARTY_CACHE_TTL:
-        return cached[0]
-    data = _compute_party_data(slug)
-    if data is not None:
-        _party_data_cache[slug] = (data, now)
-    return data
-
-
-@archive_bp.route("/party/<string:party_slug>")
-def archive_party(party_slug: str):
-    data = _get_party_data(party_slug)
-    if data is None:
-        abort(404)
-
-    cfg  = data["cfg"]
-    name = cfg["full_name"]
-
-    commons_count = data["member_counts"].get("Commons", 0)
-    lords_count   = data["member_counts"].get("Lords", 0)
-
-    member_summary_parts = []
-    if commons_count:
-        member_summary_parts.append(f"{commons_count} MP{'s' if commons_count != 1 else ''}")
-    if lords_count:
-        member_summary_parts.append(f"{lords_count} Lord{'s' if lords_count != 1 else ''}")
-    member_summary = " Â· ".join(member_summary_parts) if member_summary_parts else "No current members"
-
-    return render_template(
-        "hansard_archive/archive_party.html",
-        party_slug      = party_slug,
-        party_name      = name,
-        party_desc      = cfg["description"],
-        party_website   = cfg["website"],
-        party_colour    = data["colour"],
-        sinn_fein_note  = cfg["sinn_fein_note"],
-        member_summary  = member_summary,
-        commons_count   = commons_count,
-        lords_count     = lords_count,
-        total_contributions = data["total_contributions"],
-        dtype_breakdown = data["dtype_breakdown"],
-        monthly_data    = data["monthly_data"],
-        top_policy_areas= data["top_policy_areas"],
-        top_voices      = data["top_voices"],
-        recent_activity = data["recent_activity"],
-        recent_pqs      = data["recent_pqs"],
-        policy_year_groups = data["policy_positions"],
-        is_government   = cfg.get("is_government", False),
-        og_title        = f"{name} â€” Hansard Archive â€” Westminster Brief",
-        meta_desc       = (
-            f"{name} parliamentary activity in the Westminster Brief Hansard Archive. "
-            f"{cfg['description']}"
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Stats section â€” /stats (index) + /stats/<slug> (per-theme)
-# ---------------------------------------------------------------------------
-
-# Ordered list for the /stats index table (same 23 themes as brief pages).
-_STATS_THEME_ORDER: list[tuple[str, str]] = [
-    ("economy",                                   "Economy"),
-    ("employment-and-labour-market",              "Employment and labour market"),
-    ("finance-and-taxation",                      "Finance and taxation"),
-    ("government-and-public-administration",      "Government and public administration"),
-    ("business-and-industry",                     "Business and industry"),
-    ("education",                                 "Education"),
-    ("health-and-social-care",                    "Health and social care"),
-    ("housing-and-planning",                      "Housing and planning"),
-    ("transport",                                 "Transport"),
-    ("crime-justice-and-law",                     "Crime, justice and law"),
-    ("welfare-and-social-security",               "Welfare and social security"),
-    ("immigration-and-asylum",                    "Immigration and asylum"),
-    ("environment-and-climate-change",            "Environment and climate change"),
-    ("defence-and-national-security",             "Defence and national security"),
-    ("international-affairs",                     "International affairs"),
-    ("science-technology-and-innovation",         "Science, technology and innovation"),
-    ("energy-and-utilities",                      "Energy and utilities"),
-    ("work-and-pensions",                         "Work and pensions"),
-    ("agriculture-environment-and-rural-affairs", "Agriculture, environment and rural affairs"),
-    ("culture-media-and-sport",                   "Culture, media and sport"),
-    ("constitutional-affairs",                    "Constitutional affairs"),
-    ("foreign-affairs",                           "Foreign affairs"),
-    ("parliamentary-affairs",                     "Parliamentary affairs"),
-]
-
-
-@stats_bp.route("")
-def stats_index():
-    from hansard_archive.models import HeadlineStat as _HS
-    stats_by_slug = {r.theme_slug: r for r in _HS.query.all()}
-    rows = [
-        {"slug": slug, "name": name, "stat": stats_by_slug.get(slug)}
-        for slug, name in _STATS_THEME_ORDER
-    ]
-    return render_template(
-        "hansard_archive/stats_index.html",
-        rows           = rows,
-        heading        = "Cross-government statistics",
-        canonical_path = "/stats",
-        og_title       = "Cross-government statistics â€” Westminster Brief",
-        meta_desc      = (
-            "Official UK government statistics by policy theme, sourced from ONS, "
-            "NHS England, and government departments. Updated weekly."
-        ),
-        json_ld_type   = "CollectionPage",
-    )
-
-
-@stats_bp.route("/<string:theme_slug>")
-def stats_theme(theme_slug: str):
-    valid_slugs = {slug for slug, _ in _STATS_THEME_ORDER}
-    if theme_slug not in valid_slugs:
-        abort(404)
-
-    theme_name = _BRIEF_SLUG_HEADING.get(theme_slug) or theme_slug.replace("-", " ").title()
-
-    from hansard_archive.models import HeadlineStat as _HS
-    headline_stat = (
-        _HS.query
-        .filter_by(theme_slug=theme_slug)
-        .filter(_HS.latest_value.isnot(None))
-        .first()
-    )
-
-    today = date_type.today()
-    upcoming = (
-        UpcomingRelease.query
-        .filter_by(theme_slug=theme_slug)
-        .filter(UpcomingRelease.release_date >= today)
-        .order_by(UpcomingRelease.release_date.asc())
-        .limit(8)
-        .all()
-    )
-    org_slugs = list(dict.fromkeys(r.organisation_slug for r in upcoming))
-    govuk_calendar_url = (
-        "https://www.gov.uk/search/statistics-announcements?"
-        + "&".join(f"organisations[]={s}" for s in org_slugs)
-        if org_slugs else ""
-    )
-
-    return render_template(
-        "hansard_archive/stats_theme.html",
-        heading            = theme_name,
-        theme_slug         = theme_slug,
-        headline_stat      = headline_stat,
-        upcoming           = upcoming,
-        govuk_calendar_url = govuk_calendar_url,
-        canonical_path     = f"/stats/{theme_slug}",
-        og_title           = f"{theme_name} statistics â€” Westminster Brief",
-        meta_desc          = (
-            f"Official UK statistics on {theme_name.lower()}, upcoming releases, "
-            "and parliamentary activity."
-        ),
-        json_ld_type       = "CollectionPage",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Hansard search â€” /hansard (merged entry point replacing /archive root)
-# ---------------------------------------------------------------------------
-
-@hansard_bp2.route("")
-def hansard_home():
-    """
-    Lightweight merged search page. No query â†’ search box + recent sessions.
-    With query â†’ FTS results (top 25) + escalation block to /debates.
-    /archive (root only) 301-redirects here.
-    """
-    q = request.args.get("q", "").strip()
-
-    results, total, pq_results = [], 0, []
-    error_msg = ""
-
-    if q:
-        try:
-            if _is_postgres():
-                results, total = _fts_search(q, page=1)
-                pq_results = _pq_fts_search(q, limit=5)
-            else:
-                results, total = _ilike_search(q, page=1)
-        except Exception as exc:
-            error_msg = "Search is temporarily unavailable."
-            print(f"[hansard_home] error: {exc}", flush=True)
-
-    # No query: show recent sessions
-    recent_sessions = []
-    if not q:
-        recent_rows = (
-            HansardSession.query
-            .filter_by(is_container=False)
-            .order_by(HansardSession.date.desc())
-            .limit(10)
-            .all()
-        )
-        sids = [s.id for s in recent_rows]
-        cc = _batch_load_contrib_counts(sids)
-        pa, st = _batch_load_tags(sids)
-        recent_sessions = _build_session_items(recent_rows, cc, pa, st)
-
-    try:
-        _sc = db.session.query(func.count(HansardSession.id)).filter(HansardSession.is_container == False).scalar() or 0
-        _pqc = db.session.query(func.count(HaPQ.id)).scalar() or 0
-        archive_session_count = f"{_sc:,}" if _sc else ""
-        archive_pq_count = f"{(_pqc // 10000) * 10000:,}+" if _pqc else ""
-    except Exception:
-        archive_session_count = ""
-        archive_pq_count = ""
-
-    return render_template(
-        "hansard_archive/hansard_home.html",
-        q                     = q,
-        results               = results,
-        total                 = total,
-        pq_results            = pq_results,
-        recent_sessions       = recent_sessions,
-        error_msg             = error_msg,
-        last_ingested         = _last_ingested_label(),
-        archive_start         = _archive_start_label(),
-        archive_session_count = archive_session_count,
-        archive_pq_count      = archive_pq_count,
-        canonical_path        = "/hansard",
-        og_title              = "Hansard â€” Westminster Brief",
-        meta_desc             = (
-            "Search UK parliamentary debates. Fast access to Hansard transcripts "
-            "from Commons and Lords, with AI theme tagging."
-        ),
-    )
-
-
-@archive_bp.route("/redirect-to-hansard")
-def archive_home_redirect():
-    """301: /archive â†’ /hansard (root only â€” deep links like /archive/debate/... remain unchanged)."""
-    qs = request.query_string.decode()
-    target = f"/hansard?{qs}" if qs else "/hansard"
-    return redirect(target, 301)
