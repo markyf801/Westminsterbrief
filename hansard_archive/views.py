@@ -1310,31 +1310,61 @@ def archive_policy(policy_slug: str):
 # ---------------------------------------------------------------------------
 
 def _brief_theme_response(theme_slug: str, canonical_prefix: str):
-    """Shared render logic for /brief/<slug> and the legacy /archive/theme/<slug>."""
-    rows = (
-        db.session.query(HansardSessionTheme.theme)
-        .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
-        .distinct()
-        .all()
-    )
-    theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
+    """
+    Render /brief/<slug> pages.
+
+    Lookup order:
+    1. Policy area match (THEME_TYPE_POLICY_AREA) — primary path. Stats and
+       upcoming releases are keyed by policy area slug, so /brief/education
+       should show the "Education" policy area page.
+    2. Specific topic match (THEME_TYPE_SPECIFIC) — fallback for 301 redirects
+       from /archive/theme/<slug> where the slug is a free-text topic.
+    """
+    # ── 1. Try policy area match ──────────────────────────────────────────────
+    all_policies = _all_policy_areas()
+    policy_name  = next((p for p in all_policies if slugify_theme(p) == theme_slug), None)
+
+    if policy_name:
+        theme_name     = policy_name
+        theme_type_used = THEME_TYPE_POLICY_AREA
+        session_filter  = (
+            HansardSessionTheme.theme == theme_name,
+            HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+        )
+    else:
+        # ── 2. Fallback: specific topic match ─────────────────────────────────
+        rows = (
+            db.session.query(HansardSessionTheme.theme)
+            .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
+            .distinct()
+            .all()
+        )
+        theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
+        theme_type_used = THEME_TYPE_SPECIFIC
+        session_filter  = (
+            HansardSessionTheme.theme == theme_name,
+            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
+        ) if theme_name else None
+
     if not theme_name:
-        display_name = theme_slug.replace("-", " ")
+        display_name = theme_slug.replace("-", " ").title()
         return render_template(
-            "hansard_archive/archive_collection.html",
-            page_type      = "theme",
-            heading        = display_name,
-            subtitle       = "No sessions on this topic in the archive",
-            breadcrumb     = [("Hansard Archive", "/archive"), (display_name, None)],
-            items          = [],
-            page           = 1,
-            total_pages    = 1,
-            total          = 0,
-            base_qs        = "",
-            canonical_path = f"{canonical_prefix}/{theme_slug}",
-            og_title       = f"{display_name} — Westminster Brief",
-            meta_desc      = f"No sessions found in the Westminster Brief archive for {display_name}.",
-            json_ld_type   = "CollectionPage",
+            "hansard_archive/brief_theme.html",
+            page_type         = "theme",
+            heading           = display_name,
+            subtitle          = "No sessions on this topic in the archive",
+            breadcrumb        = [("Hansard Archive", "/archive"), (display_name, None)],
+            items             = [],
+            page              = 1,
+            total_pages       = 1,
+            total             = 0,
+            base_qs           = "",
+            canonical_path    = f"{canonical_prefix}/{theme_slug}",
+            og_title          = f"{display_name} — Westminster Brief",
+            meta_desc         = f"No sessions found in the Westminster Brief archive for {display_name}.",
+            json_ld_type      = "CollectionPage",
+            upcoming          = [],
+            govuk_calendar_url = "",
         )
 
     try:
@@ -1344,10 +1374,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
     theme_sub = (
         db.session.query(HansardSessionTheme.session_id)
-        .filter(
-            HansardSessionTheme.theme == theme_name,
-            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
-        )
+        .filter(*session_filter)
         .subquery()
     )
     stmt = (
@@ -1367,7 +1394,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
     base_qs = urlencode({"page": page}) if page > 1 else ""
 
-    # Upcoming releases panel
+    # Upcoming releases panel (only populated for policy area pages)
     today = date_type.today()
     upcoming = (
         UpcomingRelease.query
@@ -1376,8 +1403,8 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         .order_by(UpcomingRelease.release_date.asc())
         .limit(5)
         .all()
-    )
-    # Build GOV.UK calendar URL from org slugs found in DB rows
+    ) if theme_type_used == THEME_TYPE_POLICY_AREA else []
+
     org_slugs = list(dict.fromkeys(r.organisation_slug for r in upcoming))
     govuk_calendar_url = (
         "https://www.gov.uk/search/statistics-announcements?"
@@ -1385,11 +1412,17 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         if org_slugs else ""
     )
 
+    subtitle = (
+        f"{total} session{'s' if total != 1 else ''} tagged with this policy area"
+        if theme_type_used == THEME_TYPE_POLICY_AREA
+        else f"{total} session{'s' if total != 1 else ''} on this topic"
+    )
+
     return render_template(
         "hansard_archive/brief_theme.html",
-        page_type         = "theme",
+        page_type         = "policy" if theme_type_used == THEME_TYPE_POLICY_AREA else "theme",
         heading           = theme_name,
-        subtitle          = f"{total} session{'s' if total != 1 else ''} on this topic",
+        subtitle          = subtitle,
         breadcrumb        = [("Hansard Archive", "/archive"), (theme_name, None)],
         items             = items,
         page              = page,
