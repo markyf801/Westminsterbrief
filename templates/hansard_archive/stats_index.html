@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}{{ heading }} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "{{ json_ld_type }}",
+  "name": {{ heading|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <span>Statistics</span>
+    </nav>
+
+    <div class="ac-header">
+        <h1 class="ac-title">Cross-government statistics</h1>
+        <p class="ac-desc">Official UK government statistics by policy theme, updated weekly from authoritative sources.</p>
+    </div>
+
+    <div class="stats-index-table-wrap">
+        <table class="stats-index-table">
+            <thead>
+                <tr>
+                    <th>Theme</th>
+                    <th>Latest figure</th>
+                    <th>Source</th>
+                    <th>Period</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in rows %}
+            <tr>
+                <td class="sit-theme">
+                    <a href="/stats/{{ row.slug }}">{{ row.name }}</a>
+                </td>
+                {% if row.stat and row.stat.latest_value %}
+                <td class="sit-figure">
+                    <strong>{{ row.stat.display_label }}:
+                    {{ row.stat.latest_value }}{% if row.stat.unit %} {{ row.stat.unit }}{% endif %}</strong>
+                </td>
+                <td class="sit-source">
+                    <a href="{{ row.stat.source_url }}" target="_blank" rel="noopener">
+                        {{- row.stat.source_id.replace('_', ' ').replace('-', ' ').title() -}}
+                    </a>
+                </td>
+                <td class="sit-period">{{ row.stat.period_label or '—' }}</td>
+                {% else %}
+                <td class="sit-figure sit-no-stat" colspan="3">No headline figure currently tracked</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <p class="ah-source-note" style="margin-top:24px;">
+        Figures sourced from <a href="https://www.ons.gov.uk" target="_blank" rel="noopener">ONS</a>,
+        NHS England, and government departments.
+        See <a href="/about/statistics">methodology and AI disclosure</a>.
+    </p>
+
+</div>
+</div>
+{% endblock %}

@@ -279,6 +279,55 @@ def _normalise_party(raw):
         return ''
     return _TWFY_PARTY_NORM.get(raw.strip().lower(), raw.strip())
 
+ONS_SEARCH_API = "https://api.beta.ons.gov.uk/v1/search"
+ONS_BASE_URL = "https://www.ons.gov.uk"
+
+def fetch_ons_statistics(query, limit=4):
+    """Search ONS beta API for datasets relevant to the query.
+    Returns list of dicts with title, summary, url, release_date.
+    Fails silently — returns [] on any error so the page still renders."""
+    if not query:
+        return []
+    cache_key = query.lower().strip()
+    try:
+        cached = CachedTWFYSearch.get(cache_key, '_ons', ttl_hours=6)
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
+    try:
+        resp = requests.get(
+            ONS_SEARCH_API,
+            params={'q': query, 'limit': limit * 3},
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            return []
+        items = resp.json().get('items') or []
+        cutoff_year = datetime.utcnow().year - 7
+        results = []
+        for item in items:
+            if len(results) >= limit:
+                break
+            release = (item.get('release_date') or '')[:10]
+            if release and int(release[:4]) < cutoff_year:
+                continue
+            uri = item.get('uri', '')
+            results.append({
+                'title':        item.get('title', ''),
+                'summary':      item.get('summary') or item.get('meta_description', ''),
+                'url':          f"{ONS_BASE_URL}{uri}" if uri else ONS_BASE_URL,
+                'release_date': release,
+            })
+        try:
+            CachedTWFYSearch.store(cache_key, '_ons', results)
+        except Exception:
+            pass
+        return results
+    except Exception:
+        return []
+
+
 def fetch_twfy_topic(search, source_type, date_range, num=150):
     """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure.
     Results are cached for 6h (date-filtered) or 24h (open) to reduce API usage."""
@@ -2254,6 +2303,7 @@ def debates_topic():
     opp_speaker_links = {}
     gov_speaker_links = {}
     error_message = None
+    ons_stats = []
     topic = ""
     narrow_keyword = ""
     start_date = ""
@@ -2347,6 +2397,7 @@ def debates_topic():
                 else:
                     twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
+                ons_fut = executor.submit(fetch_ons_statistics, topic)
                 # Fan-out: one future per (minister, source) so all 24 calls run in parallel
                 # Lords ministers only speak in Lords/WMS; Commons ministers only in Commons/WH/WMS
                 import logging as _mlog
@@ -2374,7 +2425,7 @@ def debates_topic():
                         else:
                             continue  # no usable ID for this path — skip
                         minister_futs[fut] = mp
-                all_futs = list(twfy_futs.keys()) + [wq_fut] + list(minister_futs.keys())
+                all_futs = list(twfy_futs.keys()) + [wq_fut, ons_fut] + list(minister_futs.keys())
                 for future in concurrent.futures.as_completed(all_futs):
                     if future is wq_fut:
                         try:
@@ -2384,6 +2435,11 @@ def debates_topic():
                                 wq_total = 0
                         except Exception:
                             wq_error = True
+                    elif future is ons_fut:
+                        try:
+                            ons_stats = future.result()
+                        except Exception:
+                            ons_stats = []
                     elif future in twfy_futs:
                         src = twfy_futs[future]
                         try:
@@ -2802,7 +2858,8 @@ def debates_topic():
                            selected_dept="All Departments", selected_house="all",
                            content_type="exclude_bills", is_post=True,
                            stakeholder_topic='',
-                           result_counts=result_counts, result_sources=result_sources)
+                           result_counts=result_counts, result_sources=result_sources,
+                           ons_stats=ons_stats)
 
 
 # ==========================================

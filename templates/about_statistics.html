@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}How we use statistics — Westminster Brief{% endblock %}
+{% block meta_description %}How Westminster Brief sources, extracts, and presents cross-government statistics. Methodology, refresh cadence, AI disclosure, and how to report an issue.{% endblock %}
+{% block og_title %}How we use statistics — Westminster Brief{% endblock %}
+{% block og_description %}Methodology for cross-government statistics on Westminster Brief: sources, automated extraction, plain-English summaries, refresh cadence, and AI disclosure.{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/about/statistics">{% endblock %}
+
+{% block content %}
+<div style="max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; font-family: Georgia, serif; font-size: 16px; line-height: 1.7; color: #1a2a3a;">
+
+<nav style="font-size: 12px; font-family: sans-serif; margin-bottom: 28px; color: #888;">
+    <a href="/" style="color: #4a7fa5;">Westminster Brief</a>
+    <span style="margin: 0 6px;">›</span>
+    <span>About — Statistics</span>
+</nav>
+
+<h1 style="font-size: 24px; font-weight: 700; margin: 0 0 6px; font-family: sans-serif; color: #1a2a3a;">
+    How we source and present statistics
+</h1>
+<p style="font-size: 13px; color: #888; font-family: sans-serif; margin: 0 0 32px;">
+    Last updated May 2026
+</p>
+
+{# ── 1. Sources ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 32px 0 12px; font-family: sans-serif;">1. Sources</h2>
+<p>
+    Each policy theme on Westminster Brief carries one headline statistic drawn from an authoritative
+    government source. The table below shows the source for each theme.
+</p>
+
+<table style="width: 100%; border-collapse: collapse; font-size: 13px; font-family: sans-serif; margin-bottom: 8px;">
+    <thead>
+        <tr style="background: #f0f2f5; text-align: left;">
+            <th style="padding: 7px 12px; font-weight: 600;">Theme</th>
+            <th style="padding: 7px 12px; font-weight: 600;">Source</th>
+            <th style="padding: 7px 12px; font-weight: 600;">Publisher</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Economy</td><td style="padding: 6px 12px;">GDP growth (CDID: IHYQ)</td><td style="padding: 6px 12px;">ONS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Employment and labour market</td><td style="padding: 6px 12px;">Unemployment rate (CDID: MGSX)</td><td style="padding: 6px 12px;">ONS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Finance and taxation</td><td style="padding: 6px 12px;">Inflation — CPIH (CDID: L55O)</td><td style="padding: 6px 12px;">ONS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Government and public administration</td><td style="padding: 6px 12px;">Public sector net borrowing (CDID: DZLS)</td><td style="padding: 6px 12px;">ONS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Business and industry</td><td style="padding: 6px 12px;">Manufacturing output index (CDID: K22A)</td><td style="padding: 6px 12px;">ONS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Education</td><td style="padding: 6px 12px;">GCSE grade 4+ pass rate</td><td style="padding: 6px 12px;">DfE / ESFA</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Health and social care</td><td style="padding: 6px 12px;">A&amp;E four-hour standard performance</td><td style="padding: 6px 12px;">NHS England</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Housing and planning</td><td style="padding: 6px 12px;">New dwellings completed</td><td style="padding: 6px 12px;">MHCLG</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Transport</td><td style="padding: 6px 12px;">Road casualties — killed or seriously injured</td><td style="padding: 6px 12px;">DfT</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Crime, justice and law</td><td style="padding: 6px 12px;">Crime Survey for England and Wales</td><td style="padding: 6px 12px;">ONS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Welfare and social security</td><td style="padding: 6px 12px;">DWP benefit caseload tables</td><td style="padding: 6px 12px;">DWP</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Immigration and asylum</td><td style="padding: 6px 12px;">Long-term net migration</td><td style="padding: 6px 12px;">ONS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Environment and climate change</td><td style="padding: 6px 12px;">Renewables share of electricity generation</td><td style="padding: 6px 12px;">DESNZ</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Defence and national security</td><td style="padding: 6px 12px;">Defence spending as share of GDP</td><td style="padding: 6px 12px;">MoD</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">International affairs</td><td style="padding: 6px 12px;">UK official development assistance (ODA)</td><td style="padding: 6px 12px;">FCDO</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Science, technology and innovation</td><td style="padding: 6px 12px;">R&amp;D expenditure as share of GDP</td><td style="padding: 6px 12px;">DSIT</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Energy and utilities</td><td style="padding: 6px 12px;">Average household energy bill (Ofgem cap)</td><td style="padding: 6px 12px;">Ofgem</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Work and pensions</td><td style="padding: 6px 12px;">Pension Credit take-up rate</td><td style="padding: 6px 12px;">DWP</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Agriculture and rural affairs</td><td style="padding: 6px 12px;">Average Farm Business Income</td><td style="padding: 6px 12px;">Defra</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Culture, media and sport</td><td style="padding: 6px 12px;">Adults engaging in arts activities</td><td style="padding: 6px 12px;">DCMS</td></tr>
+        <tr style="border-bottom: 1px solid #eef;"><td style="padding: 6px 12px;">Constitutional affairs</td><td style="padding: 6px 12px;">General election turnout</td><td style="padding: 6px 12px;">Electoral Commission</td></tr>
+    </tbody>
+</table>
+<p style="font-size: 12px; font-family: sans-serif; color: #888; margin-bottom: 0;">
+    Two themes (foreign affairs, parliamentary affairs) have no single plausible national headline statistic
+    and are not currently covered. These will be reviewed for future releases.
+</p>
+
+{# ── 2. How figures are extracted ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 36px 0 12px; font-family: sans-serif;">2. How figures are extracted</h2>
+<p>
+    Westminster Brief runs a weekly automated refresh job every Monday morning. For each statistical
+    series, the job fetches the source directly — either from the ONS API (for Office for National
+    Statistics timeseries data) or by loading the bulletin landing page published by the relevant
+    government department.
+</p>
+<p>
+    For ONS timeseries data, the latest observation is read directly from the ONS Beta API using
+    the series' unique identifier (CDID). No interpretation is involved — the figure is taken as
+    published.
+</p>
+<p>
+    For departmental bulletins, an AI system (Google Gemini Flash-Lite) reads the page and extracts
+    the headline figure, unit, and time period. The verbatim sentence containing the figure is also
+    captured. Before any new bulletin source goes live, a human spot-check is required. The extracted
+    figure is displayed alongside the verbatim source sentence so you can verify it in seconds.
+</p>
+
+{# ── 3. How plain-English summaries are generated ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 36px 0 12px; font-family: sans-serif;">3. How plain-English summaries are generated</h2>
+<p>
+    Each stat card shows two pieces of text alongside the headline figure:
+</p>
+<ul style="margin: 8px 0 12px 20px; padding: 0;">
+    <li style="margin-bottom: 6px;"><strong>Source wording</strong> — a verbatim sentence from the official publication that contains the figure.</li>
+    <li style="margin-bottom: 6px;"><strong>Plain English</strong> — an AI-generated one or two sentence rewrite of the source wording in plain language.</li>
+</ul>
+<p>
+    The plain-English summary is generated by Google Gemini Flash and is strictly bounded: the AI
+    may simplify language but may not add information, comparisons, or implications not present in
+    the source sentence. The rewrite is only regenerated when the underlying source wording changes —
+    not on every weekly refresh.
+</p>
+<p>
+    The verbatim source wording is displayed alongside every plain-English summary so you can check
+    the rewrite against the original in the same view. Both are sourced from the official bulletin
+    linked on every card.
+</p>
+
+{# ── 4. Refresh cadence ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 36px 0 12px; font-family: sans-serif;">4. Refresh cadence</h2>
+<p>
+    The refresh job runs automatically every Monday at 06:00 UTC. Each source is fetched in turn.
+    If a fetch fails, the last known figure remains on the page with a "(figure may be outdated)"
+    annotation if the data has not been updated for more than 14 days.
+</p>
+<p>
+    Different sources publish at different cadences: ONS timeseries series are typically monthly or
+    quarterly; departmental bulletins vary from monthly to annual. Westminster Brief displays whatever
+    figure was most recently published — it does not attempt to predict or estimate missing periods.
+</p>
+
+{# ── 5. Reporting errors ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 36px 0 12px; font-family: sans-serif;">5. Reporting errors</h2>
+<p>
+    Each stat card has a "Report an issue" link. Use it if you believe a figure is wrong, out of date,
+    or the plain-English summary misrepresents the source. Reports go to Westminster Brief for review.
+    Include the correct figure and a link to the source if possible.
+</p>
+<p>
+    For urgent corrections, email
+    <a href="mailto:hello@westminsterbrief.co.uk" style="color: #4a7fa5;">hello@westminsterbrief.co.uk</a>.
+</p>
+
+{# ── 6. What Westminster Brief is not ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 36px 0 12px; font-family: sans-serif;">6. What Westminster Brief is not</h2>
+<p>Westminster Brief is <strong>not</strong>:</p>
+<ul style="margin: 8px 0 12px 20px; padding: 0;">
+    <li style="margin-bottom: 8px;">An official statistical source. All figures originate from the department or body listed as publisher.</li>
+    <li style="margin-bottom: 8px;">A substitute for the publishing department's bulletin. The bulletin is the authoritative version — Westminster Brief surfaces it, not replaces it.</li>
+    <li style="margin-bottom: 8px;">Authoritative for academic citation, parliamentary submissions, Freedom of Information responses, or media publication without direct verification against the source bulletin.</li>
+    <li style="margin-bottom: 8px;">Guaranteed to be current. While the weekly refresh job captures most updates within days of publication, some bulletins publish irregularly or on schedules that fall between refresh windows.</li>
+</ul>
+<p>
+    When accuracy matters, always verify directly against the source publication linked on every card.
+</p>
+
+{# ── 7. AI disclosure ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 36px 0 12px; font-family: sans-serif;">7. AI disclosure</h2>
+<p>
+    Westminster Brief uses AI in two places in the statistics pipeline:
+</p>
+<ol style="margin: 8px 0 12px 20px; padding: 0;">
+    <li style="margin-bottom: 8px;"><strong>Extraction</strong> (Google Gemini Flash-Lite) — reads departmental bulletin pages and locates the headline figure. Applied to non-ONS sources only. ONS figures are read directly from the API without AI involvement.</li>
+    <li style="margin-bottom: 8px;"><strong>Plain-English rewrite</strong> (Google Gemini Flash) — rewrites the verbatim source sentence in simpler language. Bounded to what the source sentence contains. Does not add interpretation.</li>
+</ol>
+<p>
+    Both uses are disclosed on every stat card with the label "Plain English summary generated by AI."
+    The verbatim source sentence is displayed alongside every AI-generated rewrite so the output can
+    be checked against the original.
+</p>
+<p>
+    Verify against source before use in published material.
+</p>
+
+{# ── 8. Upcoming releases ── #}
+<h2 style="font-size: 18px; font-weight: 700; margin: 36px 0 12px; font-family: sans-serif;">8. Upcoming releases</h2>
+<p>
+    Each topic brief page shows upcoming official statistics from the GOV.UK release calendar,
+    where they exist for that topic's policy area. These entries are drawn directly from
+    government departments' published release schedules.
+</p>
+<p>
+    Dates may be provisional and can change without notice. Confirmed dates are shown without
+    a label. Provisional dates are explicitly tagged "Provisional date" so the distinction is
+    always visible. Cancelled releases are excluded automatically.
+</p>
+<p>
+    The release calendar is refreshed daily from GOV.UK. Source:
+    <a href="https://www.gov.uk/search/statistics-announcements" style="color: #4a7fa5;">GOV.UK statistics release calendar</a>.
+</p>
+
+<hr style="border: none; border-top: 1px solid #eef; margin: 40px 0 24px;">
+<p style="font-size: 13px; font-family: sans-serif; color: #888;">
+    Questions about this methodology?
+    <a href="mailto:hello@westminsterbrief.co.uk" style="color: #4a7fa5;">Get in touch</a>.
+</p>
+
+</div>
+{% endblock %}

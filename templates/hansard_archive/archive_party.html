@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+
+{% block title %}{{ party_name }} — Hansard Archive — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/archive/party/{{ party_slug }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": {{ party_name|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk/archive/party/{{ party_slug }}"
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+body { background: #f0f2f5; }
+
+/* ── Policy positions section ─────────────────────────────── */
+.pp-section { margin-bottom: 18px; }
+.pp-section-title {
+    font-size: 15px; font-weight: 700; color: #1a2a3a;
+    margin: 0 0 4px; padding-bottom: 6px;
+    border-bottom: 2px solid #e0e4eb;
+}
+.pp-section-sub {
+    font-size: 11px; color: #888; margin: 0 0 14px;
+}
+
+.pp-area {
+    background: #fff;
+    border: 1px solid #dde3ed;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+.pp-area-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+}
+.pp-area-header:hover { background: #f8f9fb; }
+.pp-area-name {
+    font-size: 13px; font-weight: 700; color: #1a2a3a;
+    flex: 1;
+}
+.pp-area-count {
+    font-size: 10px; color: #888; background: #f0f2f5;
+    padding: 1px 7px; border-radius: 3px; white-space: nowrap;
+}
+.pp-area-chevron {
+    font-size: 10px; color: #aaa; transition: transform 0.15s;
+}
+.pp-area.open .pp-area-chevron { transform: rotate(90deg); }
+
+.pp-area-body {
+    display: none;
+    padding: 0 14px 14px;
+    border-top: 1px solid #f0f2f5;
+}
+.pp-area.open .pp-area-body { display: block; }
+
+.pp-excerpt {
+    font-size: 13px; line-height: 1.65; color: #1a2a3a;
+    margin: 12px 0 6px;
+    padding-left: 10px;
+    border-left: 3px solid #e0e4eb;
+    font-style: italic;
+}
+.pp-source {
+    font-size: 10px; color: #999; margin-bottom: 12px;
+    padding-left: 13px;
+}
+.pp-source a { color: #4a7fa5; }
+
+.pp-activity-label {
+    font-size: 10px; font-weight: 700; color: #555;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-bottom: 5px;
+}
+.pp-sessions { list-style: none; margin: 0 0 10px; padding: 0; }
+.pp-sessions li {
+    font-size: 12px; padding: 3px 0;
+    display: flex; gap: 8px; align-items: baseline;
+    border-bottom: 1px dotted #eef;
+}
+.pp-sessions li:last-child { border-bottom: none; }
+.pp-session-date { color: #999; white-space: nowrap; flex-shrink: 0; font-size: 11px; }
+.pp-session-link { color: #2a5a88; }
+.pp-session-link:hover { text-decoration: underline; }
+.pp-session-dtype {
+    font-size: 10px; color: #888; background: #f0f2f5;
+    padding: 0px 5px; border-radius: 2px; white-space: nowrap;
+}
+
+.pp-wms { margin-top: 8px; }
+.pp-wms-label {
+    font-size: 10px; font-weight: 700; color: #555;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-bottom: 4px;
+}
+.pp-wms-list { list-style: none; margin: 0; padding: 0; }
+.pp-wms-list li { font-size: 12px; padding: 2px 0; display: flex; gap: 8px; }
+
+.pp-no-sessions { font-size: 11px; color: #bbb; }
+
+/* Show/hide toggle */
+.pp-show-toggle {
+    text-align: center; padding: 8px 0;
+    font-size: 12px; color: #4a7fa5; cursor: pointer;
+}
+.pp-show-toggle:hover { text-decoration: underline; }
+.pp-hidden-area { display: none; }
+.pp-hidden-area.pp-revealed { display: block; }
+
+/* ── Existing party section styles (unchanged) ────────────── */
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    {# --- Breadcrumb --- #}
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/archive">Hansard Archive</a>
+        <span class="ac-breadcrumb-sep">›</span>
+        <span>{{ party_name }}</span>
+    </nav>
+
+    {# --- Party header --- #}
+    <div class="ac-header party-header">
+        <h1 class="ac-title party-title" style="border-left: 4px solid {{ party_colour }}; padding-left: 12px;">
+            {{ party_name }}
+        </h1>
+        <p class="ac-desc">{{ party_desc }}</p>
+        <div class="party-header-meta">
+            {% if commons_count or lords_count %}
+            <span class="party-stat">
+                {% if commons_count %}<strong>{{ commons_count }}</strong> MP{{ 's' if commons_count != 1 else '' }}{% endif %}
+                {% if commons_count and lords_count %} &nbsp;·&nbsp; {% endif %}
+                {% if lords_count %}<strong>{{ lords_count }}</strong> Lord{{ 's' if lords_count != 1 else '' }}{% endif %}
+            </span>
+            {% endif %}
+            <a class="party-website-link" href="{{ party_website }}" target="_blank" rel="noopener">Official website ↗</a>
+        </div>
+    </div>
+
+    {# --- Sinn Féin empty-state note --- #}
+    {% if sinn_fein_note %}
+    <div class="party-sinn-fein-note">
+        Sinn Féin MPs do not take their seats in the House of Commons. The archive shows no parliamentary contributions for this reason.
+    </div>
+    <div class="party-section">
+        <h2 class="party-section-title">Policy positions</h2>
+        <p style="font-size:13px; color:#666;">
+            Sinn Féin abstains from Westminster and does not publish a Westminster manifesto.
+            No policy positions are recorded in this section.
+        </p>
+    </div>
+    {% endif %}
+
+    {% if not sinn_fein_note %}
+
+    {# ═══════════════════════════════════════════════════════ #}
+    {# --- POLICY POSITIONS (Tier 3 — headline section) --- #}
+    {# ═══════════════════════════════════════════════════════ #}
+    {% for year_group in policy_year_groups %}
+    <div class="party-section pp-section">
+        <h2 class="pp-section-title">Manifesto commitments — {{ year_group.heading }}</h2>
+        <p class="pp-section-sub">
+            Verbatim excerpts organised by GOV.UK policy area,
+            linked to recent parliamentary activity in the archive.
+        </p>
+
+        {% set ns = namespace(shown=0) %}
+        {% for pos in year_group.positions %}
+        {% set is_extra = ns.shown >= 6 %}
+        <div class="pp-area{% if is_extra %} pp-hidden-area{% endif %}" id="pa-{{ year_group.year }}-{{ pos.slug }}">
+            <div class="pp-area-header" onclick="togglePpArea(this)">
+                <span class="pp-area-name">{{ pos.policy_area }}</span>
+                <span class="pp-area-count">{{ pos.chunk_count }} excerpt{{ 's' if pos.chunk_count != 1 else '' }}</span>
+                <span class="pp-area-chevron">▶</span>
+            </div>
+            <div class="pp-area-body">
+                {% for chunk in pos.chunks %}
+                <p class="pp-excerpt">"{{ chunk.text }}"</p>
+                <p class="pp-source">
+                    {% set deep_link = (chunk.pdf_url ~ '#page=' ~ chunk.source_page) if (chunk.pdf_url and chunk.source_page) else chunk.source_url %}
+                    {% set link_label = chunk.year_label %}
+                    {% if chunk.source_section %}{% set link_label = link_label ~ ' — ' ~ chunk.source_section[:80] %}{% endif %}
+                    {% if chunk.source_page %}{% set link_label = link_label ~ ' (p.' ~ chunk.source_page ~ ')' %}{% endif %}
+                    {% if deep_link %}
+                    <a href="{{ deep_link }}" target="_blank" rel="noopener">{{ link_label }} ↗</a>
+                    {% else %}
+                    {{ link_label }}
+                    {% endif %}
+                </p>
+                {% endfor %}
+
+                {% if pos.sessions %}
+                <div class="pp-activity-label">Recent parliamentary activity</div>
+                <ul class="pp-sessions">
+                    {% for s in pos.sessions %}
+                    <li>
+                        <span class="pp-session-date">{{ s.human_date }}</span>
+                        <a class="pp-session-link" href="/archive/debate/{{ s.url_date }}/{{ s.slug }}">{{ s.title }}</a>
+                        <span class="pp-session-dtype">{{ s.debate_type_label }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="pp-no-sessions">No archived sessions found for this area yet.</p>
+                {% endif %}
+
+                {% if pos.wms %}
+                <div class="pp-wms">
+                    <div class="pp-wms-label">Ministerial statements</div>
+                    <ul class="pp-wms-list">
+                        {% for w in pos.wms %}
+                        <li>
+                            <span class="pp-session-date">{{ w.human_date }}</span>
+                            <a class="pp-session-link" href="/archive/debate/{{ w.url_date }}/{{ w.slug }}">{{ w.title }}</a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% set ns.shown = ns.shown + 1 %}
+        {% endfor %}
+
+        {% if year_group.positions|length > 6 %}
+        <div class="pp-show-toggle" id="pp-toggle-{{ year_group.year }}" onclick="revealAllAreas('{{ year_group.year }}')">
+            Show all {{ year_group.positions|length }} policy areas ↓
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    {# --- Activity summary --- #}
+    {% if total_contributions %}
+    <div class="party-section">
+        <h2 class="party-section-title">Activity in this archive</h2>
+        <div class="party-stats-row">
+            <div class="party-stat-block">
+                <span class="party-stat-number">{{ "{:,}".format(total_contributions) }}</span>
+                <span class="party-stat-label">contributions</span>
+            </div>
+            {% if commons_count or lords_count %}
+            <div class="party-stat-block">
+                <span class="party-stat-number">{{ commons_count + lords_count }}</span>
+                <span class="party-stat-label">current members</span>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if dtype_breakdown %}
+        <div class="party-dtype-breakdown">
+            {% for item in dtype_breakdown %}
+            {% if item.count %}
+            <div class="party-dtype-row">
+                <span class="party-dtype-label">{{ item.label }}</span>
+                <span class="party-dtype-count">{{ "{:,}".format(item.count) }}</span>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# --- Monthly activity chart --- #}
+    {% if monthly_data %}
+    <div class="party-section">
+        <h2 class="party-section-title">Monthly activity (last 12 months)</h2>
+        <div class="party-timeline">
+            {% for item in monthly_data %}
+            <div class="party-timeline-col" title="{{ item.label }}: {{ item.count }} contribution{{ 's' if item.count != 1 else '' }}">
+                <div class="party-timeline-bar" style="height: {{ item.pct }}%; background: {{ party_colour }};"></div>
+                <span class="party-timeline-month">{{ item.month_abbr }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Top policy areas --- #}
+    {% if top_policy_areas %}
+    <div class="party-section">
+        <h2 class="party-section-title">Top policy areas by activity</h2>
+        <p class="party-section-note">Sessions in the archive where {{ party_name }} members contributed, by GOV.UK policy area.</p>
+        <div class="party-policy-list">
+            {% for item in top_policy_areas %}
+            <a class="party-policy-item" href="/archive/policy/{{ item.slug }}">
+                <span class="party-policy-name">{{ item.theme }}</span>
+                <span class="party-policy-count">{{ item.count }} session{{ 's' if item.count != 1 else '' }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Most active voices --- #}
+    {% if top_voices %}
+    <div class="party-section">
+        <h2 class="party-section-title">Most active voices</h2>
+        <p class="party-section-note">By number of contributions in the archive. Includes all parliamentary roles.</p>
+        <div class="party-voices-list">
+            {% for voice in top_voices %}
+            <a class="party-voice-item" href="/archive/mp/{{ voice.member_id }}">
+                <span class="party-voice-name">{{ voice.name }}</span>
+                <span class="party-voice-count">{{ "{:,}".format(voice.count) }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Recent activity --- #}
+    {% if recent_activity %}
+    <div class="party-section">
+        <h2 class="party-section-title">Recent contributions</h2>
+        <div class="ah-results-list">
+            {% for item in recent_activity %}
+            <div class="ah-card party-contrib-card">
+                <div class="ah-card-meta">
+                    <span class="party-contrib-speaker">{{ item.name }}</span>
+                    <span class="ah-card-date">{{ item.human_date }}</span>
+                    <span class="archive-dtype-badge archive-dtype-{{ item.debate_type_label|lower|replace(' ', '_') }}">{{ item.debate_type_label }}</span>
+                </div>
+                <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ item.session_slug }}">{{ item.session_title }}</a>
+                {% if item.speech_preview %}
+                <div class="party-contrib-excerpt">{{ item.speech_preview }}{% if item.speech_truncated %}…{% endif %}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% endif %}{# /not sinn_fein_note #}
+
+    {# --- Recent written questions --- #}
+    {% if recent_pqs %}
+    <div class="party-section">
+        <h2 class="party-section-title">Recent written questions</h2>
+        <div class="ah-results-list">
+            {% for pq in recent_pqs %}
+            <div class="ah-card">
+                <div class="ah-card-meta">
+                    <span class="party-contrib-speaker">{{ pq.asking_member }}</span>
+                    <span class="ah-card-date">{{ pq.human_date }}</span>
+                    {% if pq.answering_body %}<span class="archive-dept-badge">{{ pq.answering_body }}</span>{% endif %}
+                    {% if pq.is_answered %}<span class="ah-card-contribs">Answered</span>{% endif %}
+                </div>
+                <a class="ah-card-title" href="/archive/pq/{{ pq.uin }}">{{ pq.heading }}</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Empty state (no contributions, no PQs, not Sinn Féin) --- #}
+    {% if not sinn_fein_note and not total_contributions and not recent_pqs and not policy_year_groups %}
+    <div class="empty-state ac-empty">
+        <p>No parliamentary activity found for {{ party_name }} in the archive.</p>
+    </div>
+    {% endif %}
+
+    {# --- Source note --- #}
+    <p class="ah-source-note">
+        {% if policy_year_groups %}
+        Manifesto commitments reflect each party's 2024 general election manifesto. Manifestos are published at general elections and do not update during a Parliament.
+        &nbsp;·&nbsp;
+        {% endif %}
+        Parliamentary activity from
+        <a href="https://hansard.parliament.uk" target="_blank" rel="noopener">Hansard</a>
+        and the
+        <a href="https://questions-statements.parliament.uk" target="_blank" rel="noopener">Parliament Written Questions API</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Member data from the
+        <a href="https://members-api.parliament.uk" target="_blank" rel="noopener">Parliament Members API</a>.
+    </p>
+
+</div>{# /.ac-inner #}
+</div>{# /.ac-page #}
+
+<script>
+function togglePpArea(header) {
+    var card = header.parentElement;
+    card.classList.toggle('open');
+}
+
+function revealAllAreas(year) {
+    var section = document.getElementById('pp-toggle-' + year).closest('.pp-section');
+    section.querySelectorAll('.pp-hidden-area').forEach(function(el) {
+        el.classList.add('pp-revealed');
+    });
+    document.getElementById('pp-toggle-' + year).style.display = 'none';
+}
+
+// Auto-open if URL has #pa-* anchor
+(function() {
+    var hash = window.location.hash;
+    if (hash && hash.startsWith('#pa-')) {
+        var el = document.querySelector(hash);
+        if (el) {
+            el.classList.add('open');
+            // If it's a hidden area, reveal it
+            el.classList.remove('pp-hidden-area');
+            el.classList.add('pp-revealed');
+            setTimeout(function() { el.scrollIntoView({behavior:'smooth', block:'start'}); }, 100);
+        }
+    }
+})();
+</script>
+{% endblock %}

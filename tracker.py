@@ -226,9 +226,8 @@ def _fetch_unanswered_wqs(dept_id: str, target_date: str) -> list:
     return results
 
 
-@tracker_bp.route('/tracker', methods=['GET', 'POST'])
-@limiter.limit("10 per minute; 100 per day", methods=["POST"])
-def morning_tracker():
+def _tracker_view():
+    """Core tracker logic — called by both the /tracker and /written-questions/today routes."""
     sorted_grouped_results = {}
     error_message = None
     selected_dept = ""
@@ -333,6 +332,13 @@ def morning_tracker():
         sitting_day_used=sitting_day_used,
         api_failed=api_failed,
     )
+
+
+@tracker_bp.route('/tracker', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 100 per day", methods=["POST"])
+def morning_tracker():
+    return _tracker_view()
+
 
 @tracker_bp.route('/download_tracker_word', methods=['POST'])
 def download_tracker_word():

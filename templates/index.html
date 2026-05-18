@@ -6,6 +6,12 @@
 
 {% block content %}
 
+{# ── Tab bar ── #}
+<div class="wq-tab-bar">
+    <a href="/written-questions" class="wq-tab {% if request.path == '/written-questions' or request.path == '/questions' %}wq-tab-active{% endif %}">Written Questions</a>
+    <a href="/written-questions/today" class="wq-tab {% if request.path == '/written-questions/today' or request.path == '/tracker' %}wq-tab-active{% endif %}">Today's PQs</a>
+</div>
+
 {# ── Card macro — used in both flat and grouped views ── #}
 {% macro wq_card(r, show_heading=true) %}
 <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
@@ -38,7 +44,8 @@
         {% elif r.answered %}
         <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
         {% endif %}
-        <a href="{{ r.url }}" target="_blank" class="result-card-link">View on Parliament.uk &rarr;</a>
+        <a href="/archive/pq/{{ r.uin }}" target="_blank" class="result-card-link">View question &rarr;</a>
+        <a href="{{ r.url }}" target="_blank" class="result-card-source-link">Source on Parliament.uk &rarr;</a>
     </div>
 </div>
 {% endmacro %}
@@ -52,7 +59,7 @@
         For older questions visit <a href="https://questions-statements.parliament.uk/written-questions" target="_blank" style="color:#1a4a6e;">parliament.uk/written-questions</a>.{% endif %}
     </p>
 
-    <form method="POST" action="/questions">
+    <form method="POST" action="/written-questions">
         <div class="form-group">
             <label class="form-label">Search Topic:</label>
             <input type="text" name="subject" placeholder="e.g. access and participation in higher education"

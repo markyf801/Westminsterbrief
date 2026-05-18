@@ -29,6 +29,16 @@ Add a parallel data layer to the directory covering government consultations. Th
 
 ---
 
+### ONS Data Ingestion — Headline Figures in Research Tool
+
+Ingest ONS time series values into the DB so the Research Tool's ONS panel can show actual headline figures ("Student loan debt: £236bn, released March 2026") rather than just links to ONS pages. The ONS beta API returns `timeseries` items with a `cdid` code — each code maps to a specific indicator that can be fetched at `https://api.beta.ons.gov.uk/v1/datasets/timeseries/{cdid}/data`. One-time schema addition (`ons_stat` table: cdid, title, value, unit, release_date) plus a lightweight refresh cron (monthly). Would make the panel meaningfully richer for policy research use.
+
+**Revisit trigger:** Post-Teams-share with active beta users; any session touching the Research Tool or ONS panel; "make the ONS panel show actual numbers" conversation.
+
+*Captured 17 May 2026.*
+
+---
+
 ### Key Speakers on a Topic — Three Product Surfaces
 
 Who's actually leading the parliamentary conversation on a given issue, not just who's spoken once. Three distinct surfaces with different build costs:
@@ -268,6 +278,30 @@ If accuracy is genuinely useful: publish predictions with calibrated confidence 
 **Revisit trigger:** Pieces 1+2 complete and stable; any "what's next after directory enrichment" session; Substack content planning conversation.
 
 *Captured 16 May 2026 — substantive analytical capability, methodology refined.*
+
+---
+
+### Party-Level Views and Manifesto Integration
+
+Four-tier build from basic party pages through to position-drift analysis. Uses existing data (theme tagging, member-party relationships) and directly addresses the gap where Westminster Brief shows individual MP activity but not party-level positioning.
+
+**Tier 1 — Basic party pages (~1 week, Phase 2A.5)**
+`/archive/party/<slug>` for each major party: current MPs, aggregate stats, top themes, recent contributions, link to party manifesto (don't host).
+
+**Tier 2 — Topic-by-party intersection (~1 week, Phase 2A.5)**
+`/archive/policy/<area>` enhanced with party breakdown — who's speaking, how often, on each policy area. Cross-party comparison view.
+
+**Tier 3 — Manifesto integration (~2 weeks, Phase 2A.5 or 2B)**
+Manifesto text structured by policy area, sourced from each major party. Displayed alongside parliamentary activity as excerpt + link. Clear separation between manifesto position and current parliamentary position.
+
+**Tier 4 — Position drift analysis (~3–4 weeks, Phase 2B)**
+Analytical layer comparing manifesto commitments to current parliamentary activity: where has stated position shifted, where is the party delivering, where are they silent. Foundation for lexical drift / position-evolution analysis. Justifies £49 briefing pack pricing alongside speaker analysis.
+
+**Propriety:** evenhanded analytical lens across all parties. Show evidence, not interpretation. Describe drift, let users conclude.
+
+**Revisit trigger:** Post-Teams-share, when scoping the first or second Phase 2A.5 build. Strong candidate alongside organisation enrichment. Natural companion to speaker analysis — same users want both.
+
+*Captured 17 May 2026 — substantive product direction, post-Teams-share candidate.*
 
 ---
 

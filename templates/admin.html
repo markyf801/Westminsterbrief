@@ -127,7 +127,38 @@
 
   </div>{# end 3-col cache grid #}
 
-  <!-- Row 2: ingestion cards -->
+  <!-- Row 2: upcoming releases -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; align-items:start;">
+
+  <!-- ── Upcoming Releases ──────────────────────────────────────────── -->
+  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
+    <h3 style="font-size:1rem; margin:0 0 6px;">Upcoming Official Statistics</h3>
+    <p style="font-size:0.8rem; color:#888; margin:0 0 14px;">GOV.UK release calendar, cached in <code>upcoming_release</code>. Runs daily at 05:00 UTC via cron.</p>
+    {% if upcoming_stats.get('error') %}
+    <p style="color:#c62828; font-size:0.85rem; font-family:monospace;">{{ upcoming_stats.error }}</p>
+    {% else %}
+    <table style="width:100%; font-size:0.85rem; border-collapse:collapse; margin-bottom:14px;">
+      <tr><td style="padding:4px 0; color:#555;">Total rows</td><td style="font-weight:600;">{{ upcoming_stats.total }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Future releases</td><td style="font-weight:600; color:#2e7d32;">{{ upcoming_stats.future }}</td></tr>
+    </table>
+    {% endif %}
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <form method="post" action="/admin">
+        <input type="hidden" name="action" value="refresh_upcoming">
+        <button type="submit"
+                style="background:#1a4a6e; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
+          Refresh all orgs
+        </button>
+      </form>
+    </div>
+    <p style="font-size:0.78rem; color:#888; margin:10px 0 0;">Runs in background — takes ~5 min. Reload this page to see updated counts.</p>
+  </div>
+
+  <div></div>{# spacer #}
+
+  </div>{# end upcoming grid #}
+
+  <!-- Row 3: ingestion cards -->
   <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; align-items:start;">
 
   <!-- ── Committee Evidence Ingestion ─────────────────────────────── -->
@@ -208,6 +239,21 @@
         </button>
       </form>
     </details>
+
+    <div style="margin-top:14px; border-top:1px solid #eee; padding-top:14px;">
+      <form method="post" action="/admin">
+        <input type="hidden" name="action" value="fetch_evidence_content">
+        <button type="submit"
+                style="background:#2e7d32; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
+          Fetch Evidence Content
+        </button>
+      </form>
+      <p style="font-size:0.78rem; color:#888; margin:6px 0 0;">
+        Fetches and caches submission text + website URLs from Parliament's evidence pages.
+        Skips already-cached URLs. Max 100 per click. Runs in background.
+        <strong>Note:</strong> confirm licensing before running — written submissions are third-party copyright.
+      </p>
+    </div>
   </div>
 
   <!-- ── Directory Ingestion ─────────────────────────────────────── -->
@@ -299,5 +345,12 @@
   </div>
 
   </div>{# end destructive grid #}
+
+  <!-- Manifesto review link -->
+  <div style="margin-top:20px; padding:14px 18px; border:1px solid #dde; border-radius:8px; background:#f7f9fc; font-size:13px;">
+      <strong>Manifesto chunks</strong> &nbsp;·&nbsp;
+      <a href="/admin/manifesto-review" style="color:#4a7fa5;">Review and approve AI-tagged manifesto excerpts →</a>
+  </div>
+
 </div>
 {% endblock %}

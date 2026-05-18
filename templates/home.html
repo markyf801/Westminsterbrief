@@ -60,45 +60,49 @@
     </div>
 </div>
 
-{# ── Tool cards ── #}
+{# ── Tool cards — six cards matching nav order ── #}
 <div class="tool-grid">
 
-    <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="5" cy="17" r="3"/><path d="m9 21-1.5-1.5"/></svg></span>
-            <h3 class="tool-card-title">Written Questions Scanner</h3>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Search the full archive of Parliamentary Written Questions across both Houses by keyword, department,
-                and date range. Instantly see who is asking questions on your policy area, what they are asking,
-                and whether they have been answered. Export a clean list to CSV or a formatted Word document
-                ready for a briefing pack.
-            </p>
-            <a href="/questions" class="tool-card-link">Open Written Questions Scanner &rarr;</a>
-        </div>
-    </div>
+    {# Row 1: Hansard | Written Questions #}
 
     <div class="tool-card">
         <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h5"/><circle cx="17" cy="17" r="4"/><path d="M17 15v2l1 1"/></svg></span>
-            <h3 class="tool-card-title">Today's PQs Tracker</h3>
+            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg></span>
+            <h3 class="tool-card-title">Hansard</h3>
             <span class="tool-card-badge">AI</span>
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Track all Written Questions due for answer today — or the most recent sitting day if Parliament
-                is in recess — grouped by policy theme using AI. Filter by department, drill into an MP's
-                question history, and download a structured Word briefing in one click.
+                Search Parliament's official report — debates, statements, urgent questions, and committee
+                proceedings. Fast search over the last 12 months by default; deeper search across the full
+                Hansard archive available when needed. AI-tagged by policy area, MP, department, and topic.
             </p>
-            <a href="/tracker" class="tool-card-link">Open Today's PQs Tracker &rarr;</a>
+            <a href="/hansard" class="tool-card-link">Open Hansard &rarr;</a>
         </div>
     </div>
 
     <div class="tool-card">
         <div class="tool-card-header">
+            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="5" cy="17" r="3"/><path d="m9 21-1.5-1.5"/></svg></span>
+            <h3 class="tool-card-title">Written Questions</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Search the full archive of Parliamentary Written Questions across both Houses by keyword,
+                department, date range, or member. Switch to "Today's PQs" for AI-grouped questions tabled
+                today (or the most recent sitting day). Export to CSV or a formatted Word briefing.
+            </p>
+            <a href="/written-questions" class="tool-card-link">Open Written Questions &rarr;</a>
+        </div>
+    </div>
+
+    {# Row 2: Research | Stats #}
+
+    <div class="tool-card">
+        <div class="tool-card-header">
             <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-            <h3 class="tool-card-title">Member Research</h3>
+            <h3 class="tool-card-title">Research</h3>
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
@@ -108,14 +112,32 @@
                 preparing ahead of a meeting, select committee session, or stakeholder engagement.
                 Export a combined Word briefing with one click.
             </p>
-            <a href="/mp_search" class="tool-card-link">Open Member Research &rarr;</a>
+            <a href="/mp_search" class="tool-card-link">Open Research &rarr;</a>
         </div>
     </div>
 
     <div class="tool-card">
         <div class="tool-card-header">
+            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></span>
+            <h3 class="tool-card-title">Stats</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Headline statistics from across UK government, with AI-generated plain-English summaries
+                and source attribution. Covers economy, employment, education, health, and other policy
+                areas. Updated weekly from ONS and departmental publications.
+            </p>
+            <a href="/stats" class="tool-card-link">Open Stats &rarr;</a>
+        </div>
+    </div>
+
+    {# Row 3: Members | Directory #}
+
+    <div class="tool-card">
+        <div class="tool-card-header">
             <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 18a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2"/><rect x="3" y="4" width="18" height="18" rx="2"/><circle cx="12" cy="10" r="2"/><line x1="8" y1="2" x2="8" y2="4"/><line x1="16" y1="2" x2="16" y2="4"/></svg></span>
-            <h3 class="tool-card-title">Member Profiles</h3>
+            <h3 class="tool-card-title">Members</h3>
             <span class="tool-card-badge">AI</span>
         </div>
         <div class="tool-card-body">
@@ -125,45 +147,14 @@
                 and Wikipedia to produce a structured briefing covering career, roles, and policy interests.
                 Exports as a formatted Word document with photo.
             </p>
-            <a href="/biography" class="tool-card-link">Open Member Profiles &rarr;</a>
+            <a href="/biography" class="tool-card-link">Open Members &rarr;</a>
         </div>
     </div>
 
     <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg></span>
-            <h3 class="tool-card-title">Hansard Archive</h3>
-            <span class="tool-card-badge">BETA</span>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                The fastest way to search the last 12 months. Local archive of debates and Written
-                Questions, AI-tagged for filtering by policy area, MP, department, and topic.
-                Built for daily research workflows.
-            </p>
-            <a href="/archive" class="tool-card-link">Open Hansard Archive &rarr;</a>
-        </div>
-    </div>
-
-    <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
-            <h3 class="tool-card-title">Live Hansard Search</h3>
-            <span class="tool-card-badge">AI</span>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Deep-dive into any topic ever discussed in Parliament. Synthesises results from live Hansard
-                into a structured briefing covering government position, key speakers, and notable quotes.
-            </p>
-            <a href="/debates" class="tool-card-link">Open Live Hansard Search &rarr;</a>
-        </div>
-    </div>
-
-    <div class="tool-card" style="grid-column: 1 / -1;">
         <div class="tool-card-header">
             <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg></span>
-            <h3 class="tool-card-title">Stakeholder Engagement</h3>
+            <h3 class="tool-card-title">Directory</h3>
             <span class="tool-card-badge">BETA</span>
         </div>
         <div class="tool-card-body">
@@ -173,7 +164,7 @@
                 mapping who is engaging on a policy area ahead of consultations, reviews, or stakeholder
                 meetings. Coverage spans all main UK government departments.
             </p>
-            <a href="/directory" class="tool-card-link">Open Stakeholder Engagement &rarr;</a>
+            <a href="/directory" class="tool-card-link">Open Directory &rarr;</a>
         </div>
     </div>
 
