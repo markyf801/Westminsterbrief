@@ -2552,7 +2552,10 @@ def debates_topic():
                     ai_payload = [
                         {'listurl': r['listurl'], 'speaker': r['speaker_name'],
                          'party': r['speaker_party'], 'date': r['hdate'],
-                         'source': r['source_label'], 'text': r['body_clean'][:250],
+                         'source': r['source_label'],
+                         'text': (r.get('body_export') or r['body_clean'])[:1500]
+                                 if r.get('is_minister')
+                                 else r['body_clean'][:250],
                          'is_minister': r.get('is_minister', False),
                          'speech_count': speaker_counts.get(r.get('speaker_name', ''), 1)}
                         for r in balanced
