@@ -278,11 +278,15 @@ def _tracker_view():
 
                 date_for_answer = (val.get('dateForAnswer') or '').split('T')[0]
 
+                member_name = get_member_name(member_id)
+                _cm = CachedMember.get(member_id) if member_id else None
                 results.append({
                     'dept': val.get('answeringBodyName'),
                     'uin': str(val.get('uin')),
-                    'member': get_member_name(member_id),
+                    'member': member_name,
                     'member_id': member_id,
+                    'party': _cm.party if _cm else '',
+                    'constituency': _cm.constituency if _cm else '',
                     'house': val.get('house', 'Commons'),
                     'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
                     'raw_date': tabled_date_str,

@@ -95,7 +95,7 @@
                                     <span style="font-size:11px; color:#888; font-family:monospace; margin-left:6px;">{{ r.uin }}</span>
                                 </div>
                                 <div class="result-card-body">
-                                    <p style="margin-bottom:8px;"><strong>{{ r.member }}</strong></p>
+                                    <p style="margin-bottom:8px;"><strong>{{ r.member }}</strong>{% if r.party or r.constituency %}<span style="font-size:12px; color:#5a6878; font-weight:400;"> ({% if r.party %}{{ r.party }}{% endif %}{% if r.constituency %}, {{ r.constituency }}{% endif %})</span>{% endif %}</p>
                                     <p class="result-card-quote">"{{ r.text }}"</p>
                                     <p style="font-size:13px; color:#555; margin-top:8px;">
                                         <strong>Tabled:</strong> {{ r.due_date }}{% if r.date_for_answer %} &nbsp;·&nbsp; <strong>Due:</strong> {{ r.date_for_answer }}{% endif %}
@@ -138,7 +138,7 @@
                             <span style="font-size:11px; color:#888; font-family:monospace;">{{ r.uin }}</span>
                         </div>
                         <div class="result-card-body">
-                            <p style="margin-bottom:8px;"><strong>{{ r.member }}</strong></p>
+                            <p style="margin-bottom:8px;"><strong>{{ r.member }}</strong>{% if r.party or r.constituency %}<span style="font-size:12px; color:#5a6878; font-weight:400;"> ({% if r.party %}{{ r.party }}{% endif %}{% if r.constituency %}, {{ r.constituency }}{% endif %})</span>{% endif %}</p>
                             <p class="result-card-quote">"{{ r.text }}"</p>
                             <p style="font-size:13px; color:#555; margin-top:8px;">
                                 <strong>Tabled:</strong> {{ r.due_date }}{% if r.date_for_answer %} &nbsp;·&nbsp; <strong>Due:</strong> {{ r.date_for_answer }}{% endif %}
