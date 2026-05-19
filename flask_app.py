@@ -480,6 +480,67 @@ with app.app_context():
         _mig_log('cached_member ministerial_role col done')
     except Exception as _e:
         app.logger.warning('cached_member ministerial_role migration failed: %s', _e)
+    # ha_mp_analytics table — precomputed speaker analytics (Phase 2A.5)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS ha_mp_analytics (
+                    member_id        INTEGER PRIMARY KEY,
+                    computed_at      TIMESTAMP NOT NULL,
+                    sessions_12m     INTEGER NOT NULL DEFAULT 0,
+                    sessions_3m      INTEGER NOT NULL DEFAULT 0,
+                    commons_rank_12m INTEGER,
+                    commons_total    INTEGER,
+                    commons_pct_12m  FLOAT,
+                    top_policy_areas JSON,
+                    recent_shifts    JSON,
+                    debate_type_dist JSON,
+                    specialism_score FLOAT,
+                    specialism_label VARCHAR(200),
+                    thin_data        BOOLEAN NOT NULL DEFAULT FALSE,
+                    tagged_pct       FLOAT
+                )
+            """))
+            _conn.commit()
+        _mig_log('ha_mp_analytics table done')
+    except Exception as _e:
+        app.logger.warning('ha_mp_analytics migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_ha_contribution_party ON ha_contribution (party)"
+            ))
+            _conn.commit()
+        _mig_log('ha_contribution party index done')
+    except Exception as _e:
+        app.logger.warning('ha_contribution party index migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE manifesto_chunk ADD COLUMN IF NOT EXISTS source_page INTEGER"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE manifesto_chunk ADD COLUMN IF NOT EXISTS pdf_url TEXT"
+            ))
+            _conn.commit()
+        _mig_log('manifesto_chunk source_page/pdf_url cols done')
+    except Exception as _e:
+        app.logger.warning('manifesto_chunk migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS tagging_attempted_at TIMESTAMP"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS tagging_completed_at TIMESTAMP"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS tagging_failure_reason TEXT"
+            ))
+            _conn.commit()
+        _mig_log('ha_bill tagging cols done')
+    except Exception as _e:
+        app.logger.warning('ha_bill tagging cols migration failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
@@ -1029,6 +1090,19 @@ def _log_response(response):
     import time as _rt
     elapsed = _rt.monotonic() - getattr(g, '_req_start', _rt.monotonic())
     print(f'[RES] {request.method} {request.path} -> {response.status_code} ({elapsed:.2f}s)', flush=True)
+    return response
+
+@app.after_request
+def _set_csp(response):
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://plausible.io https://static.cloudflareinsights.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://plausible.io https://static.cloudflareinsights.com;"
+    )
+    response.headers['Content-Security-Policy'] = csp
     return response
 
 @app.errorhandler(429)
