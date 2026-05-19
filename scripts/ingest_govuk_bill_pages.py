@@ -111,32 +111,32 @@ def _probe_url(url: str) -> bool:
 
 def _find_govuk_url(bill_title: str) -> str | None:
     """
-    Find the GOV.UK publications page for a bill.
-    Strategy:
-      1. Construct candidate URL from title slug and probe it directly.
-      2. If that fails, try the GOV.UK Content API which returns 404 for missing pages.
+    Find the GOV.UK page for a bill by probing candidate URLs directly.
+    Tries /publications/ and /collections/ paths, with and without '-bill' suffix.
     Returns full GOV.UK URL or None.
     """
-    slug = _bill_slug(bill_title)
-    candidate = f"{_GOVUK_BASE}/government/publications/{slug}"
-    if _probe_url(candidate):
-        return candidate
-
-    # Some bills have minor slug variations — try without trailing '-bill'
-    # e.g. the GOV.UK page slug might omit 'bill' for Lords bills
-    slug_no_bill = slug[:-5]  # strip '-bill'
-    candidate2 = f"{_GOVUK_BASE}/government/publications/{slug_no_bill}"
-    if _probe_url(candidate2):
-        return candidate2
-
+    slug = _bill_slug(bill_title)           # e.g. "armed-forces-bill"
+    slug_no_bill = slug[:-5]                # e.g. "armed-forces"
+    # Also try with year suffix stripped from slug_no_bill (for "X Act 2025" → "x")
+    # and the raw slug from title as-is (some bills don't end in "bill")
+    candidates = [
+        f"{_GOVUK_BASE}/government/publications/{slug}",
+        f"{_GOVUK_BASE}/government/collections/{slug}",
+        f"{_GOVUK_BASE}/government/publications/{slug_no_bill}",
+        f"{_GOVUK_BASE}/government/collections/{slug_no_bill}",
+    ]
+    for url in candidates:
+        if _probe_url(url):
+            return url
     return None
 
 
 def _fetch_govuk_documents(govuk_url: str) -> tuple[list[dict], str | None]:
     """
     Call GOV.UK Content API for the bill's page.
+    Handles both schema_name=publication (details.attachments)
+    and schema_name=collection (links.documents).
     Returns (list of doc dicts, page description or None).
-    Each doc dict: {title, url, doc_type, pub_date}.
     """
     path = govuk_url.replace(_GOVUK_BASE, "")
     try:
@@ -148,8 +148,8 @@ def _fetch_govuk_documents(govuk_url: str) -> tuple[list[dict], str | None]:
 
     data = resp.json()
     description = data.get("description") or None
+    schema = data.get("schema_name", "")
 
-    # Publication date from page-level field
     page_date_str = data.get("first_published_at", "") or ""
     page_date = None
     if page_date_str:
@@ -159,33 +159,56 @@ def _fetch_govuk_documents(govuk_url: str) -> tuple[list[dict], str | None]:
             pass
 
     docs = []
-    for att in data.get("details", {}).get("attachments", []):
-        att_type = att.get("attachment_type", "")
-        if att_type == "external":
-            continue  # skip links back to parliament.uk
-        title = att.get("title", "").strip()
-        url = att.get("url", "").strip()
-        if not title or not url:
-            continue
-        # Relative URLs (html attachments) need base prepended
-        if url.startswith("/"):
-            url = _GOVUK_BASE + url
-        doc_type = att.get("content_type", "")
-        docs.append({
-            "title":    title,
-            "url":      url,
-            "doc_type": doc_type,
-            "pub_date": page_date,
-        })
+
+    if schema in ("collection", "document_collection"):
+        # Collections list child pages in links.documents
+        for doc in data.get("links", {}).get("documents", []):
+            title = doc.get("title", "").strip()
+            base_path = doc.get("base_path", "").strip()
+            if not title or not base_path:
+                continue
+            doc_date_str = doc.get("public_updated_at", "") or ""
+            doc_date = page_date
+            if doc_date_str:
+                try:
+                    doc_date = datetime.fromisoformat(doc_date_str[:10]).date()
+                except ValueError:
+                    pass
+            docs.append({
+                "title":    title,
+                "url":      _GOVUK_BASE + base_path,
+                "doc_type": doc.get("document_type", ""),
+                "pub_date": doc_date,
+            })
+    else:
+        # Publications have attachments in details.attachments
+        for att in data.get("details", {}).get("attachments", []):
+            if att.get("attachment_type") == "external":
+                continue  # skip links back to parliament.uk
+            title = att.get("title", "").strip()
+            url = att.get("url", "").strip()
+            if not title or not url:
+                continue
+            if url.startswith("/"):
+                url = _GOVUK_BASE + url
+            docs.append({
+                "title":    title,
+                "url":      url,
+                "doc_type": att.get("content_type", ""),
+                "pub_date": page_date,
+            })
 
     return docs, description
 
 
-def process_bill(bill: HaBill, dry_run: bool) -> None:
+def process_bill(bill: HaBill, dry_run: bool, override_url: str | None = None) -> None:
     print(f"[{bill.parliament_bill_id}] {bill.title}")
 
     # 1. Find GOV.UK URL
-    if bill.govuk_url:
+    if override_url:
+        govuk_url = override_url.strip()
+        print(f"  -> using manual URL: {govuk_url}")
+    elif bill.govuk_url:
         govuk_url = bill.govuk_url
         print(f"  -> already have URL: {govuk_url}")
     else:
@@ -237,14 +260,27 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--bill-id", type=int, default=None,
-                        help="parliament_bill_id to process (single bill, for testing)")
+                        help="parliament_bill_id to process (single bill)")
+    parser.add_argument("--set-url", default=None,
+                        help="manually set GOV.UK URL for --bill-id (requires --bill-id)")
+    parser.add_argument("--unmatched-only", action="store_true",
+                        help="only process bills with no govuk_url yet (skip re-fetch of matched bills)")
     args = parser.parse_args()
+
+    if args.set_url and not args.bill_id:
+        parser.error("--set-url requires --bill-id")
 
     with app.app_context():
         if args.bill_id:
             bills = HaBill.query.filter_by(
                 parliament_bill_id=args.bill_id,
                 bill_type="Government Bill",
+            ).all()
+        elif args.unmatched_only:
+            bills = HaBill.query.filter_by(
+                bill_type="Government Bill",
+            ).filter(HaBill.govuk_url.is_(None)).order_by(
+                HaBill.introduced_date.desc().nulls_last()
             ).all()
         else:
             bills = HaBill.query.filter_by(
@@ -257,7 +293,7 @@ def main() -> None:
         for i, bill in enumerate(bills, 1):
             print(f"\n[{i}/{len(bills)}]", end=" ")
             try:
-                process_bill(bill, args.dry_run)
+                process_bill(bill, args.dry_run, override_url=args.set_url)
             except Exception as e:
                 print(f"  [ERROR] {e}")
             time.sleep(0.3)  # polite rate limiting
