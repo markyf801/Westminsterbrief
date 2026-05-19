@@ -205,6 +205,7 @@ body { background: #f0f2f5; }
                         <span class="rpa-date">{{ r.human_date }}</span>
                     </div>
                     <span class="rpa-title">{{ r.heading }}</span>
+                    {% if r.question_text %}<span class="rpa-snippet">{{ r.question_text | truncate(200, true, '…') }}</span>{% endif %}
                     {% if r.asking_member %}<span class="rpa-meta-secondary">Asked by {{ r.asking_member }}</span>{% endif %}
                 </a>
                 {% endfor %}
