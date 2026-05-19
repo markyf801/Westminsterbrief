@@ -432,3 +432,148 @@ class UpcomingRelease(db.Model):
 
     def __repr__(self):
         return f"<UpcomingRelease id={self.id} theme={self.theme_slug} title={self.title[:40]!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2A.5: Bills ingestion
+# ---------------------------------------------------------------------------
+
+class HaBill(db.Model):
+    """
+    A UK Parliament bill ingested from the Parliament Bills API.
+
+    Sessions 38 (2024-25) and 39 (2025-26) cover the full Labour government.
+    is_act and is_defeated are independently settable; both FALSE = in-progress.
+    slug is nullable — populate later for SEO-friendly /bill/<slug> URLs.
+    """
+
+    __tablename__ = "ha_bill"
+    __table_args__ = (
+        db.Index("idx_ha_bill_session", "session"),
+        db.Index("idx_ha_bill_introduced", "introduced_date"),
+        db.Index("idx_ha_bill_is_act", "is_act"),
+        db.Index("idx_ha_bill_is_defeated", "is_defeated"),
+    )
+
+    id                 = db.Column(db.Integer, primary_key=True)
+    parliament_bill_id = db.Column(db.Integer, nullable=False, unique=True)
+    title              = db.Column(db.Text, nullable=False)
+    short_title        = db.Column(db.Text, nullable=True)
+    long_title         = db.Column(db.Text, nullable=True)
+    summary            = db.Column(db.Text, nullable=True)   # often NULL from API
+    house_of_origin    = db.Column(db.String(20), nullable=False)   # Commons | Lords
+    session            = db.Column(db.String(20), nullable=False)   # e.g. 2024-25
+    bill_type          = db.Column(db.String(100), nullable=True)
+    is_act             = db.Column(db.Boolean, nullable=False, default=False)
+    is_defeated        = db.Column(db.Boolean, nullable=False, default=False)
+    current_stage      = db.Column(db.Text, nullable=True)
+    current_house      = db.Column(db.String(20), nullable=True)
+    introduced_date    = db.Column(db.Date, nullable=True)
+    last_updated_date  = db.Column(db.Date, nullable=True)
+    royal_assent_date  = db.Column(db.Date, nullable=True)
+    slug               = db.Column(db.Text, nullable=True)
+    parliament_url     = db.Column(db.Text, nullable=False)
+    raw_data           = db.Column(db.JSON, nullable=True)
+    ingested_at        = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_refreshed     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # Tagging pipeline state — set by scripts/tag_bills.py
+    tagging_attempted_at   = db.Column(db.DateTime, nullable=True)
+    tagging_completed_at   = db.Column(db.DateTime, nullable=True)
+    tagging_failure_reason = db.Column(db.Text, nullable=True)
+
+    sponsors = db.relationship(
+        "HaBillSponsor",
+        backref="bill",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+    stages = db.relationship(
+        "HaBillStage",
+        backref="bill",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+    themes = db.relationship(
+        "HaBillTheme",
+        backref="bill",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self):
+        return f"<HaBill {self.parliament_bill_id} {self.title[:60]!r}>"
+
+
+class HaBillSponsor(db.Model):
+    """
+    A sponsor (primary or co-sponsor) of a bill.
+
+    member_id is a FK to cached_member.member_id — NULL only for Lords without
+    a member record or other edge cases. member_name stored as fallback.
+    sortOrder=1 in the API maps to is_primary=True.
+    """
+
+    __tablename__ = "ha_bill_sponsor"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "member_name", name="uq_ha_bill_sponsor"),
+        db.Index("idx_ha_bill_sponsor_bill", "bill_id"),
+        db.Index("idx_ha_bill_sponsor_member", "member_id"),
+    )
+
+    id          = db.Column(db.Integer, primary_key=True)
+    bill_id     = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    member_id   = db.Column(db.Integer, db.ForeignKey("cached_member.member_id"), nullable=True)
+    member_name = db.Column(db.Text, nullable=False)
+    party       = db.Column(db.Text, nullable=True)
+    is_primary  = db.Column(db.Boolean, nullable=False, default=False)
+    house       = db.Column(db.String(20), nullable=True)
+
+    def __repr__(self):
+        return f"<HaBillSponsor bill={self.bill_id} {self.member_name!r} primary={self.is_primary}>"
+
+
+class HaBillStage(db.Model):
+    """Stage history for a bill (First reading, Committee, Third reading, etc.)."""
+
+    __tablename__ = "ha_bill_stage"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "parliament_stage_id", name="uq_ha_bill_stage"),
+        db.Index("idx_ha_bill_stage_bill", "bill_id"),
+    )
+
+    id                  = db.Column(db.Integer, primary_key=True)
+    bill_id             = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    parliament_stage_id = db.Column(db.Integer, nullable=False)
+    stage_name          = db.Column(db.Text, nullable=False)
+    house               = db.Column(db.String(20), nullable=False)
+    stage_date          = db.Column(db.Date, nullable=True)
+    stage_order         = db.Column(db.Integer, nullable=False)
+
+    def __repr__(self):
+        return f"<HaBillStage bill={self.bill_id} {self.stage_name!r} {self.house}>"
+
+
+class HaBillTheme(db.Model):
+    """
+    AI-generated policy area tag for a bill.
+
+    theme uses display names from POLICY_AREAS in tagger.py — not slugs.
+    tagged_by records the model tier: 'ai_gemini_pro', 'manual', 'api'.
+    """
+
+    __tablename__ = "ha_bill_theme"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "theme", name="uq_ha_bill_theme"),
+        db.Index("idx_ha_bill_theme_theme", "theme"),
+        db.Index("idx_ha_bill_theme_bill", "bill_id"),
+    )
+
+    id               = db.Column(db.Integer, primary_key=True)
+    bill_id          = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    theme            = db.Column(db.Text, nullable=False)
+    tagged_by        = db.Column(db.String(50), nullable=False, default="ai_gemini_pro")
+    tagged_at        = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    confidence_score = db.Column(db.Float, nullable=True)
+
+    def __repr__(self):
+        return f"<HaBillTheme bill={self.bill_id} {self.theme!r} by={self.tagged_by}>"

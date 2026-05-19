@@ -325,6 +325,49 @@ Mark wants to explore the question of what parliamentary intelligence tools exis
 
 ---
 
+### Reusable Concurrent Fetcher Utility
+
+Bounded worker pool with per-API rate-limit config and 429/503 backoff — intended as shared infrastructure before Hansard and WQ backfills start. Single-threaded ingestion is fine for the 621-bill run (nearly done) but would make 70–80k Hansard and 30k WQ records into multi-day jobs.
+
+**Design intent:** one utility, configurable per API (Parliament Bills API, Hansard API, WQ API each have different tolerance). Replaces the per-script `_get()` + `time.sleep()` pattern with a proper worker pool. Bills ingestion can be left as-is — retrofit is not worth the risk on a completed run.
+
+**Revisit trigger:** Bills display work (Steps 8+) is complete; Hansard backfill brief is about to be drafted. Build this *before* drafting that brief, not after.
+
+*Captured 18 May 2026 — Mark's explicit sequence: bills work → concurrent fetcher → Hansard backfill.*
+
+---
+
+### Bill detail pages — gov.uk factsheets section
+
+Gov.uk publishes factsheets for major bills at predictable URLs under `/government/publications/{bill-slug}-factsheets/`. Example: `https://www.gov.uk/government/publications/crime-and-policing-bill-2025-factsheets/crime-and-policing-bill-child-sexual-abuse-material-factsheet`. These are authoritative plain-English explanations of what individual clauses do — high-value for policy professionals.
+
+**Design options:**
+1. **Manual link** — store a `govuk_publications_url` field on `ha_bill` and populate for major bills only. Simple, accurate, no scraping.
+2. **Derived link** — attempt to derive the slug from the bill title + session year. Brittle; will break on renamed bills.
+3. **GOV.UK search link** — link to `https://www.gov.uk/search/all?keywords={title}&content_store_document_type=guidance` as a fallback. Lower fidelity but always works.
+
+Option 1 is cleanest. Add `govuk_publications_url TEXT` to `ha_bill` schema; populate manually or via a small enrichment script for the 89 Government Bills. PMBs rarely have factsheets so null is fine.
+
+**Revisit trigger:** Bill detail pages (Step 8) are being built; any session touching the bill schema.
+
+*Captured 19 May 2026 — Mark identified from Parliament's own bills site.*
+
+---
+
+### /about/legislation — "How Parliament Makes Laws" Explainer Page
+
+Scaffold page explaining the UK bill procedure for lay readers, linked from the timeline display on `/bill/<id>` pages. URL to confirm: `/about/legislation` or `/how-parliament-makes-laws`. Content drafted by Mark separately; Code's job is the page scaffold (template, route, nav link) and the inline link near the timeline ("How does this work? →") on the bill detail page.
+
+**Scope:** Page scaffold + cross-link only. No content authoring by Code. Stage descriptors in `hansard_archive/bill_stages.py` may be reused or adapted for the explainer.
+
+**Timing:** After bill detail pages are built (Step 8). Mark drafts content first; page is assembled around that content.
+
+**Revisit trigger:** Step 8 (bill detail pages) is complete; Mark has drafted the explainer content; any session touching bill display templates.
+
+*Captured 18 May 2026 — raised post-stage-descriptor build.*
+
+---
+
 ## Killed
 
 *(Nothing formally killed yet — this section is for ideas explicitly decided against, with reason recorded so they don't keep resurfacing.)*
