@@ -54,7 +54,7 @@ def _validate_external_url(url: str) -> str:
 # Import existing blueprints
 from hansard import hansard_bp
 from biography import biography_bp
-from hansard_archive.views import archive_bp, brief_bp, stats_bp, hansard_bp2
+from hansard_archive.views import archive_bp, bills_bp, brief_bp, stats_bp, hansard_bp2
 from hansard_archive.slugs import slugify_theme as _slugify_theme
 from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
@@ -573,6 +573,30 @@ with app.app_context():
         _mig_log('ha_bill govuk_url + ha_bill_publication source cols done')
     except Exception as _e:
         app.logger.warning('ha_bill govuk/source migration failed: %s', _e)
+    try:
+        from hansard_archive.models import HaBill as _HaBill
+        from hansard_archive.slugs import slugify_bill as _slugify_bill
+        _bills_needing_slugs = _HaBill.query.filter(_HaBill.slug.is_(None)).all()
+        if _bills_needing_slugs:
+            _used: set[str] = set(
+                r[0] for r in db.session.query(_HaBill.slug)
+                .filter(_HaBill.slug.isnot(None)).all()
+            )
+            for _b in _bills_needing_slugs:
+                _base = _slugify_bill(_b.title)
+                _candidate = _base
+                _n = 2
+                while _candidate in _used:
+                    _candidate = f"{_base}-{_n}"
+                    _n += 1
+                _b.slug = _candidate
+                _used.add(_candidate)
+            db.session.commit()
+            _mig_log(f'ha_bill slugs populated: {len(_bills_needing_slugs)} bills')
+        else:
+            _mig_log('ha_bill slugs already populated')
+    except Exception as _e:
+        app.logger.warning('ha_bill slug population failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
@@ -869,16 +893,11 @@ def _build_sitemap_core_xml() -> str:
     archive_lastmod = max_date.isoformat() if max_date else ""
 
     # Static tool pages (content changes via deployments, not DB; omit lastmod)
-    for path in ('/', '/hansard', '/written-questions', '/written-questions/today',
-                 '/mp_search', '/biography', '/debates', '/stats',
+    for path in ('/', '/hansard', '/bills', '/written-questions', '/written-questions/today',
+                 '/mp_search', '/biography', '/debates',
                  '/directory', '/terms', '/privacy', '/history-of-hansard',
                  '/about/legislation'):
         urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
-
-    # Stats theme pages
-    from hansard_archive.views import _STATS_THEME_ORDER as _sto
-    for slug, _ in _sto:
-        urls.append((f"{BASE}/stats/{slug}", ""))
 
     # Date browse — one URL per distinct date with sessions
     for (d,) in (db.session.query(HansardSession.date)
@@ -918,6 +937,12 @@ def _build_sitemap_core_xml() -> str:
 
     # MP pages excluded from sitemap: page design is Week 3 work (not yet final shape).
     # Re-add when MP archive pages are properly built and indexed design is confirmed.
+
+    # Bill detail pages — bills with a slug
+    from hansard_archive.models import HaBill as _HaBill
+    for _bill in _HaBill.query.filter(_HaBill.slug.isnot(None)).all():
+        _lastmod = _bill.introduced_date.isoformat() if _bill.introduced_date else ""
+        urls.append((f"{BASE}/bill/{_bill.slug}", _lastmod))
 
     # Department pages — one per distinct non-null department
     for (dept, max_d) in (db.session
@@ -2348,6 +2373,7 @@ app.register_blueprint(debate_scanner_bp)
 app.register_blueprint(mp_search_bp)
 app.register_blueprint(directory_bp)
 app.register_blueprint(archive_bp)
+app.register_blueprint(bills_bp)
 app.register_blueprint(brief_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(hansard_bp2)

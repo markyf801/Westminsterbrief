@@ -94,6 +94,20 @@ def make_slug(title: str, ext_id: str, suffix_len: int = 4) -> str:
     return f"{title_part}-{short_id}"
 
 
+def slugify_bill(title: str) -> str:
+    """
+    Convert a bill title to a URL slug for /bill/<slug> URLs.
+
+    Same character rules as slugify_theme (locked pattern), but no stop-word
+    removal — "Health and Social Care Bill" must keep "and", "and" is meaningful.
+    """
+    s = title.lower()
+    s = re.sub(r"[^a-z0-9\s-]", "", s)
+    s = re.sub(r"\s+", "-", s.strip())
+    s = re.sub(r"-+", "-", s)
+    return s
+
+
 def slugify_theme(s: str) -> str:
     """
     Convert a theme, policy area, or department label to a URL slug.

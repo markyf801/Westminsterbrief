@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Bills before Parliament — Hansard Archive — Westminster Brief{% endblock %}
+{% block title %}Bills before Parliament — Hansard — Westminster Brief{% endblock %}
 {% block meta_description %}{{ meta_desc }}{% endblock %}
 {% block og_title %}{{ og_title }}{% endblock %}
 {% block og_description %}{{ meta_desc }}{% endblock %}
@@ -13,7 +13,7 @@
   "@type": "CollectionPage",
   "name": "Bills before Parliament",
   "description": {{ meta_desc|tojson }},
-  "url": "https://westminsterbrief.co.uk/archive/bills",
+  "url": "https://westminsterbrief.co.uk/bills",
   "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
 }
 </script>
@@ -97,7 +97,7 @@ body { background: #f0f2f5; }
 <div class="bl-page">
 
     <nav class="bl-breadcrumb" aria-label="breadcrumb">
-        <a href="/archive">Hansard Archive</a>
+        <a href="/hansard">Hansard</a>
         <span class="bl-breadcrumb-sep">›</span>
         <span>Bills</span>
     </nav>
@@ -107,7 +107,7 @@ body { background: #f0f2f5; }
         <p class="bl-header-sub">Government Bills and Private Members' Bills in the 2024–25 and 2025–26 sessions</p>
     </div>
 
-    <form method="GET" action="/archive/bills">
+    <form method="GET" action="/bills">
         <div class="bl-filter-bar">
             <label for="bl-session-filter">Session:</label>
             <select id="bl-session-filter" name="session" onchange="this.form.submit()">
@@ -150,7 +150,7 @@ body { background: #f0f2f5; }
     <ul class="bl-bill-list">
     {% for bill in bills %}
     <li class="bl-bill-item">
-        <a href="/archive/bill/{{ bill.parliament_bill_id }}" class="bl-bill-title">{{ bill.title }}</a>
+        <a href="/bill/{{ bill.slug or ('_id' + bill.parliament_bill_id|string) }}" class="bl-bill-title">{{ bill.title }}</a>
         <div class="bl-bill-meta">
             {% if bill.house_of_origin == "Commons" %}
             <span class="bl-badge bl-badge-commons">Commons</span>
