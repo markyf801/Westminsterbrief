@@ -1457,6 +1457,78 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
     return results
 
 
+def _bill_fts_search(q_raw: str, limit: int = 5) -> list:
+    """FTS search over ha_bill title + long_title. Postgres only."""
+    if not _is_postgres():
+        return []
+    q_clean = q_raw.strip('"')
+    ts_func = "phraseto_tsquery" if (q_raw.startswith('"') and q_raw.endswith('"') and len(q_raw) > 2) else "plainto_tsquery"
+    sql = sqla_text(f"""
+        SELECT id, title, short_title, slug, bill_type, session,
+               is_act, bill_withdrawn_date, is_carried_over, current_stage
+        FROM ha_bill
+        WHERE to_tsvector('english',
+                coalesce(title, '') || ' ' || coalesce(long_title, ''))
+              @@ {ts_func}('english', :q)
+          AND slug IS NOT NULL
+        ORDER BY ts_rank(
+            to_tsvector('english', coalesce(title, '') || ' ' || coalesce(long_title, '')),
+            {ts_func}('english', :q)
+        ) DESC
+        LIMIT :lim
+    """)
+    try:
+        rows = db.session.execute(sql, {"q": q_clean, "lim": limit}).fetchall()
+    except Exception:
+        return []
+    results = []
+    for row in rows:
+        bid, title, short_title, slug, bill_type, session, is_act, withdrawn, carried_over, stage = row
+        if is_act:
+            status_label, status_class = "Act ✓", "act"
+        elif withdrawn:
+            status_label, status_class = "Withdrawn", "lapsed"
+        elif session == "2024-25" and not carried_over:
+            status_label, status_class = "Lapsed", "lapsed"
+        else:
+            status_label, status_class = stage or "", "progress"
+        results.append({
+            "title":        short_title or title,
+            "slug":         slug,
+            "bill_type":    bill_type or "",
+            "session":      session or "",
+            "status_label": status_label,
+            "status_class": status_class,
+            "url":          f"/bill/{slug}",
+        })
+    return results
+
+
+def get_related_content(topic_keywords: str, exclude_uin: str | None = None, limit: int = 5) -> dict:
+    """
+    Find related debates, PQs, and bills for a topic keyword string.
+    Returns {'debates': [...], 'pqs': [...], 'bills': [...]}.
+    Falls back to empty on SQLite (local dev).
+    """
+    if not _is_postgres():
+        return {"debates": [], "pqs": [], "bills": []}
+    try:
+        debates_raw, _ = _fts_search(topic_keywords, page=1)
+        debates = debates_raw[:limit]
+    except Exception:
+        debates = []
+    try:
+        pqs_raw = _pq_fts_search(topic_keywords, limit=limit + (1 if exclude_uin else 0))
+        pqs = [r for r in pqs_raw if r["uin"] != exclude_uin][:limit]
+    except Exception:
+        pqs = []
+    try:
+        bills = _bill_fts_search(topic_keywords, limit=limit)
+    except Exception:
+        bills = []
+    return {"debates": debates, "pqs": pqs, "bills": bills}
+
+
 def _ilike_search(q_raw: str, page: int) -> tuple[list, int]:
     """ilike fallback for SQLite local development."""
     stmt = (
@@ -1631,6 +1703,8 @@ def pq_detail(uin: str):
 
     seo_title = f"{pq.heading or pq.uin} — {pq.uin} — Westminster Brief"
 
+    related = get_related_content(pq.heading or "", exclude_uin=pq.uin)
+
     return render_template(
         "hansard_archive/archive_pq_detail.html",
         pq              = pq,
@@ -1643,6 +1717,7 @@ def pq_detail(uin: str):
         human_tabled    = _human_date(pq.tabled_date) if pq.tabled_date else "",
         human_answered  = _human_date(pq.answer_date) if pq.answer_date else "",
         human_updated   = _human_date(pq.updated_at.date()) if pq.updated_at else "",
+        related         = related,
         seo_title       = seo_title,
         meta_desc       = (
             f"Written Question {pq.uin} — {pq.heading or 'Written Question'} "

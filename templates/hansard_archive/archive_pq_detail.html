@@ -21,7 +21,61 @@
 </script>
 {% endblock %}
 
-{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+
+/* Related parliamentary activity panel */
+.rpa-panel {
+    max-width: 760px;
+    margin: 32px auto 0;
+    padding: 0 16px;
+}
+.rpa-heading {
+    font-size: 15px; font-weight: 700; color: #1a2332;
+    margin: 0 0 16px; padding-bottom: 8px;
+    border-bottom: 2px solid #dde3ed;
+}
+.rpa-section { margin-bottom: 20px; }
+.rpa-subheading {
+    font-size: 11px; font-weight: 700; color: #888;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin: 0 0 8px;
+}
+.rpa-list { display: flex; flex-direction: column; gap: 6px; }
+.rpa-card {
+    display: block; background: #fff;
+    border: 1px solid #dde3ed; border-radius: 5px;
+    padding: 10px 14px; text-decoration: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.rpa-card:hover {
+    border-color: #b0bbcc;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+}
+.rpa-card-meta {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 5px; margin-bottom: 4px;
+}
+.rpa-date { font-size: 11px; color: #888; }
+.rpa-title {
+    display: block; font-size: 13px; font-weight: 600;
+    color: #1a2332; line-height: 1.4;
+}
+.rpa-snippet {
+    display: block; font-size: 12px; color: #666;
+    margin-top: 3px; line-height: 1.5;
+}
+.rpa-meta-secondary { display: block; font-size: 11px; color: #888; margin-top: 2px; }
+.rpa-footer {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    padding-top: 12px; border-top: 1px solid #e8ebf0;
+    margin-top: 4px;
+}
+.rpa-browse-link {
+    font-size: 12px; color: #4a7fa5; text-decoration: none; font-weight: 500;
+}
+.rpa-browse-link:hover { text-decoration: underline; }
+</style>{% endblock %}
 
 {% block content %}
 <div class="sd-page">
@@ -108,6 +162,89 @@
         </div>
 
     </div>
+
+    {# --- Related parliamentary activity panel --- #}
+    {% set has_debates = related.debates | length > 0 %}
+    {% set has_pqs     = related.pqs     | length > 0 %}
+    {% set has_bills   = related.bills   | length > 0 %}
+    {% if has_debates or has_pqs or has_bills %}
+    <div class="rpa-panel">
+        <h2 class="rpa-heading">Related parliamentary activity</h2>
+
+        {% if has_debates %}
+        <div class="rpa-section">
+            <h3 class="rpa-subheading">Debates</h3>
+            <div class="rpa-list">
+                {% for r in related.debates %}
+                <a class="rpa-card" href="/archive/debate/{{ r.url_date }}/{{ r.slug }}">
+                    <div class="rpa-card-meta">
+                        <span class="topic-source-badge topic-source-{{ r.house|lower }}">{{ r.house }}</span>
+                        <span class="archive-dtype-badge archive-dtype-{{ r.debate_type }}">{{ r.debate_type_label }}</span>
+                        {% if r.department %}<span class="archive-dept-badge">{{ r.department }}</span>{% endif %}
+                        <span class="rpa-date">{{ r.human_date }}</span>
+                    </div>
+                    <span class="rpa-title">{{ r.title }}</span>
+                    {% if r.snippet %}<span class="rpa-snippet">{{ r.snippet }}</span>{% endif %}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if has_pqs %}
+        <div class="rpa-section">
+            <h3 class="rpa-subheading">Written Questions</h3>
+            <div class="rpa-list">
+                {% for r in related.pqs %}
+                <a class="rpa-card" href="{{ r.url }}">
+                    <div class="rpa-card-meta">
+                        <span class="wq-status-badge wq-status-{% if r.is_answered %}answered{% else %}unanswered{% endif %}">
+                            {% if r.is_answered %}ANSWERED{% else %}UNANSWERED{% endif %}
+                        </span>
+                        <span class="archive-dept-badge">{{ r.answering_body }}</span>
+                        <span class="rpa-date">{{ r.human_date }}</span>
+                    </div>
+                    <span class="rpa-title">{{ r.heading }}</span>
+                    {% if r.asking_member %}<span class="rpa-meta-secondary">Asked by {{ r.asking_member }}</span>{% endif %}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if has_bills %}
+        <div class="rpa-section">
+            <h3 class="rpa-subheading">Bills</h3>
+            <div class="rpa-list">
+                {% for b in related.bills %}
+                <a class="rpa-card" href="{{ b.url }}">
+                    <div class="rpa-card-meta">
+                        <span class="bl-badge bl-badge-session">{{ b.session }}</span>
+                        {% if b.bill_type %}
+                            {% if b.bill_type.startswith('Government') %}
+                            <span class="bl-badge bl-badge-govt">Government</span>
+                            {% elif "Members'" in b.bill_type %}
+                            <span class="bl-badge bl-badge-pmb">PMB</span>
+                            {% endif %}
+                        {% endif %}
+                        <span class="bl-badge bl-badge-{{ b.status_class }}">{{ b.status_label }}</span>
+                    </div>
+                    <span class="rpa-title">{{ b.title }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if policy_areas %}
+        <div class="rpa-footer">
+            {% for pa in policy_areas[:2] %}
+            <a href="/archive/policy/{{ pa|slugify }}" class="rpa-browse-link">Browse all {{ pa }} activity →</a>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
 
     {# --- Status caveat --- #}
     <p class="sd-source-note">
