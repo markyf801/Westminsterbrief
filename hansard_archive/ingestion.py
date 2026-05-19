@@ -40,6 +40,8 @@ import requests
 
 _log = logging.getLogger(__name__)
 
+from sqlalchemy.exc import IntegrityError
+
 from extensions import db
 from hansard_archive.slugs import make_slug
 from hansard_archive.models import (
@@ -716,11 +718,37 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             hansard_url=hansard_url,
             contributions_ingested=False,
             is_container=is_container,
-            slug=make_slug(title, ext_id),
+            slug=None if is_container else make_slug(title, ext_id),
             department=dept_map.get(ext_id) or None,
         )
         db.session.add(session)
-        db.session.flush()
+        try:
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            if not is_container:
+                # Slug collision on non-container: retry with a longer suffix
+                for suffix_len in (6, 8, 12):
+                    session = HansardSession(
+                        ext_id=ext_id, title=title, date=sitting_date, house=house,
+                        debate_type=debate_type, location=location or None,
+                        hrs_tag=hrs_tag or None, hansard_url=hansard_url,
+                        contributions_ingested=False, is_container=False,
+                        slug=make_slug(title, ext_id, suffix_len=suffix_len),
+                        department=dept_map.get(ext_id) or None,
+                    )
+                    db.session.add(session)
+                    try:
+                        db.session.flush()
+                        break
+                    except IntegrityError:
+                        db.session.rollback()
+                else:
+                    print(f"[archive]   ERROR slug exhausted for {ext_id} — skipping", flush=True)
+                    continue
+            else:
+                print(f"[archive]   ERROR inserting container {ext_id} — skipping", flush=True)
+                continue
 
         contrib_count = _write_contributions(session, contributions)
         session.contributions_ingested = True

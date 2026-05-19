@@ -142,6 +142,7 @@ def main() -> None:
             else:
                 print(f"[cron] No new sessions — running tagger for any missed sessions…", flush=True)
 
+            db.session.rollback()  # clear any poisoned state from ingestion errors
             tag_result = tag_all_untagged(verbose=True)
             total_tagged = tag_result.get("tagged", 0)
             tag_errors = tag_result.get("errors", 0)
