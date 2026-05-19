@@ -1504,29 +1504,34 @@ def _bill_fts_search(q_raw: str, limit: int = 5) -> list:
     return results
 
 
-def get_related_content(topic_keywords: str, exclude_uin: str | None = None, limit: int = 5) -> dict:
+def get_related_content(topic_keywords: str, exclude_uin: str | None = None, limit: int = 8) -> dict:
     """
-    Find related debates, PQs, and bills for a topic keyword string.
-    Returns {'debates': [...], 'pqs': [...], 'bills': [...]}.
+    Find related debates, PQs, and bills for a topic keyword string,
+    sorted newest-first within FTS-matched results.
+    Returns {'debates': [...], 'pqs': [...], 'bills': [...], 'query': str}.
     Falls back to empty on SQLite (local dev).
     """
     if not _is_postgres():
-        return {"debates": [], "pqs": [], "bills": []}
+        return {"debates": [], "pqs": [], "bills": [], "query": topic_keywords}
     try:
         debates_raw, _ = _fts_search(topic_keywords, page=1)
-        debates = debates_raw[:limit]
+        debates = sorted(debates_raw, key=lambda r: r["date"] or "", reverse=True)[:limit]
     except Exception:
         debates = []
     try:
-        pqs_raw = _pq_fts_search(topic_keywords, limit=limit + (1 if exclude_uin else 0))
-        pqs = [r for r in pqs_raw if r["uin"] != exclude_uin][:limit]
+        pqs_raw = _pq_fts_search(topic_keywords, limit=50)
+        pqs = sorted(
+            [r for r in pqs_raw if r["uin"] != exclude_uin],
+            key=lambda r: r["tabled_date"] or "",
+            reverse=True,
+        )[:limit]
     except Exception:
         pqs = []
     try:
-        bills = _bill_fts_search(topic_keywords, limit=limit)
+        bills = _bill_fts_search(topic_keywords, limit=5)
     except Exception:
         bills = []
-    return {"debates": debates, "pqs": pqs, "bills": bills}
+    return {"debates": debates, "pqs": pqs, "bills": bills, "query": topic_keywords}
 
 
 def _ilike_search(q_raw: str, page: int) -> tuple[list, int]:

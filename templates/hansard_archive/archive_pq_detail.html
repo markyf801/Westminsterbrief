@@ -71,6 +71,11 @@ body { background: #f0f2f5; }
     padding-top: 12px; border-top: 1px solid #e8ebf0;
     margin-top: 4px;
 }
+.rpa-see-all {
+    display: inline-block; margin-top: 8px;
+    font-size: 12px; color: #4a7fa5; text-decoration: none; font-weight: 500;
+}
+.rpa-see-all:hover { text-decoration: underline; }
 .rpa-browse-link {
     font-size: 12px; color: #4a7fa5; text-decoration: none; font-weight: 500;
 }
@@ -188,6 +193,7 @@ body { background: #f0f2f5; }
                 </a>
                 {% endfor %}
             </div>
+            <a class="rpa-see-all" href="/archive/search?q={{ related.query|urlencode }}">See all debates on this topic →</a>
         </div>
         {% endif %}
 
@@ -210,6 +216,7 @@ body { background: #f0f2f5; }
                 </a>
                 {% endfor %}
             </div>
+            <a class="rpa-see-all" href="/written-questions?q={{ related.query|urlencode }}">See all written questions on this topic →</a>
         </div>
         {% endif %}
 
