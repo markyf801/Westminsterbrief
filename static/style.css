@@ -1540,6 +1540,39 @@ body.page-home .tool-card-link:hover {
     color: #fff;
 }
 
+/* Family tile — two sub-buttons */
+body.page-home .tool-card-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: auto;
+    padding-top: 14px;
+}
+body.page-home .tool-card-action-btn {
+    flex: 1 1 0;
+    min-width: 120px;
+    text-align: center;
+    background: #1a4a6e;
+    border: none;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 12px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+body.page-home .tool-card-action-btn:hover {
+    background: #155278;
+    color: #fff;
+}
+
+/* Beta badge — amber, distinct from AI blue */
+body.page-home .tool-card-badge-beta {
+    background: #fff3cd;
+    color: #7d5a00;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .wb-hero-title { font-size: 28px; }

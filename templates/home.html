@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% set body_class = 'page-home' %}
 {% block title %}Westminster Brief — Parliamentary Research Tools{% endblock %}
-{% block meta_description %}Parliamentary research tools for UK policy professionals. Search Hansard, track Written Questions, research stakeholders, and generate Word briefings.{% endblock %}
+{% block meta_description %}Parliamentary research tools for UK policy professionals. Search debates and Written Questions, follow bills through Parliament, research Members and stakeholders — built on Parliament's open data.{% endblock %}
 
 {% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk">{% endblock %}
 {% block extra_head %}
 <meta property="og:title" content="Westminster Brief — Parliamentary Research Tools">
-<meta property="og:description" content="Parliamentary research tools for UK policy professionals. Search Hansard, track Written Questions, research stakeholders — designed for daily policy work.">
+<meta property="og:description" content="Parliamentary research tools for UK policy professionals. Search debates and Written Questions, follow bills through Parliament, research Members and stakeholders — built on Parliament's open data.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://westminsterbrief.co.uk">
 {% endblock %}
@@ -17,13 +17,13 @@
 <div class="wb-hero">
     <div class="wb-hero-inner">
         <h1 class="wb-hero-title">Westminster Brief</h1>
-        <p class="wb-hero-sub">Parliamentary research tools for UK policy professionals. Search Hansard, track Written Questions, research stakeholders — built on Parliament's open data.</p>
+        <p class="wb-hero-sub">Parliamentary research tools for UK policy professionals. Search debates and Written Questions, follow bills through Parliament, research Members and stakeholders — built on Parliament's open data.</p>
     </div>
 </div>
 
 {# ── Coverage statement ── #}
 <div class="wb-coverage">
-    <p class="wb-coverage-text">Currently covers {{ session_count or 'over 5,000' }} debates and statements and {{ pq_count or 'over 90,000' }} Written Questions across both Houses from May 2025 onwards — updated daily. Stakeholder data from 2024, covering {{ org_count or '12,000+' }} organisations.</p>
+    <p class="wb-coverage-text">Currently covers {{ session_count or 'over 5,000' }} debates and statements, {{ pq_count or '90,000+' }} Written Questions, and {{ bill_count or '600+' }} bills across both Houses from May 2025 onwards — updated daily. Stakeholder data from 2024, covering {{ org_count or '12,000+' }} organisations.</p>
 </div>
 
 {# ── Why Westminster Brief? ── #}
@@ -63,95 +63,11 @@
 {# ── Tool cards ── #}
 <div class="tool-grid">
 
-    <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="5" cy="17" r="3"/><path d="m9 21-1.5-1.5"/></svg></span>
-            <h3 class="tool-card-title">Written Questions Scanner</h3>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Search the full archive of Parliamentary Written Questions across both Houses by keyword, department,
-                and date range. Instantly see who is asking questions on your policy area, what they are asking,
-                and whether they have been answered. Export a clean list to CSV or a formatted Word document
-                ready for a briefing pack.
-            </p>
-            <a href="/questions" class="tool-card-link">Open Written Questions Scanner &rarr;</a>
-        </div>
-    </div>
-
-    <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h5"/><circle cx="17" cy="17" r="4"/><path d="M17 15v2l1 1"/></svg></span>
-            <h3 class="tool-card-title">Today's PQs Tracker</h3>
-            <span class="tool-card-badge">AI</span>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Track all Written Questions due for answer today — or the most recent sitting day if Parliament
-                is in recess — grouped by policy theme using AI. Filter by department, drill into an MP's
-                question history, and download a structured Word briefing in one click.
-            </p>
-            <a href="/tracker" class="tool-card-link">Open Today's PQs Tracker &rarr;</a>
-        </div>
-    </div>
-
-    {# Row 2: Bills | Research #}
-
-    <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg></span>
-            <h3 class="tool-card-title">Bills</h3>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Track every UK Parliament bill from First Reading to Royal Assent — sponsors, stage history,
-                debate links, Explanatory Notes, and the policy context behind them.
-            </p>
-            <a href="/bills" class="tool-card-link">Open Bills &rarr;</a>
-        </div>
-    </div>
-
-    <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-            <h3 class="tool-card-title">Member Research</h3>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Research any MP or Peer in one place. See their career history, government and committee
-                roles, registered interests, recent Hansard speeches, and every Written Question they have
-                tabled — with answered/unanswered status and direct links to Parliament.uk. Useful for
-                preparing ahead of a meeting, select committee session, or stakeholder engagement.
-                Export a combined Word briefing with one click.
-            </p>
-            <a href="/mp_search" class="tool-card-link">Open Member Research &rarr;</a>
-        </div>
-    </div>
-
-    {# Row 3: Members | Directory #}
-
-    <div class="tool-card">
-        <div class="tool-card-header">
-            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 18a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2"/><rect x="3" y="4" width="18" height="18" rx="2"/><circle cx="12" cy="10" r="2"/><line x1="8" y1="2" x2="8" y2="4"/><line x1="16" y1="2" x2="16" y2="4"/></svg></span>
-            <h3 class="tool-card-title">Member Profiles</h3>
-            <span class="tool-card-badge">AI</span>
-        </div>
-        <div class="tool-card-body">
-            <p class="tool-card-desc">
-                Generate a comprehensive professional profile for any MP or Peer in seconds. Draws on Parliament's
-                official biography data, registered interests, committee memberships, recent Written Questions,
-                and Wikipedia to produce a structured briefing covering career, roles, and policy interests.
-                Exports as a formatted Word document with photo.
-            </p>
-            <a href="/biography" class="tool-card-link">Open Member Profiles &rarr;</a>
-        </div>
-    </div>
-
+    {# 1 — Hansard #}
     <div class="tool-card">
         <div class="tool-card-header">
             <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg></span>
             <h3 class="tool-card-title">Hansard</h3>
-            <span class="tool-card-badge">BETA</span>
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
@@ -163,6 +79,57 @@
         </div>
     </div>
 
+    {# 2 — Written Questions (family tile) #}
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><circle cx="5" cy="17" r="3"/><path d="m9 21-1.5-1.5"/></svg></span>
+            <h3 class="tool-card-title">Written Questions</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Search the full archive of Parliamentary Written Questions by keyword, department, or date range — or track what's new today, grouped by policy theme. Export results as CSV or Word.
+            </p>
+            <div class="tool-card-actions">
+                <a href="/written-questions" class="tool-card-action-btn">Search archive &rarr;</a>
+                <a href="/written-questions/today" class="tool-card-action-btn">Today's tracker &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    {# 3 — Bills #}
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg></span>
+            <h3 class="tool-card-title">Bills</h3>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Track every UK Parliament bill from First Reading to Royal Assent — sponsors, stage history, debate links, Explanatory Notes, and the policy context behind them.
+            </p>
+            <a href="/bills" class="tool-card-link">Open Bills &rarr;</a>
+        </div>
+    </div>
+
+    {# 4 — Members (family tile) #}
+    <div class="tool-card">
+        <div class="tool-card-header">
+            <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+            <h3 class="tool-card-title">Members</h3>
+            <span class="tool-card-badge">AI</span>
+        </div>
+        <div class="tool-card-body">
+            <p class="tool-card-desc">
+                Research any MP or Peer — career history, government roles, committee memberships, registered interests, and parliamentary activity. Or generate an AI-drafted profile briefing, exported to Word with photo.
+            </p>
+            <div class="tool-card-actions">
+                <a href="/mp_search" class="tool-card-action-btn">Research members &rarr;</a>
+                <a href="/biography" class="tool-card-action-btn">Generate profile &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    {# 5 — Research Tool #}
     <div class="tool-card">
         <div class="tool-card-header">
             <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
@@ -171,28 +138,24 @@
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Deep-dive into any topic ever discussed in Parliament. Synthesises results across
-                full Hansard history into a structured briefing covering government position, key
-                speakers, and notable quotes.
+                Deep-dive into any topic ever discussed in Parliament. Synthesises results from live Hansard into a structured briefing covering government position, key speakers, and notable quotes.
             </p>
             <a href="/debates" class="tool-card-link">Open Research Tool &rarr;</a>
         </div>
     </div>
 
-    <div class="tool-card" style="grid-column: 1 / -1;">
+    {# 6 — Stakeholder Directory #}
+    <div class="tool-card">
         <div class="tool-card-header">
             <span class="tool-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg></span>
-            <h3 class="tool-card-title">Stakeholder Engagement</h3>
-            <span class="tool-card-badge">BETA</span>
+            <h3 class="tool-card-title">Stakeholder Directory</h3>
+            <span class="tool-card-badge tool-card-badge-beta">BETA</span>
         </div>
         <div class="tool-card-body">
             <p class="tool-card-desc">
-                Search thousands of organisations with recorded engagement with Parliament and government —
-                ministerial meetings, select committee evidence, and lobbying register entries. Useful for
-                mapping who is engaging on a policy area ahead of consultations, reviews, or stakeholder
-                meetings. Coverage spans all main UK government departments.
+                Search thousands of organisations with recorded engagement with Parliament and government — ministerial meetings, select committee evidence, and lobbying register entries. Useful for mapping who is engaging on a policy area.
             </p>
-            <a href="/directory" class="tool-card-link">Open Stakeholder Engagement &rarr;</a>
+            <a href="/directory" class="tool-card-link">Open Stakeholder Directory &rarr;</a>
         </div>
     </div>
 
