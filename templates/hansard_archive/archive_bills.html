@@ -116,8 +116,29 @@ body { background: #f0f2f5; }
                 <option value="{{ s }}" {% if session_f == s %}selected{% endif %}>{{ s }}</option>
                 {% endfor %}
             </select>
+
+            <label for="bl-type-filter">Type:</label>
+            <select id="bl-type-filter" name="type" onchange="this.form.submit()">
+                {% for val, label in bill_type_options %}
+                <option value="{{ val }}" {% if type_f == val %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+
+            <label for="bl-status-filter">Status:</label>
+            <select id="bl-status-filter" name="status" onchange="this.form.submit()">
+                <option value="" {% if status_f == '' %}selected{% endif %}>All</option>
+                <option value="active" {% if status_f == 'active' %}selected{% endif %}>Active</option>
+                <option value="act" {% if status_f == 'act' %}selected{% endif %}>Passed into law</option>
+                <option value="lapsed" {% if status_f == 'lapsed' %}selected{% endif %}>Lapsed or withdrawn</option>
+            </select>
         </div>
     </form>
+
+    {%- set _qs_parts = [] -%}
+    {%- if session_f -%}{%- set _ = _qs_parts.append('session=' + session_f) -%}{%- endif -%}
+    {%- if type_f -%}{%- set _ = _qs_parts.append('type=' + type_f) -%}{%- endif -%}
+    {%- if status_f -%}{%- set _ = _qs_parts.append('status=' + status_f) -%}{%- endif -%}
+    {%- set _qs = (_qs_parts | join('&') + '&') if _qs_parts else '' -%}
 
     <div class="bl-results-bar">
         <span>{{ total }} bill{% if total != 1 %}s{% endif %}{% if session_f %} in {{ session_f }}{% endif %}</span>
@@ -168,21 +189,21 @@ body { background: #f0f2f5; }
     {% if total_pages > 1 %}
     <nav class="bl-pagination" aria-label="Pagination">
         {% if page > 1 %}
-        <a href="{{ request.path }}?{{ 'session=' + session_f + '&' if session_f }}page={{ page - 1 }}">‹ Previous</a>
+        <a href="{{ request.path }}?{{ _qs }}page={{ page - 1 }}">‹ Previous</a>
         {% endif %}
 
         {% for p in range(1, total_pages + 1) %}
             {% if p == page %}
             <span class="bl-pg-current">{{ p }}</span>
             {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-            <a href="{{ request.path }}?{{ 'session=' + session_f + '&' if session_f }}page={{ p }}">{{ p }}</a>
+            <a href="{{ request.path }}?{{ _qs }}page={{ p }}">{{ p }}</a>
             {% elif p == page - 3 or p == page + 3 %}
             <span class="bl-pg-dots">…</span>
             {% endif %}
         {% endfor %}
 
         {% if page < total_pages %}
-        <a href="{{ request.path }}?{{ 'session=' + session_f + '&' if session_f }}page={{ page + 1 }}">Next ›</a>
+        <a href="{{ request.path }}?{{ _qs }}page={{ page + 1 }}">Next ›</a>
         {% endif %}
     </nav>
     {% endif %}

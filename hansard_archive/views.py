@@ -2349,10 +2349,34 @@ def hansard_home():
 _BILLS_PER_PAGE = 50
 
 
+_BILL_TYPE_MAP = {
+    "government":  "Government Bill",
+    "ballot":      "Private Members' Bill (Ballot)",
+    "tmr":         "Private Members' Bill (Ten Minute Rule)",
+    "presentation":"Private Members' Bill (Presentation)",
+    "lords_ballot":"Private Members' Bill (Lords ballot)",
+    "private":     "Private Bill",
+    "hybrid":      "Hybrid Bill",
+}
+
+_BILL_TYPE_OPTIONS = [
+    ("",             "All types"),
+    ("government",   "Government Bill"),
+    ("ballot",       "Private Members' Bill (Ballot)"),
+    ("tmr",          "Private Members' Bill (Ten Minute Rule)"),
+    ("presentation", "Private Members' Bill (Presentation)"),
+    ("lords_ballot", "Private Members' Bill (Lords Ballot)"),
+    ("private",      "Private Bill"),
+    ("hybrid",       "Hybrid Bill"),
+]
+
+
 @archive_bp.route("/bills")
 def archive_bills():
     page          = max(1, request.args.get("page", 1, type=int))
     session_f     = request.args.get("session", "").strip()
+    type_f        = request.args.get("type", "").strip()
+    status_f      = request.args.get("status", "").strip()
     valid_sessions = ("2024-25", "2025-26")
 
     query = HaBill.query.order_by(
@@ -2360,6 +2384,14 @@ def archive_bills():
     )
     if session_f in valid_sessions:
         query = query.filter(HaBill.session == session_f)
+    if type_f in _BILL_TYPE_MAP:
+        query = query.filter(HaBill.bill_type == _BILL_TYPE_MAP[type_f])
+    if status_f == "active":
+        query = query.filter(HaBill.is_act == False, HaBill.is_defeated == False)
+    elif status_f == "act":
+        query = query.filter(HaBill.is_act == True)
+    elif status_f == "lapsed":
+        query = query.filter(HaBill.is_defeated == True)
 
     total      = query.count()
     bills      = query.offset((page - 1) * _BILLS_PER_PAGE).limit(_BILLS_PER_PAGE).all()
@@ -2381,16 +2413,19 @@ def archive_bills():
 
     return render_template(
         "hansard_archive/archive_bills.html",
-        bills          = bills,
-        sponsors       = sponsors,
-        page           = page,
-        total_pages    = total_pages,
-        total          = total,
-        session_f      = session_f,
-        valid_sessions = valid_sessions,
-        canonical_path = "/archive/bills",
-        og_title       = "Bills before Parliament — Hansard Archive — Westminster Brief",
-        meta_desc      = (
+        bills             = bills,
+        sponsors          = sponsors,
+        page              = page,
+        total_pages       = total_pages,
+        total             = total,
+        session_f         = session_f,
+        type_f            = type_f,
+        status_f          = status_f,
+        valid_sessions    = valid_sessions,
+        bill_type_options = _BILL_TYPE_OPTIONS,
+        canonical_path    = "/archive/bills",
+        og_title          = "Bills before Parliament — Hansard Archive — Westminster Brief",
+        meta_desc         = (
             "UK Parliament bills in the 2024-25 and 2025-26 sessions. "
             "Government Bills, Private Members' Bills and Lords Bills "
             "with full stage history."

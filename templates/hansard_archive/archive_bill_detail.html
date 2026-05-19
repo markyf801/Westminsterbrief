@@ -49,6 +49,12 @@ body { background: #f0f2f5; }
 .bl-badge-act      { background: #22863a; color: #fff; }
 .bl-badge-defeated { background: #d63031; color: #fff; }
 
+/* Bill type note */
+.bl-type-note {
+    font-size: 13px; color: #667; margin: 8px 0 0;
+    font-family: sans-serif; line-height: 1.5;
+}
+
 /* Status banner */
 .bl-status-banner {
     padding: 10px 16px; border-radius: 5px;
@@ -239,7 +245,7 @@ body { background: #f0f2f5; }
                 {% if bill.bill_type.startswith("Government") %}
                 <span class="bl-badge bl-badge-govt">Government Bill</span>
                 {% elif "Members'" in bill.bill_type %}
-                <span class="bl-badge bl-badge-pmb">Private Members' Bill</span>
+                <span class="bl-badge bl-badge-pmb">{{ bill.bill_type }}</span>
                 {% else %}
                 <span class="bl-badge bl-badge-private">{{ bill.bill_type }}</span>
                 {% endif %}
@@ -253,6 +259,24 @@ body { background: #f0f2f5; }
             <span class="bl-badge bl-badge-defeated">Defeated</span>
             {% endif %}
         </div>
+
+        {% if bill.bill_type %}
+        <p class="bl-type-note">
+        {%- if bill.bill_type == "Private Members' Bill (Ballot)" -%}
+            A Private Members' Bill introduced through the annual ballot, which gives backbench MPs a chance to secure Friday debate time. Ballot bills are the only PMBs with a realistic prospect of becoming law without government support.
+        {%- elif bill.bill_type == "Private Members' Bill (Ten Minute Rule)" -%}
+            A Private Members' Bill introduced through a 10-minute speech in the Commons, used primarily to draw attention to an issue rather than to legislate. Most do not progress beyond First Reading.
+        {%- elif bill.bill_type == "Private Members' Bill (Presentation)" -%}
+            A Private Members' Bill placed before the House without a speech. Usually a procedural way of registering a policy position. Most do not progress.
+        {%- elif bill.bill_type == "Private Members' Bill (Lords ballot)" -%}
+            A Private Members' Bill introduced in the House of Lords through ballot. Some Lords PMBs do progress to law, particularly on technical, non-partisan matters.
+        {%- elif bill.bill_type == "Private Bill" -%}
+            A bill applying to a specific person, body, or place, rather than to the general public. Usually promoted by a railway company, university, or local authority seeking specific statutory powers.
+        {%- elif bill.bill_type == "Hybrid Bill" -%}
+            A bill that combines public legislation with effects on specific identified interests. Used for major infrastructure projects like HS2; affected parties can petition against the bill.
+        {%- endif -%}
+        </p>
+        {% endif %}
     </div>
 
     {# Status banner #}
