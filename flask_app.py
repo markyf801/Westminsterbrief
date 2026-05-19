@@ -704,6 +704,11 @@ def about_statistics():
     return render_template('about_statistics.html')
 
 
+@app.route('/about/legislation')
+def about_legislation():
+    return render_template('about_legislation.html')
+
+
 @app.route('/')
 @app.route('/home')
 def home():
@@ -851,7 +856,8 @@ def _build_sitemap_core_xml() -> str:
     # Static tool pages (content changes via deployments, not DB; omit lastmod)
     for path in ('/', '/hansard', '/written-questions', '/written-questions/today',
                  '/mp_search', '/biography', '/debates', '/stats',
-                 '/directory', '/terms', '/privacy', '/history-of-hansard'):
+                 '/directory', '/terms', '/privacy', '/history-of-hansard',
+                 '/about/legislation'):
         urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
 
     # Stats theme pages
