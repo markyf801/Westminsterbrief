@@ -38,6 +38,7 @@ from cache_models import CachedMember
 from extensions import db
 from hansard_archive.models import (
     HaBill,
+    HaBillPublication,
     HaBillSponsor,
     HansardContribution,
     HansardSession,
@@ -2419,6 +2420,25 @@ def archive_bill_detail(parliament_bill_id: int):
     )
     primary_sponsor = next((s for s in sponsors if s.is_primary), None)
 
+    # Publications: find the best EN summary and list other notable docs
+    all_pubs = (
+        HaBillPublication.query
+        .filter_by(bill_id=bill.id)
+        .order_by(HaBillPublication.publication_date.desc().nulls_last())
+        .all()
+    )
+    en_with_summary = next(
+        (p for p in all_pubs if p.publication_type == "explanatory_notes" and p.summary_text),
+        None,
+    )
+    en_link_only = next(
+        (p for p in all_pubs if p.publication_type == "explanatory_notes" and not p.summary_text),
+        None,
+    ) if not en_with_summary else None
+    # Notable docs for "Other documents" subsection (impact assessments, delegated powers, etc.)
+    notable_types = {"impact_assessment", "delegated_powers_memorandum", "human_rights_memorandum", "bill_text"}
+    notable_pubs = [p for p in all_pubs if p.publication_type in notable_types]
+
     title_for_seo = bill.short_title or bill.title
     return render_template(
         "hansard_archive/archive_bill_detail.html",
@@ -2428,6 +2448,9 @@ def archive_bill_detail(parliament_bill_id: int):
         sponsors              = sponsors,
         primary_sponsor       = primary_sponsor,
         has_hansard_fallbacks = has_hansard_fallbacks,
+        en_with_summary       = en_with_summary,
+        en_link_only          = en_link_only,
+        notable_pubs          = notable_pubs,
         canonical_path        = f"/archive/bill/{parliament_bill_id}",
         og_title              = f"{title_for_seo} — Westminster Brief",
         meta_desc             = (

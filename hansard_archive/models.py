@@ -577,3 +577,40 @@ class HaBillTheme(db.Model):
 
     def __repr__(self):
         return f"<HaBillTheme bill={self.bill_id} {self.theme!r} by={self.tagged_by}>"
+
+
+class HaBillPublication(db.Model):
+    """
+    A document publication associated with a bill (Explanatory Notes,
+    Impact Assessment, Delegated Powers Memorandum, etc.).
+
+    publication_type uses a controlled vocabulary:
+      'explanatory_notes' | 'impact_assessment' |
+      'delegated_powers_memorandum' | 'human_rights_memorandum' |
+      'bill_text' | 'other'
+
+    summary_text is populated only for explanatory_notes where an HTML
+    version exists and parsing succeeds.  All other types store NULL.
+    No AI rewriting — verbatim extract from the source document.
+    """
+
+    __tablename__ = "ha_bill_publication"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "publication_url", name="uq_ha_bill_publication"),
+        db.Index("idx_ha_bill_pub_bill", "bill_id"),
+        db.Index("idx_ha_bill_pub_type", "publication_type"),
+    )
+
+    id               = db.Column(db.Integer, primary_key=True)
+    bill_id          = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    publication_type = db.Column(db.Text, nullable=False)
+    title            = db.Column(db.Text, nullable=False)
+    publication_date = db.Column(db.Date, nullable=True)
+    publication_url  = db.Column(db.Text, nullable=False)
+    publisher        = db.Column(db.Text, nullable=True)
+    summary_text     = db.Column(db.Text, nullable=True)
+    raw_data         = db.Column(db.JSON, nullable=True)
+    ingested_at      = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<HaBillPublication bill={self.bill_id} {self.publication_type!r} {self.title[:40]!r}>"
