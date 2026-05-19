@@ -37,6 +37,8 @@ from sqlalchemy import func, text as sqla_text
 from cache_models import CachedMember
 from extensions import db
 from hansard_archive.models import (
+    HaBill,
+    HaBillSponsor,
     HansardContribution,
     HansardSession,
     HansardSessionTheme,
@@ -2335,6 +2337,96 @@ def hansard_home():
         meta_desc             = (
             "Search UK parliamentary debates. Fast access to Hansard transcripts "
             "from Commons and Lords, with AI theme tagging."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bills — /archive/bills (index) + /archive/bill/<id> (detail)
+# ---------------------------------------------------------------------------
+
+_BILLS_PER_PAGE = 50
+
+
+@archive_bp.route("/bills")
+def archive_bills():
+    page          = max(1, request.args.get("page", 1, type=int))
+    session_f     = request.args.get("session", "").strip()
+    valid_sessions = ("2024-25", "2025-26")
+
+    query = HaBill.query.order_by(
+        HaBill.introduced_date.desc().nulls_last(), HaBill.id.desc()
+    )
+    if session_f in valid_sessions:
+        query = query.filter(HaBill.session == session_f)
+
+    total      = query.count()
+    bills      = query.offset((page - 1) * _BILLS_PER_PAGE).limit(_BILLS_PER_PAGE).all()
+    total_pages = max(1, (total + _BILLS_PER_PAGE - 1) // _BILLS_PER_PAGE)
+
+    # Batch-load primary sponsor names — avoids N+1
+    bill_ids = [b.id for b in bills]
+    sponsors: dict[int, str] = {}
+    if bill_ids:
+        for row in (
+            db.session.query(HaBillSponsor.bill_id, HaBillSponsor.member_name)
+            .filter(
+                HaBillSponsor.bill_id.in_(bill_ids),
+                HaBillSponsor.is_primary == True,
+            )
+            .all()
+        ):
+            sponsors.setdefault(row.bill_id, row.member_name)
+
+    return render_template(
+        "hansard_archive/archive_bills.html",
+        bills          = bills,
+        sponsors       = sponsors,
+        page           = page,
+        total_pages    = total_pages,
+        total          = total,
+        session_f      = session_f,
+        valid_sessions = valid_sessions,
+        canonical_path = "/archive/bills",
+        og_title       = "Bills before Parliament — Hansard Archive — Westminster Brief",
+        meta_desc      = (
+            "UK Parliament bills in the 2024-25 and 2025-26 sessions. "
+            "Government Bills, Private Members' Bills and Lords Bills "
+            "with full stage history."
+        ),
+    )
+
+
+@archive_bp.route("/bill/<int:parliament_bill_id>")
+def archive_bill_detail(parliament_bill_id: int):
+    from hansard_archive.bill_stages import compute_bill_status
+
+    bill = HaBill.query.filter_by(parliament_bill_id=parliament_bill_id).first_or_404()
+
+    bill_status = compute_bill_status(bill)
+
+    sponsors = (
+        HaBillSponsor.query
+        .filter_by(bill_id=bill.id)
+        .order_by(HaBillSponsor.is_primary.desc(), HaBillSponsor.id)
+        .all()
+    )
+    primary_sponsor = next((s for s in sponsors if s.is_primary), None)
+
+    title_for_seo = bill.short_title or bill.title
+    return render_template(
+        "hansard_archive/archive_bill_detail.html",
+        bill            = bill,
+        bill_status     = bill_status,
+        stages_by_group = bill_status.stages_by_group(),
+        sponsors        = sponsors,
+        primary_sponsor = primary_sponsor,
+        canonical_path  = f"/archive/bill/{parliament_bill_id}",
+        og_title        = f"{title_for_seo} — Westminster Brief",
+        meta_desc       = (
+            f"{bill.title}. "
+            f"{'Government Bill' if bill.bill_type and bill.bill_type.startswith('Government') else 'Private Members&#39; Bill'} "
+            f"in the UK Parliament {bill.session} session."
         ),
     )
 

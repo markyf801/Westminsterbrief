@@ -500,12 +500,123 @@ def _is_carried_over(bill: "HaBill") -> bool:
     return False
 
 
-# NOTE: compute_bill_status(bill) -> BillStatus is deferred to Step 8.
-# It will:
-#   1. Short-circuit for is_act=True  → fate="act", banner "Passed — became an Act on {date}"
-#   2. Short-circuit for is_defeated  → fate="defeated", derive stage from current_stage field
-#   3. Check _is_carried_over()       → fate="carried_over"
-#   4. Otherwise iterate ha_bill_stage ordered by stage_order, set state per stage
-#      (completed if stage_date < today and not current_stage, current if matches
-#       bill.current_stage, pending otherwise)
-#   5. Return BillStatus with the assembled stages list
+def _format_date(d: "date") -> str:
+    return f"{d.day} {d.strftime('%B %Y')}"
+
+
+def compute_bill_status(bill: "HaBill") -> BillStatus:
+    """
+    Build a BillStatus for the bill detail page.
+
+    Derives royal_assent_date from ha_bill_stage if not on the bill record.
+    Stage states are assigned by finding the current stage index; all prior
+    stages are marked completed, subsequent stages pending.
+    """
+    stages_raw: list["HaBillStage"] = bill.stages.order_by("stage_order").all()
+
+    # Royal assent date: bill field first, then fall back to stage record
+    royal_assent_date = bill.royal_assent_date
+    if not royal_assent_date:
+        for s in stages_raw:
+            if _normalise(s.stage_name) == "royal assent" and s.stage_date:
+                royal_assent_date = s.stage_date
+                break
+
+    # Fate + banner text
+    if bill.is_act:
+        fate = "act"
+        banner = (
+            f"Passed — Royal Assent {_format_date(royal_assent_date)}"
+            if royal_assent_date
+            else "Passed — now an Act of Parliament"
+        )
+    elif bill.is_defeated:
+        fate = "defeated"
+        banner = "Defeated in Parliament"
+    elif _is_carried_over(bill):
+        fate = "carried_over"
+        intro_id = bill.raw_data.get("introducedSessionId") if bill.raw_data else None
+        intro_label = _SESSION_LABELS.get(intro_id, "a previous session")
+        banner = f"Carried over from {intro_label}"
+    else:
+        fate = "in_progress"
+        stage_text = (
+            get_display_name(bill.current_stage) if bill.current_stage else "In progress"
+        )
+        house_text = f" · {bill.current_house}" if bill.current_house else ""
+        banner = f"{stage_text}{house_text}"
+
+    # Last action date (most recent stage with a date)
+    last_action_date = None
+    for s in reversed(stages_raw):
+        if s.stage_date:
+            last_action_date = s.stage_date
+            break
+
+    # Build per-stage state list
+    bill_is_done = bill.is_act or bill.is_defeated
+    norm_current = _normalise(bill.current_stage) if bill.current_stage else None
+
+    if bill_is_done:
+        stage_states = [
+            StageState(
+                stage_name=s.stage_name,
+                display_name=get_display_name(s.stage_name),
+                house=s.house,
+                stage_order=s.stage_order,
+                stage_date=s.stage_date,
+                state="completed" if s.stage_date else "pending",
+                group=stage_group(s.stage_name, s.house, bill.house_of_origin),
+                descriptor=get_stage_descriptor(s.stage_name, s.house),
+            )
+            for s in stages_raw
+        ]
+    else:
+        # Find index of the current stage to split completed / current / pending
+        current_idx = None
+        if norm_current:
+            for i, s in enumerate(stages_raw):
+                if _normalise(s.stage_name) == norm_current:
+                    current_idx = i
+                    break
+
+        stage_states = []
+        for i, s in enumerate(stages_raw):
+            if current_idx is not None:
+                if i < current_idx:
+                    state = "completed"
+                elif i == current_idx:
+                    state = "current"
+                else:
+                    state = "pending"
+            else:
+                # Fallback: completed if stage_date exists
+                state = "completed" if s.stage_date else "pending"
+
+            stage_states.append(
+                StageState(
+                    stage_name=s.stage_name,
+                    display_name=get_display_name(s.stage_name),
+                    house=s.house,
+                    stage_order=s.stage_order,
+                    stage_date=s.stage_date,
+                    state=state,
+                    group=stage_group(s.stage_name, s.house, bill.house_of_origin),
+                    descriptor=get_stage_descriptor(s.stage_name, s.house),
+                )
+            )
+
+    return BillStatus(
+        fate=fate,
+        banner_text=banner,
+        current_stage_name=(
+            get_display_name(bill.current_stage) if bill.current_stage else None
+        ),
+        current_stage_house=bill.current_house,
+        last_action_date=last_action_date,
+        royal_assent_date=royal_assent_date,
+        stages=stage_states,
+        is_act=bill.is_act,
+        is_defeated=bill.is_defeated,
+        is_carried_over=(fate == "carried_over"),
+    )
