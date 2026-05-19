@@ -328,7 +328,7 @@ body { background: #f0f2f5; }
     {% endif %}
 
     {# Explanatory Notes — "What this bill is about" section #}
-    {% if en_with_summary or en_link_only or notable_pubs %}
+    {% if en_with_summary or en_link_only or notable_pubs or bill.long_title %}
     <div class="bl-en-section">
         <div class="bl-en-section-title">What this bill is about</div>
 
@@ -343,6 +343,10 @@ body { background: #f0f2f5; }
         <p class="bl-en-link-only">
             <a href="{{ en_link_only.publication_url }}" target="_blank" rel="noopener">Explanatory Notes for this bill are available from parliament.uk ↗</a>
         </p>
+
+        {% elif bill.long_title %}
+        <p class="bl-en-attribution">Bill's formal long title:</p>
+        <div class="bl-en-summary">{{ bill.long_title }}</div>
         {% endif %}
 
         {% if notable_pubs %}
