@@ -473,6 +473,7 @@ class HaBill(db.Model):
     royal_assent_date  = db.Column(db.Date, nullable=True)
     slug               = db.Column(db.Text, nullable=True)
     parliament_url     = db.Column(db.Text, nullable=False)
+    govuk_url          = db.Column(db.Text, nullable=True)
     raw_data           = db.Column(db.JSON, nullable=True)
     ingested_at        = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     last_refreshed     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -604,6 +605,7 @@ class HaBillPublication(db.Model):
     id               = db.Column(db.Integer, primary_key=True)
     bill_id          = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
     publication_type = db.Column(db.Text, nullable=False)
+    source           = db.Column(db.String(20), nullable=False, default='parliament')  # parliament | govuk
     title            = db.Column(db.Text, nullable=False)
     publication_date = db.Column(db.Date, nullable=True)
     publication_url  = db.Column(db.Text, nullable=False)

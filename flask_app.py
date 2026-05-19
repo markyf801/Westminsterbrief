@@ -558,6 +558,21 @@ with app.app_context():
         _mig_log('ha_bill tagging cols done')
     except Exception as _e:
         app.logger.warning('ha_bill tagging cols migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS govuk_url TEXT"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE ha_bill_publication ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'parliament'"
+            ))
+            _conn.execute(text(
+                "UPDATE ha_bill_publication SET source = 'parliament' WHERE source IS NULL"
+            ))
+            _conn.commit()
+        _mig_log('ha_bill govuk_url + ha_bill_publication source cols done')
+    except Exception as _e:
+        app.logger.warning('ha_bill govuk/source migration failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records

@@ -2472,7 +2472,9 @@ def archive_bill_detail(parliament_bill_id: int):
     ) if not en_with_summary else None
     # Notable docs for "Other documents" subsection (impact assessments, delegated powers, etc.)
     notable_types = {"impact_assessment", "delegated_powers_memorandum", "human_rights_memorandum", "bill_text"}
-    notable_pubs = [p for p in all_pubs if p.publication_type in notable_types]
+    parliament_pubs = [p for p in all_pubs if p.source == "parliament"]
+    notable_pubs = [p for p in parliament_pubs if p.publication_type in notable_types]
+    govuk_pubs = [p for p in all_pubs if p.source == "govuk"]
 
     title_for_seo = bill.short_title or bill.title
     return render_template(
@@ -2486,6 +2488,7 @@ def archive_bill_detail(parliament_bill_id: int):
         en_with_summary       = en_with_summary,
         en_link_only          = en_link_only,
         notable_pubs          = notable_pubs,
+        govuk_pubs            = govuk_pubs,
         canonical_path        = f"/archive/bill/{parliament_bill_id}",
         og_title              = f"{title_for_seo} — Westminster Brief",
         meta_desc             = (

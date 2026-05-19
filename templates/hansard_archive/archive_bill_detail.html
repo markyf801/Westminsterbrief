@@ -339,6 +339,11 @@ body { background: #f0f2f5; }
                 <a href="{{ bill.parliament_url }}" target="_blank" rel="noopener" class="bl-parliament-link">
                     View on Parliament ↗
                 </a>
+                {% if bill.govuk_url %}
+                <br><a href="{{ bill.govuk_url }}" target="_blank" rel="noopener" class="bl-parliament-link" style="margin-top:4px; display:inline-block;">
+                    View on GOV.UK ↗
+                </a>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -394,6 +399,35 @@ body { background: #f0f2f5; }
                 {% endif %}
             </ul>
         </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# GOV.UK policy documents section #}
+    {% if govuk_pubs %}
+    <div class="bl-en-section">
+        <div class="bl-en-section-title">GOV.UK policy documents</div>
+        {% set govuk_type_labels = {
+            "policy_paper":                 "Policy paper",
+            "factsheet":                    "Factsheet",
+            "impact_assessment":            "Impact Assessment",
+            "delegated_powers_memorandum":  "Delegated Powers Memorandum",
+            "human_rights_memorandum":      "Human Rights Memorandum",
+            "consultation_outcome":         "Consultation outcome",
+            "bill_text":                    "Bill text"
+        } %}
+        <ul class="bl-notable-list" style="margin-top: 10px;">
+            {% for pub in govuk_pubs %}
+            <li>
+                <a href="{{ pub.publication_url }}" target="_blank" rel="noopener">{{ pub.title[:90] }}</a>
+                <span class="bl-notable-type">{{ govuk_type_labels.get(pub.publication_type, "Document") }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if bill.govuk_url %}
+        <p style="margin: 10px 0 0; font-size: 12px;">
+            <a href="{{ bill.govuk_url }}" target="_blank" rel="noopener" style="color: #4a7fa5;">View all on GOV.UK ↗</a>
+        </p>
         {% endif %}
     </div>
     {% endif %}
