@@ -1548,20 +1548,6 @@ body.page-home .tool-card-link:hover {
     color: #fff;
 }
 
-/* Family tile — two sub-buttons */
-body.page-home .tool-card-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: auto;
-    padding-top: 14px;
-}
-body.page-home .tool-card-actions .tool-card-link {
-    flex: 1 1 0;
-    min-width: 120px;
-    font-size: 13px;
-    padding: 9px 12px;
-}
 
 /* Beta badge — amber, distinct from AI blue */
 body.page-home .tool-card-badge-beta {
