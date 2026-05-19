@@ -29,7 +29,7 @@
     {# --- Session header --- #}
     <div class="sd-header">
         <nav class="sd-breadcrumb" aria-label="breadcrumb">
-            <a href="/archive">Hansard Archive</a>
+            <a href="/archive">Hansard</a>
             <span class="sd-breadcrumb-sep">›</span>
             <a href="/archive/date/{{ url_date }}">{{ human_date }}</a>
             <span class="sd-breadcrumb-sep">›</span>
@@ -47,6 +47,13 @@
             <a class="sd-hansard-link" href="{{ session.hansard_url }}" target="_blank" rel="noopener">View on Hansard ↗</a>
             {% endif %}
         </div>
+
+        {% if related_bill %}
+        <div class="sd-bill-row">
+            <span class="sd-theme-label">Bill:</span>
+            <a href="/bill/{{ related_bill[1] }}" class="archive-tag archive-tag-bill">{{ related_bill[0] }} →</a>
+        </div>
+        {% endif %}
 
         {% if policy_areas or specific_topics %}
         <div class="sd-theme-row">

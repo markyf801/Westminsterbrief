@@ -227,3 +227,394 @@ class HaPQTheme(db.Model):
 
     def __repr__(self):
         return f"<HaPQTheme pq={self.pq_id} [{self.theme_type}] {self.theme!r}>"
+
+
+class MpAnalytics(db.Model):
+    """
+    Precomputed parliamentary activity analytics for a Commons MP.
+
+    Refreshed nightly by scripts/compute_mp_analytics.py.  Only covers
+    members present in cached_member with house='Commons'.  Procedural
+    chair contributions (Mr Speaker, Deputy Speakers, etc.) are excluded
+    from all calculations — see analytics_constants.PROCEDURAL_NAME_PATTERNS.
+
+    JSON columns store lists/dicts; None means the member had too little data
+    to compute that metric.
+    """
+
+    __tablename__ = "ha_mp_analytics"
+
+    member_id        = db.Column(db.Integer, primary_key=True)   # FK to cached_member.member_id (no constraint — avoids cross-file FK complexity)
+    computed_at      = db.Column(db.DateTime, nullable=False)
+
+    # Activity counts (12-month and 3-month windows)
+    sessions_12m     = db.Column(db.Integer, nullable=False, default=0)
+    sessions_3m      = db.Column(db.Integer, nullable=False, default=0)
+
+    # Chamber ranking among Commons MPs with ≥ BASELINE_MIN_SESSIONS sessions
+    commons_rank_12m = db.Column(db.Integer, nullable=True)   # 1 = most active
+    commons_total    = db.Column(db.Integer, nullable=True)   # size of ranking pool
+    commons_pct_12m  = db.Column(db.Float,   nullable=True)   # percentile 0–100
+
+    # Policy area engagement — JSON list of dicts:
+    # [{theme, sessions, rank, contributor_count, surface_rank}]
+    top_policy_areas = db.Column(db.JSON, nullable=True)
+
+    # Policy areas newly engaged with in last 3 months vs prior 9 months
+    # JSON list of dicts: [{theme}]
+    recent_shifts    = db.Column(db.JSON, nullable=True)
+
+    # Debate type breakdown (12 months) — JSON dict: {debate_type: session_count}
+    debate_type_dist = db.Column(db.JSON, nullable=True)
+
+    # HHI concentration score (0–1); label is the plain-English interpretation
+    specialism_score = db.Column(db.Float,       nullable=True)
+    specialism_label = db.Column(db.String(200),  nullable=True)
+
+    # True when total sessions < TIER_FULL — simplified panel renders
+    thin_data        = db.Column(db.Boolean, nullable=False, default=False)
+
+    # Proportion (0–100) of this MP's 12-month sessions that carry theme tags
+    tagged_pct       = db.Column(db.Float, nullable=True)
+
+    def __repr__(self):
+        return f"<MpAnalytics member={self.member_id} computed={self.computed_at}>"
+
+
+class ManifestoChunk(db.Model):
+    """
+    A short excerpt (2-5 sentences) from a party's 2024 general election manifesto,
+    tagged to one or more GOV.UK policy areas.
+
+    Chunks are AI-generated (Gemini Flash-Lite) and must be reviewed by Mark
+    (review_status='approved') before they render on party pages.
+    """
+
+    __tablename__ = "manifesto_chunk"
+    __table_args__ = (
+        db.UniqueConstraint("party_slug", "manifesto_year", "chunk_text",
+                            name="uq_manifesto_chunk"),
+    )
+
+    id             = db.Column(db.Integer, primary_key=True)
+    party_slug     = db.Column(db.String(80),  nullable=False, index=True)
+    manifesto_year = db.Column(db.Integer,     nullable=False, default=2024)
+    source_section = db.Column(db.Text,        nullable=True)   # section heading
+    source_url     = db.Column(db.Text,        nullable=True)   # HTML manifesto page URL
+    source_page    = db.Column(db.Integer,     nullable=True)   # PDF page number (1-indexed)
+    pdf_url        = db.Column(db.Text,        nullable=True)   # direct PDF URL for #page=N links
+    chunk_text     = db.Column(db.Text,        nullable=False)
+    ingested_at    = db.Column(db.DateTime,    nullable=False)
+    review_status  = db.Column(db.String(20),  nullable=False, default="pending")
+    # 'pending' | 'approved' | 'rejected'
+
+    tags = db.relationship("ManifestoChunkTag", back_populates="chunk",
+                           cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<ManifestoChunk id={self.id} party={self.party_slug} status={self.review_status}>"
+
+
+class ManifestoChunkTag(db.Model):
+    """
+    Many-to-many: one chunk tagged to one policy area.
+    is_primary=True marks the best-fit area for display when multiple chunks
+    share the same party+policy_area combination.
+    """
+
+    __tablename__ = "manifesto_chunk_tag"
+
+    chunk_id    = db.Column(db.Integer, db.ForeignKey("manifesto_chunk.id", ondelete="CASCADE"),
+                            primary_key=True)
+    policy_area = db.Column(db.String(100), primary_key=True)
+    is_primary  = db.Column(db.Boolean, nullable=False, default=False)
+
+    chunk = db.relationship("ManifestoChunk", back_populates="tags")
+
+    def __repr__(self):
+        return f"<ManifestoChunkTag chunk={self.chunk_id} area={self.policy_area} primary={self.is_primary}>"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Cross-government statistics
+# ---------------------------------------------------------------------------
+
+class HeadlineStat(db.Model):
+    """
+    One statistic row per theme (v1). source_id is a stable slug independent
+    of URL — source_url can be updated when gov.uk moves bulletins without
+    breaking row identity.
+
+    source_type: 'ons_timeseries' | 'govuk_bulletin' | 'manual'
+    display_hint: 'raw' | 'borrowing' | 'surplus_deficit'
+    """
+
+    __tablename__ = "headline_stat"
+    __table_args__ = (
+        db.UniqueConstraint("theme_slug", "source_id", name="uq_headline_stat"),
+    )
+
+    id               = db.Column(db.Integer,   primary_key=True)
+    theme_slug       = db.Column(db.Text,      nullable=False, index=True)
+    source_type      = db.Column(db.Text,      nullable=False)
+    source_id        = db.Column(db.Text,      nullable=False)
+    display_label    = db.Column(db.Text,      nullable=False)
+    display_hint     = db.Column(db.Text,      nullable=False, default="raw")
+    geography        = db.Column(db.Text,      nullable=False, default="UK")
+    latest_value     = db.Column(db.Text,      nullable=True)
+    unit             = db.Column(db.Text,      nullable=True)
+    period_label     = db.Column(db.Text,      nullable=True)
+    release_date     = db.Column(db.Date,      nullable=True)
+    source_url       = db.Column(db.Text,      nullable=False)
+    source_wording   = db.Column(db.Text,      nullable=True)
+    plain_english    = db.Column(db.Text,      nullable=True)
+    plain_english_generated_at = db.Column(db.DateTime, nullable=True)
+    rewrite_model    = db.Column(db.Text,      nullable=True)
+    extraction_config = db.Column(db.Text,     nullable=True)   # JSON stored as text (SQLite compat)
+    last_refreshed   = db.Column(db.DateTime,  nullable=False)
+    last_success     = db.Column(db.DateTime,  nullable=False)
+
+    issue_reports = db.relationship("StatIssueReport", back_populates="stat",
+                                    cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<HeadlineStat id={self.id} theme={self.theme_slug} source={self.source_id}>"
+
+
+class StatIssueReport(db.Model):
+    """User-submitted issue reports against a specific stat card."""
+
+    __tablename__ = "stat_issue_report"
+
+    id               = db.Column(db.Integer, primary_key=True)
+    headline_stat_id = db.Column(db.Integer, db.ForeignKey("headline_stat.id", ondelete="SET NULL"),
+                                 nullable=True)
+    theme_slug       = db.Column(db.Text,    nullable=False)
+    source_id        = db.Column(db.Text,    nullable=False)
+    user_message     = db.Column(db.Text,    nullable=False)
+    user_email       = db.Column(db.Text,    nullable=True)
+    created_at       = db.Column(db.DateTime, nullable=False)
+    reviewed         = db.Column(db.Boolean, nullable=False, default=False)
+
+    stat = db.relationship("HeadlineStat", back_populates="issue_reports")
+
+    def __repr__(self):
+        return f"<StatIssueReport id={self.id} theme={self.theme_slug} reviewed={self.reviewed}>"
+
+
+class UpcomingRelease(db.Model):
+    """
+    Cached upcoming official statistics from the GOV.UK release calendar.
+    Refreshed daily via the upcoming_refresh.py CLI job.
+
+    release_date_confirmed: True = confirmed date, False = provisional.
+    Cancelled releases are excluded at refresh time and never stored.
+    """
+
+    __tablename__ = "upcoming_release"
+    __table_args__ = (
+        db.UniqueConstraint("govuk_content_id", "theme_slug", name="uq_upcoming_release_content_theme"),
+        db.Index("idx_upcoming_release_theme_date", "theme_slug", "release_date"),
+    )
+
+    id                     = db.Column(db.Integer,  primary_key=True)
+    govuk_content_id       = db.Column(db.Text,     nullable=False)
+    theme_slug             = db.Column(db.Text,     nullable=False)
+    organisation_slug      = db.Column(db.Text,     nullable=False)
+    organisation_name      = db.Column(db.Text,     nullable=False)
+    title                  = db.Column(db.Text,     nullable=False)
+    summary                = db.Column(db.Text,     nullable=True)
+    release_date           = db.Column(db.Date,     nullable=False)
+    release_date_confirmed = db.Column(db.Boolean,  nullable=False)
+    publication_url        = db.Column(db.Text,     nullable=False)
+    document_type          = db.Column(db.Text,     nullable=True)
+    last_refreshed         = db.Column(db.DateTime, nullable=False)
+
+    def __repr__(self):
+        return f"<UpcomingRelease id={self.id} theme={self.theme_slug} title={self.title[:40]!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2A.5: Bills ingestion
+# ---------------------------------------------------------------------------
+
+class HaBill(db.Model):
+    """
+    A UK Parliament bill ingested from the Parliament Bills API.
+
+    Sessions 38 (2024-25) and 39 (2025-26) cover the full Labour government.
+    is_act and is_defeated are independently settable; both FALSE = in-progress.
+    slug is nullable — populate later for SEO-friendly /bill/<slug> URLs.
+    """
+
+    __tablename__ = "ha_bill"
+    __table_args__ = (
+        db.Index("idx_ha_bill_session", "session"),
+        db.Index("idx_ha_bill_introduced", "introduced_date"),
+        db.Index("idx_ha_bill_is_act", "is_act"),
+        db.Index("idx_ha_bill_is_defeated", "is_defeated"),
+    )
+
+    id                 = db.Column(db.Integer, primary_key=True)
+    parliament_bill_id = db.Column(db.Integer, nullable=False, unique=True)
+    title              = db.Column(db.Text, nullable=False)
+    short_title        = db.Column(db.Text, nullable=True)
+    long_title         = db.Column(db.Text, nullable=True)
+    summary            = db.Column(db.Text, nullable=True)   # often NULL from API
+    house_of_origin    = db.Column(db.String(20), nullable=False)   # Commons | Lords
+    session            = db.Column(db.String(20), nullable=False)   # e.g. 2024-25
+    bill_type          = db.Column(db.String(100), nullable=True)
+    is_act              = db.Column(db.Boolean, nullable=False, default=False)
+    is_defeated         = db.Column(db.Boolean, nullable=False, default=False)
+    bill_withdrawn_date = db.Column(db.Date, nullable=True)
+    is_carried_over     = db.Column(db.Boolean, nullable=False, default=False)
+    current_stage       = db.Column(db.Text, nullable=True)
+    current_house      = db.Column(db.String(20), nullable=True)
+    introduced_date    = db.Column(db.Date, nullable=True)
+    last_updated_date  = db.Column(db.Date, nullable=True)
+    royal_assent_date  = db.Column(db.Date, nullable=True)
+    slug               = db.Column(db.Text, nullable=True)
+    parliament_url     = db.Column(db.Text, nullable=False)
+    govuk_url          = db.Column(db.Text, nullable=True)
+    raw_data           = db.Column(db.JSON, nullable=True)
+    ingested_at        = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_refreshed     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # Tagging pipeline state — set by scripts/tag_bills.py
+    tagging_attempted_at   = db.Column(db.DateTime, nullable=True)
+    tagging_completed_at   = db.Column(db.DateTime, nullable=True)
+    tagging_failure_reason = db.Column(db.Text, nullable=True)
+
+    sponsors = db.relationship(
+        "HaBillSponsor",
+        backref="bill",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+    stages = db.relationship(
+        "HaBillStage",
+        backref="bill",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+    themes = db.relationship(
+        "HaBillTheme",
+        backref="bill",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self):
+        return f"<HaBill {self.parliament_bill_id} {self.title[:60]!r}>"
+
+
+class HaBillSponsor(db.Model):
+    """
+    A sponsor (primary or co-sponsor) of a bill.
+
+    member_id is a FK to cached_member.member_id — NULL only for Lords without
+    a member record or other edge cases. member_name stored as fallback.
+    sortOrder=1 in the API maps to is_primary=True.
+    """
+
+    __tablename__ = "ha_bill_sponsor"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "member_name", name="uq_ha_bill_sponsor"),
+        db.Index("idx_ha_bill_sponsor_bill", "bill_id"),
+        db.Index("idx_ha_bill_sponsor_member", "member_id"),
+    )
+
+    id          = db.Column(db.Integer, primary_key=True)
+    bill_id     = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    member_id   = db.Column(db.Integer, db.ForeignKey("cached_member.member_id"), nullable=True)
+    member_name = db.Column(db.Text, nullable=False)
+    party       = db.Column(db.Text, nullable=True)
+    is_primary  = db.Column(db.Boolean, nullable=False, default=False)
+    house       = db.Column(db.String(20), nullable=True)
+
+    def __repr__(self):
+        return f"<HaBillSponsor bill={self.bill_id} {self.member_name!r} primary={self.is_primary}>"
+
+
+class HaBillStage(db.Model):
+    """Stage history for a bill (First reading, Committee, Third reading, etc.)."""
+
+    __tablename__ = "ha_bill_stage"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "parliament_stage_id", name="uq_ha_bill_stage"),
+        db.Index("idx_ha_bill_stage_bill", "bill_id"),
+    )
+
+    id                  = db.Column(db.Integer, primary_key=True)
+    bill_id             = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    parliament_stage_id = db.Column(db.Integer, nullable=False)
+    stage_name          = db.Column(db.Text, nullable=False)
+    house               = db.Column(db.String(20), nullable=False)
+    stage_date          = db.Column(db.Date, nullable=True)
+    stage_order         = db.Column(db.Integer, nullable=False)
+
+    def __repr__(self):
+        return f"<HaBillStage bill={self.bill_id} {self.stage_name!r} {self.house}>"
+
+
+class HaBillTheme(db.Model):
+    """
+    AI-generated policy area tag for a bill.
+
+    theme uses display names from POLICY_AREAS in tagger.py — not slugs.
+    tagged_by records the model tier: 'ai_gemini_pro', 'manual', 'api'.
+    """
+
+    __tablename__ = "ha_bill_theme"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "theme", name="uq_ha_bill_theme"),
+        db.Index("idx_ha_bill_theme_theme", "theme"),
+        db.Index("idx_ha_bill_theme_bill", "bill_id"),
+    )
+
+    id               = db.Column(db.Integer, primary_key=True)
+    bill_id          = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    theme            = db.Column(db.Text, nullable=False)
+    tagged_by        = db.Column(db.String(50), nullable=False, default="ai_gemini_pro")
+    tagged_at        = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    confidence_score = db.Column(db.Float, nullable=True)
+
+    def __repr__(self):
+        return f"<HaBillTheme bill={self.bill_id} {self.theme!r} by={self.tagged_by}>"
+
+
+class HaBillPublication(db.Model):
+    """
+    A document publication associated with a bill (Explanatory Notes,
+    Impact Assessment, Delegated Powers Memorandum, etc.).
+
+    publication_type uses a controlled vocabulary:
+      'explanatory_notes' | 'impact_assessment' |
+      'delegated_powers_memorandum' | 'human_rights_memorandum' |
+      'bill_text' | 'other'
+
+    summary_text is populated only for explanatory_notes where an HTML
+    version exists and parsing succeeds.  All other types store NULL.
+    No AI rewriting — verbatim extract from the source document.
+    """
+
+    __tablename__ = "ha_bill_publication"
+    __table_args__ = (
+        db.UniqueConstraint("bill_id", "publication_url", name="uq_ha_bill_publication"),
+        db.Index("idx_ha_bill_pub_bill", "bill_id"),
+        db.Index("idx_ha_bill_pub_type", "publication_type"),
+    )
+
+    id               = db.Column(db.Integer, primary_key=True)
+    bill_id          = db.Column(db.Integer, db.ForeignKey("ha_bill.id", ondelete="CASCADE"), nullable=False)
+    publication_type = db.Column(db.Text, nullable=False)
+    source           = db.Column(db.String(20), nullable=False, default='parliament')  # parliament | govuk
+    title            = db.Column(db.Text, nullable=False)
+    publication_date = db.Column(db.Date, nullable=True)
+    publication_url  = db.Column(db.Text, nullable=False)
+    publisher        = db.Column(db.Text, nullable=True)
+    summary_text     = db.Column(db.Text, nullable=True)
+    raw_data         = db.Column(db.JSON, nullable=True)
+    ingested_at      = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<HaBillPublication bill={self.bill_id} {self.publication_type!r} {self.title[:40]!r}>"

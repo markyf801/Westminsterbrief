@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Edit Stat — {{ row.theme_slug }} — Westminster Brief{% endblock %}
+
+{% block extra_head %}
+<style>
+.se-wrap { max-width: 760px; margin: 32px auto; padding: 0 24px; }
+.se-h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; }
+.se-meta { font-size: 13px; color: #5a6878; margin: 0 0 28px; }
+.se-form-group { margin-bottom: 18px; }
+.se-form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #374151; }
+.se-form-group .se-hint { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+.se-form-group input[type=text],
+.se-form-group input[type=url],
+.se-form-group input[type=date],
+.se-form-group select,
+.se-form-group textarea { width: 100%; padding: 7px 10px; border: 1px solid #d0d5dd; border-radius: 5px; font-size: 13px; font-family: inherit; box-sizing: border-box; }
+.se-form-group textarea { min-height: 80px; resize: vertical; }
+.se-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.se-required::after { content: ' *'; color: #dc2626; }
+.se-actions { display: flex; gap: 12px; margin-top: 28px; align-items: center; }
+.se-save { background: #1d4ed8; color: #fff; border: none; padding: 9px 22px; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.se-save:hover { background: #1e40af; }
+.se-cancel { font-size: 13px; color: #6b7280; text-decoration: none; }
+.se-cancel:hover { color: #374151; }
+.se-source-link { font-size: 12px; color: #3b7dd8; }
+.se-divider { border: none; border-top: 1px solid #e5e8ec; margin: 24px 0; }
+.se-section-head { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.se-back { font-size: 13px; color: #3b7dd8; text-decoration: none; margin-bottom: 16px; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="se-wrap">
+    <a href="/admin/stats" class="se-back">&larr; All stats</a>
+    <h1 class="se-h1">Edit: {{ row.display_label }}</h1>
+    <p class="se-meta">
+        {{ row.theme_slug }} &nbsp;·&nbsp; <code>{{ row.source_id }}</code>
+        &nbsp;·&nbsp; id={{ row.id }}
+        {% if row.source_url %}
+        &nbsp;·&nbsp; <a href="{{ row.source_url }}" target="_blank" rel="noopener" class="se-source-link">View source &rarr;</a>
+        {% endif %}
+    </p>
+
+    <form method="post" action="/admin/stats/{{ row.id }}">
+
+        <p class="se-section-head">Classification</p>
+
+        <div class="se-form-row">
+            <div class="se-form-group">
+                <label class="se-required">Source type</label>
+                <div class="se-hint">Set to <strong>manual</strong> to lock this row and skip AI refresh.</div>
+                <select name="source_type">
+                    <option value="manual"        {% if row.source_type == 'manual' %}selected{% endif %}>manual</option>
+                    <option value="govuk_bulletin" {% if row.source_type == 'govuk_bulletin' %}selected{% endif %}>govuk_bulletin</option>
+                    <option value="ons_timeseries" {% if row.source_type == 'ons_timeseries' %}selected{% endif %}>ons_timeseries</option>
+                </select>
+            </div>
+            <div class="se-form-group">
+                <label>Display hint</label>
+                <div class="se-hint">Controls how the value is framed on the stats page.</div>
+                <select name="display_hint">
+                    <option value="raw"             {% if row.display_hint == 'raw' %}selected{% endif %}>raw</option>
+                    <option value="borrowing"       {% if row.display_hint == 'borrowing' %}selected{% endif %}>borrowing</option>
+                    <option value="surplus_deficit" {% if row.display_hint == 'surplus_deficit' %}selected{% endif %}>surplus_deficit</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="se-form-group">
+            <label class="se-required">Display label</label>
+            <div class="se-hint">Short series name shown on the stats pages.</div>
+            <input type="text" name="display_label" value="{{ row.display_label }}" required>
+        </div>
+
+        <hr class="se-divider">
+        <p class="se-section-head">Value</p>
+
+        <div class="se-form-row">
+            <div class="se-form-group">
+                <label class="se-required">Latest value</label>
+                <div class="se-hint">The bare figure, e.g. "3.4" or "£12.4bn" or "244,000".</div>
+                <input type="text" name="latest_value" value="{{ row.latest_value or '' }}">
+            </div>
+            <div class="se-form-group">
+                <label>Unit</label>
+                <div class="se-hint">E.g. "%" or "£bn" or "dwellings". Appended after the value.</div>
+                <input type="text" name="unit" value="{{ row.unit or '' }}">
+            </div>
+        </div>
+
+        <div class="se-form-row">
+            <div class="se-form-group">
+                <label>Period label</label>
+                <div class="se-hint">E.g. "March 2026" or "Q1 2026" or "2023-24".</div>
+                <input type="text" name="period_label" value="{{ row.period_label or '' }}">
+            </div>
+            <div class="se-form-group">
+                <label>Release date</label>
+                <div class="se-hint">Date the bulletin was published (YYYY-MM-DD).</div>
+                <input type="date" name="release_date"
+                       value="{{ row.release_date.isoformat() if row.release_date else '' }}">
+            </div>
+        </div>
+
+        <hr class="se-divider">
+        <p class="se-section-head">Source text</p>
+
+        <div class="se-form-group">
+            <label>Verbatim source wording</label>
+            <div class="se-hint">Paste the exact sentence from the bulletin that contains the figure. Used internally for audit.</div>
+            <textarea name="source_wording">{{ row.source_wording or '' }}</textarea>
+        </div>
+
+        <div class="se-form-group">
+            <label>Plain-English rewrite</label>
+            <div class="se-hint">One or two plain sentences for the stats page. Accepts the existing AI version if it's correct.</div>
+            <textarea name="plain_english">{{ row.plain_english or '' }}</textarea>
+        </div>
+
+        <div class="se-form-group">
+            <label class="se-required">Source URL</label>
+            <div class="se-hint">Link to the bulletin page (not the dataset). Must be publicly accessible.</div>
+            <input type="url" name="source_url" value="{{ row.source_url or '' }}" required>
+        </div>
+
+        <div class="se-actions">
+            <button type="submit" class="se-save">Save changes</button>
+            <a href="/admin/stats" class="se-cancel">Cancel</a>
+            {% if row.rewrite_model == 'manual' %}
+            <span style="font-size:12px; color:#6b7280;">Last edited manually</span>
+            {% elif row.rewrite_model %}
+            <span style="font-size:12px; color:#6b7280;">Rewrite model: {{ row.rewrite_model }}</span>
+            {% endif %}
+        </div>
+
+    </form>
+</div>
+{% endblock %}

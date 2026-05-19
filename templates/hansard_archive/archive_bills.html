@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}Bills before Parliament — Hansard — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  "name": "Bills before Parliament",
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk/bills",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+body { background: #f0f2f5; }
+
+.bl-page { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+
+.bl-breadcrumb { font-size: 12px; color: #666; margin-bottom: 18px; }
+.bl-breadcrumb a { color: #4a7fa5; text-decoration: none; }
+.bl-breadcrumb a:hover { text-decoration: underline; }
+.bl-breadcrumb-sep { margin: 0 6px; color: #bbb; }
+
+.bl-header { margin-bottom: 20px; }
+.bl-header h1 { font-size: 22px; font-weight: 700; color: #1a2a3a; margin: 0 0 4px; }
+.bl-header-sub { font-size: 13px; color: #666; margin: 0; }
+
+.bl-filter-bar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 14px; flex-wrap: wrap;
+}
+.bl-filter-bar label { font-size: 12px; color: #555; font-weight: 600; }
+.bl-filter-bar select {
+    font-size: 12px; border: 1px solid #cdd3dc; border-radius: 4px;
+    padding: 4px 8px; background: #fff; color: #1a2a3a; cursor: pointer;
+}
+.bl-filter-bar select:focus { outline: 2px solid #4a7fa5; }
+
+.bl-results-bar {
+    font-size: 12px; color: #666; margin-bottom: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+}
+
+/* Bill rows */
+.bl-bill-list { list-style: none; padding: 0; margin: 0; }
+.bl-bill-item {
+    background: #fff; border: 1px solid #dde3ed; border-radius: 6px;
+    padding: 12px 16px; margin-bottom: 8px;
+    display: flex; flex-direction: column; gap: 5px;
+}
+.bl-bill-title {
+    font-size: 14px; font-weight: 600; color: #1a2a3a;
+    text-decoration: none; line-height: 1.4;
+}
+.bl-bill-title:hover { color: #4a7fa5; text-decoration: underline; }
+
+.bl-bill-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bl-bill-sponsor { font-size: 12px; color: #666; }
+
+/* Badges */
+.bl-badge {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 7px; border-radius: 3px; white-space: nowrap;
+}
+.bl-badge-commons  { background: #e8f0fb; color: #1a4a8a; }
+.bl-badge-lords    { background: #f3e8fb; color: #5a1a8a; }
+.bl-badge-govt     { background: #e6f4ea; color: #1a6a2a; }
+.bl-badge-pmb      { background: #fff3e0; color: #8a4a00; }
+.bl-badge-private  { background: #f0f0f0; color: #555; }
+.bl-badge-session  { background: #f0f2f5; color: #555; font-weight: 400; }
+.bl-badge-act      { background: #22863a; color: #fff; }
+.bl-badge-defeated { background: #d63031; color: #fff; }
+.bl-badge-lapsed   { background: #e0e0e0; color: #666; font-style: italic; }
+.bl-badge-progress { background: #f0f2f5; color: #555; font-weight: 400; }
+
+/* Pagination */
+.bl-pagination {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 24px; font-size: 13px; justify-content: center;
+}
+.bl-pagination a { color: #4a7fa5; text-decoration: none; padding: 4px 10px; border: 1px solid #dde3ed; border-radius: 4px; }
+.bl-pagination a:hover { background: #f0f2f5; }
+.bl-pagination .bl-pg-current { padding: 4px 10px; border: 1px solid #4a7fa5; border-radius: 4px; color: #1a2a3a; font-weight: 700; }
+.bl-pagination .bl-pg-dots { color: #999; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bl-page">
+
+    <nav class="bl-breadcrumb" aria-label="breadcrumb">
+        <a href="/hansard">Hansard</a>
+        <span class="bl-breadcrumb-sep">›</span>
+        <span>Bills</span>
+    </nav>
+
+    <div class="bl-header">
+        <h1>Bills before Parliament</h1>
+        <p class="bl-header-sub">Government Bills and Private Members' Bills in the 2024–25 and 2025–26 sessions</p>
+    </div>
+
+    <form method="GET" action="/bills">
+        <div class="bl-filter-bar">
+            <label for="bl-session-filter">Session:</label>
+            <select id="bl-session-filter" name="session" onchange="this.form.submit()">
+                <option value="">All sessions</option>
+                {% for s in valid_sessions %}
+                <option value="{{ s }}" {% if session_f == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+
+            <label for="bl-type-filter">Type:</label>
+            <select id="bl-type-filter" name="type" onchange="this.form.submit()">
+                {% for val, label in bill_type_options %}
+                <option value="{{ val }}" {% if type_f == val %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+
+            <label for="bl-status-filter">Status:</label>
+            <select id="bl-status-filter" name="status" onchange="this.form.submit()">
+                <option value="" {% if status_f == '' %}selected{% endif %}>All</option>
+                <option value="active" {% if status_f == 'active' %}selected{% endif %}>Active</option>
+                <option value="act" {% if status_f == 'act' %}selected{% endif %}>Passed into law</option>
+                <option value="lapsed" {% if status_f == 'lapsed' %}selected{% endif %}>Lapsed or withdrawn</option>
+            </select>
+        </div>
+    </form>
+
+    {%- set _qs_parts = [] -%}
+    {%- if session_f -%}{%- set _ = _qs_parts.append('session=' + session_f) -%}{%- endif -%}
+    {%- if type_f -%}{%- set _ = _qs_parts.append('type=' + type_f) -%}{%- endif -%}
+    {%- if status_f -%}{%- set _ = _qs_parts.append('status=' + status_f) -%}{%- endif -%}
+    {%- set _qs = (_qs_parts | join('&') + '&') if _qs_parts else '' -%}
+
+    <div class="bl-results-bar">
+        <span>{{ total }} bill{% if total != 1 %}s{% endif %}{% if session_f %} in {{ session_f }}{% endif %}</span>
+        {% if total_pages > 1 %}
+        <span>Page {{ page }} of {{ total_pages }}</span>
+        {% endif %}
+    </div>
+
+    <ul class="bl-bill-list">
+    {% for bill in bills %}
+    <li class="bl-bill-item">
+        <a href="/bill/{{ bill.slug or ('_id' + bill.parliament_bill_id|string) }}" class="bl-bill-title">{{ bill.title }}</a>
+        <div class="bl-bill-meta">
+            {% if bill.house_of_origin == "Commons" %}
+            <span class="bl-badge bl-badge-commons">Commons</span>
+            {% else %}
+            <span class="bl-badge bl-badge-lords">Lords</span>
+            {% endif %}
+
+            {% if bill.bill_type %}
+                {% if bill.bill_type.startswith("Government") %}
+                <span class="bl-badge bl-badge-govt">Government</span>
+                {% elif "Members'" in bill.bill_type %}
+                <span class="bl-badge bl-badge-pmb">PMB</span>
+                {% else %}
+                <span class="bl-badge bl-badge-private">{{ bill.bill_type }}</span>
+                {% endif %}
+            {% endif %}
+
+            <span class="bl-badge bl-badge-session">{{ bill.session }}</span>
+
+            {% if bill.is_act %}
+            <span class="bl-badge bl-badge-act">Act ✓</span>
+            {% elif bill.is_defeated %}
+            <span class="bl-badge bl-badge-defeated">Defeated</span>
+            {% elif bill.bill_withdrawn_date %}
+            <span class="bl-badge bl-badge-lapsed">Withdrawn</span>
+            {% elif bill.session == '2024-25' and not bill.is_carried_over %}
+            <span class="bl-badge bl-badge-lapsed">Lapsed</span>
+            {% elif bill.current_stage %}
+            <span class="bl-badge bl-badge-progress">{{ bill.current_stage }}</span>
+            {% endif %}
+        </div>
+        {% set sponsor_name = sponsors.get(bill.id) %}
+        {% if sponsor_name %}
+        <div class="bl-bill-sponsor">{{ sponsor_name }}</div>
+        {% endif %}
+    </li>
+    {% endfor %}
+    </ul>
+
+    {% if total_pages > 1 %}
+    <nav class="bl-pagination" aria-label="Pagination">
+        {% if page > 1 %}
+        <a href="{{ request.path }}?{{ _qs }}page={{ page - 1 }}">‹ Previous</a>
+        {% endif %}
+
+        {% for p in range(1, total_pages + 1) %}
+            {% if p == page %}
+            <span class="bl-pg-current">{{ p }}</span>
+            {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+            <a href="{{ request.path }}?{{ _qs }}page={{ p }}">{{ p }}</a>
+            {% elif p == page - 3 or p == page + 3 %}
+            <span class="bl-pg-dots">…</span>
+            {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <a href="{{ request.path }}?{{ _qs }}page={{ page + 1 }}">Next ›</a>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+</div>
+{% endblock %}

@@ -53,14 +53,12 @@
     <nav class="navbar">
         <a href="/home" class="brand">🏛️ Westminster Brief</a>
 
-        <a href="/questions" {% if request.path == '/questions' %}class="nav-active"{% endif %}>Written Questions</a>
-        <a href="/tracker"  {% if request.path == '/tracker' %}class="nav-active"{% endif %}>Today's PQs</a>
-        <a href="/mp_search"{% if request.path == '/mp_search' %}class="nav-active"{% endif %}>Member Research</a>
-        <a href="/biography"{% if request.path == '/biography' %}class="nav-active"{% endif %}>Member Profiles</a>
-        <a href="/debates"  {% if request.path.startswith('/debates') %}class="nav-active"{% endif %}>Hansard Search</a>
-        <a href="/archive"  {% if request.path.startswith('/archive') %}class="nav-active"{% endif %}>Hansard Archive <span class="nav-beta">BETA</span></a>
-        {# <a href="/debate_prep" {% if request.path.startswith('/debate_prep') %}class="nav-active"{% endif %}>Debate Prep</a> #}
-        <a href="/directory" {% if request.path.startswith('/directory') %}class="nav-active"{% endif %}>Stakeholder Engagement</a>
+        <a href="/hansard"  {% if request.path.startswith('/hansard') or (request.path.startswith('/archive') and not request.path.startswith('/archive/bill')) %}class="nav-active"{% endif %}>Hansard</a>
+        <a href="/bills" {% if request.path.startswith('/bills') or request.path.startswith('/bill/') %}class="nav-active"{% endif %}>Bills</a>
+        <a href="/written-questions" {% if request.path.startswith('/written-questions') or request.path == '/questions' or request.path == '/tracker' %}class="nav-active"{% endif %}>Written Questions</a>
+        <a href="/debates"  {% if request.path.startswith('/debates') %}class="nav-active"{% endif %}>Research</a>
+        <a href="/mp_search"{% if request.path == '/mp_search' or request.path == '/biography' %}class="nav-active"{% endif %}>Members</a>
+        <a href="/directory" {% if request.path.startswith('/directory') %}class="nav-active"{% endif %}>Directory</a>
         <span class="nav-divider"></span>
         <a href="/history-of-hansard" {% if request.path == '/history-of-hansard' %}class="nav-active"{% endif %}>History of Hansard</a>
         {% if current_user.is_authenticated %}

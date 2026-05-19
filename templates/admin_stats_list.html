@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Stats Admin — Westminster Brief{% endblock %}
+
+{% block extra_head %}
+<style>
+.sa-wrap { max-width: 1200px; margin: 32px auto; padding: 0 24px; }
+.sa-h1 { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+.sa-sub { color: #5a6878; font-size: 14px; margin: 0 0 24px; }
+.sa-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sa-table th { background: #f0f2f5; font-weight: 600; padding: 8px 10px; text-align: left; border-bottom: 2px solid #d0d5dd; }
+.sa-table td { padding: 7px 10px; border-bottom: 1px solid #e5e8ec; vertical-align: top; }
+.sa-table tr:hover td { background: #f8fafc; }
+.sa-type-manual { background: #fff3cd; color: #856404; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.sa-type-ons    { background: #d1fae5; color: #065f46; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.sa-type-govuk  { background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.sa-suspect { background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; margin-left: 4px; }
+.sa-edit { font-size: 12px; color: #3b7dd8; text-decoration: none; }
+.sa-edit:hover { text-decoration: underline; }
+.sa-empty { color: #9ca3af; font-style: italic; }
+.sa-back { font-size: 13px; color: #3b7dd8; text-decoration: none; margin-bottom: 16px; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sa-wrap">
+    <a href="/admin" class="sa-back">&larr; Admin panel</a>
+    <h1 class="sa-h1">Statistics quality review</h1>
+    <p class="sa-sub">{{ rows|length }} rows &nbsp;·&nbsp;
+        {{ rows|selectattr('latest_value')|list|length }} with values &nbsp;·&nbsp;
+        {{ rows|selectattr('source_type', 'eq', 'manual')|list|length }} manual &nbsp;·&nbsp;
+        Click a row to edit. <strong>Suspect</strong> badge = value looks like bad AI extraction.
+    </p>
+
+    <table class="sa-table">
+        <thead>
+            <tr>
+                <th>Theme</th>
+                <th>Display label</th>
+                <th>Latest value</th>
+                <th>Type</th>
+                <th>Last refreshed</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+        <tr>
+            <td style="font-size:12px; color:#5a6878;">{{ row.theme_slug }}</td>
+            <td>{{ row.display_label }}</td>
+            <td>
+                {% if row.latest_value %}
+                    {{ row.latest_value }}{% if row.unit %} {{ row.unit }}{% endif %}
+                    {% if suspect(row) %}<span class="sa-suspect">Suspect</span>{% endif %}
+                {% else %}
+                    <span class="sa-empty">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if row.source_type == 'manual' %}
+                    <span class="sa-type-manual">MANUAL</span>
+                {% elif row.source_type == 'ons_timeseries' %}
+                    <span class="sa-type-ons">ONS</span>
+                {% else %}
+                    <span class="sa-type-govuk">GOV.UK</span>
+                {% endif %}
+            </td>
+            <td style="font-size:12px; color:#5a6878;">
+                {% if row.last_refreshed %}
+                    {{ row.last_refreshed.strftime('%d %b %H:%M') }}
+                {% else %}—{% endif %}
+            </td>
+            <td><a href="/admin/stats/{{ row.id }}" class="sa-edit">Edit</a></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

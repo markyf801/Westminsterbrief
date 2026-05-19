@@ -1,0 +1,509 @@
+{% extends "base.html" %}
+
+{% block title %}{{ bill.title }} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Legislation",
+  "name": {{ bill.title|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+body { background: #f0f2f5; }
+
+.bl-detail-page { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+
+.bl-breadcrumb { font-size: 12px; color: #666; margin-bottom: 18px; }
+.bl-breadcrumb a { color: #4a7fa5; text-decoration: none; }
+.bl-breadcrumb a:hover { text-decoration: underline; }
+.bl-breadcrumb-sep { margin: 0 6px; color: #bbb; }
+
+/* Header */
+.bl-detail-header { margin-bottom: 18px; }
+.bl-detail-title { font-size: 22px; font-weight: 700; color: #1a2a3a; margin: 0 0 10px; line-height: 1.35; }
+.bl-detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* Badges */
+.bl-badge {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 7px; border-radius: 3px; white-space: nowrap;
+}
+.bl-badge-commons  { background: #e8f0fb; color: #1a4a8a; }
+.bl-badge-lords    { background: #f3e8fb; color: #5a1a8a; }
+.bl-badge-govt     { background: #e6f4ea; color: #1a6a2a; }
+.bl-badge-pmb      { background: #fff3e0; color: #8a4a00; }
+.bl-badge-private  { background: #f0f0f0; color: #555; }
+.bl-badge-session  { background: #f0f2f5; color: #555; font-weight: 400; }
+.bl-badge-act      { background: #22863a; color: #fff; }
+.bl-badge-defeated { background: #d63031; color: #fff; }
+
+/* Bill type note */
+.bl-type-note {
+    font-size: 13px; color: #667; margin: 8px 0 0;
+    font-family: sans-serif; line-height: 1.5;
+}
+
+/* Status banner */
+.bl-status-banner {
+    padding: 10px 16px; border-radius: 5px;
+    font-size: 14px; font-weight: 600; margin-bottom: 20px;
+}
+.bl-status-act       { background: #d4edda; color: #155724; border-left: 4px solid #22863a; }
+.bl-status-defeated  { background: #fde8e8; color: #721c24; border-left: 4px solid #d63031; }
+.bl-status-in_progress { background: #e8f0fb; color: #1a4a8a; border-left: 4px solid #4a7fa5; }
+.bl-status-carried_over { background: #fff3e0; color: #8a4a00; border-left: 4px solid #f0a500; }
+.bl-status-lapsed    { background: #f0f0f0; color: #555; border-left: 4px solid #aaa; }
+
+/* Info grid */
+.bl-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 28px;
+}
+.bl-info-section {
+    background: #fff; border: 1px solid #dde3ed; border-radius: 6px;
+    padding: 10px 14px;
+}
+.bl-info-label { font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+.bl-info-value { font-size: 13px; color: #1a2a3a; font-weight: 600; }
+.bl-info-unknown { color: #aaa; font-weight: 400; font-style: italic; }
+.bl-sponsor-party {
+    display: inline-block; font-size: 11px; color: #666; font-weight: 400;
+    margin-left: 6px;
+}
+.bl-parliament-link {
+    color: #4a7fa5; text-decoration: none; font-weight: 600; font-size: 13px;
+}
+.bl-parliament-link:hover { text-decoration: underline; }
+
+/* Co-sponsors */
+.bl-cosponsor-toggle {
+    font-size: 11px; color: #4a7fa5; cursor: pointer; margin-top: 4px;
+}
+.bl-cosponsor-toggle:hover { text-decoration: underline; }
+.bl-cosponsor-list { font-size: 12px; color: #555; margin: 4px 0 0 12px; padding: 0; list-style: disc; }
+.bl-cosponsor-list li { margin-bottom: 2px; }
+.bl-hidden { display: none; }
+
+/* Summary */
+.bl-summary-section {
+    background: #fff; border: 1px solid #dde3ed; border-radius: 6px;
+    padding: 14px 18px; margin-bottom: 24px;
+}
+.bl-summary-label {
+    font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase;
+    letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.bl-summary-text { font-size: 13px; color: #333; line-height: 1.6; }
+
+/* Stage timeline */
+.bl-timeline-section { margin-bottom: 30px; }
+.bl-section-title {
+    font-size: 15px; font-weight: 700; color: #1a2a3a;
+    margin: 0 0 12px; border-bottom: 2px solid #e0e4eb; padding-bottom: 6px;
+}
+.bl-stages-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    background: #fff; border: 1px solid #dde3ed; border-radius: 6px;
+    overflow: hidden;
+}
+.bl-stages-col {
+    padding: 12px 14px;
+    border-right: 1px solid #e0e4eb;
+}
+.bl-stages-col:last-child { border-right: none; }
+.bl-col-header {
+    font-size: 11px; font-weight: 700; color: #666;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding-bottom: 8px; margin-bottom: 6px;
+    border-bottom: 2px solid #e0e4eb;
+}
+.bl-stage-row {
+    display: flex; align-items: flex-start; gap: 7px;
+    padding: 4px 0; font-size: 12px; line-height: 1.4;
+}
+.bl-stage-icon { flex-shrink: 0; width: 14px; text-align: center; font-size: 11px; margin-top: 1px; }
+.bl-stage-name { flex: 1; color: #333; }
+.bl-stage-date { font-size: 10px; color: #888; white-space: nowrap; margin-top: 1px; }
+
+/* State colours */
+.bl-stage-completed .bl-stage-icon { color: #22863a; }
+.bl-stage-completed .bl-stage-name { color: #1a2a3a; }
+.bl-stage-current   .bl-stage-icon { color: #4a7fa5; }
+.bl-stage-current   .bl-stage-name { color: #1a2a3a; font-weight: 700; }
+.bl-stage-pending   .bl-stage-icon { color: #ccc; }
+.bl-stage-pending   .bl-stage-name { color: #aaa; }
+
+.bl-col-empty { font-size: 12px; color: #aaa; font-style: italic; margin: 4px 0; }
+
+/* Stage debate links */
+.bl-stage-link { color: inherit; text-decoration: underline; text-decoration-color: #b0c4de; font-weight: 600; }
+.bl-stage-link:hover { text-decoration-color: currentColor; }
+.bl-stage-ext-link { color: #aaa; text-decoration: none; margin-left: 3px; font-size: 10px; }
+.bl-stage-ext-link:hover { color: #666; }
+.bl-stage-pending .bl-stage-link,
+.bl-stage-pending .bl-stage-ext-link { pointer-events: none; text-decoration: none; }
+
+/* Archive boundary note */
+.bl-archive-note {
+    font-size: 11px; color: #999; margin-top: 10px; padding-top: 8px;
+    border-top: 1px dashed #e0e4eb; line-height: 1.5;
+}
+.bl-archive-note a { color: #4a7fa5; text-decoration: none; }
+.bl-archive-note a:hover { text-decoration: underline; }
+
+/* Explanatory Notes section */
+.bl-en-section {
+    background: #fff; border: 1px solid #dde3ed; border-radius: 6px;
+    padding: 16px 18px; margin-bottom: 24px;
+}
+.bl-en-section-title {
+    font-size: 15px; font-weight: 700; color: #1a2a3a;
+    margin: 0 0 8px; padding-bottom: 6px; border-bottom: 2px solid #e0e4eb;
+}
+.bl-en-attribution {
+    font-size: 11px; color: #888; margin-bottom: 10px;
+}
+.bl-en-attribution a { color: #4a7fa5; text-decoration: none; }
+.bl-en-attribution a:hover { text-decoration: underline; }
+.bl-en-summary {
+    font-size: 13px; color: #333; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-word;
+}
+.bl-en-readmore {
+    display: block; margin-top: 10px; font-size: 12px;
+    color: #4a7fa5; text-decoration: none;
+}
+.bl-en-readmore:hover { text-decoration: underline; }
+.bl-en-link-only {
+    font-size: 13px; color: #555; margin-bottom: 8px;
+}
+.bl-en-link-only a { color: #4a7fa5; text-decoration: none; }
+.bl-en-link-only a:hover { text-decoration: underline; }
+
+/* Notable publications subsection */
+.bl-notable-pubs { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e8edf5; }
+.bl-notable-title { font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.bl-notable-list { list-style: none; margin: 0; padding: 0; }
+.bl-notable-list li { font-size: 12px; color: #555; margin-bottom: 4px; }
+.bl-notable-list a { color: #4a7fa5; text-decoration: none; }
+.bl-notable-list a:hover { text-decoration: underline; }
+.bl-notable-type { font-size: 10px; color: #aaa; margin-left: 4px; }
+
+/* Source note */
+.bl-source-note {
+    font-size: 12px; color: #888; margin-top: 6px;
+    border-top: 1px solid #e0e4eb; padding-top: 12px;
+}
+.bl-source-note a { color: #4a7fa5; text-decoration: none; }
+.bl-source-note a:hover { text-decoration: underline; }
+
+@media (max-width: 600px) {
+    .bl-stages-grid { grid-template-columns: 1fr; }
+    .bl-stages-col { border-right: none; border-bottom: 1px solid #e0e4eb; }
+    .bl-stages-col:last-child { border-bottom: none; }
+    .bl-info-grid { grid-template-columns: 1fr 1fr; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bl-detail-page">
+
+    <nav class="bl-breadcrumb" aria-label="breadcrumb">
+        <a href="/hansard">Hansard</a>
+        <span class="bl-breadcrumb-sep">›</span>
+        <a href="/bills">Bills</a>
+        <span class="bl-breadcrumb-sep">›</span>
+        <span>{{ (bill.short_title or bill.title)[:60] }}{% if (bill.short_title or bill.title)|length > 60 %}…{% endif %}</span>
+    </nav>
+
+    <div class="bl-detail-header">
+        <h1 class="bl-detail-title">{{ bill.title }}</h1>
+        <div class="bl-detail-meta">
+            {% if bill.house_of_origin == "Commons" %}
+            <span class="bl-badge bl-badge-commons">Commons bill</span>
+            {% else %}
+            <span class="bl-badge bl-badge-lords">Lords bill</span>
+            {% endif %}
+
+            {% if bill.bill_type %}
+                {% if bill.bill_type.startswith("Government") %}
+                <span class="bl-badge bl-badge-govt">Government Bill</span>
+                {% elif "Members'" in bill.bill_type %}
+                <span class="bl-badge bl-badge-pmb">{{ bill.bill_type }}</span>
+                {% else %}
+                <span class="bl-badge bl-badge-private">{{ bill.bill_type }}</span>
+                {% endif %}
+            {% endif %}
+
+            <span class="bl-badge bl-badge-session">{{ bill.session }}</span>
+
+            {% if bill_status.is_act %}
+            <span class="bl-badge bl-badge-act">Act of Parliament</span>
+            {% elif bill_status.is_defeated %}
+            <span class="bl-badge bl-badge-defeated">Defeated</span>
+            {% endif %}
+        </div>
+
+        {% if bill.bill_type %}
+        <p class="bl-type-note">
+        {%- if bill.bill_type == "Private Members' Bill (Ballot)" -%}
+            A Private Members' Bill introduced through the annual ballot, which gives backbench MPs a chance to secure Friday debate time. Ballot bills are the only PMBs with a realistic prospect of becoming law without government support.
+        {%- elif bill.bill_type == "Private Members' Bill (Ten Minute Rule)" -%}
+            A Private Members' Bill introduced through a 10-minute speech in the Commons, used primarily to draw attention to an issue rather than to legislate. Most do not progress beyond First Reading.
+        {%- elif bill.bill_type == "Private Members' Bill (Presentation)" -%}
+            A Private Members' Bill placed before the House without a speech. Usually a procedural way of registering a policy position. Most do not progress.
+        {%- elif bill.bill_type == "Private Members' Bill (Lords ballot)" -%}
+            A Private Members' Bill introduced in the House of Lords through ballot. Some Lords PMBs do progress to law, particularly on technical, non-partisan matters.
+        {%- elif bill.bill_type == "Private Bill" -%}
+            A bill applying to a specific person, body, or place, rather than to the general public. Usually promoted by a railway company, university, or local authority seeking specific statutory powers.
+        {%- elif bill.bill_type == "Hybrid Bill" -%}
+            A bill that combines public legislation with effects on specific identified interests. Used for major infrastructure projects like HS2; affected parties can petition against the bill.
+        {%- endif -%}
+        </p>
+        {% endif %}
+    </div>
+
+    {# Status banner #}
+    <div class="bl-status-banner bl-status-{{ bill_status.fate }}">
+        {{ bill_status.banner_text }}
+    </div>
+
+    {# Info grid: sponsor · introduced · royal assent / last activity · source #}
+    <div class="bl-info-grid">
+        <div class="bl-info-section">
+            <div class="bl-info-label">Sponsor</div>
+            {% if primary_sponsor %}
+            <div class="bl-info-value">
+                {{ primary_sponsor.member_name }}
+                {% if primary_sponsor.party %}<span class="bl-sponsor-party">({{ primary_sponsor.party }})</span>{% endif %}
+            </div>
+            {% if sponsors|length > 1 %}
+            <div class="bl-cosponsor-toggle" onclick="this.nextElementSibling.classList.toggle('bl-hidden')">
+                + {{ sponsors|length - 1 }} co-sponsor{% if sponsors|length > 2 %}s{% endif %}
+            </div>
+            <ul class="bl-cosponsor-list bl-hidden">
+                {% for sp in sponsors %}{% if not sp.is_primary %}
+                <li>{{ sp.member_name }}{% if sp.party %} ({{ sp.party }}){% endif %}</li>
+                {% endif %}{% endfor %}
+            </ul>
+            {% endif %}
+            {% else %}
+            <div class="bl-info-value bl-info-unknown">Not recorded</div>
+            {% endif %}
+        </div>
+
+        <div class="bl-info-section">
+            <div class="bl-info-label">Introduced</div>
+            <div class="bl-info-value">
+                {% if bill.introduced_date %}
+                {{ bill.introduced_date.day }} {{ bill.introduced_date.strftime('%B %Y') }}
+                {% else %}—{% endif %}
+            </div>
+        </div>
+
+        {% if bill_status.royal_assent_date %}
+        <div class="bl-info-section">
+            <div class="bl-info-label">Royal Assent</div>
+            <div class="bl-info-value">
+                {{ bill_status.royal_assent_date.day }} {{ bill_status.royal_assent_date.strftime('%B %Y') }}
+            </div>
+        </div>
+        {% elif bill_status.last_action_date %}
+        <div class="bl-info-section">
+            <div class="bl-info-label">Last activity</div>
+            <div class="bl-info-value">
+                {{ bill_status.last_action_date.day }} {{ bill_status.last_action_date.strftime('%B %Y') }}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="bl-info-section">
+            <div class="bl-info-label">Parliament</div>
+            <div class="bl-info-value">
+                <a href="{{ bill.parliament_url }}" target="_blank" rel="noopener" class="bl-parliament-link">
+                    View on Parliament ↗
+                </a>
+                {% if bill.govuk_url %}
+                <br><a href="{{ bill.govuk_url }}" target="_blank" rel="noopener" class="bl-parliament-link" style="margin-top:4px; display:inline-block;">
+                    View on GOV.UK ↗
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {# Summary — use display_summary (HTML-safe, stripped of redirect-only content) or long_title #}
+    {% if display_summary or bill.long_title %}
+    <div class="bl-summary-section">
+        <div class="bl-summary-label">About this bill</div>
+        {% if display_summary %}
+        <div class="bl-summary-text">{{ display_summary | safe }}</div>
+        {% else %}
+        <p class="bl-summary-text">{{ bill.long_title }}</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# Stage timeline — three columns matching Parliament's own layout #}
+    {% set orig_col = "Commons" if bill.house_of_origin == "Commons" else "Lords" %}
+    {% set second_col = "Lords" if bill.house_of_origin == "Commons" else "Commons" %}
+
+    {# Macro: renders one stage row with optional debate link #}
+    {% macro stage_row(st) %}
+    <div class="bl-stage-row bl-stage-{{ st.state }}">
+        <span class="bl-stage-icon">{% if st.state == "completed" %}✓{% elif st.state == "current" %}●{% else %}○{% endif %}</span>
+        <span class="bl-stage-name">
+            {%- if st.local_session_slug and st.state != "pending" -%}
+            <a href="/archive/debate/{{ st.local_session_url_date }}/{{ st.local_session_slug }}" class="bl-stage-link">{{ st.display_name }}</a>
+            {%- else -%}
+            {{ st.display_name }}
+            {%- endif -%}
+        </span>
+        <span class="bl-stage-date">
+            {%- if st.stage_date %}{{ st.stage_date.day }} {{ st.stage_date.strftime('%b %Y') }}{% endif -%}
+            {%- if st.hansard_fallback_url and st.has_debate and st.state != "pending" %}<a href="{{ st.hansard_fallback_url }}" target="_blank" rel="noopener" class="bl-stage-ext-link" title="View on Parliament Hansard">↗</a>{% endif -%}
+        </span>
+    </div>
+    {% endmacro %}
+
+    <div class="bl-timeline-section">
+        <h2 class="bl-section-title">Parliamentary stages</h2>
+        <p style="font-size: 13px; color: #667; margin: 0 0 16px; font-family: sans-serif;">Stages shown in blue link to the debate transcript. Not sure what these stages mean? <a href="/about/legislation" style="color: #4a7fa5;">How Parliament makes laws →</a></p>
+        <div class="bl-stages-grid">
+
+            <div class="bl-stages-col">
+                <div class="bl-col-header">{{ orig_col }}</div>
+                {% for st in stages_by_group.originating_house %}
+                {{ stage_row(st) }}
+                {% else %}
+                <p class="bl-col-empty">—</p>
+                {% endfor %}
+            </div>
+
+            <div class="bl-stages-col">
+                <div class="bl-col-header">{{ second_col }}</div>
+                {% for st in stages_by_group.second_house %}
+                {{ stage_row(st) }}
+                {% else %}
+                <p class="bl-col-empty">Not yet reached</p>
+                {% endfor %}
+            </div>
+
+            <div class="bl-stages-col">
+                <div class="bl-col-header">Final stages</div>
+                {% for st in stages_by_group.final %}
+                {{ stage_row(st) }}
+                {% else %}
+                <p class="bl-col-empty">Not yet reached</p>
+                {% endfor %}
+            </div>
+
+        </div>
+        {% if has_hansard_fallbacks %}
+        <p class="bl-archive-note">
+            Some stage debates occurred before our Hansard archive begins (May 2025).
+            Links marked ↗ go to Parliament's own Hansard for that date.
+        </p>
+        {% endif %}
+    </div>
+
+    <p class="bl-source-note">
+        Parliamentary information from
+        <a href="{{ bill.parliament_url }}" target="_blank" rel="noopener">bills.parliament.uk ↗</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Explanatory Notes extracts are verbatim from Parliament's published documents.
+    </p>
+
+    {# Explanatory Notes — "What this bill is about" section #}
+    {% if en_with_summary or en_link_only or notable_pubs %}
+    <div class="bl-en-section">
+        <div class="bl-en-section-title">What this bill is about</div>
+
+        {% if en_with_summary %}
+        <p class="bl-en-attribution">
+            From the Explanatory Notes{% if en_with_summary.publisher %} published by {{ en_with_summary.publisher }}{% endif %}{% if en_with_summary.publication_date %} ({{ en_with_summary.publication_date.strftime('%B %Y') }}){% endif %}:
+        </p>
+        <div class="bl-en-summary">{{ en_with_summary.summary_text[:600] }}{% if en_with_summary.summary_text|length > 600 %}…{% endif %}</div>
+        <a href="{{ en_with_summary.publication_url }}" target="_blank" rel="noopener" class="bl-en-readmore">Read the full Explanatory Notes ↗</a>
+
+        {% elif en_link_only %}
+        <p class="bl-en-link-only">
+            <a href="{{ en_link_only.publication_url }}" target="_blank" rel="noopener">Explanatory Notes for this bill are available from parliament.uk ↗</a>
+        </p>
+
+        {% endif %}
+
+        {% if notable_pubs %}
+        <div class="bl-notable-pubs">
+            <div class="bl-notable-title">Other documents</div>
+            <ul class="bl-notable-list">
+                {% set type_labels = {
+                    "impact_assessment": "Impact Assessment",
+                    "delegated_powers_memorandum": "Delegated Powers Memorandum",
+                    "human_rights_memorandum": "Human Rights Memorandum",
+                    "bill_text": "Bill text"
+                } %}
+                {% for pub in notable_pubs[:8] %}
+                <li>
+                    <a href="{{ pub.publication_url }}" target="_blank" rel="noopener">{{ pub.title }}</a>
+                    <span class="bl-notable-type">{{ type_labels.get(pub.publication_type, pub.publication_type) }}</span>
+                </li>
+                {% endfor %}
+                {% if notable_pubs|length > 8 %}
+                <li><a href="{{ bill.parliament_url }}" target="_blank" rel="noopener">+ {{ notable_pubs|length - 8 }} more documents on parliament.uk ↗</a></li>
+                {% endif %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# GOV.UK policy documents section #}
+    {% if govuk_pubs %}
+    <div class="bl-en-section">
+        <div class="bl-en-section-title">GOV.UK policy documents</div>
+        {% set govuk_type_labels = {
+            "policy_paper":                 "Policy paper",
+            "factsheet":                    "Factsheet",
+            "impact_assessment":            "Impact Assessment",
+            "delegated_powers_memorandum":  "Delegated Powers Memorandum",
+            "human_rights_memorandum":      "Human Rights Memorandum",
+            "consultation_outcome":         "Consultation outcome",
+            "bill_text":                    "Bill text"
+        } %}
+        <ul class="bl-notable-list" style="margin-top: 10px;">
+            {% for pub in govuk_pubs %}
+            <li>
+                <a href="{{ pub.publication_url }}" target="_blank" rel="noopener">{{ pub.title }}</a>
+                <span class="bl-notable-type">{{ govuk_type_labels.get(pub.publication_type, "Document") }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if bill.govuk_url %}
+        <p style="margin: 10px 0 0; font-size: 12px;">
+            <a href="{{ bill.govuk_url }}" target="_blank" rel="noopener" style="color: #4a7fa5;">View all on GOV.UK ↗</a>
+        </p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+
+</div>
+{% endblock %}

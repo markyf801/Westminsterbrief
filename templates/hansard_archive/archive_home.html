@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
-{% block title %}Hansard Archive — Westminster Brief{% endblock %}
+{% block title %}Hansard — Westminster Brief{% endblock %}
 {% block meta_description %}Search and browse Hansard debates from the UK Parliament. Full transcripts, AI theme tags, and policy area filters across Commons and Lords.{% endblock %}
-{% block og_title %}Hansard Archive — Westminster Brief{% endblock %}
+{% block og_title %}Hansard — Westminster Brief{% endblock %}
 {% block og_description %}Search UK parliamentary debates by topic, house, date or policy area. Full Hansard transcripts with AI theme tagging.{% endblock %}
 
 {% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
@@ -13,7 +13,7 @@
 
     {# --- Page header --- #}
     <div class="ah-header">
-        <h1 class="ah-title">Hansard Archive <span class="badge-beta">BETA</span></h1>
+        <h1 class="ah-title">Hansard <span class="badge-beta">BETA</span></h1>
         <p class="ah-desc">UK parliamentary debates — Commons and Lords</p>
         {% if archive_session_count or archive_pq_count %}
         <p class="ah-desc">Search {{ archive_session_count or '5,000+' }} debates and {{ archive_pq_count or '90,000+' }} Written Questions by topic, MP, department, or date.</p>
@@ -205,8 +205,11 @@
                 </div>
                 <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
                 {% set tags_shown = namespace(n=0) %}
-                {% if item.policy_areas or item.specific_topics %}
+                {% if item.related_bill or item.policy_areas or item.specific_topics %}
                 <div class="ah-card-tags">
+                    {% if item.related_bill %}
+                    <a href="/bill/{{ item.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ item.related_bill[0] }}</a>
+                    {% endif %}
                     {% for pa in item.policy_areas[:1] %}
                     <a href="/archive?policy={{ pa|urlencode }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
                     {% set tags_shown.n = tags_shown.n + 1 %}

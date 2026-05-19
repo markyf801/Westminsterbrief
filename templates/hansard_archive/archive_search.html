@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {# noindex enforced via X-Robots-Tag header in the route #}
-{% block title %}{% if q %}Search: {{ q }} — Hansard Archive{% else %}Search — Hansard Archive{% endif %} — Westminster Brief{% endblock %}
+{% block title %}{% if q %}Search: {{ q }} — Hansard{% else %}Search — Hansard{% endif %} — Westminster Brief{% endblock %}
 {% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/archive/search{% if q %}?q={{ q|urlencode }}{% endif %}">{% endblock %}
 {% block json_ld %}{% endblock %}{# no JSON-LD on noindex pages #}
 
@@ -16,7 +16,7 @@
 
     {# --- Breadcrumb --- #}
     <nav class="ac-breadcrumb" aria-label="breadcrumb">
-        <a href="/archive">Hansard Archive</a>
+        <a href="/archive">Hansard</a>
         <span class="ac-breadcrumb-sep">›</span>
         <span>Search</span>
     </nav>

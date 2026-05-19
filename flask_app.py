@@ -54,7 +54,7 @@ def _validate_external_url(url: str) -> str:
 # Import existing blueprints
 from hansard import hansard_bp
 from biography import biography_bp
-from hansard_archive.views import archive_bp
+from hansard_archive.views import archive_bp, bills_bp, brief_bp, stats_bp, hansard_bp2
 from hansard_archive.slugs import slugify_theme as _slugify_theme
 from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
@@ -547,6 +547,57 @@ with app.app_context():
         _mig_log('ha_bill tagging cols done')
     except Exception as _e:
         app.logger.warning('ha_bill tagging cols migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS govuk_url TEXT"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE ha_bill_publication ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'parliament'"
+            ))
+            _conn.execute(text(
+                "UPDATE ha_bill_publication SET source = 'parliament' WHERE source IS NULL"
+            ))
+            _conn.commit()
+        _mig_log('ha_bill govuk_url + ha_bill_publication source cols done')
+    except Exception as _e:
+        app.logger.warning('ha_bill govuk/source migration failed: %s', _e)
+    try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS bill_withdrawn_date DATE"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS is_carried_over BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            _conn.commit()
+        _mig_log('ha_bill withdrawn/carried_over cols done')
+    except Exception as _e:
+        app.logger.warning('ha_bill withdrawn/carried_over migration failed: %s', _e)
+    try:
+        from hansard_archive.models import HaBill as _HaBill
+        from hansard_archive.slugs import slugify_bill as _slugify_bill
+        _bills_needing_slugs = _HaBill.query.filter(_HaBill.slug.is_(None)).all()
+        if _bills_needing_slugs:
+            _used: set[str] = set(
+                r[0] for r in db.session.query(_HaBill.slug)
+                .filter(_HaBill.slug.isnot(None)).all()
+            )
+            for _b in _bills_needing_slugs:
+                _base = _slugify_bill(_b.title)
+                _candidate = _base
+                _n = 2
+                while _candidate in _used:
+                    _candidate = f"{_base}-{_n}"
+                    _n += 1
+                _b.slug = _candidate
+                _used.add(_candidate)
+            db.session.commit()
+            _mig_log(f'ha_bill slugs populated: {len(_bills_needing_slugs)} bills')
+        else:
+            _mig_log('ha_bill slugs already populated')
+    except Exception as _e:
+        app.logger.warning('ha_bill slug population failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
@@ -685,6 +736,16 @@ SECTOR_LABELS = dict(SECTOR_OPTIONS)
 @app.route('/ping')
 def ping():
     return 'ok', 200
+
+@app.route('/about/statistics')
+def about_statistics():
+    return render_template('about_statistics.html')
+
+
+@app.route('/about/legislation')
+def about_legislation():
+    return render_template('about_legislation.html')
+
 
 @app.route('/')
 @app.route('/home')
@@ -831,10 +892,11 @@ def _build_sitemap_core_xml() -> str:
     archive_lastmod = max_date.isoformat() if max_date else ""
 
     # Static tool pages (content changes via deployments, not DB; omit lastmod)
-    for path in ('/', '/questions', '/tracker', '/mp_search', '/biography',
-                 '/debates', '/archive', '/directory', '/terms', '/privacy',
-                 '/history-of-hansard'):
-        urls.append((f"{BASE}{path}", archive_lastmod if path == '/archive' else ""))
+    for path in ('/', '/hansard', '/bills', '/written-questions', '/written-questions/today',
+                 '/mp_search', '/biography', '/debates',
+                 '/directory', '/terms', '/privacy', '/history-of-hansard',
+                 '/about/legislation'):
+        urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
 
     # Date browse — one URL per distinct date with sessions
     for (d,) in (db.session.query(HansardSession.date)
@@ -874,6 +936,12 @@ def _build_sitemap_core_xml() -> str:
 
     # MP pages excluded from sitemap: page design is Week 3 work (not yet final shape).
     # Re-add when MP archive pages are properly built and indexed design is confirmed.
+
+    # Bill detail pages — bills with a slug
+    from hansard_archive.models import HaBill as _HaBill
+    for _bill in _HaBill.query.filter(_HaBill.slug.isnot(None)).all():
+        _lastmod = _bill.introduced_date.isoformat() if _bill.introduced_date else ""
+        urls.append((f"{BASE}/bill/{_bill.slug}", _lastmod))
 
     # Department pages — one per distinct non-null department
     for (dept, max_d) in (db.session
@@ -2047,6 +2115,93 @@ def admin_panel():
                            backup_status=backup_status)
 
 
+# ---------------------------------------------------------------------------
+# Admin: Statistics quality review  /admin/stats
+# ---------------------------------------------------------------------------
+
+def _stat_is_suspect(row) -> bool:
+    """Return True if latest_value looks like bad AI extraction (year, 'None', no digits)."""
+    v = (row.latest_value or "").strip()
+    if not v or v == "-":
+        return False
+    import re as _re
+    if "None" in v:
+        return True
+    if _re.match(r"^\d{4}$", v):          # bare 4-digit year
+        return True
+    if _re.match(r"^\d{4}-\d{2}-\d{2}$", v):  # date string
+        return True
+    if not _re.search(r"\d", v):           # no digits at all
+        return True
+    if "words" in v.lower():               # "7306 words" (word count)
+        return True
+    return False
+
+
+@app.route('/admin/stats', methods=['GET'])
+def admin_stats_list():
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import HeadlineStat
+    rows = HeadlineStat.query.order_by(HeadlineStat.theme_slug).all()
+    return render_template('admin_stats_list.html', rows=rows, suspect=_stat_is_suspect)
+
+
+@app.route('/admin/stats/<int:stat_id>', methods=['GET', 'POST'])
+def admin_stats_edit(stat_id):
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import HeadlineStat
+    from datetime import datetime, timezone
+
+    row = HeadlineStat.query.get_or_404(stat_id)
+
+    if request.method == 'POST':
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        old_plain = row.plain_english
+
+        row.source_type    = request.form.get('source_type', row.source_type)
+        row.display_label  = request.form.get('display_label', row.display_label).strip() or row.display_label
+        row.display_hint   = request.form.get('display_hint', row.display_hint)
+        row.latest_value   = request.form.get('latest_value', '').strip() or None
+        row.unit           = request.form.get('unit', '').strip() or None
+        row.period_label   = request.form.get('period_label', '').strip() or None
+        row.source_wording = request.form.get('source_wording', '').strip() or None
+        row.plain_english  = request.form.get('plain_english', '').strip() or None
+        row.source_url     = request.form.get('source_url', row.source_url).strip() or row.source_url
+
+        release_raw = request.form.get('release_date', '').strip()
+        if release_raw:
+            try:
+                from datetime import date as _date
+                row.release_date = _date.fromisoformat(release_raw)
+            except ValueError:
+                pass
+        else:
+            row.release_date = None
+
+        row.last_refreshed = now
+        row.last_success   = now
+        row.rewrite_model  = 'manual'
+        if row.plain_english != old_plain:
+            row.plain_english_generated_at = now
+
+        db.session.commit()
+
+        changed_fields = [
+            f for f in ('source_type', 'latest_value', 'unit', 'period_label',
+                        'source_wording', 'plain_english', 'source_url', 'release_date',
+                        'display_label', 'display_hint')
+        ]
+        _admin_log(f'stats_edit | id={stat_id} theme={row.theme_slug} source_id={row.source_id} '
+                   f'fields={",".join(changed_fields)} value={row.latest_value!r}')
+
+        return redirect('/admin/stats')
+
+    return render_template('admin_stats_edit.html', row=row)
+
+
 # ==========================================
 # 7. BLUEPRINTS
 # ==========================================
@@ -2057,6 +2212,53 @@ app.register_blueprint(debate_scanner_bp)
 app.register_blueprint(mp_search_bp)
 app.register_blueprint(directory_bp)
 app.register_blueprint(archive_bp)
+app.register_blueprint(bills_bp)
+app.register_blueprint(brief_bp)
+app.register_blueprint(stats_bp)
+app.register_blueprint(hansard_bp2)
+
+
+# ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
+# /written-questions → Written Questions scanner (Search tab)
+# /written-questions/today → Today's PQs tracker (Today's PQs tab)
+# /tracker → 301 → /written-questions/today
+# /questions → 301 → /written-questions  (old WQ scanner URL)
+
+@app.route('/written-questions', methods=['GET', 'POST'])
+def written_questions():
+    from flask import g as _g
+    _g.wq_tab = 'search'
+    from hansard import index as _wq_index
+    return _wq_index()
+
+
+@app.route('/written-questions/today', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 100 per day", methods=["POST"])
+def written_questions_today():
+    from flask import g as _g
+    _g.wq_tab = 'today'
+    from tracker import _tracker_view
+    return _tracker_view()
+
+
+@app.route('/tracker', methods=['GET', 'POST'])
+def tracker_redirect():
+    if request.method == 'POST':
+        return redirect('/written-questions/today', 308)
+    return redirect('/written-questions/today', 301)
+
+
+@app.route('/questions', methods=['GET', 'POST'])
+def questions_redirect():
+    if request.method == 'POST':
+        return redirect('/written-questions', 308)
+    return redirect('/written-questions', 301)
+
+from stats_refresh import register_stats_cli
+register_stats_cli(app)
+
+from upcoming_refresh import register_upcoming_cli
+register_upcoming_cli(app)
 
 @app.context_processor
 def inject_version():
