@@ -574,6 +574,18 @@ with app.app_context():
     except Exception as _e:
         app.logger.warning('ha_bill govuk/source migration failed: %s', _e)
     try:
+        with db.engine.connect() as _conn:
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS bill_withdrawn_date DATE"
+            ))
+            _conn.execute(text(
+                "ALTER TABLE ha_bill ADD COLUMN IF NOT EXISTS is_carried_over BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            _conn.commit()
+        _mig_log('ha_bill withdrawn/carried_over cols done')
+    except Exception as _e:
+        app.logger.warning('ha_bill withdrawn/carried_over migration failed: %s', _e)
+    try:
         from hansard_archive.models import HaBill as _HaBill
         from hansard_archive.slugs import slugify_bill as _slugify_bill
         _bills_needing_slugs = _HaBill.query.filter(_HaBill.slug.is_(None)).all()

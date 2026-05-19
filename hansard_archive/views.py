@@ -2454,11 +2454,31 @@ def bills_index():
     if type_f in _BILL_TYPE_MAP:
         query = query.filter(HaBill.bill_type == _BILL_TYPE_MAP[type_f])
     if status_f == "active":
-        query = query.filter(HaBill.is_act == False, HaBill.is_defeated == False)
+        # Active = not yet completed, not withdrawn, and either in current session or carried over
+        query = query.filter(
+            HaBill.is_act == False,
+            HaBill.is_defeated == False,
+            HaBill.bill_withdrawn_date.is_(None),
+            db.or_(HaBill.session == "2025-26", HaBill.is_carried_over == True),
+        )
     elif status_f == "act":
         query = query.filter(HaBill.is_act == True)
     elif status_f == "lapsed":
-        query = query.filter(HaBill.is_defeated == True)
+        # Lapsed = 2024-25 session ended without completion and not carried over
+        # Withdrawn = explicit billWithdrawn date from the API
+        from sqlalchemy import or_
+        query = query.filter(
+            or_(
+                HaBill.bill_withdrawn_date.isnot(None),
+                db.and_(
+                    HaBill.session == "2024-25",
+                    HaBill.is_act == False,
+                    HaBill.is_defeated == False,
+                    HaBill.bill_withdrawn_date.is_(None),
+                    HaBill.is_carried_over == False,
+                ),
+            )
+        )
 
     total       = query.count()
     bills       = query.offset((page - 1) * _BILLS_PER_PAGE).limit(_BILLS_PER_PAGE).all()

@@ -79,6 +79,7 @@ body { background: #f0f2f5; }
 .bl-badge-session  { background: #f0f2f5; color: #555; font-weight: 400; }
 .bl-badge-act      { background: #22863a; color: #fff; }
 .bl-badge-defeated { background: #d63031; color: #fff; }
+.bl-badge-lapsed   { background: #e0e0e0; color: #666; font-style: italic; }
 .bl-badge-progress { background: #f0f2f5; color: #555; font-weight: 400; }
 
 /* Pagination */
@@ -174,6 +175,10 @@ body { background: #f0f2f5; }
             <span class="bl-badge bl-badge-act">Act ✓</span>
             {% elif bill.is_defeated %}
             <span class="bl-badge bl-badge-defeated">Defeated</span>
+            {% elif bill.bill_withdrawn_date %}
+            <span class="bl-badge bl-badge-lapsed">Withdrawn</span>
+            {% elif bill.session == '2024-25' and not bill.is_carried_over %}
+            <span class="bl-badge bl-badge-lapsed">Lapsed</span>
             {% elif bill.current_stage %}
             <span class="bl-badge bl-badge-progress">{{ bill.current_stage }}</span>
             {% endif %}

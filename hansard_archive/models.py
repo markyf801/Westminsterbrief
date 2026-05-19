@@ -464,9 +464,11 @@ class HaBill(db.Model):
     house_of_origin    = db.Column(db.String(20), nullable=False)   # Commons | Lords
     session            = db.Column(db.String(20), nullable=False)   # e.g. 2024-25
     bill_type          = db.Column(db.String(100), nullable=True)
-    is_act             = db.Column(db.Boolean, nullable=False, default=False)
-    is_defeated        = db.Column(db.Boolean, nullable=False, default=False)
-    current_stage      = db.Column(db.Text, nullable=True)
+    is_act              = db.Column(db.Boolean, nullable=False, default=False)
+    is_defeated         = db.Column(db.Boolean, nullable=False, default=False)
+    bill_withdrawn_date = db.Column(db.Date, nullable=True)
+    is_carried_over     = db.Column(db.Boolean, nullable=False, default=False)
+    current_stage       = db.Column(db.Text, nullable=True)
     current_house      = db.Column(db.String(20), nullable=True)
     introduced_date    = db.Column(db.Date, nullable=True)
     last_updated_date  = db.Column(db.Date, nullable=True)
