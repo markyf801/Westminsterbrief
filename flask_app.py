@@ -121,6 +121,8 @@ Talisman(
             "'unsafe-inline'",
             "https://cdn.jsdelivr.net",
             "https://code.jquery.com",
+            "https://plausible.io",
+            "https://static.cloudflareinsights.com",
         ],
         'style-src': [
             "'self'",
@@ -137,7 +139,11 @@ Talisman(
             "data:",
             "https:",
         ],
-        'connect-src': "'self'",
+        'connect-src': [
+            "'self'",
+            "https://plausible.io",
+            "https://static.cloudflareinsights.com",
+        ],
     },
     referrer_policy='strict-origin-when-cross-origin',
     frame_options='DENY',
@@ -1113,19 +1119,6 @@ def _log_response(response):
     import time as _rt
     elapsed = _rt.monotonic() - getattr(g, '_req_start', _rt.monotonic())
     print(f'[RES] {request.method} {request.path} -> {response.status_code} ({elapsed:.2f}s)', flush=True)
-    return response
-
-@app.after_request
-def _set_csp(response):
-    csp = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://plausible.io https://static.cloudflareinsights.com https://cdn.jsdelivr.net; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: https:; "
-        "connect-src 'self' https://plausible.io https://static.cloudflareinsights.com;"
-    )
-    response.headers['Content-Security-Policy'] = csp
     return response
 
 @app.errorhandler(429)
