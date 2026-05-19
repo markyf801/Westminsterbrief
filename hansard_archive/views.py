@@ -2560,10 +2560,17 @@ def bill_detail(slug: str):
     notable_pubs    = [p for p in parliament_pubs if p.publication_type in notable_types]
     govuk_pubs      = [p for p in all_pubs if p.source == "govuk"]
 
+    import re as _re
+    def _strip_html(s: str) -> str:
+        return _re.sub(r"<[^>]+>", "", s or "").strip()
+    raw_summary = bill.summary or ""
+    display_summary = raw_summary if len(_strip_html(raw_summary)) > 20 else None
+
     title_for_seo = bill.short_title or bill.title
     return render_template(
         "hansard_archive/archive_bill_detail.html",
         bill                  = bill,
+        display_summary       = display_summary,
         bill_status           = bill_status,
         stages_by_group       = bill_status.stages_by_group(),
         sponsors              = sponsors,

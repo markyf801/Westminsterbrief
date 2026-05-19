@@ -348,11 +348,15 @@ body { background: #f0f2f5; }
         </div>
     </div>
 
-    {# Summary — use bill.summary if available, fall back to long_title #}
-    {% if bill.summary or bill.long_title %}
+    {# Summary — use display_summary (HTML-safe, stripped of redirect-only content) or long_title #}
+    {% if display_summary or bill.long_title %}
     <div class="bl-summary-section">
         <div class="bl-summary-label">About this bill</div>
-        <p class="bl-summary-text">{{ bill.summary or bill.long_title }}</p>
+        {% if display_summary %}
+        <div class="bl-summary-text">{{ display_summary | safe }}</div>
+        {% else %}
+        <p class="bl-summary-text">{{ bill.long_title }}</p>
+        {% endif %}
     </div>
     {% endif %}
 
