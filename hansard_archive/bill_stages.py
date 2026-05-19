@@ -413,6 +413,22 @@ def stage_group(stage_name: str, stage_house: str, originating_house: str) -> st
     return STAGE_GROUP_SECOND
 
 
+# ---------------------------------------------------------------------------
+# Stages that have no substantive parliamentary debate record.
+# Session-link matching is skipped for these.
+# ---------------------------------------------------------------------------
+NO_DEBATE_STAGE_NAMES: frozenset[str] = frozenset({
+    "1st reading",
+    "introduction and 1st reading",
+    "programme motion",
+    "money resolution",
+    "ways and means resolution",
+    "carry-over motion",
+    "withdrawal",
+    "royal assent",
+})
+
+
 @dataclass
 class StageState:
     """
@@ -423,6 +439,12 @@ class StageState:
       "current"        — stage is in progress (hourglass)
       "not_applicable" — stage cannot apply to this bill's path (strikethrough circle)
       "pending"        — stage not yet reached (empty circle)
+
+    Session link fields (populated after compute_bill_status by attach_session_links):
+      has_debate         — False for procedural stages with no Hansard record
+      local_session_slug — set when a matching ha_session exists in the local archive
+      local_session_date — paired with slug to build /archive/debate/<date>/<slug> URL
+      hansard_fallback_url — set for debate stages outside the archive window
     """
     stage_name: str
     display_name: str
@@ -432,6 +454,12 @@ class StageState:
     state: str          # "completed" | "current" | "not_applicable" | "pending"
     group: str          # STAGE_GROUP_* constant — drives three-column layout
     descriptor: StageDescriptor | None
+    # Session link fields — defaults None; populated by attach_session_links()
+    has_debate: bool = True
+    local_session_slug: str | None = None
+    local_session_date: "date | None" = None
+    local_session_url_date: str | None = None   # e.g. "12-may-2025"
+    hansard_fallback_url: str | None = None
 
 
 @dataclass
@@ -557,18 +585,22 @@ def compute_bill_status(bill: "HaBill") -> BillStatus:
     bill_is_done = bill.is_act or bill.is_defeated
     norm_current = _normalise(bill.current_stage) if bill.current_stage else None
 
+    def _make_stage(s: "HaBillStage", state: str) -> StageState:
+        return StageState(
+            stage_name=s.stage_name,
+            display_name=get_display_name(s.stage_name),
+            house=s.house,
+            stage_order=s.stage_order,
+            stage_date=s.stage_date,
+            state=state,
+            group=stage_group(s.stage_name, s.house, bill.house_of_origin),
+            descriptor=get_stage_descriptor(s.stage_name, s.house),
+            has_debate=(_normalise(s.stage_name) not in NO_DEBATE_STAGE_NAMES),
+        )
+
     if bill_is_done:
         stage_states = [
-            StageState(
-                stage_name=s.stage_name,
-                display_name=get_display_name(s.stage_name),
-                house=s.house,
-                stage_order=s.stage_order,
-                stage_date=s.stage_date,
-                state="completed" if s.stage_date else "pending",
-                group=stage_group(s.stage_name, s.house, bill.house_of_origin),
-                descriptor=get_stage_descriptor(s.stage_name, s.house),
-            )
+            _make_stage(s, "completed" if s.stage_date else "pending")
             for s in stages_raw
         ]
     else:
@@ -590,21 +622,8 @@ def compute_bill_status(bill: "HaBill") -> BillStatus:
                 else:
                     state = "pending"
             else:
-                # Fallback: completed if stage_date exists
                 state = "completed" if s.stage_date else "pending"
-
-            stage_states.append(
-                StageState(
-                    stage_name=s.stage_name,
-                    display_name=get_display_name(s.stage_name),
-                    house=s.house,
-                    stage_order=s.stage_order,
-                    stage_date=s.stage_date,
-                    state=state,
-                    group=stage_group(s.stage_name, s.house, bill.house_of_origin),
-                    descriptor=get_stage_descriptor(s.stage_name, s.house),
-                )
-            )
+            stage_states.append(_make_stage(s, state))
 
     return BillStatus(
         fate=fate,

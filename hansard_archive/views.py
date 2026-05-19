@@ -2400,10 +2400,16 @@ def archive_bills():
 @archive_bp.route("/bill/<int:parliament_bill_id>")
 def archive_bill_detail(parliament_bill_id: int):
     from hansard_archive.bill_stages import compute_bill_status
+    from hansard_archive.bill_session_match import attach_session_links
 
     bill = HaBill.query.filter_by(parliament_bill_id=parliament_bill_id).first_or_404()
 
     bill_status = compute_bill_status(bill)
+    attach_session_links(bill, bill_status)
+
+    has_hansard_fallbacks = any(
+        s.hansard_fallback_url for s in bill_status.stages
+    )
 
     sponsors = (
         HaBillSponsor.query
@@ -2416,14 +2422,15 @@ def archive_bill_detail(parliament_bill_id: int):
     title_for_seo = bill.short_title or bill.title
     return render_template(
         "hansard_archive/archive_bill_detail.html",
-        bill            = bill,
-        bill_status     = bill_status,
-        stages_by_group = bill_status.stages_by_group(),
-        sponsors        = sponsors,
-        primary_sponsor = primary_sponsor,
-        canonical_path  = f"/archive/bill/{parliament_bill_id}",
-        og_title        = f"{title_for_seo} — Westminster Brief",
-        meta_desc       = (
+        bill                  = bill,
+        bill_status           = bill_status,
+        stages_by_group       = bill_status.stages_by_group(),
+        sponsors              = sponsors,
+        primary_sponsor       = primary_sponsor,
+        has_hansard_fallbacks = has_hansard_fallbacks,
+        canonical_path        = f"/archive/bill/{parliament_bill_id}",
+        og_title              = f"{title_for_seo} — Westminster Brief",
+        meta_desc             = (
             f"{bill.title}. "
             f"{'Government Bill' if bill.bill_type and bill.bill_type.startswith('Government') else 'Private Members&#39; Bill'} "
             f"in the UK Parliament {bill.session} session."

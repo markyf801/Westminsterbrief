@@ -144,6 +144,22 @@ body { background: #f0f2f5; }
 
 .bl-col-empty { font-size: 12px; color: #aaa; font-style: italic; margin: 4px 0; }
 
+/* Stage debate links */
+.bl-stage-link { color: inherit; text-decoration: underline; text-decoration-color: #b0c4de; }
+.bl-stage-link:hover { text-decoration-color: currentColor; }
+.bl-stage-ext-link { color: #aaa; text-decoration: none; margin-left: 3px; font-size: 10px; }
+.bl-stage-ext-link:hover { color: #666; }
+.bl-stage-pending .bl-stage-link,
+.bl-stage-pending .bl-stage-ext-link { pointer-events: none; text-decoration: none; }
+
+/* Archive boundary note */
+.bl-archive-note {
+    font-size: 11px; color: #999; margin-top: 10px; padding-top: 8px;
+    border-top: 1px dashed #e0e4eb; line-height: 1.5;
+}
+.bl-archive-note a { color: #4a7fa5; text-decoration: none; }
+.bl-archive-note a:hover { text-decoration: underline; }
+
 /* Source note */
 .bl-source-note {
     font-size: 12px; color: #888; margin-top: 6px;
@@ -277,6 +293,24 @@ body { background: #f0f2f5; }
     {% set orig_col = "Commons" if bill.house_of_origin == "Commons" else "Lords" %}
     {% set second_col = "Lords" if bill.house_of_origin == "Commons" else "Commons" %}
 
+    {# Macro: renders one stage row with optional debate link #}
+    {% macro stage_row(st) %}
+    <div class="bl-stage-row bl-stage-{{ st.state }}">
+        <span class="bl-stage-icon">{% if st.state == "completed" %}✓{% elif st.state == "current" %}●{% else %}○{% endif %}</span>
+        <span class="bl-stage-name">
+            {%- if st.local_session_slug and st.state != "pending" -%}
+            <a href="/archive/debate/{{ st.local_session_url_date }}/{{ st.local_session_slug }}" class="bl-stage-link">{{ st.display_name }}</a>
+            {%- else -%}
+            {{ st.display_name }}
+            {%- endif -%}
+        </span>
+        <span class="bl-stage-date">
+            {%- if st.stage_date %}{{ st.stage_date.day }} {{ st.stage_date.strftime('%b %Y') }}{% endif -%}
+            {%- if st.hansard_fallback_url and st.has_debate and st.state != "pending" %}<a href="{{ st.hansard_fallback_url }}" target="_blank" rel="noopener" class="bl-stage-ext-link" title="View on Parliament Hansard">↗</a>{% endif -%}
+        </span>
+    </div>
+    {% endmacro %}
+
     <div class="bl-timeline-section">
         <h2 class="bl-section-title">Parliamentary stages</h2>
         <div class="bl-stages-grid">
@@ -284,13 +318,7 @@ body { background: #f0f2f5; }
             <div class="bl-stages-col">
                 <div class="bl-col-header">{{ orig_col }}</div>
                 {% for st in stages_by_group.originating_house %}
-                <div class="bl-stage-row bl-stage-{{ st.state }}">
-                    <span class="bl-stage-icon">{% if st.state == "completed" %}✓{% elif st.state == "current" %}●{% else %}○{% endif %}</span>
-                    <span class="bl-stage-name">{{ st.display_name }}</span>
-                    {% if st.stage_date %}
-                    <span class="bl-stage-date">{{ st.stage_date.day }} {{ st.stage_date.strftime('%b %Y') }}</span>
-                    {% endif %}
-                </div>
+                {{ stage_row(st) }}
                 {% else %}
                 <p class="bl-col-empty">—</p>
                 {% endfor %}
@@ -299,13 +327,7 @@ body { background: #f0f2f5; }
             <div class="bl-stages-col">
                 <div class="bl-col-header">{{ second_col }}</div>
                 {% for st in stages_by_group.second_house %}
-                <div class="bl-stage-row bl-stage-{{ st.state }}">
-                    <span class="bl-stage-icon">{% if st.state == "completed" %}✓{% elif st.state == "current" %}●{% else %}○{% endif %}</span>
-                    <span class="bl-stage-name">{{ st.display_name }}</span>
-                    {% if st.stage_date %}
-                    <span class="bl-stage-date">{{ st.stage_date.day }} {{ st.stage_date.strftime('%b %Y') }}</span>
-                    {% endif %}
-                </div>
+                {{ stage_row(st) }}
                 {% else %}
                 <p class="bl-col-empty">Not yet reached</p>
                 {% endfor %}
@@ -314,19 +336,19 @@ body { background: #f0f2f5; }
             <div class="bl-stages-col">
                 <div class="bl-col-header">Final stages</div>
                 {% for st in stages_by_group.final %}
-                <div class="bl-stage-row bl-stage-{{ st.state }}">
-                    <span class="bl-stage-icon">{% if st.state == "completed" %}✓{% elif st.state == "current" %}●{% else %}○{% endif %}</span>
-                    <span class="bl-stage-name">{{ st.display_name }}</span>
-                    {% if st.stage_date %}
-                    <span class="bl-stage-date">{{ st.stage_date.day }} {{ st.stage_date.strftime('%b %Y') }}</span>
-                    {% endif %}
-                </div>
+                {{ stage_row(st) }}
                 {% else %}
                 <p class="bl-col-empty">Not yet reached</p>
                 {% endfor %}
             </div>
 
         </div>
+        {% if has_hansard_fallbacks %}
+        <p class="bl-archive-note">
+            Some stage debates occurred before our Hansard archive begins (May 2025).
+            Links marked ↗ go to Parliament's own Hansard for that date.
+        </p>
+        {% endif %}
     </div>
 
     <p class="bl-source-note">
