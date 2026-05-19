@@ -1661,6 +1661,19 @@ a.archive-dept-badge:hover { background: #d6dfe8; color: #1a3350; }
     border: 1px solid #c8dcc8;
 }
 .archive-tag-topic:hover { background: #e4ece4; text-decoration: underline; }
+.archive-tag-bill {
+    background: #e6eef8;
+    color: #1a3a6a;
+    border: 1px solid #b8cfe8;
+    font-weight: 600;
+}
+.archive-tag-bill:hover { background: #d0e2f4; text-decoration: underline; }
+.sd-bill-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
 .sd-theme-label {
     font-size: 11px;
     color: #6b7a8d;

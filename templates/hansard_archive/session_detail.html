@@ -48,6 +48,13 @@
             {% endif %}
         </div>
 
+        {% if related_bill %}
+        <div class="sd-bill-row">
+            <span class="sd-theme-label">Bill:</span>
+            <a href="/bill/{{ related_bill[1] }}" class="archive-tag archive-tag-bill">{{ related_bill[0] }} →</a>
+        </div>
+        {% endif %}
+
         {% if policy_areas or specific_topics %}
         <div class="sd-theme-row">
             <span class="sd-theme-label">Related topics:</span>

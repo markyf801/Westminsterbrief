@@ -210,6 +210,7 @@ def _build_session_items(sessions: list, contrib_counts: dict,
             "policy_areas":      sorted(policy_areas.get(s.id, [])),
             "specific_topics":   sorted(specific_topics.get(s.id, [])),
             "department":        s.department or "",
+            "related_bill":      _find_bill_for_session(s.title),
         }
         for s in sessions
     ]
@@ -489,6 +490,7 @@ def _session_context(session: HansardSession) -> dict:
         "department":        session.department or "",
         "related_sessions":  _related_sessions(session),
         "day_nav":           _day_navigation(session),
+        "related_bill":      _find_bill_for_session(session.title),
     }
 
 
@@ -537,9 +539,59 @@ def _archive_start_label() -> str:
 
 _VOCAB_CACHE_TTL  = 300   # 5 minutes — refreshed after each ingest cycle
 _RECENT_CACHE_TTL = 900   # 15 minutes — recent-additions widget
+_BILL_INDEX_TTL   = 900   # 15 minutes — bill title cross-link index
 _policy_area_cache: tuple[list, float] | None = None
 _dept_cache: tuple[list, float] | None = None
 _recent_additions_cache: tuple[dict, float] | None = None
+_bill_index_cache: tuple[list, float] | None = None
+
+
+def _norm_for_bill_match(text: str) -> str:
+    """Normalise text for bill cross-link matching.
+
+    Strips [HL], lowercases, removes all non-alphanumeric characters (apostrophes,
+    replacement chars, punctuation) and collapses whitespace, so titles with encoding
+    quirks still match.
+    """
+    t = re.sub(r"\s*[\[\(]hl[\]\)]", "", text, flags=re.IGNORECASE)
+    t = t.lower()
+    t = re.sub(r"[^a-z0-9\s]", " ", t)  # replace all non-alnum with space
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _get_bill_index() -> list[tuple[str, str, str]]:
+    """Return cached list of (norm_title, display_title, slug) for all slugged bills."""
+    global _bill_index_cache
+    now = time.monotonic()
+    if _bill_index_cache and now - _bill_index_cache[1] < _BILL_INDEX_TTL:
+        return _bill_index_cache[0]
+    try:
+        bills = HaBill.query.filter(HaBill.slug.isnot(None)).all()
+        idx = []
+        for b in bills:
+            t = b.short_title or b.title
+            norm = re.sub(r"\s+act\s+\d{4}$", "", t, flags=re.IGNORECASE)
+            norm = re.sub(r"\s+bill(\s+\[?hl\]?|\s+\(hl\))?$", "", norm, flags=re.IGNORECASE)
+            norm = _norm_for_bill_match(norm).strip()
+            if norm:
+                idx.append((norm, t, b.slug))
+        _bill_index_cache = (idx, now)
+        return idx
+    except Exception:
+        return []
+
+
+def _find_bill_for_session(title: str) -> tuple[str, str] | None:
+    """Return (display_title, slug) if this session is a bill stage, else None."""
+    tl = title.lower()
+    if "bill" not in tl and " act " not in tl and not tl.endswith(" act"):
+        return None  # fast path — most sessions unrelated to bills
+    norm_sess = _norm_for_bill_match(title)
+    for norm_bill, display, slug in _get_bill_index():
+        if norm_bill and norm_bill in norm_sess:
+            return (display, slug)
+    return None
 
 
 def _all_policy_areas() -> list[str]:
@@ -1337,6 +1389,7 @@ def _fts_search(
             "human_date":        _human_date(d),
             "url_date":          _url_date(d),
             "snippet":           Markup(snippet) if snippet else None,
+            "related_bill":      _find_bill_for_session(title),
         })
     return results, total
 
@@ -1427,6 +1480,7 @@ def _ilike_search(q_raw: str, page: int) -> tuple[list, int]:
             "human_date":        _human_date(s.date),
             "url_date":          _url_date(s.date),
             "snippet":           None,
+            "related_bill":      _find_bill_for_session(s.title),
         }
         for s in sessions
     ]

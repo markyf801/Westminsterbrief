@@ -76,6 +76,11 @@
                 <span class="ah-card-date">{{ r.human_date }}</span>
             </div>
             <a class="ah-card-title" href="/archive/debate/{{ r.url_date }}/{{ r.slug }}">{{ r.title }}</a>
+            {% if r.related_bill %}
+            <div class="ah-card-tags">
+                <a href="/bill/{{ r.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ r.related_bill[0] }}</a>
+            </div>
+            {% endif %}
             {% if r.snippet %}
             <p class="ah-card-snippet">{{ r.snippet }}</p>
             {% endif %}
@@ -175,9 +180,12 @@
                 {% endif %}
             </div>
             <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
-            {% if item.policy_areas or item.specific_topics %}
             {% set tags_shown = namespace(n=0) %}
+            {% if item.related_bill or item.policy_areas or item.specific_topics %}
             <div class="ah-card-tags">
+                {% if item.related_bill %}
+                <a href="/bill/{{ item.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ item.related_bill[0] }}</a>
+                {% endif %}
                 {% for pa in item.policy_areas[:1] %}
                 <a href="/archive/policy/{{ pa|slugify }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
                 {% set tags_shown.n = tags_shown.n + 1 %}

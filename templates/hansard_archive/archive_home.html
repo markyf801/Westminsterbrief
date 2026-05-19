@@ -226,8 +226,11 @@
                 </div>
                 <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
                 {% set tags_shown = namespace(n=0) %}
-                {% if item.policy_areas or item.specific_topics %}
+                {% if item.related_bill or item.policy_areas or item.specific_topics %}
                 <div class="ah-card-tags">
+                    {% if item.related_bill %}
+                    <a href="/bill/{{ item.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ item.related_bill[0] }}</a>
+                    {% endif %}
                     {% for pa in item.policy_areas[:1] %}
                     <a href="/archive?policy={{ pa|urlencode }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
                     {% set tags_shown.n = tags_shown.n + 1 %}
