@@ -206,6 +206,32 @@ body {
     border: 1px solid #e0e6ed;
 }
 
+.wq-tab-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 18px;
+    border-bottom: 2px solid #e0e6ed;
+    padding-bottom: 0;
+}
+.wq-tab {
+    font-size: 13px;
+    font-weight: 600;
+    color: #4a7fa5;
+    text-decoration: none;
+    padding: 6px 14px 8px;
+    border-radius: 4px 4px 0 0;
+    border: 1px solid transparent;
+    border-bottom: none;
+    margin-bottom: -2px;
+}
+.wq-tab:hover { background: #f0f4f8; }
+.wq-tab-active {
+    color: #1a2332;
+    background: #fff;
+    border-color: #e0e6ed;
+    border-bottom-color: #fff;
+}
+
 /* Article content — used for long-form editorial pages (e.g. History of Hansard) */
 .article-content h1 {
     font-size: 28px;
