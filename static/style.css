@@ -208,28 +208,36 @@ body {
 
 .wq-tab-row {
     display: flex;
-    gap: 4px;
-    margin-bottom: 18px;
-    border-bottom: 2px solid #e0e6ed;
-    padding-bottom: 0;
+    gap: 6px;
+    margin-bottom: 20px;
 }
 .wq-tab {
+    display: inline-block;
     font-size: 13px;
     font-weight: 600;
     color: #4a7fa5;
     text-decoration: none;
-    padding: 6px 14px 8px;
-    border-radius: 4px 4px 0 0;
-    border: 1px solid transparent;
-    border-bottom: none;
-    margin-bottom: -2px;
+    padding: 6px 16px;
+    border-radius: 20px;
+    border: 1px solid #dde3ed;
+    background: #f5f7fa;
+    transition: background 0.15s, border-color 0.15s;
 }
-.wq-tab:hover { background: #f0f4f8; }
+.wq-tab:hover {
+    background: #e8edf4;
+    border-color: #b0bbcc;
+    color: #1a4a6e;
+    text-decoration: none;
+}
 .wq-tab-active {
-    color: #1a2332;
-    background: #fff;
-    border-color: #e0e6ed;
-    border-bottom-color: #fff;
+    background: #1a4a6e;
+    border-color: #1a4a6e;
+    color: #fff;
+}
+.wq-tab-active:hover {
+    background: #155278;
+    border-color: #155278;
+    color: #fff;
 }
 
 /* Article content — used for long-form editorial pages (e.g. History of Hansard) */
@@ -1548,23 +1556,11 @@ body.page-home .tool-card-actions {
     margin-top: auto;
     padding-top: 14px;
 }
-body.page-home .tool-card-action-btn {
+body.page-home .tool-card-actions .tool-card-link {
     flex: 1 1 0;
     min-width: 120px;
-    text-align: center;
-    background: #1a4a6e;
-    border: none;
-    color: #ffffff;
     font-size: 13px;
-    font-weight: 600;
     padding: 9px 12px;
-    border-radius: 6px;
-    text-decoration: none;
-    transition: background 0.15s;
-}
-body.page-home .tool-card-action-btn:hover {
-    background: #155278;
-    color: #fff;
 }
 
 /* Beta badge — amber, distinct from AI blue */

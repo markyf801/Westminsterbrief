@@ -2819,7 +2819,12 @@ def bills_index():
         HaBill.introduced_date.desc().nulls_last(), HaBill.id.desc()
     )
     if q:
-        query = query.filter(HaBill.title.ilike(f"%{q}%"))
+        from sqlalchemy import or_ as _or
+        query = query.filter(_or(
+            HaBill.title.ilike(f"%{q}%"),
+            HaBill.long_title.ilike(f"%{q}%"),
+            HaBill.summary.ilike(f"%{q}%"),
+        ))
     if session_f in valid_sessions:
         query = query.filter(HaBill.session == session_f)
     if type_f in _BILL_TYPE_MAP:

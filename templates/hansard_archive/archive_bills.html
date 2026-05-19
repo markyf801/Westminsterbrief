@@ -128,7 +128,7 @@ body { background: #f0f2f5; }
 
     <form method="GET" action="/bills">
         <div class="bl-search-row">
-            <input type="text" name="q" value="{{ q }}" placeholder="Search bill titles…"
+            <input type="text" name="q" value="{{ q }}" placeholder="Search bill titles, long titles and descriptions…"
                    class="bl-search-input" autocomplete="off" spellcheck="false">
             <button type="submit" class="bl-search-btn">Search</button>
             {% if q %}<a href="/bills?{% if session_f %}session={{ session_f }}&{% endif %}{% if type_f %}type={{ type_f }}&{% endif %}{% if status_f %}status={{ status_f }}{% endif %}" class="bl-clear-link">Clear</a>{% endif %}
