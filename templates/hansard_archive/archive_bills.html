@@ -34,6 +34,24 @@ body { background: #f0f2f5; }
 .bl-header h1 { font-size: 22px; font-weight: 700; color: #1a2a3a; margin: 0 0 4px; }
 .bl-header-sub { font-size: 13px; color: #666; margin: 0; }
 
+.bl-search-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px;
+}
+.bl-search-input {
+    flex: 1; max-width: 440px;
+    font-size: 13px; border: 1px solid #cdd3dc; border-radius: 4px;
+    padding: 6px 10px; color: #1a2a3a;
+}
+.bl-search-input:focus { outline: 2px solid #4a7fa5; border-color: #4a7fa5; }
+.bl-search-btn {
+    font-size: 13px; font-weight: 600; padding: 6px 14px;
+    background: #4a7fa5; color: #fff; border: none; border-radius: 4px; cursor: pointer;
+}
+.bl-search-btn:hover { background: #3a6f95; }
+.bl-clear-link { font-size: 12px; color: #4a7fa5; text-decoration: none; }
+.bl-clear-link:hover { text-decoration: underline; }
+
 .bl-filter-bar {
     display: flex; align-items: center; gap: 10px;
     margin-bottom: 14px; flex-wrap: wrap;
@@ -109,6 +127,12 @@ body { background: #f0f2f5; }
     </div>
 
     <form method="GET" action="/bills">
+        <div class="bl-search-row">
+            <input type="text" name="q" value="{{ q }}" placeholder="Search bill titles…"
+                   class="bl-search-input" autocomplete="off" spellcheck="false">
+            <button type="submit" class="bl-search-btn">Search</button>
+            {% if q %}<a href="/bills?{% if session_f %}session={{ session_f }}&{% endif %}{% if type_f %}type={{ type_f }}&{% endif %}{% if status_f %}status={{ status_f }}{% endif %}" class="bl-clear-link">Clear</a>{% endif %}
+        </div>
         <div class="bl-filter-bar">
             <label for="bl-session-filter">Session:</label>
             <select id="bl-session-filter" name="session" onchange="this.form.submit()">
@@ -136,6 +160,7 @@ body { background: #f0f2f5; }
     </form>
 
     {%- set _qs_parts = [] -%}
+    {%- if q -%}{%- set _ = _qs_parts.append('q=' + q|urlencode) -%}{%- endif -%}
     {%- if session_f -%}{%- set _ = _qs_parts.append('session=' + session_f) -%}{%- endif -%}
     {%- if type_f -%}{%- set _ = _qs_parts.append('type=' + type_f) -%}{%- endif -%}
     {%- if status_f -%}{%- set _ = _qs_parts.append('status=' + status_f) -%}{%- endif -%}

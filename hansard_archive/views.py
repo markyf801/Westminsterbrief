@@ -2812,11 +2812,14 @@ def bills_index():
     session_f      = request.args.get("session", "").strip()
     type_f         = request.args.get("type", "").strip()
     status_f       = request.args.get("status", "").strip()
+    q              = request.args.get("q", "").strip()
     valid_sessions = ("2024-25", "2025-26")
 
     query = HaBill.query.order_by(
         HaBill.introduced_date.desc().nulls_last(), HaBill.id.desc()
     )
+    if q:
+        query = query.filter(HaBill.title.ilike(f"%{q}%"))
     if session_f in valid_sessions:
         query = query.filter(HaBill.session == session_f)
     if type_f in _BILL_TYPE_MAP:
@@ -2875,6 +2878,7 @@ def bills_index():
         session_f         = session_f,
         type_f            = type_f,
         status_f          = status_f,
+        q                 = q,
         valid_sessions    = valid_sessions,
         bill_type_options = _BILL_TYPE_OPTIONS,
         canonical_path    = "/bills",
