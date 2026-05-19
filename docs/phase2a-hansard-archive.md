@@ -141,3 +141,39 @@ timeline (Commons First Reading → ... → Royal Assent).
   2. Once historical data populated and verified non-zero, re-add the filter options to
      `/questions` template.
   Estimated effort: 0.5 day schema + 1 day backfill script + 12h run + 0.5h UI restore.
+
+---
+
+## AI tagging reliability finding (May 2026)
+
+Recorded after bills tagging run: 620/621 bills tagged by Gemini 2.5 Pro against the
+23-item GOV.UK policy area taxonomy. Validation rules (schema enforcement + canonical
+name check) worked correctly — zero out-of-vocabulary labels written to the DB.
+
+**The failure mode that validation does not catch:** semantic mismatch. Tags that are
+correctly-named items from the canonical list, applied to bills they are not substantively
+about. Examples: "Treatment of Terminal Illness Bill" tagged "Business and industry" and
+"Trade"; regulatory PMBs consistently tagged "Crime, justice and law" because they create
+offences; "Government and public administration" applied to almost any bill touching a
+public body.
+
+Root cause is token-level pattern matching on short-context items. The 522 Private Members'
+Bills in the corpus mostly have null summaries and short titles — the model fills the
+context gap by associating surface tokens with categories rather than reasoning about
+substantive content. Well-documented government bills (long title + summary populated) are
+much more reliably tagged.
+
+**Implication for architecture:** prefer structured authoritative data where it exists.
+For government bills, the sponsoring department from the Bills API is more reliable than
+AI-tagged policy area. For PMBs, the title alone is usually insufficient context for
+reliable AI classification at scale.
+
+AI tagging is acceptable where: context is richer (full debate transcripts vs bill titles),
+stakes are lower, or human verification is in the loop. Pure AI classification of
+short-context items at scale against a fixed taxonomy should be treated as approximate
+rather than authoritative.
+
+**Decision taken:** `ha_bill_theme` rows preserved as-is; tags not surfaced in any
+user-facing feature in v1. Bill display pages show title, sponsor, stage, dates, and
+Parliament source link only — no policy area badges or tag-driven filtering. Question of
+categorisation strategy reopened when the historical record feature is designed.
