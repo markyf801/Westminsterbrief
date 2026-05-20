@@ -533,6 +533,23 @@ def _refresh_stat(stat, gemini_key: str, dry_run: bool = False) -> str:
 
     # Write StatObservation (Phase 1.5). Rejection (pre-cutoff, no period) is
     # logged inside _write_observation; we still proceed to mirror legacy fields.
+    #
+    # release_url note: StatObservation.release_url is currently set to
+    # stat.source_url for both ons_timeseries and govuk_bulletin sources because
+    # neither source provides a per-release URL at this stage:
+    #   - ONS Beta API returns metadata for the timeseries as a whole; individual
+    #     release URLs are not surfaced in /v1/data responses.
+    #   - govuk_bulletin scrapes the bulletin landing page (stat.source_url);
+    #     we do not yet capture the URL of the specific release edition.
+    # This is a known temporary state. In a future phase:
+    #   - govuk_bulletin: the specific bulletin edition URL will be captured
+    #     from the bulletin's canonical link/redirect and stored per observation.
+    #   - ONS: per-release dataset URLs may be derivable from the API response
+    #     (e.g. the release calendar or a dataset endpoint) once that is explored.
+    # Until then, release_url == source_url for all machine-fetched observations.
+    # producer_url (HeadlineStat) is the correct field for the producer home page;
+    # release_url is intended to point at the specific edition — they should
+    # diverge once per-release URL capture is implemented.
     if not dry_run:
         _write_observation(db, stat, fetched, now)
 
