@@ -1818,7 +1818,7 @@ def admin_panel():
     if session.get('admin_authenticated'):
         pass  # fall through to admin page
     else:
-        token = request.args.get('token', '') or request.form.get('token', '')
+        token = request.form.get('token', '')
         totp_code = request.form.get('totp', '')
 
         if not ADMIN_TOKEN:
