@@ -50,6 +50,7 @@ from hansard_archive.models import (
 )
 from hansard_archive import policy_areas as _pa
 from hansard_archive.slugs import slugify_theme
+from hansard_archive.stats_queries import get_headline_stat
 
 archive_bp  = Blueprint("archive",  __name__, url_prefix="/archive")
 brief_bp    = Blueprint("brief",    __name__, url_prefix="/brief")
@@ -1451,13 +1452,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     # Headline stat teaser — shown as one-line link to /stats/<slug>
     headline_stat = None
     if theme_type_used == THEME_TYPE_POLICY_AREA and _pa.by_slug(theme_slug) is not None:
-        from hansard_archive.models import HeadlineStat as _HeadlineStat
-        headline_stat = (
-            _HeadlineStat.query
-            .filter_by(theme_slug=theme_slug)
-            .filter(_HeadlineStat.latest_value.isnot(None))
-            .first()
-        )
+        headline_stat = get_headline_stat(theme_slug)
 
     return render_template(
         "hansard_archive/brief_theme.html",
@@ -2575,13 +2570,7 @@ def stats_theme(theme_slug: str):
 
     theme_name = _pa.display_name_from_slug(theme_slug) or theme_slug.replace("-", " ").title()
 
-    from hansard_archive.models import HeadlineStat as _HS
-    headline_stat = (
-        _HS.query
-        .filter_by(theme_slug=theme_slug)
-        .filter(_HS.latest_value.isnot(None))
-        .first()
-    )
+    headline_stat = get_headline_stat(theme_slug)
 
     today = date_type.today()
     upcoming = (
