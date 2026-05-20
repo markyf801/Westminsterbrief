@@ -371,13 +371,25 @@ def _fetch_govuk_bulletin(stat, gemini_key: str) -> dict | None:
     }
 
 
-# ── Plain-English rewrite (Phase 1.5: deferred — function kept for future use) ─
+# ── Plain-English rewrite ─────────────────────────────────────────────────────
+#
+# _generate_rewrite() is intentionally kept here but NOT called.
+#
+# Plain English generation was deferred at Phase 1.5. The planned
+# re-introduction point is Phase 1.8 (see docs/stats-index-design.md).
+# At that point this function will be wired into _refresh_stat() once
+# per successful observation write, with the result written to
+# StatObservation.plain_english and plain_english_generated_at.
+#
+# DO NOT remove this function as dead code. It is preserved deliberately
+# so Phase 1.8 can re-enable it without restructuring — the Gemini call,
+# prompt, and error handling are already correct. If you are considering
+# removing it, read docs/stats-index-design.md Phase 1.8 section first.
 
 def _generate_rewrite(stat, fetched: dict, gemini_key: str) -> str | None:
     """
     Call Gemini Flash to rewrite source_wording as plain English.
-    NOT called in Phase 1.5 — plain English generation is deferred.
-    Kept here so Phase 1.6 can re-enable it without restructuring.
+    Not called in Phase 1.5 — plain English generation is deferred to Phase 1.8.
     """
     prompt = _REWRITE_PROMPT.format(
         source_wording = fetched.get("source_wording", ""),
