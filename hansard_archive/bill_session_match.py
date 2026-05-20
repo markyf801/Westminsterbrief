@@ -68,13 +68,13 @@ def _norm_bill_title(title: str, short_title: str | None) -> str:
     t = re.sub(r"\s+Act\s+\d{4}$", "", t, flags=re.IGNORECASE)
     t = re.sub(r"\s+Bill(\s+\[?HL\]?|\s+\(HL\))?$", "", t, flags=re.IGNORECASE)
     t = re.sub(r"\s*[\[\(]HL[\]\)]", "", t, flags=re.IGNORECASE)
-    return t.lower().strip()
+    return re.sub(r"\s+", " ", t).lower().strip()
 
 
 def _norm_session_title(title: str) -> str:
     t = re.sub(r"\s+Bill(\s+\[?HL\]?|\s+\(HL\))?$", "", title, flags=re.IGNORECASE)
     t = re.sub(r"\s*[\[\(]HL[\]\)]", "", t, flags=re.IGNORECASE)
-    return t.lower().strip()
+    return re.sub(r"\s+", " ", t).lower().strip()
 
 
 # ---------------------------------------------------------------------------

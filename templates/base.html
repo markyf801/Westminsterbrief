@@ -50,13 +50,6 @@
 </head>
 <body class="{{ body_class | default('') }}">
 
-    {% if is_beta %}
-    <div class="beta-env-banner">
-        <strong>BETA</strong> — This is a private preview environment.
-        Data is live but features may be incomplete or unstable.
-    </div>
-    {% endif %}
-
     <nav class="navbar">
         <a href="/home" class="brand">🏛️ Westminster Brief</a>
 
@@ -124,5 +117,6 @@
 <!-- Cloudflare Web Analytics -->
 <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "30b61bcfebdb4bacb3fe9e752cdebb2e"}'></script>
 <!-- End Cloudflare Web Analytics -->
+{% block extra_scripts %}{% endblock %}
 </body>
 </html>

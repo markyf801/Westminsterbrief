@@ -96,7 +96,7 @@ class HansardContribution(db.Model):
 
     member_id = db.Column(db.Integer, nullable=True, index=True)
     member_name = db.Column(db.String(300), nullable=True)
-    party = db.Column(db.String(100), nullable=True, index=True)
+    party = db.Column(db.String(100), nullable=True)
 
     speech_text = db.Column(db.Text, nullable=False)
     speech_order = db.Column(db.Integer, nullable=False, default=0)
@@ -373,9 +373,24 @@ class HeadlineStat(db.Model):
     extraction_config = db.Column(db.Text,     nullable=True)   # JSON stored as text (SQLite compat)
     last_refreshed   = db.Column(db.DateTime,  nullable=False)
     last_success     = db.Column(db.DateTime,  nullable=False)
+    # Phase 1 additions
+    producer_url     = db.Column(db.Text,      nullable=True)
+    methodology_url  = db.Column(db.Text,      nullable=True)
+    definition_id    = db.Column(db.Integer,   db.ForeignKey("ha_stat_definition.id",
+                                                              ondelete="SET NULL"),
+                                 nullable=True)
+    release_type     = db.Column(db.Text,      nullable=True)  # headline/reference/analysis/ad_hoc
+    sub_topic_slug   = db.Column(db.Text,      nullable=True)
 
     issue_reports = db.relationship("StatIssueReport", back_populates="stat",
                                     cascade="all, delete-orphan")
+    observations  = db.relationship("StatObservation", back_populates="stat",
+                                    cascade="all, delete-orphan",
+                                    order_by="StatObservation.period_end.desc()")
+    policy_areas  = db.relationship("StatPolicyArea", back_populates="stat",
+                                    cascade="all, delete-orphan")
+    definition    = db.relationship("StatDefinition", back_populates="stats",
+                                    foreign_keys=[definition_id])
 
     def __repr__(self):
         return f"<HeadlineStat id={self.id} theme={self.theme_slug} source={self.source_id}>"
@@ -618,3 +633,120 @@ class HaBillPublication(db.Model):
 
     def __repr__(self):
         return f"<HaBillPublication bill={self.bill_id} {self.publication_type!r} {self.title[:40]!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Stats index — Phase 1 schema
+# ---------------------------------------------------------------------------
+
+class StatDefinition(db.Model):
+    """
+    Reusable measure definitions shared across multiple HeadlineStat rows.
+    Solves the 'highly skilled employment' problem: one canonical definition,
+    many stats (by year, geography, provider type) that reference it.
+
+    Forward note (Phase 1.6): source_type on HeadlineStat will be migrated
+    to a FK against a StatSource table. This table is not StatSource — it
+    defines *what* is being measured, not *who* produces it.
+    """
+
+    __tablename__ = "ha_stat_definition"
+    __table_args__ = (
+        db.UniqueConstraint("slug", name="uq_stat_definition_slug"),
+    )
+
+    id                 = db.Column(db.Integer,  primary_key=True)
+    slug               = db.Column(db.Text,     nullable=False)
+    name               = db.Column(db.Text,     nullable=False)
+    producer           = db.Column(db.Text,     nullable=True)
+    description        = db.Column(db.Text,     nullable=True)
+    methodology_url    = db.Column(db.Text,     nullable=True)
+    cohort_definition  = db.Column(db.Text,     nullable=True)
+    denominator        = db.Column(db.Text,     nullable=True)
+    caveats            = db.Column(db.Text,     nullable=True)
+    created_at         = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at         = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                                   onupdate=datetime.utcnow)
+
+    stats = db.relationship("HeadlineStat", back_populates="definition",
+                            foreign_keys="HeadlineStat.definition_id")
+
+    def __repr__(self):
+        return f"<StatDefinition id={self.id} slug={self.slug!r}>"
+
+
+class StatPolicyArea(db.Model):
+    """
+    Many-to-many junction between HeadlineStat and policy areas.
+    A stat may belong to multiple policy areas; exactly one must be primary.
+    The primary policy area determines the stat's canonical URL.
+
+    HeadlineStat.theme_slug is kept in sync with the is_primary=True row
+    here via application logic — do not update one without the other.
+    """
+
+    __tablename__ = "ha_stat_policy_area"
+    __table_args__ = (
+        db.UniqueConstraint("headline_stat_id", "theme_slug",
+                            name="uq_stat_policy_area"),
+    )
+
+    id               = db.Column(db.Integer, primary_key=True)
+    headline_stat_id = db.Column(db.Integer,
+                                 db.ForeignKey("headline_stat.id", ondelete="CASCADE"),
+                                 nullable=False, index=True)
+    theme_slug       = db.Column(db.Text, nullable=False, index=True)
+    is_primary       = db.Column(db.Boolean, nullable=False, default=False)
+
+    stat = db.relationship("HeadlineStat", back_populates="policy_areas")
+
+    def __repr__(self):
+        return (f"<StatPolicyArea stat={self.headline_stat_id} "
+                f"theme={self.theme_slug!r} primary={self.is_primary}>")
+
+
+class StatObservation(db.Model):
+    """
+    Time-series storage for HeadlineStat values — one row per release/period.
+    Cutoff: observations with period_end < 2024-07-01 are rejected at ingestion.
+
+    straddles_cutoff: True when period_start < 2024-07-01 AND period_end >= 2024-07-01.
+    Straddling observations are stored but excluded from 'latest value' queries
+    by default.
+
+    Latest value query (fastest path):
+        SELECT * FROM ha_stat_observation
+        WHERE headline_stat_id = ? AND NOT straddles_cutoff
+        ORDER BY period_end DESC LIMIT 1
+    """
+
+    __tablename__ = "ha_stat_observation"
+    __table_args__ = (
+        db.UniqueConstraint("headline_stat_id", "period_start", "period_end",
+                            name="uq_stat_observation_period"),
+        db.Index("idx_stat_obs_stat_id", "headline_stat_id"),
+        db.Index("idx_stat_obs_latest", "headline_stat_id", "period_end"),
+    )
+
+    id               = db.Column(db.Integer,  primary_key=True)
+    headline_stat_id = db.Column(db.Integer,
+                                 db.ForeignKey("headline_stat.id", ondelete="CASCADE"),
+                                 nullable=False)
+    period_label     = db.Column(db.Text,     nullable=True)
+    period_start     = db.Column(db.Date,     nullable=True)
+    period_end       = db.Column(db.Date,     nullable=True)
+    value            = db.Column(db.Text,     nullable=True)
+    release_date     = db.Column(db.Date,     nullable=True)
+    release_url      = db.Column(db.Text,     nullable=True)
+    source_wording   = db.Column(db.Text,     nullable=True)
+    plain_english    = db.Column(db.Text,     nullable=True)
+    plain_english_generated_at = db.Column(db.DateTime, nullable=True)
+    rewrite_model    = db.Column(db.Text,     nullable=True)
+    straddles_cutoff = db.Column(db.Boolean,  nullable=False, default=False)
+    created_at       = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    stat = db.relationship("HeadlineStat", back_populates="observations")
+
+    def __repr__(self):
+        return (f"<StatObservation id={self.id} stat={self.headline_stat_id} "
+                f"period={self.period_label!r} value={self.value!r}>")

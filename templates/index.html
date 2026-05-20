@@ -6,12 +6,6 @@
 
 {% block content %}
 
-{# ── Tab bar ── #}
-<div class="wq-tab-bar">
-    <a href="/written-questions" class="wq-tab {% if request.path == '/written-questions' or request.path == '/questions' %}wq-tab-active{% endif %}">Written Questions</a>
-    <a href="/written-questions/today" class="wq-tab {% if request.path == '/written-questions/today' or request.path == '/tracker' %}wq-tab-active{% endif %}">Today's PQs</a>
-</div>
-
 {# ── Card macro — used in both flat and grouped views ── #}
 {% macro wq_card(r, show_heading=true) %}
 <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
@@ -51,6 +45,10 @@
 {% endmacro %}
 
 <div class="box">
+    <div class="wq-tab-row">
+        <a href="/written-questions" class="wq-tab wq-tab-active">Written Questions Scanner</a>
+        <a href="/written-questions/today" class="wq-tab">Today's PQs Tracker</a>
+    </div>
     <h2>Written Questions Scanner</h2>
     <p class="page-desc">
         Search Written Questions tabled in the Commons and Lords. Filter by department, house, and answer status. Export to CSV or Word.
@@ -59,7 +57,7 @@
         For older questions visit <a href="https://questions-statements.parliament.uk/written-questions" target="_blank" style="color:#1a4a6e;">parliament.uk/written-questions</a>.{% endif %}
     </p>
 
-    <form method="POST" action="/written-questions">
+    <form method="POST" action="/questions">
         <div class="form-group">
             <label class="form-label">Search Topic:</label>
             <input type="text" name="subject" placeholder="e.g. access and participation in higher education"

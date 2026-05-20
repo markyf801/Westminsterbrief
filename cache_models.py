@@ -98,32 +98,32 @@ class CachedTWFYSearch(db.Model):
 
     @staticmethod
     def get(query, source_type, ttl_hours=24):
+        key = CachedTWFYSearch.make_key(query, source_type)
+        entry = CachedTWFYSearch.query.filter_by(cache_key=key).first()
+        if not entry:
+            return None
+        age = datetime.utcnow() - entry.cached_at
+        if age > timedelta(hours=ttl_hours):
+            return None
         try:
-            key = CachedTWFYSearch.make_key(query, source_type)
-            entry = CachedTWFYSearch.query.filter_by(cache_key=key).first()
-            if not entry:
-                return None
-            age = datetime.utcnow() - entry.cached_at
-            if age > timedelta(hours=ttl_hours):
-                return None
             return json.loads(entry.results_json)
         except Exception:
             return None
 
     @staticmethod
     def store(query, source_type, results):
+        key = CachedTWFYSearch.make_key(query, source_type)
+        existing = CachedTWFYSearch.query.filter_by(cache_key=key).first()
+        data = json.dumps(results)
+        if existing:
+            existing.results_json = data
+            existing.cached_at = datetime.utcnow()
+        else:
+            db.session.add(CachedTWFYSearch(
+                cache_key=key, search_query=query,
+                source_type=source_type, results_json=data
+            ))
         try:
-            key = CachedTWFYSearch.make_key(query, source_type)
-            existing = CachedTWFYSearch.query.filter_by(cache_key=key).first()
-            data = json.dumps(results)
-            if existing:
-                existing.results_json = data
-                existing.cached_at = datetime.utcnow()
-            else:
-                db.session.add(CachedTWFYSearch(
-                    cache_key=key, search_query=query,
-                    source_type=source_type, results_json=data
-                ))
             db.session.commit()
         except Exception:
             db.session.rollback()

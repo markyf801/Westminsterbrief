@@ -271,6 +271,7 @@ def _fetch_speeches(member_id: int, is_lord: bool, topic: str = '') -> list:  # 
                 for c in mp_by_session.get(s.id, []):
                     preceding = by_key.get((s.id, c.speech_order - 1))
                     contribs.append({
+                        'id': c.id,
                         'text': (c.speech_text or '')[:500],
                         'preceding_name': preceding.member_name if preceding else None,
                         'preceding_text': (preceding.speech_text or '')[:250] if preceding else None,

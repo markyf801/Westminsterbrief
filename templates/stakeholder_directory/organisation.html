@@ -115,71 +115,11 @@
 </div>
 {% endif %}
 
-{# ── Committee evidence accordion ─────────────────────────────────────────── #}
-{% if committee_groups %}
-<div class="box">
-    <h3 style="margin-bottom:14px;">Committee Evidence</h3>
-    {% for committee_name, inquiries in committee_groups.items() %}
-    <details class="dir-committee-block">
-        <summary class="dir-committee-summary">
-            <span class="dir-committee-name">{{ committee_name }}</span>
-            <span class="dir-committee-count">
-                {% set total = namespace(n=0) %}
-                {% for items in inquiries.values() %}{% set total.n = total.n + items|length %}{% endfor %}
-                {{ total.n }} record{{ 's' if total.n != 1 else '' }}
-            </span>
-        </summary>
-        {% for inquiry_title, items in inquiries.items() %}
-        <div class="dir-inquiry-group">
-            <div class="dir-inquiry-title">
-                {% if items[0].eng.inquiry_id %}
-                <a href="https://committees.parliament.uk/work/{{ items[0].eng.inquiry_id }}/"
-                   target="_blank" rel="noopener">{{ inquiry_title }}</a>
-                {% else %}{{ inquiry_title }}{% endif %}
-            </div>
-            {% for item in items %}
-            <div class="dir-evidence-row">
-                <span class="badge-st {{ source_color[item.eng.source_type] }}">
-                    {{ source_labels[item.eng.source_type] }}
-                </span>
-                {% if item.eng.engagement_date %}
-                <span class="dir-evidence-date">{{ item.eng.engagement_date.strftime('%d %b %Y') }}</span>
-                {% endif %}
-                {% if item.eng.source_url %}
-                <a href="{{ item.eng.source_url }}" target="_blank" rel="noopener"
-                   class="dir-evidence-link">Read full submission on Parliament ↗</a>
-                {% endif %}
-                {% if item.content and item.content.excerpt_text %}
-                <div class="dir-evidence-excerpt">
-                    <blockquote class="dir-evidence-quote">{{ item.content.excerpt_text }}</blockquote>
-                    {% if item.content.word_count_original %}
-                    <span class="dir-evidence-wordcount">Full submission: {{ item.content.word_count_original|int }} words</span>
-                    {% endif %}
-                </div>
-                {% endif %}
-                {% if item.org_urls %}
-                <div class="dir-evidence-urls">
-                    <span class="dir-evidence-urls-label">URLs mentioned in submission:</span>
-                    {% for url in item.org_urls[:3] %}
-                    <a href="{{ url }}" target="_blank" rel="noopener"
-                       class="dir-evidence-ext-url">{{ url|truncate(55) }}</a>
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
-        {% endfor %}
-    </details>
-    {% endfor %}
-</div>
-{% endif %}
-
-{# ── Other engagement records (ministerial meetings, lobbying) ────────────── #}
+{# ── Engagement list ─────────────────────────────────────────────────────── #}
 <div class="box">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
         <h3 style="margin-bottom:0;">
-            {% if committee_groups %}Other engagement records{% else %}Engagement records{% endif %}
+            Engagement records
             {% if total_engs > 25 %}
             <span style="font-size:14px; font-weight:400; color:#888;">({{ total_engs }} total)</span>
             {% endif %}

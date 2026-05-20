@@ -29,16 +29,6 @@ Add a parallel data layer to the directory covering government consultations. Th
 
 ---
 
-### ONS Data Ingestion — Headline Figures in Research Tool
-
-Ingest ONS time series values into the DB so the Research Tool's ONS panel can show actual headline figures ("Student loan debt: £236bn, released March 2026") rather than just links to ONS pages. The ONS beta API returns `timeseries` items with a `cdid` code — each code maps to a specific indicator that can be fetched at `https://api.beta.ons.gov.uk/v1/datasets/timeseries/{cdid}/data`. One-time schema addition (`ons_stat` table: cdid, title, value, unit, release_date) plus a lightweight refresh cron (monthly). Would make the panel meaningfully richer for policy research use.
-
-**Revisit trigger:** Post-Teams-share with active beta users; any session touching the Research Tool or ONS panel; "make the ONS panel show actual numbers" conversation.
-
-*Captured 17 May 2026.*
-
----
-
 ### Key Speakers on a Topic — Three Product Surfaces
 
 Who's actually leading the parliamentary conversation on a given issue, not just who's spoken once. Three distinct surfaces with different build costs:
@@ -281,30 +271,6 @@ If accuracy is genuinely useful: publish predictions with calibrated confidence 
 
 ---
 
-### Party-Level Views and Manifesto Integration
-
-Four-tier build from basic party pages through to position-drift analysis. Uses existing data (theme tagging, member-party relationships) and directly addresses the gap where Westminster Brief shows individual MP activity but not party-level positioning.
-
-**Tier 1 — Basic party pages (~1 week, Phase 2A.5)**
-`/archive/party/<slug>` for each major party: current MPs, aggregate stats, top themes, recent contributions, link to party manifesto (don't host).
-
-**Tier 2 — Topic-by-party intersection (~1 week, Phase 2A.5)**
-`/archive/policy/<area>` enhanced with party breakdown — who's speaking, how often, on each policy area. Cross-party comparison view.
-
-**Tier 3 — Manifesto integration (~2 weeks, Phase 2A.5 or 2B)**
-Manifesto text structured by policy area, sourced from each major party. Displayed alongside parliamentary activity as excerpt + link. Clear separation between manifesto position and current parliamentary position.
-
-**Tier 4 — Position drift analysis (~3–4 weeks, Phase 2B)**
-Analytical layer comparing manifesto commitments to current parliamentary activity: where has stated position shifted, where is the party delivering, where are they silent. Foundation for lexical drift / position-evolution analysis. Justifies £49 briefing pack pricing alongside speaker analysis.
-
-**Propriety:** evenhanded analytical lens across all parties. Show evidence, not interpretation. Describe drift, let users conclude.
-
-**Revisit trigger:** Post-Teams-share, when scoping the first or second Phase 2A.5 build. Strong candidate alongside organisation enrichment. Natural companion to speaker analysis — same users want both.
-
-*Captured 17 May 2026 — substantive product direction, post-Teams-share candidate.*
-
----
-
 ### £5/Month Subscription Tier Strategy
 
 Mark wants to return to this question in a separate session. Captured here as a reminder. The context is the broader pricing and positioning question — what a £5/month tier looks like, what it includes, and how it fits between the free toolkit and the paid stakeholder briefing pack. Separate from Phase 2A.5 work.
@@ -351,6 +317,52 @@ Option 1 is cleanest. Add `govuk_publications_url TEXT` to `ha_bill` schema; pop
 **Revisit trigger:** Bill detail pages (Step 8) are being built; any session touching the bill schema.
 
 *Captured 19 May 2026 — Mark identified from Parliament's own bills site.*
+
+---
+
+### Research Tool → Local DB Migration (Replace External API with ha_* tables)
+
+**Context:** The Parliamentary Research Tool (`/debates`, `debate_scanner.py`) currently fetches live from the Hansard Parliament API (or TWFY fallback) on every search. The local `ha_*` DB now contains essentially the same data — the migration would replace the fetch layer with DB queries.
+
+**Audit result (20 May 2026):** Local DB covers all fields the Research Tool needs:
+
+| Research Tool needs | Local DB field | Notes |
+|---|---|---|
+| Speech text | `ha_contribution.speech_text` | Full text in ORM + FTS via `speech_tsv` |
+| Speaker name | `ha_contribution.member_name` | ✓ |
+| Speaker party | `ha_contribution.party` | ✓ |
+| Parliament member ID | `ha_contribution.member_id` | Same ID used by Hansard minister search |
+| Session date | `ha_session.date` | ✓ |
+| Session title | `ha_session.title` | ✓ |
+| House (Commons/Lords) | `ha_session.house` | ✓ |
+| Debate type | `ha_session.debate_type` | ✓ — controlled vocab already in use |
+| Hansard URL | `ha_session.hansard_url` | ✓ — already used by archive tool |
+| Department (for OQ filter) | `ha_session.department` | ✓ |
+| WQs | `ha_pq` table | Full text, asking/answering member, FTS via `question_tsv` |
+| WMS | `ha_session` filtered by `debate_type='ministerial_statement'` | ✓ |
+| Policy area tags | `ha_session_theme` | Bonus — richer than API |
+
+**What's not available (minor):**
+- TWFY `relevance` float — replace with `ts_rank` from FTS. Equivalent for ordering.
+- TWFY `listurl` links — replace with `ha_session.hansard_url` or `/archive/debate/...` internal links.
+
+**Scope of work (for Opus to scope properly):**
+1. New fetch layer: `_fetch_from_db(topic, source_type, date_range, member_id=None)` querying `ha_contribution` FTS and joining `ha_session`. Drop-in replacement for `fetch_hansard_topic()` and `fetch_hansard_minister_topic()`.
+2. WQ fetch: replace Parliament WQ API call with `ha_pq` FTS query.
+3. WMS fetch: replace WMS API call with `ha_session` filter on `debate_type`.
+4. URL generation: switch from TWFY-format URLs to `ha_session.hansard_url` or internal archive links.
+5. AI payload assembly, grouping, deduplication, Word export: **unchanged**.
+6. Remove `SEARCH_BACKEND` env var (no longer needed); remove TWFY dependencies for search.
+
+**Benefits:** 10–100× faster responses (DB vs live API), no TWFY API key dependency, no external outage risk, results directly linkable to archive detail pages.
+
+**Risk:** `speech_text` is not in the SQLAlchemy ORM model definition (added via ALTER TABLE migration) — needs either raw SQL or adding the column to the ORM class before the migration.
+
+**Coverage note:** DB covers last 12 months (deliberate product scope). No regression vs current product intent.
+
+**Revisit trigger:** Any session scoping Phase 2A.5 work after Teams share; any "Research Tool performance" conversation; any "TWFY dependency" conversation; Opus architecture review session.
+
+*Captured 20 May 2026 — audit done by Code, scoping to be done by Opus.*
 
 ---
 

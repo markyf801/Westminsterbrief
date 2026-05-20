@@ -178,7 +178,6 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(200), nullable=False)
     has_completed_onboarding = db.Column(db.Boolean, default=False, nullable=False)
     access_tier = db.Column(db.String(20), nullable=False, default='standard')
-    is_govuk_email = db.Column(db.Boolean, nullable=False, default=False)
     reset_token = db.Column(db.String(100), nullable=True)
     reset_token_expiry = db.Column(db.DateTime, nullable=True)
     deletion_requested_at = db.Column(db.DateTime, nullable=True)
@@ -244,13 +243,11 @@ _mig_t0 = _mig_time.monotonic()
 def _mig_log(phase):
     print(f'[STARTUP] {phase} +{_mig_time.monotonic() - _mig_t0:.1f}s', flush=True)
 
-_SKIP_MIGS = bool(os.environ.get('SKIP_MIGRATIONS'))
-_mig_log('begin' if not _SKIP_MIGS else 'SKIP_MIGRATIONS=1 — read-only mode, skipping DDL and seeds')
+_mig_log('begin')
 with app.app_context():
     _mig_log('app_context entered')
-    if not _SKIP_MIGS:
-        db.create_all()
-        _mig_log('db.create_all done')
+    db.create_all()
+    _mig_log('db.create_all done')
     # Add has_completed_onboarding to existing user tables that predate this column
     try:
         with db.engine.connect() as conn:
@@ -259,14 +256,6 @@ with app.app_context():
     except Exception:
         pass  # Column already exists — nothing to do
     _mig_log('onboarding col done')
-    # Add is_govuk_email flag (Phase 2 — stored for future free-tier auto-grant)
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_govuk_email BOOLEAN NOT NULL DEFAULT FALSE'))
-            conn.commit()
-    except Exception:
-        pass
-    _mig_log('is_govuk_email col done')
     # Rename cached_twfy_search.query → search_query (query shadows SQLAlchemy's .query interface)
     try:
         with db.engine.connect() as conn:
@@ -609,6 +598,63 @@ with app.app_context():
             _mig_log('ha_bill slugs already populated')
     except Exception as _e:
         app.logger.warning('ha_bill slug population failed: %s', _e)
+    # --- Phase 1 stats schema ---
+    try:
+        with db.engine.connect() as _conn:
+            for _col, _defn in [
+                ('producer_url',    'TEXT'),
+                ('methodology_url', 'TEXT'),
+                ('definition_id',   'INTEGER'),
+                ('release_type',    'TEXT'),
+                ('sub_topic_slug',  'TEXT'),
+            ]:
+                try:
+                    _conn.execute(text(
+                        f'ALTER TABLE headline_stat ADD COLUMN IF NOT EXISTS {_col} {_defn}'
+                    ))
+                except Exception:
+                    pass  # column already exists (SQLite < 3.35 doesn't support IF NOT EXISTS)
+            _conn.commit()
+        _mig_log('headline_stat Phase 1 cols done')
+    except Exception as _e:
+        app.logger.warning('headline_stat Phase 1 cols migration failed: %s', _e)
+    # Backfill StatObservation from legacy HeadlineStat single-value fields.
+    # Only runs when a stat has a latest_value but no StatObservation rows yet.
+    # Idempotent — the unique constraint on (headline_stat_id, period_start, period_end)
+    # prevents duplicates. The backfill uses NULL period dates (pre-time-series era)
+    # so real observations written by the ingestion pipeline are clearly distinct.
+    try:
+        from hansard_archive.models import HeadlineStat as _HS, StatObservation as _SO
+        _stats_needing_backfill = (
+            _HS.query
+            .filter(_HS.latest_value.isnot(None))
+            .filter(~_HS.observations.any())
+            .all()
+        )
+        if _stats_needing_backfill:
+            for _hs in _stats_needing_backfill:
+                _obs = _SO(
+                    headline_stat_id=_hs.id,
+                    period_label=_hs.period_label,
+                    period_start=None,
+                    period_end=None,
+                    value=_hs.latest_value,
+                    release_date=_hs.release_date,
+                    release_url=_hs.source_url,
+                    source_wording=_hs.source_wording,
+                    plain_english=_hs.plain_english,
+                    plain_english_generated_at=_hs.plain_english_generated_at,
+                    rewrite_model=_hs.rewrite_model,
+                    straddles_cutoff=False,
+                    created_at=_hs.last_success,
+                )
+                db.session.add(_obs)
+            db.session.commit()
+            _mig_log(f'StatObservation backfill: {len(_stats_needing_backfill)} rows created')
+        else:
+            _mig_log('StatObservation backfill: nothing to do')
+    except Exception as _e:
+        app.logger.warning('StatObservation backfill failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
@@ -620,18 +666,17 @@ with app.app_context():
          'house': 'Commons', 'twfy_person_id': '26321',
          'twfy_name': 'Josh MacAlister', 'resolution_method': 'seeded'},
     ]
-    if not _SKIP_MIGS:
-        _mig_log('starting MemberLink seeds')
-        for s in _SEEDS:
-            if not MemberLink.get_by_parliament_id(s['parliament_id']):
-                MemberLink.upsert(**s)
-        _mig_log('MemberLink seeds done')
-        if not User.query.filter_by(email='joe@university.ac.uk').first():
-            joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
-            joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
-            db.session.add(joe)
-            db.session.commit()
-        _mig_log('user seed done')
+    _mig_log('starting MemberLink seeds')
+    for s in _SEEDS:
+        if not MemberLink.get_by_parliament_id(s['parliament_id']):
+            MemberLink.upsert(**s)
+    _mig_log('MemberLink seeds done')
+    if not User.query.filter_by(email='joe@university.ac.uk').first():
+        joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
+        joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
+        db.session.add(joe)
+        db.session.commit()
+    _mig_log('user seed done')
 
     # Seed education stakeholder orgs (run once — skipped if any orgs already exist)
     _mig_log('checking StakeholderOrg count')
@@ -713,13 +758,12 @@ with app.app_context():
     _mig_log('StakeholderOrg seed done')
     _mig_log('app_context block complete')
 
-if not _SKIP_MIGS:
-    # Kick off background minister link seeding after app context is established
-    _mig_log('importing debate_scanner for seed_all_minister_links')
-    from debate_scanner import seed_all_minister_links
-    _mig_log('debate_scanner imported')
-    seed_all_minister_links(app)
-    _mig_log('seed_all_minister_links started')
+# Kick off background minister link seeding after app context is established
+_mig_log('importing debate_scanner for seed_all_minister_links')
+from debate_scanner import seed_all_minister_links
+_mig_log('debate_scanner imported')
+seed_all_minister_links(app)
+_mig_log('seed_all_minister_links started')
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
@@ -764,15 +808,18 @@ def about_legislation():
 @app.route('/home')
 def home():
     from sqlalchemy import func as sql_func
-    session_count_str, pq_count_str, org_count_str = "", "", ""
+    session_count_str, pq_count_str, org_count_str, bill_count_str = "", "", "", ""
     try:
-        from hansard_archive.models import HansardSession, HaPQ
+        from hansard_archive.models import HansardSession, HaPQ, HaBill
         sc  = db.session.query(sql_func.count(HansardSession.id)).filter(HansardSession.is_container == False).scalar() or 0
         pqc = db.session.query(sql_func.count(HaPQ.id)).scalar() or 0
+        bc  = db.session.query(sql_func.count(HaBill.id)).scalar() or 0
         if sc:
             session_count_str = f"over {(sc // 1000) * 1000:,}"
         if pqc:
             pq_count_str = f"over {(pqc // 10000) * 10000:,}"
+        if bc:
+            bill_count_str = f"{bc:,}"
     except Exception:
         pass
     try:
@@ -783,7 +830,7 @@ def home():
     except Exception:
         pass
     try:
-        return render_template('home.html', session_count=session_count_str, pq_count=pq_count_str, org_count=org_count_str)
+        return render_template('home.html', session_count=session_count_str, pq_count=pq_count_str, org_count=org_count_str, bill_count=bill_count_str)
     except Exception as _e:
         print(f'[HOME ERROR] {_e}', flush=True)
         raise
@@ -937,7 +984,7 @@ def _build_sitemap_core_xml() -> str:
                               .group_by(HansardSessionTheme.theme)
                               .having(sqlfunc.count(HansardSessionTheme.session_id) >= 5)
                               .all()):
-        urls.append((f"{BASE}/brief/{_slugify_theme(theme)}",
+        urls.append((f"{BASE}/archive/theme/{_slugify_theme(theme)}",
                      max_d.isoformat() if max_d else ""))
 
     # Session detail pages — non-container sessions with a slug
@@ -1186,33 +1233,6 @@ def ratelimit_handler(e):
     return render_template('429.html'), 429
 
 
-_BETA_ENV = os.environ.get('ENVIRONMENT') == 'beta'
-_BETA_PASSWORD = os.environ.get('BETA_PASSWORD', '')
-
-@app.before_request
-def _beta_auth_gate():
-    """Block all routes on the beta service unless the visitor has authenticated."""
-    if not _BETA_ENV:
-        return
-    exempt = {'/beta-login'}
-    if request.path in exempt or request.path.startswith('/static/'):
-        return
-    if not session.get('beta_authenticated'):
-        return redirect(url_for('beta_login', next=request.path))
-
-@app.route('/beta-login', methods=['GET', 'POST'])
-def beta_login():
-    if not _BETA_ENV:
-        abort(404)
-    error = None
-    if request.method == 'POST':
-        pw = request.form.get('password', '')
-        if pw and pw == _BETA_PASSWORD:
-            session['beta_authenticated'] = True
-            return redirect(request.args.get('next') or '/')
-        error = 'Incorrect password.'
-    return render_template('beta_login.html', error=error)
-
 @app.before_request
 def _enforce_feature_flags():
     """Abort 404 for hidden feature routes before @login_required can redirect."""
@@ -1260,8 +1280,7 @@ def register():
             flash('An account with that email already exists.')
         else:
             tier = 'public_sector' if _is_approved_email(email) else 'standard'
-            govuk = email.endswith('.gov.uk') or '@gov.uk' in email
-            user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'), access_tier=tier, is_govuk_email=govuk)
+            user = User(email=email, password_hash=generate_password_hash(password, method='pbkdf2:sha256'), access_tier=tier)
             db.session.add(user)
             db.session.commit()
             login_user(user)
@@ -1778,8 +1797,7 @@ ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '').strip()
 TOTP_SECRET = os.environ.get('TOTP_SECRET', '').strip()
 
 # Background job status for long-running admin operations
-_committee_ingest_status  = {'running': False, 'message': None, 'started_at': None}
-_upcoming_refresh_status  = {'running': False, 'message': None}
+_committee_ingest_status = {'running': False, 'message': None, 'started_at': None}
 
 def _admin_log(action):
     app.logger.info('ADMIN | ip=%s | %s', request.remote_addr, action)
@@ -1800,7 +1818,7 @@ def admin_panel():
     if session.get('admin_authenticated'):
         pass  # fall through to admin page
     else:
-        token = request.args.get('token', '') or request.form.get('token', '')
+        token = request.form.get('token', '')
         totp_code = request.form.get('totp', '')
 
         if not ADMIN_TOKEN:
@@ -1881,33 +1899,6 @@ def admin_panel():
             except Exception as e:
                 db.session.rollback()
                 message = f'Error resetting failed links: {e}'
-
-        elif action == 'refresh_upcoming':
-            import threading as _threading
-            if _upcoming_refresh_status['running']:
-                message = 'Refresh already running — check back in a few minutes.'
-            else:
-                org_slug = request.form.get('org_slug') or None
-
-                def _run_upcoming(slug):
-                    from upcoming_refresh import run_refresh
-                    _upcoming_refresh_status['running'] = True
-                    _upcoming_refresh_status['message'] = (
-                        f'Refreshing {slug}…' if slug else 'Refreshing all orgs…'
-                    )
-                    try:
-                        run_refresh(org_slug=slug)
-                        _upcoming_refresh_status['message'] = (
-                            f'Refresh of {slug} complete.' if slug else 'Refresh of all orgs complete.'
-                        )
-                    except Exception as e:
-                        _upcoming_refresh_status['message'] = f'Refresh error: {e}'
-                    finally:
-                        _upcoming_refresh_status['running'] = False
-
-                _threading.Thread(target=_run_upcoming, args=(org_slug,), daemon=True).start()
-                message = f'Upcoming refresh started in background — {"org: " + org_slug if org_slug else "all orgs"}.'
-                _admin_log(f'refresh_upcoming | {org_slug or "all"}')
 
         elif action == 'ingest_committee_evidence':
             import threading, requests as _requests
@@ -2003,20 +1994,6 @@ def admin_panel():
                     else:
                         message = f'Ingestion started for {len(committee_ids)} committees ({start_date} → {end_date}). Refresh this page in a few minutes to see results.'
                         _admin_log(f'ingest_committee_evidence full | {len(committee_ids)} committees | {start_date} → {end_date}')
-
-        elif action == 'fetch_evidence_content':
-            from stakeholder_directory.ingesters.evidence_content import run_fetch
-            import threading as _threading
-            _threading.Thread(
-                target=run_fetch,
-                args=(app,),
-                daemon=True,
-            ).start()
-            message = (
-                'Evidence content fetch started in background (max 100 URLs per run). '
-                'Check back in a few minutes — progress is logged to the app log.'
-            )
-            _admin_log('fetch_evidence_content')
 
         elif action == 'clear_directory_data':
             try:
@@ -2180,21 +2157,7 @@ def admin_panel():
     except Exception as e:
         backup_status = {'error': str(e)}
 
-    # --- Upcoming releases stats ---
-    upcoming_stats = {}
-    try:
-        from hansard_archive.models import UpcomingRelease as _UR
-        upcoming_stats['total'] = _UR.query.count()
-        from datetime import date as _date_today
-        upcoming_stats['future'] = _UR.query.filter(_UR.release_date >= _date_today.today()).count()
-    except Exception as e:
-        upcoming_stats['error'] = str(e)
-
     # Show background ingestion status as the message if no other message and job ran/is running
-    if not message and _upcoming_refresh_status['message']:
-        message = _upcoming_refresh_status['message']
-        if _upcoming_refresh_status['running']:
-            message = '⏳ ' + message
     if not message and _committee_ingest_status['message']:
         message = _committee_ingest_status['message']
         if _committee_ingest_status['running']:
@@ -2209,83 +2172,7 @@ def admin_panel():
                            member_link_stats=member_link_stats,
                            dir_stats=dir_stats,
                            archive_stats=archive_stats,
-                           backup_status=backup_status,
-                           upcoming_stats=upcoming_stats)
-
-
-# ---------------------------------------------------------------------------
-# Manifesto chunk review — /admin/manifesto-review
-# ---------------------------------------------------------------------------
-
-@app.route('/admin/manifesto-review', methods=['GET', 'POST'])
-def admin_manifesto_review():
-    if not session.get('admin_authenticated'):
-        return redirect('/admin')
-
-    from hansard_archive.models import ManifestoChunk, ManifestoChunkTag  # noqa: F401
-
-    message = None
-
-    if request.method == 'POST':
-        action   = request.form.get('action')
-        chunk_id = request.form.get('chunk_id', type=int)
-
-        if action == 'approve_all_party':
-            party_slug = request.form.get('party_slug', '')
-            n = ManifestoChunk.query.filter_by(
-                party_slug=party_slug, review_status='pending'
-            ).update({'review_status': 'approved'}, synchronize_session=False)
-            db.session.commit()
-            _admin_log(f'manifesto approve_all party={party_slug} n={n}')
-            return redirect(f'/admin/manifesto-review?party={party_slug}&status=approved')
-
-        chunk = db.session.get(ManifestoChunk, chunk_id) if chunk_id else None
-        if chunk:
-            if action == 'approve':
-                chunk.review_status = 'approved'
-                db.session.commit()
-                _admin_log(f'manifesto approve chunk={chunk_id}')
-            elif action == 'reject':
-                chunk.review_status = 'rejected'
-                db.session.commit()
-                _admin_log(f'manifesto reject chunk={chunk_id}')
-        return redirect(request.referrer or '/admin/manifesto-review')
-
-    party_filter  = request.args.get('party', '')
-    status_filter = request.args.get('status', 'pending')
-    message       = request.args.get('msg', '')
-
-    try:
-        q = ManifestoChunk.query.options(db.joinedload(ManifestoChunk.tags))
-        if party_filter:
-            q = q.filter_by(party_slug=party_filter)
-        if status_filter:
-            q = q.filter_by(review_status=status_filter)
-        chunks = q.order_by(ManifestoChunk.party_slug, ManifestoChunk.id).all()
-
-        from sqlalchemy import func
-        summary = db.session.query(
-            ManifestoChunk.party_slug,
-            ManifestoChunk.review_status,
-            func.count(ManifestoChunk.id).label('n'),
-        ).group_by(ManifestoChunk.party_slug, ManifestoChunk.review_status).all()
-
-        party_summary: dict[str, dict[str, int]] = {}
-        for row in summary:
-            party_summary.setdefault(row.party_slug, {})[row.review_status] = row.n
-
-    except Exception as _e:
-        app.logger.exception('admin_manifesto_review GET failed')
-        return f"<pre style='color:red;padding:20px'>Error loading manifesto review:\n{_e}\n\nCheck Railway logs for full traceback.</pre>", 500
-
-    return render_template(
-        'admin_manifesto_review.html',
-        chunks=chunks,
-        party_filter=party_filter,
-        status_filter=status_filter,
-        party_summary=party_summary,
-        message=message,
-    )
+                           backup_status=backup_status)
 
 
 # ---------------------------------------------------------------------------
@@ -2410,7 +2297,7 @@ def written_questions():
 def written_questions_today():
     from flask import g as _g
     _g.wq_tab = 'today'
-    from tracker import _tracker_view
+    from tracker import morning_tracker as _tracker_view
     return _tracker_view()
 
 
@@ -2441,10 +2328,6 @@ def inject_version():
 def inject_admin_auth():
     from flask import session as flask_session
     return {'admin_authenticated': flask_session.get('admin_authenticated', False)}
-
-@app.context_processor
-def inject_beta_flag():
-    return {'is_beta': _BETA_ENV}
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)

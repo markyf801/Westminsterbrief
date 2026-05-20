@@ -28,6 +28,7 @@ from typing import Optional
 import requests
 
 from extensions import db
+from hansard_archive.policy_areas import HANSARD_POLICY_NAMES as _HANSARD_POLICY_NAMES
 from hansard_archive.models import (
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
@@ -47,35 +48,11 @@ _PQ_BATCH_SIZE = 10
 _PQ_BATCH_DELAY = 0.5   # between batch calls — paid tier
 
 # ---------------------------------------------------------------------------
-# GOV.UK policy area taxonomy (verified April 2026 against gov.uk/search/policy-papers)
-# Three parliamentary additions: Energy, Parliament and constitution, Trade
+# GOV.UK policy area taxonomy — canonical list lives in policy_areas.py.
+# Imported here as a flat list for the Gemini enum schema.
 # ---------------------------------------------------------------------------
 
-POLICY_AREAS = [
-    "Business and industry",
-    "Children and families",
-    "Crime, justice and law",
-    "Defence and armed forces",
-    "Economy",
-    "Education, training and skills",
-    "Employment and labour market",
-    "Energy",
-    "Environment",
-    "Finance and taxation",
-    "Foreign affairs and diplomacy",
-    "Government and public administration",
-    "Health and social care",
-    "Housing and planning",
-    "Immigration and borders",
-    "International development",
-    "Local government",
-    "Parliament and constitution",
-    "Science and technology",
-    "Society and culture",
-    "Trade",
-    "Transport",
-    "Welfare and benefits",
-]
+POLICY_AREAS = _HANSARD_POLICY_NAMES
 
 # ---------------------------------------------------------------------------
 # Gemini client — structured output variant

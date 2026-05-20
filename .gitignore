@@ -30,6 +30,7 @@ instance/
 
 # Runtime caches
 minister_cache.json
+.pytest_cache/
 
 # Scratch / local-only files
 ClaudeAPI.txt

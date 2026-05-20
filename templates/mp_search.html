@@ -337,7 +337,7 @@
                 {% endfor %}
                 {% if s.url %}
                 <div style="margin-top:8px;">
-                    <a href="{{ s.url }}" class="pq-card-link">View full session →</a>
+                    <a href="{{ s.url }}{% if s.contributions and s.contributions[0].id %}?mp={{ member_id }}#contrib-{{ s.contributions[0].id }}{% elif member_id %}?mp={{ member_id }}{% endif %}" class="pq-card-link">View full session →</a>
                 </div>
                 {% endif %}
             </div>
@@ -359,7 +359,7 @@
                     <td>{{ s.date }}</td>
                     <td>
                         {% if s.url %}
-                        <a href="{{ s.url }}" style="color:#4a7fa5; text-decoration:none;">{{ s.subject }}</a>
+                        <a href="{{ s.url }}{% if member_id %}?mp={{ member_id }}{% endif %}" style="color:#4a7fa5; text-decoration:none;">{{ s.subject }}</a>
                         {% else %}
                         {{ s.subject }}
                         {% endif %}

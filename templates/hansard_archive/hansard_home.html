@@ -19,7 +19,48 @@
 </script>
 {% endblock %}
 
-{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+
+.hh-browse-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 16px 0 24px;
+}
+.hh-browse-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #fff;
+    border: 1px solid #dde3ed;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    flex: 1 1 0;
+    min-width: 0;
+}
+.hh-browse-card:hover {
+    border-color: #b0bbcc;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+}
+.hh-browse-icon { color: #4a7fa5; flex-shrink: 0; }
+.hh-browse-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #1a2332;
+    line-height: 1.3;
+}
+.hh-browse-sub {
+    display: block;
+    font-size: 11px;
+    color: #888;
+    margin-top: 1px;
+    line-height: 1.3;
+}
+</style>{% endblock %}
 
 {% block content %}
 <div class="ac-page">
@@ -76,13 +117,16 @@
                 <span class="ah-card-date">{{ r.human_date }}</span>
             </div>
             <a class="ah-card-title" href="/archive/debate/{{ r.url_date }}/{{ r.slug }}">{{ r.title }}</a>
-            {% if r.related_bill %}
-            <div class="ah-card-tags">
-                <a href="/bill/{{ r.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ r.related_bill[0] }}</a>
-            </div>
-            {% endif %}
             {% if r.snippet %}
             <p class="ah-card-snippet">{{ r.snippet }}</p>
+            {% endif %}
+            {% if r.related_bill %}
+            <details class="ah-card-bills">
+                <summary class="ah-bills-toggle">{{ r.related_bill[0] }}</summary>
+                <div class="ah-card-tags">
+                    <a href="/bill/{{ r.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ r.related_bill[0] }}</a>
+                </div>
+            </details>
             {% endif %}
         </div>
         {% endfor %}
@@ -157,6 +201,11 @@
             <span class="hh-browse-label">Research Tool</span>
             <span class="hh-browse-sub">AI-assisted debate analysis</span>
         </a>
+        <a href="/archive/bills" class="hh-browse-card">
+            <span class="hh-browse-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
+            <span class="hh-browse-label">Bills</span>
+            <span class="hh-browse-sub">Track legislation progress</span>
+        </a>
     </div>
 
     {# --- Recent sessions --- #}
@@ -182,21 +231,24 @@
             <a class="ah-card-title" href="/archive/debate/{{ item.url_date }}/{{ s.slug }}">{{ s.title }}</a>
             {% set tags_shown = namespace(n=0) %}
             {% if item.related_bill or item.policy_areas or item.specific_topics %}
-            <div class="ah-card-tags">
-                {% if item.related_bill %}
-                <a href="/bill/{{ item.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ item.related_bill[0] }}</a>
-                {% endif %}
-                {% for pa in item.policy_areas[:1] %}
-                <a href="/archive/policy/{{ pa|slugify }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
-                {% set tags_shown.n = tags_shown.n + 1 %}
-                {% endfor %}
-                {% for topic in item.specific_topics %}
-                {% if tags_shown.n < 3 %}
-                <span class="archive-tag archive-tag-topic">{{ topic }}</span>
-                {% set tags_shown.n = tags_shown.n + 1 %}
-                {% endif %}
-                {% endfor %}
-            </div>
+            <details class="ah-card-bills">
+                <summary class="ah-bills-toggle">{% if item.related_bill %}{{ item.related_bill[0] }}{% elif item.policy_areas %}{{ item.policy_areas[0] }}{% elif item.specific_topics %}{{ item.specific_topics[0] }}{% endif %}</summary>
+                <div class="ah-card-tags">
+                    {% if item.related_bill %}
+                    <a href="/bill/{{ item.related_bill[1] }}" class="archive-tag archive-tag-bill">{{ item.related_bill[0] }}</a>
+                    {% endif %}
+                    {% for pa in item.policy_areas[:1] %}
+                    <a href="/archive/policy/{{ pa|slugify }}" class="archive-tag archive-tag-policy">{{ pa }}</a>
+                    {% set tags_shown.n = tags_shown.n + 1 %}
+                    {% endfor %}
+                    {% for topic in item.specific_topics %}
+                    {% if tags_shown.n < 3 %}
+                    <span class="archive-tag archive-tag-topic">{{ topic }}</span>
+                    {% set tags_shown.n = tags_shown.n + 1 %}
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </details>
             {% endif %}
         </div>
         {% endfor %}

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Westminster Brief — Upcoming Releases Refresh
 Fetches scheduled official statistics from the GOV.UK release calendar and
 caches them in the upcoming_release table, one row per (content_id, theme_slug).
