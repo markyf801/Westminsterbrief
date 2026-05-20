@@ -47,6 +47,7 @@ from hansard_archive.models import (
     HaPQTheme,
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
+    UpcomingRelease,
 )
 from hansard_archive import policy_areas as _pa
 from hansard_archive.slugs import slugify_theme
