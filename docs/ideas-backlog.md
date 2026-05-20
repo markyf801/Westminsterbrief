@@ -320,6 +320,52 @@ Option 1 is cleanest. Add `govuk_publications_url TEXT` to `ha_bill` schema; pop
 
 ---
 
+### Research Tool → Local DB Migration (Replace External API with ha_* tables)
+
+**Context:** The Parliamentary Research Tool (`/debates`, `debate_scanner.py`) currently fetches live from the Hansard Parliament API (or TWFY fallback) on every search. The local `ha_*` DB now contains essentially the same data — the migration would replace the fetch layer with DB queries.
+
+**Audit result (20 May 2026):** Local DB covers all fields the Research Tool needs:
+
+| Research Tool needs | Local DB field | Notes |
+|---|---|---|
+| Speech text | `ha_contribution.speech_text` | Full text in ORM + FTS via `speech_tsv` |
+| Speaker name | `ha_contribution.member_name` | ✓ |
+| Speaker party | `ha_contribution.party` | ✓ |
+| Parliament member ID | `ha_contribution.member_id` | Same ID used by Hansard minister search |
+| Session date | `ha_session.date` | ✓ |
+| Session title | `ha_session.title` | ✓ |
+| House (Commons/Lords) | `ha_session.house` | ✓ |
+| Debate type | `ha_session.debate_type` | ✓ — controlled vocab already in use |
+| Hansard URL | `ha_session.hansard_url` | ✓ — already used by archive tool |
+| Department (for OQ filter) | `ha_session.department` | ✓ |
+| WQs | `ha_pq` table | Full text, asking/answering member, FTS via `question_tsv` |
+| WMS | `ha_session` filtered by `debate_type='ministerial_statement'` | ✓ |
+| Policy area tags | `ha_session_theme` | Bonus — richer than API |
+
+**What's not available (minor):**
+- TWFY `relevance` float — replace with `ts_rank` from FTS. Equivalent for ordering.
+- TWFY `listurl` links — replace with `ha_session.hansard_url` or `/archive/debate/...` internal links.
+
+**Scope of work (for Opus to scope properly):**
+1. New fetch layer: `_fetch_from_db(topic, source_type, date_range, member_id=None)` querying `ha_contribution` FTS and joining `ha_session`. Drop-in replacement for `fetch_hansard_topic()` and `fetch_hansard_minister_topic()`.
+2. WQ fetch: replace Parliament WQ API call with `ha_pq` FTS query.
+3. WMS fetch: replace WMS API call with `ha_session` filter on `debate_type`.
+4. URL generation: switch from TWFY-format URLs to `ha_session.hansard_url` or internal archive links.
+5. AI payload assembly, grouping, deduplication, Word export: **unchanged**.
+6. Remove `SEARCH_BACKEND` env var (no longer needed); remove TWFY dependencies for search.
+
+**Benefits:** 10–100× faster responses (DB vs live API), no TWFY API key dependency, no external outage risk, results directly linkable to archive detail pages.
+
+**Risk:** `speech_text` is not in the SQLAlchemy ORM model definition (added via ALTER TABLE migration) — needs either raw SQL or adding the column to the ORM class before the migration.
+
+**Coverage note:** DB covers last 12 months (deliberate product scope). No regression vs current product intent.
+
+**Revisit trigger:** Any session scoping Phase 2A.5 work after Teams share; any "Research Tool performance" conversation; any "TWFY dependency" conversation; Opus architecture review session.
+
+*Captured 20 May 2026 — audit done by Code, scoping to be done by Opus.*
+
+---
+
 ### /about/legislation — "How Parliament Makes Laws" Explainer Page
 
 Scaffold page explaining the UK bill procedure for lay readers, linked from the timeline display on `/bill/<id>` pages. URL to confirm: `/about/legislation` or `/how-parliament-makes-laws`. Content drafted by Mark separately; Code's job is the page scaffold (template, route, nav link) and the inline link near the timeline ("How does this work? →") on the bill detail page.

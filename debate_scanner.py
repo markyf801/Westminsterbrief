@@ -1774,6 +1774,367 @@ def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
     return results
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LOCAL DB FETCH LAYER — replaces Hansard API / TWFY for Research Tool searches
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DB_SOURCE_FILTER = {
+    'commons':         "s.house = 'Commons' AND s.debate_type NOT IN ('westminster_hall','ministerial_statement')",
+    'lords':           "s.house = 'Lords' AND s.debate_type != 'ministerial_statement'",
+    'westminsterhall': "s.debate_type = 'westminster_hall'",
+    'wms':             "s.debate_type = 'ministerial_statement'",
+}
+
+
+def _session_to_source(house, debate_type):
+    dt = (debate_type or '').lower()
+    if dt == 'westminster_hall':
+        return 'westminsterhall'
+    if dt == 'ministerial_statement':
+        return 'wms'
+    return 'lords' if (house or '').lower() == 'lords' else 'commons'
+
+
+def _db_row(s_date, s_title, s_house, s_debate_type, s_hansard_url, s_ext_id,
+            s_dept, c_member_name, c_party, c_speech_text, c_member_id, relevance):
+    source = _session_to_source(s_house, s_debate_type)
+    hdate = s_date.isoformat() if hasattr(s_date, 'isoformat') else str(s_date or '')[:10]
+    text_clean = (c_speech_text or '').strip()
+    return {
+        'listurl':               s_hansard_url or '',
+        'body_clean':            text_clean[:500],
+        'body_export':           text_clean[:3000],
+        'body_word_count':       len(text_clean.split()),
+        'speaker_name':          c_member_name or '',
+        'speaker_party':         _normalise_party(c_party or ''),
+        'hdate':                 hdate,
+        'debate_title':          s_title or '',
+        'source':                source,
+        'source_label':          get_source_label(source),
+        'relevance':             float(relevance or 0),
+        'debate_type':           get_debate_type(s_title or '', source=source),
+        'debate_section_ext_id': s_ext_id or '',
+        'member_id':             c_member_id,
+        'dept':                  s_dept or '',
+    }
+
+
+def _db_is_postgres():
+    from extensions import db as _db
+    return _db.engine.url.drivername.startswith('postgresql')
+
+
+def _wsq_string(fts_query):
+    """Prepare fts_query for websearch_to_tsquery: strip outer parens, lowercase OR."""
+    s = fts_query.strip()
+    if s.startswith('(') and s.endswith(')'):
+        s = s[1:-1].strip()
+    return re.sub(r'\bOR\b', 'or', s)
+
+
+def fetch_from_db_topic(fts_query, source_type, date_from='', date_to='', limit=25):
+    """Return all speech rows from sessions matching fts_query for source_type.
+    Replaces fetch_hansard_topic() — includes full session expansion in one DB query.
+    On Postgres: uses speech_tsv/title_tsv GIN indexes.
+    On SQLite (dev): ILIKE fallback on title.
+    """
+    import logging as _dbl
+    from extensions import db as _db
+    from sqlalchemy import text as sqla_text
+
+    if not fts_query:
+        return []
+    src_filter = _DB_SOURCE_FILTER.get(source_type)
+    if not src_filter:
+        return []
+
+    is_pg = _db_is_postgres()
+    try:
+        date_clauses = []
+        params = {'lim': limit}
+        if date_from:
+            date_clauses.append('s.date >= :date_from')
+            params['date_from'] = date_from
+        if date_to:
+            date_clauses.append('s.date <= :date_to')
+            params['date_to'] = date_to
+        where_dates = ('AND ' + ' AND '.join(date_clauses)) if date_clauses else ''
+
+        if is_pg:
+            wsq = _wsq_string(fts_query)
+            params['q'] = wsq
+            sql_sessions = sqla_text(f"""
+                SELECT matched.session_id FROM (
+                    SELECT c.session_id,
+                           MAX(ts_rank(c.speech_tsv, websearch_to_tsquery('english', :q))) AS r
+                    FROM ha_contribution c
+                    JOIN ha_session s ON s.id = c.session_id
+                    WHERE s.is_container = false AND {src_filter}
+                      {where_dates}
+                      AND c.speech_tsv @@ websearch_to_tsquery('english', :q)
+                    GROUP BY c.session_id
+                    UNION
+                    SELECT s.id AS session_id,
+                           ts_rank(s.title_tsv, websearch_to_tsquery('english', :q)) AS r
+                    FROM ha_session s
+                    WHERE s.is_container = false AND {src_filter}
+                      {where_dates}
+                      AND s.title_tsv @@ websearch_to_tsquery('english', :q)
+                ) matched
+                ORDER BY matched.r DESC
+                LIMIT :lim
+            """)
+            sid_rows = _db.session.execute(sql_sessions, params).fetchall()
+            session_ids = [r[0] for r in sid_rows]
+            if not session_ids:
+                _dbl.warning(f"[db_topic] {source_type} q={repr(fts_query)[:60]} 0 sessions")
+                return []
+            sql_contribs = sqla_text("""
+                SELECT c.session_id, c.member_id, c.member_name, c.party,
+                       c.speech_text, c.speech_order,
+                       s.title, s.date, s.house, s.debate_type,
+                       s.hansard_url, s.ext_id, s.department,
+                       COALESCE(ts_rank(c.speech_tsv, websearch_to_tsquery('english', :q)), 0) AS relevance
+                FROM ha_contribution c
+                JOIN ha_session s ON s.id = c.session_id
+                WHERE c.session_id = ANY(:ids)
+                ORDER BY s.date DESC, c.session_id, c.speech_order
+            """)
+            contrib_rows = _db.session.execute(
+                sql_contribs, {'ids': session_ids, 'q': wsq}
+            ).fetchall()
+        else:
+            # SQLite dev fallback — ILIKE on title
+            m_q = re.search(r'"([^"]+)"', fts_query)
+            keyword = m_q.group(1) if m_q else fts_query.strip('()"')
+            params['kw'] = f'%{keyword}%'
+            sql_sessions = sqla_text(f"""
+                SELECT DISTINCT s.id AS session_id
+                FROM ha_session s
+                LEFT JOIN ha_contribution c ON c.session_id = s.id
+                WHERE s.is_container = 0 AND {src_filter}
+                  {where_dates}
+                  AND (s.title LIKE :kw OR c.speech_text LIKE :kw)
+                LIMIT :lim
+            """)
+            sid_rows = _db.session.execute(sql_sessions, params).fetchall()
+            session_ids = [r[0] for r in sid_rows]
+            if not session_ids:
+                return []
+            placeholders = ','.join(f':id{i}' for i in range(len(session_ids)))
+            id_params = {f'id{i}': sid for i, sid in enumerate(session_ids)}
+            sql_contribs = sqla_text(f"""
+                SELECT c.session_id, c.member_id, c.member_name, c.party,
+                       c.speech_text, c.speech_order,
+                       s.title, s.date, s.house, s.debate_type,
+                       s.hansard_url, s.ext_id, s.department,
+                       0.0 AS relevance
+                FROM ha_contribution c
+                JOIN ha_session s ON s.id = c.session_id
+                WHERE c.session_id IN ({placeholders})
+                ORDER BY s.date DESC, c.session_id, c.speech_order
+            """)
+            contrib_rows = _db.session.execute(sql_contribs, id_params).fetchall()
+
+        result = [
+            _db_row(r.date, r.title, r.house, r.debate_type, r.hansard_url,
+                    r.ext_id, r.department, r.member_name, r.party,
+                    r.speech_text, r.member_id, r.relevance)
+            for r in contrib_rows
+        ]
+        _dbl.warning(f"[db_topic] {source_type} sessions={len(session_ids)} rows={len(result)}")
+        return result
+    except Exception as e:
+        import logging
+        logging.warning(f"[db_topic] {source_type} exception: {type(e).__name__}: {e}")
+        return [{'_error': f"DB topic fetch failed: {e}"}]
+
+
+def fetch_from_db_minister(member_id, source_types, date_from='', date_to='', limit=25):
+    """Return all speech rows from sessions where this Parliament member spoke.
+    Replaces fetch_hansard_minister_topic() — includes full session expansion.
+    member_id: Parliament member ID (= ha_contribution.member_id).
+    """
+    import logging as _dbl
+    from extensions import db as _db
+    from sqlalchemy import text as sqla_text
+
+    if not member_id:
+        return []
+    src_filters = [_DB_SOURCE_FILTER[s] for s in source_types if s in _DB_SOURCE_FILTER]
+    if not src_filters:
+        return []
+    src_clause = '(' + ' OR '.join(f'({f})' for f in src_filters) + ')'
+    container_check = 's.is_container = false' if _db_is_postgres() else 's.is_container = 0'
+
+    date_clauses = []
+    params = {'mid': member_id, 'lim': limit}
+    if date_from:
+        date_clauses.append('s.date >= :date_from')
+        params['date_from'] = date_from
+    if date_to:
+        date_clauses.append('s.date <= :date_to')
+        params['date_to'] = date_to
+    where_dates = ('AND ' + ' AND '.join(date_clauses)) if date_clauses else ''
+
+    is_pg = _db_is_postgres()
+    try:
+        sql_sessions = sqla_text(f"""
+            SELECT DISTINCT c.session_id
+            FROM ha_contribution c
+            JOIN ha_session s ON s.id = c.session_id
+            WHERE {container_check} AND {src_clause}
+              {where_dates}
+              AND c.member_id = :mid
+            ORDER BY c.session_id DESC
+            LIMIT :lim
+        """)
+        sid_rows = _db.session.execute(sql_sessions, params).fetchall()
+        session_ids = [r[0] for r in sid_rows]
+        if not session_ids:
+            _dbl.warning(f"[db_minister] member_id={member_id} sources={source_types} 0 sessions")
+            return []
+
+        if is_pg:
+            sql_contribs = sqla_text("""
+                SELECT c.session_id, c.member_id, c.member_name, c.party,
+                       c.speech_text, c.speech_order,
+                       s.title, s.date, s.house, s.debate_type,
+                       s.hansard_url, s.ext_id, s.department,
+                       0.5 AS relevance
+                FROM ha_contribution c
+                JOIN ha_session s ON s.id = c.session_id
+                WHERE c.session_id = ANY(:ids)
+                ORDER BY s.date DESC, c.session_id, c.speech_order
+            """)
+            contrib_rows = _db.session.execute(sql_contribs, {'ids': session_ids}).fetchall()
+        else:
+            placeholders = ','.join(f':id{i}' for i in range(len(session_ids)))
+            id_params = {f'id{i}': sid for i, sid in enumerate(session_ids)}
+            sql_contribs = sqla_text(f"""
+                SELECT c.session_id, c.member_id, c.member_name, c.party,
+                       c.speech_text, c.speech_order,
+                       s.title, s.date, s.house, s.debate_type,
+                       s.hansard_url, s.ext_id, s.department,
+                       0.5 AS relevance
+                FROM ha_contribution c
+                JOIN ha_session s ON s.id = c.session_id
+                WHERE c.session_id IN ({placeholders})
+                ORDER BY s.date DESC, c.session_id, c.speech_order
+            """)
+            contrib_rows = _db.session.execute(sql_contribs, id_params).fetchall()
+
+        result = [
+            _db_row(r.date, r.title, r.house, r.debate_type, r.hansard_url,
+                    r.ext_id, r.department, r.member_name, r.party,
+                    r.speech_text, r.member_id, r.relevance)
+            for r in contrib_rows
+        ]
+        _dbl.warning(f"[db_minister] member_id={member_id} sources={source_types} sessions={len(session_ids)} rows={len(result)}")
+        return result
+    except Exception as e:
+        import logging
+        logging.warning(f"[db_minister] member_id={member_id} exception: {type(e).__name__}: {e}")
+        return []
+
+
+def fetch_wqs_from_db(topic, dept_names, date_from='', date_to='', limit=300):
+    """Fetch WQs from ha_pq matching topic. Returns (rows, total).
+    Replaces _fetch_topic_wqs() — queries local DB instead of Parliament API.
+    Uses question_tsv FTS on Postgres; ILIKE fallback on SQLite.
+    """
+    import logging as _wql
+    from extensions import db as _db
+    from hansard_archive.models import HaPQ
+    from sqlalchemy import text as sqla_text, or_
+    from datetime import date as _date_type
+
+    try:
+        is_pg = _db_is_postgres()
+        q = HaPQ.query
+
+        if date_from:
+            try:
+                q = q.filter(HaPQ.tabled_date >= _date_type.fromisoformat(date_from))
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                q = q.filter(HaPQ.tabled_date <= _date_type.fromisoformat(date_to))
+            except ValueError:
+                pass
+
+        dept_set = set(dept_names or [])
+        if dept_set:
+            q = q.filter(HaPQ.answering_body.in_(list(dept_set)))
+
+        if topic:
+            if is_pg:
+                m_q = re.search(r'"([^"]+)"', topic)
+                kw = m_q.group(1) if m_q else topic.strip('()"')
+                q = q.filter(sqla_text("question_tsv @@ plainto_tsquery('english', :kw)").bindparams(kw=kw))
+            else:
+                raw_words = [w.lower() for w in topic.split() if len(w) > 3]
+                kw = raw_words[0] if raw_words else topic
+                q = q.filter(or_(
+                    HaPQ.heading.ilike(f'%{kw}%'),
+                    HaPQ.question_text.ilike(f'%{kw}%'),
+                ))
+
+        q = q.order_by(HaPQ.tabled_date.desc())
+        total = q.count()
+        pq_rows = q.limit(limit).all()
+
+        raw_words = [w.lower() for w in topic.split() if len(w) > 3]
+        relevance_stems = [(w[:-1] if w.endswith('s') and len(w) > 4 else w) for w in raw_words]
+
+        results = []
+        seen_uins = set()
+        for pq in pq_rows:
+            uin = pq.uin or ''
+            if uin and uin in seen_uins:
+                continue
+            if uin:
+                seen_uins.add(uin)
+            # Client-side relevance filter — only when no dept filter already narrows results
+            if relevance_stems and not dept_set:
+                combined = ((pq.question_text or '') + ' ' + (pq.heading or '')).lower()
+                match_count = sum(1 for stem in relevance_stems if stem in combined)
+                min_matches = 2 if len(relevance_stems) >= 2 else 1
+                if match_count < min_matches:
+                    continue
+            raw_date = pq.tabled_date.isoformat() if pq.tabled_date else ''
+            date_ans = pq.answer_date.isoformat() if pq.answer_date else ''
+            house = pq.chamber or 'Commons'
+            role = 'Life Peer' if house == 'Lords' else 'MP'
+            results.append({
+                'uin':                uin,
+                'dept':               pq.answering_body or '',
+                'question_text':      pq.question_text or '',
+                'answer_text':        (pq.answer_text or '')[:1500],
+                'answering_minister': pq.answering_member or '',
+                'asking_mp':          pq.asking_member or '',
+                'role':               role,
+                'party':              '',
+                'party_colour':       '#888',
+                'date_tabled':        raw_date,
+                'date_answered':      date_ans,
+                'is_answered':        bool(pq.is_answered),
+                'is_holding':         bool(pq.is_holding),
+                'is_withdrawn':       bool(pq.is_withdrawn),
+                'heading':            pq.heading or '',
+                'url': (f"https://questions-statements.parliament.uk/written-questions"
+                        f"/detail/{raw_date}/{uin}"),
+            })
+
+        _wql.warning(f"[db_wqs] topic={topic!r} dept={list(dept_set)} total={total} kept={len(results)}")
+        return results, total
+    except Exception as e:
+        import logging
+        logging.error(f"[db_wqs] exception: {type(e).__name__}: {e}")
+        return [], -1
+
+
 def _resolve_parliament_id(display_name):
     """Look up the Parliament member ID for a minister by name.
     Returns (parliament_id, house) or (None, None)."""
@@ -2275,11 +2636,7 @@ def debates_topic():
 
         if not topic:
             error_message = "Please enter a topic to search."
-        elif not TWFY_API_KEY:
-            error_message = "TWFY API key is not configured."
         else:
-            date_range = get_twfy_date_range(start_date, end_date)
-
             if house_filter == 'lords_only':
                 sources = ['lords', 'wms']
             elif house_filter == 'commons_only':
@@ -2296,85 +2653,55 @@ def debates_topic():
                 search_query = f'{expanded} AND "{narrow_keyword}"'
             else:
                 search_query = expanded
-            if date_range:
-                clean_sq = search_query.strip()
-                if clean_sq.startswith('(') and clean_sq.endswith(')'):
-                    clean_sq = clean_sq[1:-1]
-                debug_query = f"{clean_sq} {date_range}"
-            else:
-                debug_query = search_query
+            debug_query = search_query
 
-            # Resolve department ministers to TWFY person IDs for minister-led search.
-            # When a dept is selected, we search each minister's debate history directly
-            # so their sessions appear even when their speeches don't contain the keywords.
+            # Resolve department ministers for minister-led DB search
             minister_people = []
             if selected_depts:
                 m_data_for_ids = get_minister_list()
                 for dept in selected_depts:
                     minister_people.extend(get_dept_minister_twfy_ids(dept, m_data_for_ids))
 
-            # Run TWFY debate search, Parliament WQ API, and minister-led searches in parallel
+            # Run DB topic search, WQ search, and minister-led searches in parallel
             all_rows = []
 
             def _do_wq_fetch():
-                return _fetch_topic_wqs(topic, start_date, end_date, selected_depts)
+                return fetch_wqs_from_db(topic, selected_depts, start_date, end_date)
 
             source_counts = {}
-            use_hansard_minister = os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard'
-            use_hansard_topic = use_hansard_minister  # same flag controls both
             with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-                # Route keyword search: Hansard API for commons/lords/westminsterhall;
-                # TWFY fallback for WMS (no Hansard statements search endpoint exists).
-                if use_hansard_topic:
-                    topic_search_futs = {}
-                    # Resolve dept_id for WMS filter (Parliament API uses numeric body IDs)
-                    wms_dept_id = None
-                    for dept in (selected_depts or []):
-                        wms_dept_id = PARLIAMENT_DEPT_IDS.get(dept)
-                        if wms_dept_id:
-                            break
-                    for src in sources:
-                        if src == 'wms':
-                            topic_search_futs[executor.submit(
-                                copy_current_request_context(fetch_parliament_wms),
-                                search_query, date_range, wms_dept_id
-                            )] = src
-                        else:
-                            topic_search_futs[executor.submit(
-                                copy_current_request_context(fetch_hansard_topic), search_query, src, date_range
-                            )] = src
-                    twfy_futs = topic_search_futs
-                else:
-                    twfy_futs = {executor.submit(copy_current_request_context(fetch_twfy_topic), search_query, src, date_range): src for src in sources}
+                # Topic search: one future per source type, all via local DB
+                topic_search_futs = {
+                    executor.submit(
+                        copy_current_request_context(fetch_from_db_topic),
+                        search_query, src, start_date, end_date
+                    ): src
+                    for src in sources
+                }
                 wq_fut = executor.submit(copy_current_request_context(_do_wq_fetch))
-                # Fan-out: one future per (minister, source) so all 24 calls run in parallel
-                # Lords ministers only speak in Lords/WMS; Commons ministers only in Commons/WH/WMS
                 import logging as _mlog
                 _mlog.warning(
-                    f"[minister_dispatch] use_hansard={use_hansard_minister} "
-                    f"ministers={[(mp.get('name',''),bool(mp.get('parliament_id'))) for mp in minister_people]}"
+                    f"[minister_dispatch] db_mode=True "
+                    f"ministers={[(mp.get('name',''), mp.get('parliament_id')) for mp in minister_people]}"
                 )
+                # Minister search: one future per minister, all applicable sources in one DB call
                 minister_futs = {}
                 for mp in minister_people:
-                    for src in sources:
-                        if mp.get('is_lord') and src not in ('lords', 'wms'):
-                            continue
-                        if not mp.get('is_lord') and src == 'lords':
-                            continue
-                        if use_hansard_minister and mp.get('parliament_id'):
-                            fut = executor.submit(
-                                copy_current_request_context(fetch_hansard_minister_topic),
-                                mp['parliament_id'], expanded, date_range, [src],
-                                is_lord=mp.get('is_lord', False))
-                        elif mp.get('person_id'):
-                            fut = executor.submit(
-                                copy_current_request_context(fetch_twfy_minister_topic),
-                                mp['person_id'], expanded, date_range, [src],
-                                is_lord=mp.get('is_lord', False))
-                        else:
-                            continue  # no usable ID for this path — skip
-                        minister_futs[fut] = mp
-                all_futs = list(twfy_futs.keys()) + [wq_fut] + list(minister_futs.keys())
+                    if not mp.get('parliament_id'):
+                        continue
+                    mp_sources = [s for s in sources if not (
+                        (mp.get('is_lord') and s not in ('lords', 'wms')) or
+                        (not mp.get('is_lord') and s == 'lords')
+                    )]
+                    if not mp_sources:
+                        continue
+                    fut = executor.submit(
+                        copy_current_request_context(fetch_from_db_minister),
+                        mp['parliament_id'], mp_sources, start_date, end_date
+                    )
+                    minister_futs[fut] = mp
+
+                all_futs = list(topic_search_futs.keys()) + [wq_fut] + list(minister_futs.keys())
                 for future in concurrent.futures.as_completed(all_futs):
                     if future is wq_fut:
                         try:
@@ -2384,8 +2711,8 @@ def debates_topic():
                                 wq_total = 0
                         except Exception:
                             wq_error = True
-                    elif future in twfy_futs:
-                        src = twfy_futs[future]
+                    elif future in topic_search_futs:
+                        src = topic_search_futs[future]
                         try:
                             rows = future.result()
                             errors = [r for r in rows if r.get('_error')]
@@ -2400,49 +2727,25 @@ def debates_topic():
                         except Exception:
                             pass
 
-            # Extract any TWFY error markers before dedup
-            twfy_errors = [r['_error'] for r in all_rows if r.get('_error')]
+            db_errors = [r['_error'] for r in all_rows if r.get('_error')]
             all_rows = [r for r in all_rows if not r.get('_error')]
             source_debug = ' | '.join(f"{s}: {c}" for s, c in sorted(source_counts.items()))
             if source_debug:
                 debug_query += f" | [{source_debug}]"
-            if twfy_errors:
-                debug_query += ' | ERRORS: ' + '; '.join(set(twfy_errors))
+            if db_errors:
+                debug_query += ' | ERRORS: ' + '; '.join(set(db_errors))
 
             topic_rows = deduplicate_by_listurl(all_rows)
             import logging as _tlog
-            twfy_count = sum(1 for r in topic_rows if not r.get('listurl', '').startswith('http'))
-            hansard_count = sum(1 for r in topic_rows if r.get('listurl', '').startswith('http'))
-            _tlog.warning(f"[topic_rows] {len(topic_rows)} total after dedup: {twfy_count} TWFY, {hansard_count} Hansard | source_counts={source_counts}")
+            _tlog.warning(f"[topic_rows] {len(topic_rows)} after dedup | source_counts={source_counts}")
 
-            # Apply date filter BEFORE session expansion so we only expand in-range sessions.
-            # TWFY keyword search returns historical results by relevance even with a date
-            # range in the search string — the Python filter is the reliable enforcement.
-            if start_date or end_date:
-                import logging as _flog
-                before_filter = len(topic_rows)
-                topic_rows = [r for r in topic_rows
-                              if (not start_date or r.get('hdate', '') >= start_date)
-                              and (not end_date or r.get('hdate', '') <= end_date)]
-                _flog.warning(f"[date_filter] start={start_date!r} end={end_date!r} before={before_filter} after={len(topic_rows)}")
-
-            # Debates-first: expand each matched debate to include ALL speeches.
-            # This ensures ministerial responses appear even when their speeches don't
-            # contain the search keywords (minister: "supporting graduates", not "loan repayments").
-            if topic_rows:
-                session_speeches = fetch_all_debate_sessions(topic_rows, max_debates=25)
-                if session_speeches:
-                    # Stubs from minister search are kept alongside expanded rows — the stubs
-                    # are what marks a minister as a Government Speaker even when the session
-                    # expansion is a false positive. deduplicate_by_listurl now keys Hansard
-                    # rows on (url, speaker_name) so stubs and expanded speeches all survive.
-                    topic_rows = deduplicate_by_listurl(topic_rows + session_speeches)
-            # Re-apply date filter — session expansion fetches all speeches in a session,
-            # which can occasionally include adjacent-day edge cases.
+            # Date safety net — DB filtering is primary; this catches any edge cases
             if start_date or end_date:
                 topic_rows = [r for r in topic_rows
                               if (not start_date or r.get('hdate', '') >= start_date)
                               and (not end_date or r.get('hdate', '') <= end_date)]
+
+            # No fetch_all_debate_sessions() needed — DB fetch already returns full sessions
 
             # Flag ministerial speakers and sort them to the top
             minister_data = get_minister_list()
