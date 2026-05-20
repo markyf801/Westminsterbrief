@@ -598,6 +598,63 @@ with app.app_context():
             _mig_log('ha_bill slugs already populated')
     except Exception as _e:
         app.logger.warning('ha_bill slug population failed: %s', _e)
+    # --- Phase 1 stats schema ---
+    try:
+        with db.engine.connect() as _conn:
+            for _col, _defn in [
+                ('producer_url',    'TEXT'),
+                ('methodology_url', 'TEXT'),
+                ('definition_id',   'INTEGER'),
+                ('release_type',    'TEXT'),
+                ('sub_topic_slug',  'TEXT'),
+            ]:
+                try:
+                    _conn.execute(text(
+                        f'ALTER TABLE headline_stat ADD COLUMN IF NOT EXISTS {_col} {_defn}'
+                    ))
+                except Exception:
+                    pass  # column already exists (SQLite < 3.35 doesn't support IF NOT EXISTS)
+            _conn.commit()
+        _mig_log('headline_stat Phase 1 cols done')
+    except Exception as _e:
+        app.logger.warning('headline_stat Phase 1 cols migration failed: %s', _e)
+    # Backfill StatObservation from legacy HeadlineStat single-value fields.
+    # Only runs when a stat has a latest_value but no StatObservation rows yet.
+    # Idempotent — the unique constraint on (headline_stat_id, period_start, period_end)
+    # prevents duplicates. The backfill uses NULL period dates (pre-time-series era)
+    # so real observations written by the ingestion pipeline are clearly distinct.
+    try:
+        from hansard_archive.models import HeadlineStat as _HS, StatObservation as _SO
+        _stats_needing_backfill = (
+            _HS.query
+            .filter(_HS.latest_value.isnot(None))
+            .filter(~_HS.observations.any())
+            .all()
+        )
+        if _stats_needing_backfill:
+            for _hs in _stats_needing_backfill:
+                _obs = _SO(
+                    headline_stat_id=_hs.id,
+                    period_label=_hs.period_label,
+                    period_start=None,
+                    period_end=None,
+                    value=_hs.latest_value,
+                    release_date=_hs.release_date,
+                    release_url=_hs.source_url,
+                    source_wording=_hs.source_wording,
+                    plain_english=_hs.plain_english,
+                    plain_english_generated_at=_hs.plain_english_generated_at,
+                    rewrite_model=_hs.rewrite_model,
+                    straddles_cutoff=False,
+                    created_at=_hs.last_success,
+                )
+                db.session.add(_obs)
+            db.session.commit()
+            _mig_log(f'StatObservation backfill: {len(_stats_needing_backfill)} rows created')
+        else:
+            _mig_log('StatObservation backfill: nothing to do')
+    except Exception as _e:
+        app.logger.warning('StatObservation backfill failed: %s', _e)
     # Seed known hard-to-resolve ministers into MemberLink
     # These are peers whose TWFY getLords name search fails (newer Life Peers)
     # parliament_id and twfy_person_id verified from direct Hansard debate records
