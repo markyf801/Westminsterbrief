@@ -796,6 +796,10 @@ def ingest_date_range(
         except Exception as e:
             print(f"[archive] UNEXPECTED ERROR on {current}: {e}", flush=True)
             errors += 1
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
 
         current += timedelta(days=1)
         time.sleep(_INTER_REQUEST_DELAY)
