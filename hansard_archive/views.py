@@ -48,6 +48,7 @@ from hansard_archive.models import (
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
 )
+from hansard_archive import policy_areas as _pa
 from hansard_archive.slugs import slugify_theme
 
 archive_bp  = Blueprint("archive",  __name__, url_prefix="/archive")
@@ -1340,58 +1341,24 @@ def archive_policy(policy_slug: str):
 # Archive theme page — /archive/theme/<slug>  â†'  301 â†' /brief/<slug>
 # ---------------------------------------------------------------------------
 
-# Westminster Brief brief slugs â†' actual Hansard DB policy area name(s).
-# The two taxonomies differ (e.g. "education" â‰  "Education, training and skills"),
-# so we bridge them statically rather than relying on slugify round-trips.
-_BRIEF_SLUG_TO_POLICY_AREAS: dict[str, list[str]] = {
-    "economy":                                   ["Economy"],
-    "employment-and-labour-market":              ["Employment and labour market"],
-    "finance-and-taxation":                      ["Finance and taxation"],
-    "government-and-public-administration":      ["Government and public administration"],
-    "business-and-industry":                     ["Business and industry"],
-    "education":                                 ["Education, training and skills", "Children and families"],
-    "health-and-social-care":                    ["Health and social care"],
-    "housing-and-planning":                      ["Housing and planning"],
-    "transport":                                 ["Transport"],
-    "crime-justice-and-law":                     ["Crime, justice and law"],
-    "welfare-and-social-security":               ["Welfare and benefits"],
-    "immigration-and-asylum":                    ["Immigration and borders"],
-    "environment-and-climate-change":            ["Environment"],
-    "defence-and-national-security":             ["Defence and armed forces"],
-    "international-affairs":                     ["International development", "Foreign affairs and diplomacy"],
-    "science-technology-and-innovation":         ["Science and technology"],
-    "energy-and-utilities":                      ["Energy"],
-    "work-and-pensions":                         ["Welfare and benefits", "Employment and labour market"],
-    "agriculture-environment-and-rural-affairs": ["Environment"],
-    "culture-media-and-sport":                   ["Society and culture"],
-    "constitutional-affairs":                    ["Parliament and constitution"],
-    "foreign-affairs":                           ["Foreign affairs and diplomacy"],
-    "parliamentary-affairs":                     ["Parliament and constitution"],
-}
 
-# Headings for slugs where slugâ†'title-case produces awkward punctuation.
-_BRIEF_SLUG_HEADING: dict[str, str] = {
-    "crime-justice-and-law":                     "Crime, Justice and Law",
-    "science-technology-and-innovation":         "Science, Technology and Innovation",
-    "agriculture-environment-and-rural-affairs": "Agriculture, Environment and Rural Affairs",
-    "culture-media-and-sport":                   "Culture, Media and Sport",
-}
-
+# Policy area slug/label/hansard-name data lives in hansard_archive/policy_areas.py.
+# Use _pa.by_slug(), _pa.hansard_names_for_slug(), _pa.display_name_from_slug().
 
 def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     """
     Render /brief/<slug> pages.
 
     Lookup order:
-    0. Bridge mapping (_BRIEF_SLUG_TO_POLICY_AREAS) — resolves the mismatch
+    0. Bridge mapping (policy_areas module) — resolves the mismatch
        between brief page slugs and Hansard DB policy area taxonomy strings.
     1. Policy area slug reverse-lookup — catches any policy areas not in the map.
     2. Specific topic match (THEME_TYPE_SPECIFIC) — fallback for /archive/theme/ redirects.
     """
     # â"€â"€ 0. Bridge mapping: brief slug â†' DB policy area name(s) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-    policy_names = _BRIEF_SLUG_TO_POLICY_AREAS.get(theme_slug)
+    policy_names = _pa.hansard_names_for_slug(theme_slug) or None
     if policy_names:
-        theme_name      = _BRIEF_SLUG_HEADING.get(theme_slug) or theme_slug.replace("-", " ").title()
+        theme_name      = _pa.display_name_from_slug(theme_slug) or theme_slug.replace("-", " ").title()
         theme_type_used = THEME_TYPE_POLICY_AREA
         session_filter  = (
             HansardSessionTheme.theme.in_(policy_names),
@@ -1483,7 +1450,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
     # Headline stat teaser — shown as one-line link to /stats/<slug>
     headline_stat = None
-    if theme_type_used == THEME_TYPE_POLICY_AREA and theme_slug in _BRIEF_SLUG_TO_POLICY_AREAS:
+    if theme_type_used == THEME_TYPE_POLICY_AREA and _pa.by_slug(theme_slug) is not None:
         from hansard_archive.models import HeadlineStat as _HeadlineStat
         headline_stat = (
             _HeadlineStat.query
@@ -2593,33 +2560,7 @@ def archive_party(party_slug: str):
 # Stats section — /stats (index) + /stats/<slug> (per-theme)
 # ---------------------------------------------------------------------------
 
-# Ordered list for the /stats index table (same 23 themes as brief pages).
-_STATS_THEME_ORDER: list[tuple[str, str]] = [
-    ("economy",                                   "Economy"),
-    ("employment-and-labour-market",              "Employment and labour market"),
-    ("finance-and-taxation",                      "Finance and taxation"),
-    ("government-and-public-administration",      "Government and public administration"),
-    ("business-and-industry",                     "Business and industry"),
-    ("education",                                 "Education"),
-    ("health-and-social-care",                    "Health and social care"),
-    ("housing-and-planning",                      "Housing and planning"),
-    ("transport",                                 "Transport"),
-    ("crime-justice-and-law",                     "Crime, justice and law"),
-    ("welfare-and-social-security",               "Welfare and social security"),
-    ("immigration-and-asylum",                    "Immigration and asylum"),
-    ("environment-and-climate-change",            "Environment and climate change"),
-    ("defence-and-national-security",             "Defence and national security"),
-    ("international-affairs",                     "International affairs"),
-    ("science-technology-and-innovation",         "Science, technology and innovation"),
-    ("energy-and-utilities",                      "Energy and utilities"),
-    ("work-and-pensions",                         "Work and pensions"),
-    ("agriculture-environment-and-rural-affairs", "Agriculture, environment and rural affairs"),
-    ("culture-media-and-sport",                   "Culture, media and sport"),
-    ("constitutional-affairs",                    "Constitutional affairs"),
-    ("foreign-affairs",                           "Foreign affairs"),
-    ("parliamentary-affairs",                     "Parliamentary affairs"),
-]
-
+# Policy area display order comes from hansard_archive/policy_areas.py — _pa.display_order().
 
 @stats_bp.route("")
 def stats_index():
@@ -2629,11 +2570,10 @@ def stats_index():
 
 @stats_bp.route("/<string:theme_slug>")
 def stats_theme(theme_slug: str):
-    valid_slugs = {slug for slug, _ in _STATS_THEME_ORDER}
-    if theme_slug not in valid_slugs:
+    if _pa.by_slug(theme_slug) is None:
         abort(404)
 
-    theme_name = _BRIEF_SLUG_HEADING.get(theme_slug) or theme_slug.replace("-", " ").title()
+    theme_name = _pa.display_name_from_slug(theme_slug) or theme_slug.replace("-", " ").title()
 
     from hansard_archive.models import HeadlineStat as _HS
     headline_stat = (
