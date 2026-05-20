@@ -677,93 +677,108 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
 
     new_sessions = 0
 
-    for ext_id, (overview, contributions) in all_sessions.items():
-        if HansardSession.query.filter_by(ext_id=ext_id).first():
-            if verbose:
-                print(f"[archive]   SKIP {ext_id[:20]}... (already ingested)", flush=True)
-            continue
-
-        title = (overview.get("Title") or "").strip()
-        location = overview.get("Location") or ""
-        hrs_tag = overview.get("HRSTag") or ""
-        debate_type = _classify_from_overview(title, location, hrs_tag)
-
-        # Lords oral questions: the structural classifier has no reliable HRS signal
-        # for Lords OQs, so they land in 'other'. Override using the opening-phrase
-        # signal: every Lords OQ starts "To ask His Majesty's Government..." —
-        # this is constitutionally mandated phrasing, not a heuristic.
-        if house == "Lords" and contributions:
-            first_text = (contributions[0].get("speech_text") or "").strip().lower()
-            if first_text.startswith("to ask his majesty"):
-                debate_type = DEBATE_TYPE_ORAL_QUESTIONS
-
-        hansard_url = _build_hansard_url(house, sitting_date, ext_id, title)
-
-        # See module-level comments for the container vs anchor distinction.
-        is_container = (
-            (hrs_tag or "").lower() in _CONTAINER_HRS_TAGS                                        # duplicate-content containers + hs_venue
-            or (not hrs_tag and title.lower() in {"commons chamber", "westminster hall",
-                                                   "lords chamber", "grand committee"})            # null-tag containers
-            or title.lower() in _ANCHOR_TITLES                                                     # zero-content anchors
-        )
-
-        session = HansardSession(
-            ext_id=ext_id,
-            title=title,
-            date=sitting_date,
-            house=house,
-            debate_type=debate_type,
-            location=location or None,
-            hrs_tag=hrs_tag or None,
-            hansard_url=hansard_url,
-            contributions_ingested=False,
-            is_container=is_container,
-            slug=None if is_container else make_slug(title, ext_id),
-            department=dept_map.get(ext_id) or None,
-        )
-        db.session.add(session)
+    def _safe_rollback() -> None:
+        """Rollback; if rollback itself fails (dead connection), dispose the pool."""
         try:
-            db.session.flush()
-        except IntegrityError:
             db.session.rollback()
-            if not is_container:
-                # Slug collision on non-container: retry with a longer suffix
-                for suffix_len in (6, 8, 12):
-                    session = HansardSession(
-                        ext_id=ext_id, title=title, date=sitting_date, house=house,
-                        debate_type=debate_type, location=location or None,
-                        hrs_tag=hrs_tag or None, hansard_url=hansard_url,
-                        contributions_ingested=False, is_container=False,
-                        slug=make_slug(title, ext_id, suffix_len=suffix_len),
-                        department=dept_map.get(ext_id) or None,
-                    )
-                    db.session.add(session)
-                    try:
-                        db.session.flush()
-                        break
-                    except IntegrityError:
-                        db.session.rollback()
-                else:
-                    print(f"[archive]   ERROR slug exhausted for {ext_id} — skipping", flush=True)
-                    continue
-            else:
-                print(f"[archive]   ERROR inserting container {ext_id} — skipping", flush=True)
+        except Exception:
+            try:
+                db.engine.dispose()
+            except Exception:
+                pass
+
+    for ext_id, (overview, contributions) in all_sessions.items():
+        try:
+            if HansardSession.query.filter_by(ext_id=ext_id).first():
+                if verbose:
+                    print(f"[archive]   SKIP {ext_id[:20]}... (already ingested)", flush=True)
                 continue
 
-        contrib_count = _write_contributions(session, contributions)
-        session.contributions_ingested = True
+            title = (overview.get("Title") or "").strip()
+            location = overview.get("Location") or ""
+            hrs_tag = overview.get("HRSTag") or ""
+            debate_type = _classify_from_overview(title, location, hrs_tag)
 
-        try:
-            db.session.commit()
-            new_sessions += 1
-            if verbose:
-                print(
-                    f"[archive]   + {title[:60]!r} — {contrib_count} contributions",
-                    flush=True,
-                )
+            # Lords oral questions: the structural classifier has no reliable HRS signal
+            # for Lords OQs, so they land in 'other'. Override using the opening-phrase
+            # signal: every Lords OQ starts "To ask His Majesty's Government..." —
+            # this is constitutionally mandated phrasing, not a heuristic.
+            if house == "Lords" and contributions:
+                first_text = (contributions[0].get("speech_text") or "").strip().lower()
+                if first_text.startswith("to ask his majesty"):
+                    debate_type = DEBATE_TYPE_ORAL_QUESTIONS
+
+            hansard_url = _build_hansard_url(house, sitting_date, ext_id, title)
+
+            # See module-level comments for the container vs anchor distinction.
+            is_container = (
+                (hrs_tag or "").lower() in _CONTAINER_HRS_TAGS                                        # duplicate-content containers + hs_venue
+                or (not hrs_tag and title.lower() in {"commons chamber", "westminster hall",
+                                                       "lords chamber", "grand committee"})            # null-tag containers
+                or title.lower() in _ANCHOR_TITLES                                                     # zero-content anchors
+            )
+
+            session = HansardSession(
+                ext_id=ext_id,
+                title=title,
+                date=sitting_date,
+                house=house,
+                debate_type=debate_type,
+                location=location or None,
+                hrs_tag=hrs_tag or None,
+                hansard_url=hansard_url,
+                contributions_ingested=False,
+                is_container=is_container,
+                slug=None if is_container else make_slug(title, ext_id),
+                department=dept_map.get(ext_id) or None,
+            )
+            db.session.add(session)
+            try:
+                db.session.flush()
+            except IntegrityError:
+                db.session.rollback()
+                if not is_container:
+                    # Slug collision on non-container: retry with a longer suffix
+                    for suffix_len in (6, 8, 12):
+                        session = HansardSession(
+                            ext_id=ext_id, title=title, date=sitting_date, house=house,
+                            debate_type=debate_type, location=location or None,
+                            hrs_tag=hrs_tag or None, hansard_url=hansard_url,
+                            contributions_ingested=False, is_container=False,
+                            slug=make_slug(title, ext_id, suffix_len=suffix_len),
+                            department=dept_map.get(ext_id) or None,
+                        )
+                        db.session.add(session)
+                        try:
+                            db.session.flush()
+                            break
+                        except IntegrityError:
+                            db.session.rollback()
+                    else:
+                        print(f"[archive]   ERROR slug exhausted for {ext_id} — skipping", flush=True)
+                        continue
+                else:
+                    print(f"[archive]   ERROR inserting container {ext_id} — skipping", flush=True)
+                    continue
+
+            contrib_count = _write_contributions(session, contributions)
+            session.contributions_ingested = True
+
+            try:
+                db.session.commit()
+                new_sessions += 1
+                if verbose:
+                    print(
+                        f"[archive]   + {title[:60]!r} — {contrib_count} contributions",
+                        flush=True,
+                    )
+            except Exception as e:
+                _safe_rollback()
+                print(f"[archive]   ERROR committing {ext_id}: {e}", flush=True)
+
         except Exception as e:
-            db.session.rollback()
-            print(f"[archive]   ERROR committing {ext_id}: {e}", flush=True)
+            _safe_rollback()
+            print(f"[archive]   ERROR processing session {ext_id}: {e}", flush=True)
 
     return new_sessions
 
