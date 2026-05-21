@@ -667,6 +667,20 @@ def _run_startup_migrations():
         _mig_log('Phase 1.7 discovery cols done')
     except Exception as _e:
         app.logger.warning('Phase 1.7 discovery cols migration failed: %s', _e)
+    # --- ha_cron_run column defaults (belt-and-braces for raw-SQL INSERTs) ---
+    try:
+        with db.engine.connect() as _conn:
+            for _col in ('sessions_ingested', 'sessions_tagged', 'errors'):
+                try:
+                    _conn.execute(text(
+                        f'ALTER TABLE ha_cron_run ALTER COLUMN {_col} SET DEFAULT 0'
+                    ))
+                except Exception:
+                    pass  # already has DEFAULT or unsupported (SQLite)
+            _conn.commit()
+        _mig_log('ha_cron_run defaults done')
+    except Exception as _e:
+        app.logger.warning('ha_cron_run defaults migration failed: %s', _e)
     # Backfill StatObservation from legacy HeadlineStat single-value fields.
     # Only runs when a stat has a latest_value but no StatObservation rows yet.
     # Idempotent — the unique constraint on (headline_stat_id, period_start, period_end)

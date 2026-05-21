@@ -163,9 +163,9 @@ class HaCronRun(db.Model):
     started_at = db.Column(db.DateTime, nullable=False)
     finished_at = db.Column(db.DateTime, nullable=True)
     days_window = db.Column(db.Integer, nullable=False, default=3)
-    sessions_ingested = db.Column(db.Integer, nullable=False, default=0)
-    sessions_tagged = db.Column(db.Integer, nullable=False, default=0)
-    errors = db.Column(db.Integer, nullable=False, default=0)
+    sessions_ingested = db.Column(db.Integer, nullable=False, default=0, server_default=text('0'))
+    sessions_tagged = db.Column(db.Integer, nullable=False, default=0, server_default=text('0'))
+    errors = db.Column(db.Integer, nullable=False, default=0, server_default=text('0'))
     status = db.Column(db.String(20), nullable=False, default="running")  # running / ok / failed
     notes = db.Column(db.Text, nullable=True)
 
