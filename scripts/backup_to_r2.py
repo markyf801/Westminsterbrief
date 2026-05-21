@@ -119,10 +119,11 @@ def main():
             cur.execute(
                 """
                 INSERT INTO ha_cron_run
-                    (service_name, started_at, finished_at, days_window, status)
-                VALUES (%s, %s, %s, %s, %s)
+                    (service_name, started_at, finished_at, days_window,
+                     sessions_ingested, sessions_tagged, errors, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                ("backup-r2", now, now, 1, "ok"),
+                ("backup-r2", now, now, 1, 0, 0, 0, "ok"),
             )
         conn.close()
         log("Recorded run in ha_cron_run")
