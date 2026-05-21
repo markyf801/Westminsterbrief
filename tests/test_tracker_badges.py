@@ -58,6 +58,7 @@ class TestTrackerBadgeTemplate:
         import stakeholder_directory.models  # noqa: F401
         import stakeholder_directory.ingesters.staging  # noqa: F401
         from tracker import tracker_bp
+        from feature_flags import feature_enabled
 
         project_root = Path(__file__).parents[1]
         app = Flask(__name__, template_folder=str(project_root / 'templates'))
@@ -75,6 +76,7 @@ class TestTrackerBadgeTemplate:
         def load_user(uid):
             return None
 
+        app.jinja_env.globals['feature_enabled'] = feature_enabled
         app.register_blueprint(tracker_bp)
         with app.app_context():
             _db.create_all()
