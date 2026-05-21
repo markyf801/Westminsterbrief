@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Source Registry — Westminster Brief Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+.sp-wrap  { max-width: 1200px; margin: 32px auto; padding: 0 24px; }
+.sp-h1    { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
+.sp-sub   { color: #5a6878; font-size: 14px; margin: 0 0 20px; }
+.sp-back  { font-size: 13px; color: #3b7dd8; text-decoration: none; display: inline-block; margin-bottom: 16px; }
+.sp-filters { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+.sp-filters select { padding: 5px 10px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 13px; }
+.sp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sp-table th { background: #f0f2f5; font-weight: 600; padding: 8px 10px; text-align: left; border-bottom: 2px solid #d0d5dd; white-space: nowrap; }
+.sp-table td { padding: 7px 10px; border-bottom: 1px solid #e5e8ec; vertical-align: top; }
+.sp-table tr:hover td { background: #f8fafc; }
+.sp-table a { color: #3b7dd8; text-decoration: none; }
+.sp-table a:hover { text-decoration: underline; }
+.badge { padding: 2px 7px; border-radius: 3px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.b-pending    { background: #fef9c3; color: #713f12; }
+.b-inprog     { background: #dbeafe; color: #1e40af; }
+.b-completed  { background: #d1fae5; color: #065f46; }
+.b-failed     { background: #fee2e2; color: #991b1b; }
+.b-candidate  { background: #fef3c7; color: #92400e; }
+.b-authorised { background: #d1fae5; color: #065f46; }
+.b-declined   { background: #f3f4f6; color: #6b7280; }
+.b-candidate-status { background: #fef9c3; color: #713f12; }
+.b-authorised-status { background: #d1fae5; color: #065f46; }
+.b-under-review { background: #dbeafe; color: #1e40af; }
+.b-paused   { background: #f3f4f6; color: #374151; }
+.failure-hint { font-size: 11px; color: #dc2626; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sp-wrap">
+    <a href="/admin" class="sp-back">&larr; Admin panel</a>
+    <h1 class="sp-h1">Source Registry — Producers</h1>
+    <p class="sp-sub">
+        {{ producers|length }} producers &nbsp;·&nbsp;
+        {{ producers|selectattr('discovery_status', 'eq', 'completed')|list|length }} completed &nbsp;·&nbsp;
+        {{ producers|selectattr('discovery_status', 'eq', 'failed')|list|length }} failed &nbsp;·&nbsp;
+        {{ producers|selectattr('discovery_status', 'eq', 'pending')|list|length }} pending
+    </p>
+
+    <div class="sp-filters">
+        <label for="filter-discovery" style="font-size:13px; font-weight:600;">Discovery:</label>
+        <select id="filter-discovery" onchange="applyFilters()">
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In progress</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+        </select>
+        <label for="filter-auth" style="font-size:13px; font-weight:600;">Auth status:</label>
+        <select id="filter-auth" onchange="applyFilters()">
+            <option value="">All</option>
+            <option value="candidate">Candidate</option>
+            <option value="authorised">Authorised</option>
+            <option value="declined">Declined</option>
+        </select>
+    </div>
+
+    <table class="sp-table" id="producer-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Licence</th>
+                <th>Auth status</th>
+                <th>Discovery</th>
+                <th>Candidates</th>
+                <th>Authorised pubs</th>
+                <th>Failure reason</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in producers %}
+        <tr data-discovery="{{ p.discovery_status }}" data-auth="{{ p.authorisation_status }}">
+            <td><strong>{{ p.name }}</strong><br><span style="color:#6b7280;font-size:11px;">{{ p.slug }}</span></td>
+            <td style="font-size:12px; color:#5a6878;">{{ p.producer_type }}</td>
+            <td style="font-size:12px;">{{ p.licence }}</td>
+            <td>
+                {% if p.authorisation_status == 'authorised' %}
+                    <span class="badge b-authorised-status">Authorised</span>
+                {% elif p.authorisation_status == 'candidate' %}
+                    <span class="badge b-candidate-status">Candidate</span>
+                {% elif p.authorisation_status == 'under_review' %}
+                    <span class="badge b-under-review">Under review</span>
+                {% elif p.authorisation_status == 'paused' %}
+                    <span class="badge b-paused">Paused</span>
+                {% else %}
+                    <span class="badge" style="background:#f3f4f6;color:#374151;">{{ p.authorisation_status }}</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if p.discovery_status == 'pending' %}
+                    <span class="badge b-pending">Pending</span>
+                {% elif p.discovery_status == 'in_progress' %}
+                    <span class="badge b-inprog">In progress</span>
+                {% elif p.discovery_status == 'completed' %}
+                    <span class="badge b-completed">Completed</span>
+                    {% if p.discovery_completed_at %}
+                    <br><span style="font-size:11px;color:#6b7280;">{{ p.discovery_completed_at.strftime('%d %b %Y %H:%M') }}</span>
+                    {% endif %}
+                {% elif p.discovery_status == 'failed' %}
+                    <span class="badge b-failed">Failed</span>
+                {% endif %}
+            </td>
+            <td style="text-align:center;">
+                {% if pub_counts[p.id]['candidate'] > 0 %}
+                    <a href="/admin/producers/{{ p.id }}/publications">{{ pub_counts[p.id]['candidate'] }}</a>
+                {% else %}
+                    <span style="color:#9ca3af;">—</span>
+                {% endif %}
+            </td>
+            <td style="text-align:center;">
+                {% if pub_counts[p.id]['authorised'] > 0 %}
+                    {{ pub_counts[p.id]['authorised'] }}
+                {% else %}
+                    <span style="color:#9ca3af;">—</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if p.discovery_status == 'failed' and p.discovery_failure_reason %}
+                    <span class="failure-hint" title="{{ p.discovery_failure_reason }}">{{ p.discovery_failure_reason[:80] }}</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="/admin/producers/{{ p.id }}/publications" style="font-size:12px; white-space:nowrap;">Review &rarr;</a>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function applyFilters() {
+    const disc = document.getElementById('filter-discovery').value;
+    const auth = document.getElementById('filter-auth').value;
+    document.querySelectorAll('#producer-table tbody tr').forEach(row => {
+        const matchDisc = !disc || row.dataset.discovery === disc;
+        const matchAuth = !auth || row.dataset.auth === auth;
+        row.style.display = (matchDisc && matchAuth) ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

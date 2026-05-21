@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}Publication Review — {{ producer.name }} — Westminster Brief Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+.pr-wrap   { max-width: 1200px; margin: 32px auto; padding: 0 24px; }
+.pr-h1     { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
+.pr-sub    { color: #5a6878; font-size: 14px; margin: 0 0 20px; }
+.pr-back   { font-size: 13px; color: #3b7dd8; text-decoration: none; display: inline-block; margin-bottom: 16px; }
+.pr-meta   { display: flex; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }
+.pr-meta-item { font-size: 13px; }
+.pr-meta-label { font-weight: 600; color: #374151; }
+.pr-bulk   { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; padding: 12px; background: #f8fafc; border: 1px solid #e5e8ec; border-radius: 6px; }
+.pr-bulk button { padding: 6px 14px; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid; }
+.btn-auth    { background: #065f46; color: #fff; border-color: #065f46; }
+.btn-auth:hover { background: #047857; }
+.btn-decline { background: #991b1b; color: #fff; border-color: #991b1b; }
+.btn-decline:hover { background: #b91c1c; }
+.btn-neutral { background: #fff; color: #374151; border-color: #d0d5dd; }
+.btn-neutral:hover { background: #f3f4f6; }
+.pr-cards  { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; }
+.pr-card   { border: 1px solid #e5e8ec; border-radius: 8px; padding: 16px; background: #fff; }
+.pr-card.is-authorised { border-color: #6ee7b7; background: #f0fdf4; }
+.pr-card.is-declined   { border-color: #fca5a5; background: #fff5f5; opacity: 0.7; }
+.pr-card-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+.pr-card-check  { margin-top: 3px; flex-shrink: 0; }
+.pr-card-title  { font-weight: 700; font-size: 14px; flex: 1; line-height: 1.4; }
+.pr-card-url    { font-size: 12px; margin-bottom: 8px; }
+.pr-card-url a  { color: #3b7dd8; word-break: break-all; }
+.pr-card-desc   { font-size: 13px; color: #374151; margin-bottom: 8px; line-height: 1.5; }
+.pr-card-meta   { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.badge { padding: 2px 7px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.b-candidate  { background: #fef9c3; color: #713f12; }
+.b-authorised { background: #d1fae5; color: #065f46; }
+.b-declined   { background: #fee2e2; color: #991b1b; }
+.b-cadence    { background: #e0e7ff; color: #3730a3; }
+.b-subject    { background: #f3f4f6; color: #374151; }
+.pr-card-discovered { font-size: 11px; color: #9ca3af; margin-bottom: 12px; }
+.pr-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.pr-card-actions button, .pr-card-actions a { padding: 5px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid; text-decoration: none; display: inline-block; }
+.btn-sm-auth    { background: #065f46; color: #fff; border-color: #065f46; }
+.btn-sm-auth:hover { background: #047857; }
+.btn-sm-decline { background: #fff; color: #991b1b; border-color: #fca5a5; }
+.btn-sm-decline:hover { background: #fff5f5; }
+.btn-sm-edit    { background: #fff; color: #3b7dd8; border-color: #bfdbfe; }
+.btn-sm-edit:hover { background: #eff6ff; }
+.pr-edit-form { margin-top: 12px; border-top: 1px solid #e5e8ec; padding-top: 12px; display: none; }
+.pr-edit-form label { font-size: 12px; font-weight: 600; display: block; margin-bottom: 3px; color: #374151; }
+.pr-edit-form input, .pr-edit-form textarea, .pr-edit-form select { width: 100%; padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 13px; margin-bottom: 8px; box-sizing: border-box; }
+.pr-edit-form textarea { resize: vertical; min-height: 60px; }
+.pr-empty { color: #9ca3af; font-style: italic; text-align: center; padding: 48px 0; }
+
+/* Confirmation modal */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:8px; padding:24px; max-width:480px; width:90%; }
+.modal-h { font-size:17px; font-weight:700; margin:0 0 12px; }
+.modal-body { font-size:13px; color:#374151; margin-bottom:16px; max-height:200px; overflow-y:auto; }
+.modal-actions { display:flex; gap:10px; justify-content:flex-end; }
+.modal-actions button { padding:7px 16px; border-radius:4px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid; }
+
+/* Decline reason prompt */
+.decline-reason-wrap { margin-bottom: 12px; }
+.decline-reason-wrap label { font-size:13px; font-weight:600; display:block; margin-bottom:4px; }
+.decline-reason-wrap textarea { width:100%; padding:6px 8px; border:1px solid #d0d5dd; border-radius:4px; font-size:13px; box-sizing:border-box; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pr-wrap">
+    <a href="/admin/producers" class="pr-back">&larr; All producers</a>
+    <h1 class="pr-h1">{{ producer.name }}</h1>
+    <div class="pr-meta">
+        <div class="pr-meta-item"><span class="pr-meta-label">Slug:</span> {{ producer.slug }}</div>
+        <div class="pr-meta-item"><span class="pr-meta-label">Type:</span> {{ producer.producer_type }}</div>
+        <div class="pr-meta-item"><span class="pr-meta-label">Licence:</span> {{ producer.licence }}</div>
+        <div class="pr-meta-item"><span class="pr-meta-label">Discovery:</span> {{ producer.discovery_status }}</div>
+        {% if producer.discovery_failure_reason %}
+        <div class="pr-meta-item" style="color:#dc2626;"><span class="pr-meta-label">Failure:</span> {{ producer.discovery_failure_reason[:120] }}</div>
+        {% endif %}
+    </div>
+    <p class="pr-sub">
+        {{ publications|length }} candidate(s) awaiting review &nbsp;·&nbsp;
+        <a href="{{ producer.web_root_url }}" target="_blank" rel="noopener">Producer website &rarr;</a>
+    </p>
+
+    {% if publications %}
+    <!-- Bulk action bar -->
+    <div class="pr-bulk">
+        <button class="btn-neutral" onclick="selectAll(true)">Select all</button>
+        <button class="btn-neutral" onclick="selectAll(false)">Deselect all</button>
+        <button class="btn-auth" onclick="bulkAction('authorise')">Authorise selected (<span id="sel-count">0</span>)</button>
+        <button class="btn-decline" onclick="bulkAction('decline')">Decline selected (<span id="sel-count-2">0</span>)</button>
+    </div>
+
+    <div class="pr-cards">
+    {% for pub in publications %}
+    <div class="pr-card{% if pub.authorisation_status == 'authorised' %} is-authorised{% elif pub.authorisation_status == 'declined' %} is-declined{% endif %}" data-pub-id="{{ pub.id }}">
+        <div class="pr-card-header">
+            <input type="checkbox" class="pr-card-check pub-checkbox" data-pub-id="{{ pub.id }}" onchange="updateSelCount()" {% if pub.authorisation_status != 'candidate' %}disabled{% endif %}>
+            <div class="pr-card-title">{{ pub.name }}</div>
+            <span class="badge {% if pub.authorisation_status == 'candidate' %}b-candidate{% elif pub.authorisation_status == 'authorised' %}b-authorised{% else %}b-declined{% endif %}">{{ pub.authorisation_status }}</span>
+        </div>
+        <div class="pr-card-url"><a href="{{ pub.url }}" target="_blank" rel="noopener">{{ pub.url[:80] }}{% if pub.url|length > 80 %}…{% endif %}</a></div>
+        {% if pub.description %}
+        <div class="pr-card-desc">{{ pub.description }}</div>
+        {% endif %}
+        <div class="pr-card-meta">
+            {% if pub.update_cadence %}<span class="badge b-cadence">{{ pub.update_cadence }}</span>{% endif %}
+            {% if pub.subject_area %}<span class="badge b-subject">{{ pub.subject_area }}</span>{% endif %}
+        </div>
+        {% if pub.discovered_at %}
+        <div class="pr-card-discovered">Discovered {{ pub.discovered_at.strftime('%d %b %Y %H:%M') }}</div>
+        {% endif %}
+        {% if pub.authorisation_status == 'candidate' %}
+        <div class="pr-card-actions">
+            <button class="btn-sm-auth" onclick="singleAction({{ pub.id }}, 'authorise')">Authorise</button>
+            <button class="btn-sm-decline" onclick="singleAction({{ pub.id }}, 'decline')">Decline</button>
+            <button class="btn-sm-edit" onclick="toggleEdit({{ pub.id }})">Edit</button>
+        </div>
+        <!-- Inline edit form -->
+        <div class="pr-edit-form" id="edit-form-{{ pub.id }}">
+            <form method="POST" action="/admin/publications/{{ pub.id }}/edit">
+                <label>Name</label>
+                <input name="name" value="{{ pub.name }}" required>
+                <label>Description</label>
+                <textarea name="description">{{ pub.description or '' }}</textarea>
+                <label>Update cadence</label>
+                <select name="update_cadence">
+                    <option value="">— unknown —</option>
+                    {% for c in ['daily','weekly','monthly','quarterly','annual','biennial','ad_hoc','one_off'] %}
+                    <option value="{{ c }}"{% if pub.update_cadence == c %} selected{% endif %}>{{ c }}</option>
+                    {% endfor %}
+                </select>
+                <label>Subject area</label>
+                <input name="subject_area" value="{{ pub.subject_area or '' }}">
+                <div style="display:flex;gap:8px;">
+                    <button type="submit" class="btn-sm-auth">Save</button>
+                    <button type="button" class="btn-sm-edit" onclick="toggleEdit({{ pub.id }})">Cancel</button>
+                </div>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <div class="pr-empty">No candidate publications for this producer yet.</div>
+    {% endif %}
+</div>
+
+<!-- Confirmation modal -->
+<div class="modal-overlay" id="confirm-modal">
+    <div class="modal-box">
+        <div class="modal-h" id="modal-title">Confirm action</div>
+        <div class="modal-body" id="modal-body"></div>
+        <div class="decline-reason-wrap" id="decline-reason-wrap" style="display:none;">
+            <label for="decline-reason-text">Decline reason (optional)</label>
+            <textarea id="decline-reason-text" rows="2" placeholder="Why are these being declined?"></textarea>
+        </div>
+        <div class="modal-actions">
+            <button class="btn-neutral" onclick="closeModal()">Cancel</button>
+            <button id="modal-confirm-btn" class="btn-auth" onclick="submitConfirmedAction()">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let _pendingAction = null;
+let _pendingIds = [];
+
+function updateSelCount() {
+    const n = document.querySelectorAll('.pub-checkbox:checked').length;
+    document.getElementById('sel-count').textContent = n;
+    document.getElementById('sel-count-2').textContent = n;
+}
+
+function selectAll(val) {
+    document.querySelectorAll('.pub-checkbox:not(:disabled)').forEach(cb => cb.checked = val);
+    updateSelCount();
+}
+
+function singleAction(pubId, action) {
+    _pendingAction = action;
+    _pendingIds = [pubId];
+    showModal(action, 1);
+}
+
+function bulkAction(action) {
+    const checked = [...document.querySelectorAll('.pub-checkbox:checked')].map(cb => parseInt(cb.dataset.pubId));
+    if (checked.length === 0) { alert('No publications selected.'); return; }
+    _pendingAction = action;
+    _pendingIds = checked;
+    showModal(action, checked.length);
+}
+
+function showModal(action, count) {
+    const noun = count === 1 ? '1 publication' : count + ' publications';
+    document.getElementById('modal-title').textContent =
+        action === 'authorise' ? 'Authorise ' + noun : 'Decline ' + noun;
+    document.getElementById('modal-body').textContent =
+        action === 'authorise'
+            ? 'Authorise ' + noun + '? They will become visible in the registry.'
+            : 'Decline ' + noun + '? This action is recorded in the audit log.';
+    const drw = document.getElementById('decline-reason-wrap');
+    drw.style.display = action === 'decline' ? '' : 'none';
+    if (action === 'decline') document.getElementById('decline-reason-text').value = '';
+    const btn = document.getElementById('modal-confirm-btn');
+    btn.className = action === 'authorise' ? 'btn-auth' : 'btn-decline';
+    btn.textContent = action === 'authorise' ? 'Authorise' : 'Decline';
+    document.getElementById('confirm-modal').classList.add('open');
+}
+
+function closeModal() {
+    document.getElementById('confirm-modal').classList.remove('open');
+    _pendingAction = null;
+    _pendingIds = [];
+}
+
+function submitConfirmedAction() {
+    const reason = document.getElementById('decline-reason-text').value.trim();
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/admin/publications/bulk-action';
+    const addHidden = (name, val) => {
+        const i = document.createElement('input');
+        i.type = 'hidden'; i.name = name; i.value = val;
+        form.appendChild(i);
+    };
+    addHidden('action', _pendingAction);
+    _pendingIds.forEach(id => addHidden('pub_ids', id));
+    if (reason) addHidden('decline_reason', reason);
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function toggleEdit(pubId) {
+    const el = document.getElementById('edit-form-' + pubId);
+    el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+</script>
+{% endblock %}
