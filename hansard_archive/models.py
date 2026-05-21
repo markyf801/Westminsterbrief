@@ -15,6 +15,7 @@ application tables (user, tracked_topic, cached_*, sd_*, etc.).
 
 from datetime import datetime
 from extensions import db
+from sqlalchemy import event, inspect as sa_inspect, text
 
 
 DEBATE_TYPE_ORAL_QUESTIONS = "oral_questions"
@@ -352,6 +353,8 @@ class HeadlineStat(db.Model):
     __tablename__ = "headline_stat"
     __table_args__ = (
         db.UniqueConstraint("theme_slug", "source_id", name="uq_headline_stat"),
+        db.Index("idx_headline_stat_producer", "producer_id"),
+        db.Index("idx_headline_stat_publication", "publication_id"),
     )
 
     id               = db.Column(db.Integer,   primary_key=True)
@@ -381,6 +384,13 @@ class HeadlineStat(db.Model):
                                  nullable=True)
     release_type     = db.Column(db.Text,      nullable=True)  # headline/reference/analysis/ad_hoc
     sub_topic_slug   = db.Column(db.Text,      nullable=True)
+    # Phase 1.6 — nullable FK; backfill in Phase 1.7+
+    producer_id      = db.Column(db.Integer,   db.ForeignKey("ha_stat_producer.id",
+                                                              ondelete="SET NULL"),
+                                 nullable=True, index=True)
+    publication_id   = db.Column(db.Integer,   db.ForeignKey("ha_stat_publication.id",
+                                                              ondelete="SET NULL"),
+                                 nullable=True, index=True)
 
     issue_reports = db.relationship("StatIssueReport", back_populates="stat",
                                     cascade="all, delete-orphan")
@@ -391,6 +401,8 @@ class HeadlineStat(db.Model):
                                     cascade="all, delete-orphan")
     definition    = db.relationship("StatDefinition", back_populates="stats",
                                     foreign_keys=[definition_id])
+    producer      = db.relationship("StatProducer", foreign_keys=[producer_id])
+    publication   = db.relationship("StatPublication", foreign_keys=[publication_id])
 
     def __repr__(self):
         return f"<HeadlineStat id={self.id} theme={self.theme_slug} source={self.source_id}>"
@@ -750,3 +762,232 @@ class StatObservation(db.Model):
     def __repr__(self):
         return (f"<StatObservation id={self.id} stat={self.headline_stat_id} "
                 f"period={self.period_label!r} value={self.value!r}>")
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.6: Source registry
+# ---------------------------------------------------------------------------
+
+class StatProducer(db.Model):
+    """
+    A statistics-producing body. The primary unit of licence authorisation.
+
+    Application-layer invariants (not enforceable via SQLite CHECK constraints):
+    - If licence != 'Unverified', licence_evidence_raw_url must not be null.
+    - If authorisation_status == 'authorised', reviewed_by and reviewed_at
+      must not be null.
+
+    A SQLAlchemy event listener registered at the bottom of this module
+    automatically writes a StatLicenceAuditLog row whenever a StatProducer row
+    is created or has its licence, licence_evidence_raw_url, or
+    licence_evidence_wayback_url fields changed.
+    """
+
+    __tablename__ = "ha_stat_producer"
+    __table_args__ = (
+        db.UniqueConstraint("slug", name="uq_stat_producer_slug"),
+        db.CheckConstraint(
+            "producer_type IN ('central_department','executive_agency','ndpb',"
+            "'regulator','devolved_administration','devolved_body',"
+            "'gss_producer','other_public_body')",
+            name="ck_stat_producer_type"),
+        db.CheckConstraint(
+            "authorisation_status IN ('candidate','under_review','authorised',"
+            "'declined','paused')",
+            name="ck_stat_producer_auth_status"),
+        db.CheckConstraint(
+            "licence IN ('OGL_v3','Crown_Copyright_other','HESA_Open',"
+            "'HESA_Commercial','UCAS','Custom_Open','Custom_Restrictive','Unverified')",
+            name="ck_stat_producer_licence"),
+    )
+
+    id                           = db.Column(db.Integer, primary_key=True)
+    slug                         = db.Column(db.Text, nullable=False)
+    name                         = db.Column(db.Text, nullable=False)
+    short_name                   = db.Column(db.Text, nullable=True)
+    producer_type                = db.Column(db.Text, nullable=False)
+    parent_id                    = db.Column(db.Integer,
+                                             db.ForeignKey("ha_stat_producer.id",
+                                                           ondelete="SET NULL"),
+                                             nullable=True, index=True)
+    web_root_url                 = db.Column(db.Text, nullable=False)
+    contact_email                = db.Column(db.Text, nullable=True)
+    description                  = db.Column(db.Text, nullable=True)
+    authorisation_status         = db.Column(db.Text, nullable=False, default="candidate")
+    authorisation_reason         = db.Column(db.Text, nullable=True)
+    licence                      = db.Column(db.Text, nullable=False)
+    licence_evidence_raw_url     = db.Column(db.Text, nullable=True)
+    licence_evidence_wayback_url = db.Column(db.Text, nullable=True)
+    reviewed_by                  = db.Column(db.Text, nullable=True)
+    reviewed_at                  = db.Column(db.DateTime, nullable=True)
+    created_at                   = db.Column(db.DateTime, nullable=False,
+                                             default=datetime.utcnow)
+    updated_at                   = db.Column(db.DateTime, nullable=False,
+                                             default=datetime.utcnow,
+                                             onupdate=datetime.utcnow)
+
+    parent       = db.relationship("StatProducer", remote_side="StatProducer.id",
+                                   foreign_keys=[parent_id])
+    publications = db.relationship("StatPublication", back_populates="producer",
+                                   passive_deletes=True)
+    audit_log    = db.relationship("StatLicenceAuditLog", back_populates="producer",
+                                   cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<StatProducer id={self.id} slug={self.slug!r} licence={self.licence!r}>"
+
+
+class StatPublication(db.Model):
+    """
+    A specific statistical output published by a StatProducer.
+
+    Publications inherit their producer's authorisation status and licence.
+    No publication-level override — if a specific publication needs different
+    handling, the producer is re-reviewed.
+    """
+
+    __tablename__ = "ha_stat_publication"
+    __table_args__ = (
+        db.UniqueConstraint("producer_id", "slug",
+                            name="uq_stat_publication_producer_slug"),
+        db.Index("idx_stat_pub_producer", "producer_id"),
+        db.CheckConstraint(
+            "update_cadence IS NULL OR update_cadence IN "
+            "('daily','weekly','monthly','quarterly','annual','biennial','ad_hoc','one_off')",
+            name="ck_stat_pub_cadence"),
+    )
+
+    id             = db.Column(db.Integer, primary_key=True)
+    producer_id    = db.Column(db.Integer,
+                               db.ForeignKey("ha_stat_producer.id", ondelete="RESTRICT"),
+                               nullable=False, index=True)
+    slug           = db.Column(db.Text, nullable=False, index=True)
+    name           = db.Column(db.Text, nullable=False)
+    url            = db.Column(db.Text, nullable=False)
+    description    = db.Column(db.Text, nullable=True)
+    update_cadence = db.Column(db.Text, nullable=True)
+    first_seen_at  = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_seen_at   = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                               onupdate=datetime.utcnow)
+
+    producer = db.relationship("StatProducer", back_populates="publications")
+
+    def __repr__(self):
+        return f"<StatPublication id={self.id} producer={self.producer_id} slug={self.slug!r}>"
+
+
+class StatLicenceAuditLog(db.Model):
+    """
+    Append-only audit trail for licence-related changes on a StatProducer.
+
+    Rows are created automatically by the SQLAlchemy event listener registered
+    at the bottom of this module. Application code must never UPDATE or DELETE
+    rows in this table — always create new rows to record changes.
+    """
+
+    __tablename__ = "ha_stat_licence_audit_log"
+    __table_args__ = (
+        db.Index("idx_stat_licence_audit_producer", "producer_id"),
+    )
+
+    id                       = db.Column(db.Integer, primary_key=True)
+    producer_id              = db.Column(db.Integer,
+                                         db.ForeignKey("ha_stat_producer.id",
+                                                       ondelete="CASCADE"),
+                                         nullable=False, index=True)
+    changed_at               = db.Column(db.DateTime, nullable=False,
+                                         default=datetime.utcnow)
+    old_licence              = db.Column(db.Text, nullable=True)
+    new_licence              = db.Column(db.Text, nullable=False)
+    old_evidence_raw_url     = db.Column(db.Text, nullable=True)
+    new_evidence_raw_url     = db.Column(db.Text, nullable=True)
+    old_evidence_wayback_url = db.Column(db.Text, nullable=True)
+    new_evidence_wayback_url = db.Column(db.Text, nullable=True)
+    change_reason            = db.Column(db.Text, nullable=True)
+    recorded_by              = db.Column(db.Text, nullable=True)
+
+    producer = db.relationship("StatProducer", back_populates="audit_log")
+
+    def __repr__(self):
+        return (f"<StatLicenceAuditLog id={self.id} producer={self.producer_id} "
+                f"new_licence={self.new_licence!r}>")
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.6: Audit log event listeners
+# ---------------------------------------------------------------------------
+
+def _write_licence_audit(connection, producer_id, *, old_licence, new_licence,
+                          old_raw_url, new_raw_url, old_way_url, new_way_url,
+                          change_reason):
+    """Insert one ha_stat_licence_audit_log row using the mapper connection."""
+    connection.execute(
+        text(
+            "INSERT INTO ha_stat_licence_audit_log "
+            "(producer_id, changed_at, old_licence, new_licence, "
+            "old_evidence_raw_url, new_evidence_raw_url, "
+            "old_evidence_wayback_url, new_evidence_wayback_url, change_reason) "
+            "VALUES (:pid, :at, :old_lic, :new_lic, "
+            ":old_raw, :new_raw, :old_way, :new_way, :reason)"
+        ),
+        {
+            "pid":     producer_id,
+            "at":      datetime.utcnow(),
+            "old_lic": old_licence,
+            "new_lic": new_licence,
+            "old_raw": old_raw_url,
+            "new_raw": new_raw_url,
+            "old_way": old_way_url,
+            "new_way": new_way_url,
+            "reason":  change_reason,
+        },
+    )
+
+
+@event.listens_for(StatProducer, "after_insert")
+def _stat_producer_after_insert(mapper, connection, target):
+    """Write an initial audit entry when a StatProducer row is first created."""
+    _write_licence_audit(
+        connection,
+        target.id,
+        old_licence=None,
+        new_licence=target.licence,
+        old_raw_url=None,
+        new_raw_url=target.licence_evidence_raw_url,
+        old_way_url=None,
+        new_way_url=target.licence_evidence_wayback_url,
+        change_reason="Initial classification",
+    )
+
+
+@event.listens_for(StatProducer, "before_update")
+def _stat_producer_before_update(mapper, connection, target):
+    """Write an audit entry when any licence-related field changes on a StatProducer."""
+    _TRACKED = ("licence", "licence_evidence_raw_url", "licence_evidence_wayback_url")
+    attrs = sa_inspect(target).attrs
+    if not any(attrs[f].history.has_changes() for f in _TRACKED):
+        return  # no licence-related change — skip
+
+    def _old_new(field):
+        h = attrs[field].history
+        old = h.deleted[0] if h.deleted else (h.unchanged[0] if h.unchanged else None)
+        new = h.added[0]   if h.added   else (h.unchanged[0] if h.unchanged else None)
+        return old, new
+
+    old_lic, new_lic = _old_new("licence")
+    old_raw, new_raw = _old_new("licence_evidence_raw_url")
+    old_way, new_way = _old_new("licence_evidence_wayback_url")
+
+    _write_licence_audit(
+        connection,
+        target.id,
+        old_licence=old_lic,
+        new_licence=new_lic,
+        old_raw_url=old_raw,
+        new_raw_url=new_raw,
+        old_way_url=old_way,
+        new_way_url=new_way,
+        change_reason=None,
+    )
