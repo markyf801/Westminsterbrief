@@ -618,6 +618,23 @@ with app.app_context():
         _mig_log('headline_stat Phase 1 cols done')
     except Exception as _e:
         app.logger.warning('headline_stat Phase 1 cols migration failed: %s', _e)
+    # --- Phase 1.6 source registry FKs on headline_stat ---
+    try:
+        with db.engine.connect() as _conn:
+            for _col, _defn in [
+                ('producer_id',   'INTEGER'),
+                ('publication_id', 'INTEGER'),
+            ]:
+                try:
+                    _conn.execute(text(
+                        f'ALTER TABLE headline_stat ADD COLUMN IF NOT EXISTS {_col} {_defn}'
+                    ))
+                except Exception:
+                    pass  # column already exists (SQLite < 3.35 doesn't support IF NOT EXISTS)
+            _conn.commit()
+        _mig_log('headline_stat Phase 1.6 FK cols done')
+    except Exception as _e:
+        app.logger.warning('headline_stat Phase 1.6 FK cols migration failed: %s', _e)
     # Backfill StatObservation from legacy HeadlineStat single-value fields.
     # Only runs when a stat has a latest_value but no StatObservation rows yet.
     # Idempotent — the unique constraint on (headline_stat_id, period_start, period_end)
