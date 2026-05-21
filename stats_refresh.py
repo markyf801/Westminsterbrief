@@ -642,6 +642,9 @@ def register_stats_cli(app) -> None:
         """Refresh headline_stat rows for a single theme slug."""
         run_refresh(theme_slug=slug, dry_run=dry_run)
 
+    from scripts.check_stats_state import register_stats_check_cli
+    register_stats_check_cli(stats_group)
+
 
 # ── Direct invocation ─────────────────────────────────────────────────────────
 
