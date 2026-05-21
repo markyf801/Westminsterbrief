@@ -243,9 +243,15 @@ _mig_t0 = _mig_time.monotonic()
 def _mig_log(phase):
     print(f'[STARTUP] {phase} +{_mig_time.monotonic() - _mig_t0:.1f}s', flush=True)
 
-_mig_log('begin')
-with app.app_context():
-    _mig_log('app_context entered')
+_SKIP_MIGRATIONS = os.environ.get('SKIP_MIGRATIONS') == '1'
+
+
+def _run_startup_migrations():
+    """Execute all startup schema migrations and data seeding.
+
+    Runs inside app.app_context(). Not called when SKIP_MIGRATIONS=1 (e.g. the
+    read-only beta service that shares the production database).
+    """
     db.create_all()
     _mig_log('db.create_all done')
     # Add has_completed_onboarding to existing user tables that predate this column
@@ -773,14 +779,24 @@ with app.app_context():
         except Exception:
             db.session.rollback()
     _mig_log('StakeholderOrg seed done')
+
+
+_mig_log('begin')
+with app.app_context():
+    _mig_log('app_context entered')
+    if _SKIP_MIGRATIONS:
+        _mig_log('SKIP_MIGRATIONS=1 set; skipping db.create_all() and schema modifications')
+    else:
+        _run_startup_migrations()
     _mig_log('app_context block complete')
 
 # Kick off background minister link seeding after app context is established
 _mig_log('importing debate_scanner for seed_all_minister_links')
 from debate_scanner import seed_all_minister_links
 _mig_log('debate_scanner imported')
-seed_all_minister_links(app)
-_mig_log('seed_all_minister_links started')
+if not _SKIP_MIGRATIONS:
+    seed_all_minister_links(app)
+    _mig_log('seed_all_minister_links started')
 
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
