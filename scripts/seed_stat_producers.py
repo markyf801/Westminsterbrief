@@ -36,8 +36,10 @@ sys.path.insert(0, os.path.dirname(_HERE))
 log = logging.getLogger("seed_stat_producers")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-_GOV_COPYRIGHT = "https://www.gov.uk/help/copyright"
-_OGL_CANONICAL = "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+# The canonical OGL v3 reference URL (live, Wayback-indexed).
+# https://www.gov.uk/help/copyright returns 404 — do not use that URL.
+_GOV_COPYRIGHT = "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+_OGL_CANONICAL = _GOV_COPYRIGHT
 
 
 def _get_wayback_url(raw_url: str) -> str | None:
@@ -315,7 +317,7 @@ def build_seed_data() -> list[dict]:
             "producer_type": "other_public_body",
             "web_root_url": "https://www.england.nhs.uk/",
             "licence": "OGL_v3",
-            "licence_evidence_raw_url": "https://www.england.nhs.uk/contact-us/privacy-notice/copyright/",
+            "licence_evidence_raw_url": "https://www.england.nhs.uk/contact-us/privacy-notice/",
             "description": (
                 "Publishes NHS performance statistics including A&E waiting times, "
                 "referral to treatment and ambulance data."
@@ -412,7 +414,7 @@ def build_seed_data() -> list[dict]:
             "producer_type": "other_public_body",
             "web_root_url": "https://www.ucas.com/",
             "licence": "UCAS",
-            "licence_evidence_raw_url": "https://www.ucas.com/about-us/terms-and-conditions",
+            "licence_evidence_raw_url": "https://www.ucas.com/terms-and-conditions-for-use-of-the-ucas-network",
             "description": (
                 "Publishes university application, offer and acceptance statistics."
             ),
@@ -440,7 +442,7 @@ def build_seed_data() -> list[dict]:
             "producer_type": "devolved_administration",
             "web_root_url": "https://statswales.gov.wales/",
             "licence": "OGL_v3",
-            "licence_evidence_raw_url": "https://www.llyw.cymru/copyright-statement",
+            "licence_evidence_raw_url": "https://www.gov.wales/copyright-statement",
             "description": (
                 "Publishes Wales-specific statistics via StatsWales, covering "
                 "health, education, economy and Welsh language."
@@ -453,7 +455,7 @@ def build_seed_data() -> list[dict]:
             "producer_type": "devolved_body",
             "web_root_url": "https://www.nisra.gov.uk/",
             "licence": "OGL_v3",
-            "licence_evidence_raw_url": "https://www.nisra.gov.uk/contact/crown-copyright",
+            "licence_evidence_raw_url": "https://www.nisra.gov.uk/crown-copyright",
             "description": (
                 "Publishes Northern Ireland official statistics on population, "
                 "health, economy and the census."

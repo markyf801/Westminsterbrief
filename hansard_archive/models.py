@@ -799,6 +799,9 @@ class StatProducer(db.Model):
             "licence IN ('OGL_v3','Crown_Copyright_other','HESA_Open',"
             "'HESA_Commercial','UCAS','Custom_Open','Custom_Restrictive','Unverified')",
             name="ck_stat_producer_licence"),
+        db.CheckConstraint(
+            "discovery_status IN ('pending','in_progress','completed','failed')",
+            name="ck_stat_producer_discovery_status"),
     )
 
     id                           = db.Column(db.Integer, primary_key=True)
@@ -825,6 +828,10 @@ class StatProducer(db.Model):
     updated_at                   = db.Column(db.DateTime, nullable=False,
                                              default=datetime.utcnow,
                                              onupdate=datetime.utcnow)
+    # Phase 1.7: discovery state
+    discovery_status             = db.Column(db.Text, nullable=False, default="pending")
+    discovery_completed_at       = db.Column(db.DateTime, nullable=True)
+    discovery_failure_reason     = db.Column(db.Text, nullable=True)
 
     parent       = db.relationship("StatProducer", remote_side="StatProducer.id",
                                    foreign_keys=[parent_id])
@@ -855,6 +862,9 @@ class StatPublication(db.Model):
             "update_cadence IS NULL OR update_cadence IN "
             "('daily','weekly','monthly','quarterly','annual','biennial','ad_hoc','one_off')",
             name="ck_stat_pub_cadence"),
+        db.CheckConstraint(
+            "authorisation_status IN ('candidate','under_review','authorised','declined','paused')",
+            name="ck_stat_pub_auth_status"),
     )
 
     id             = db.Column(db.Integer, primary_key=True)
@@ -871,8 +881,19 @@ class StatPublication(db.Model):
     created_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
                                onupdate=datetime.utcnow)
+    # Phase 1.7: authorisation workflow
+    authorisation_status = db.Column(db.Text, nullable=False, default="candidate")
+    subject_area         = db.Column(db.Text, nullable=True)
+    discovered_at        = db.Column(db.DateTime, nullable=True)
+    authorised_at        = db.Column(db.DateTime, nullable=True)
+    authorised_by        = db.Column(db.Text, nullable=True)
+    declined_at          = db.Column(db.DateTime, nullable=True)
+    declined_by          = db.Column(db.Text, nullable=True)
+    decline_reason       = db.Column(db.Text, nullable=True)
 
-    producer = db.relationship("StatProducer", back_populates="publications")
+    producer      = db.relationship("StatProducer", back_populates="publications")
+    pub_audit_log = db.relationship("StatPublicationAuditLog", back_populates="publication",
+                                    cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<StatPublication id={self.id} producer={self.producer_id} slug={self.slug!r}>"
@@ -913,6 +934,41 @@ class StatLicenceAuditLog(db.Model):
     def __repr__(self):
         return (f"<StatLicenceAuditLog id={self.id} producer={self.producer_id} "
                 f"new_licence={self.new_licence!r}>")
+
+
+class StatPublicationAuditLog(db.Model):
+    """
+    Append-only audit trail for authorise/decline decisions on a StatPublication.
+
+    Rows are written automatically by the before_update event listener below
+    whenever authorisation_status changes. Application code must never UPDATE
+    or DELETE rows in this table.
+
+    Only fires for human decisions (admin UI). Discovery worker candidate
+    creation uses INSERT (not UPDATE) so this hook does not fire for it.
+    """
+
+    __tablename__ = "ha_stat_publication_audit_log"
+    __table_args__ = (
+        db.Index("idx_stat_pub_audit_pub", "publication_id"),
+    )
+
+    id             = db.Column(db.Integer, primary_key=True)
+    publication_id = db.Column(db.Integer,
+                               db.ForeignKey("ha_stat_publication.id",
+                                             ondelete="CASCADE"),
+                               nullable=False, index=True)
+    changed_at     = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    old_status     = db.Column(db.Text, nullable=False)
+    new_status     = db.Column(db.Text, nullable=False)
+    change_reason  = db.Column(db.Text, nullable=True)
+    recorded_by    = db.Column(db.Text, nullable=False)
+
+    publication = db.relationship("StatPublication", back_populates="pub_audit_log")
+
+    def __repr__(self):
+        return (f"<StatPublicationAuditLog id={self.id} pub={self.publication_id} "
+                f"new_status={self.new_status!r}>")
 
 
 # ---------------------------------------------------------------------------
@@ -990,4 +1046,46 @@ def _stat_producer_before_update(mapper, connection, target):
         old_way_url=old_way,
         new_way_url=new_way,
         change_reason=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.7: Publication authorisation audit hook
+# ---------------------------------------------------------------------------
+
+@event.listens_for(StatPublication, "before_update")
+def _stat_publication_before_update(mapper, connection, target):
+    """Write audit entry when authorisation_status changes on a StatPublication.
+
+    Only fires for human authorise/decline decisions (admin UI actions).
+    Discovery worker candidate creation uses INSERT, not UPDATE, so this
+    hook does not fire during automated discovery.
+
+    The admin route must set target._recorded_by before flushing so the
+    entry records who made the decision. Falls back to 'system' if unset.
+    """
+    attrs = sa_inspect(target).attrs
+    h = attrs["authorisation_status"].history
+    if not h.has_changes():
+        return
+    old = h.deleted[0] if h.deleted else (h.unchanged[0] if h.unchanged else None)
+    new = h.added[0]   if h.added   else (h.unchanged[0] if h.unchanged else None)
+    if old == new:
+        return
+    recorded_by   = getattr(target, "_recorded_by",   None) or "system"
+    change_reason = getattr(target, "_change_reason", None)
+    connection.execute(
+        text(
+            "INSERT INTO ha_stat_publication_audit_log "
+            "(publication_id, changed_at, old_status, new_status, change_reason, recorded_by) "
+            "VALUES (:pid, :at, :old, :new, :reason, :by)"
+        ),
+        {
+            "pid":    target.id,
+            "at":     datetime.utcnow(),
+            "old":    old,
+            "new":    new,
+            "reason": change_reason,
+            "by":     recorded_by,
+        },
     )

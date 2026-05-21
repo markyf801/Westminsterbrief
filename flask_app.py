@@ -641,6 +641,32 @@ def _run_startup_migrations():
         _mig_log('headline_stat Phase 1.6 FK cols done')
     except Exception as _e:
         app.logger.warning('headline_stat Phase 1.6 FK cols migration failed: %s', _e)
+    # --- Phase 1.7 discovery skill columns ---
+    try:
+        with db.engine.connect() as _conn:
+            for _tbl, _col, _defn in [
+                ('ha_stat_producer',    'discovery_status',         "TEXT NOT NULL DEFAULT 'pending'"),
+                ('ha_stat_producer',    'discovery_completed_at',   'TIMESTAMP'),
+                ('ha_stat_producer',    'discovery_failure_reason', 'TEXT'),
+                ('ha_stat_publication', 'authorisation_status',     "TEXT NOT NULL DEFAULT 'candidate'"),
+                ('ha_stat_publication', 'subject_area',             'TEXT'),
+                ('ha_stat_publication', 'discovered_at',            'TIMESTAMP'),
+                ('ha_stat_publication', 'authorised_at',            'TIMESTAMP'),
+                ('ha_stat_publication', 'authorised_by',            'TEXT'),
+                ('ha_stat_publication', 'declined_at',              'TIMESTAMP'),
+                ('ha_stat_publication', 'declined_by',              'TEXT'),
+                ('ha_stat_publication', 'decline_reason',           'TEXT'),
+            ]:
+                try:
+                    _conn.execute(text(
+                        f'ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_defn}'
+                    ))
+                except Exception:
+                    pass  # column already exists
+            _conn.commit()
+        _mig_log('Phase 1.7 discovery cols done')
+    except Exception as _e:
+        app.logger.warning('Phase 1.7 discovery cols migration failed: %s', _e)
     # Backfill StatObservation from legacy HeadlineStat single-value fields.
     # Only runs when a stat has a latest_value but no StatObservation rows yet.
     # Idempotent — the unique constraint on (headline_stat_id, period_start, period_end)
@@ -2293,6 +2319,111 @@ def admin_stats_edit(stat_id):
         return redirect('/admin/stats')
 
     return render_template('admin_stats_edit.html', row=row)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.7 admin routes — source registry producer + publication review
+# ---------------------------------------------------------------------------
+
+@app.route('/admin/producers', methods=['GET'])
+def admin_producers_list():
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import StatProducer, StatPublication
+    from sqlalchemy import func
+    producers = (
+        StatProducer.query
+        .order_by(StatProducer.discovery_completed_at.desc().nullslast(),
+                  StatProducer.name)
+        .all()
+    )
+    # Build candidate/authorised counts per producer in one query
+    counts_raw = (
+        db.session.query(
+            StatPublication.producer_id,
+            StatPublication.authorisation_status,
+            func.count(StatPublication.id).label("n"),
+        )
+        .group_by(StatPublication.producer_id, StatPublication.authorisation_status)
+        .all()
+    )
+    pub_counts: dict = {}
+    for pid in [p.id for p in producers]:
+        pub_counts[pid] = {"candidate": 0, "authorised": 0}
+    for row in counts_raw:
+        if row.producer_id in pub_counts:
+            if row.authorisation_status == "candidate":
+                pub_counts[row.producer_id]["candidate"] = row.n
+            elif row.authorisation_status == "authorised":
+                pub_counts[row.producer_id]["authorised"] = row.n
+    return render_template('admin_producers_list.html',
+                           producers=producers, pub_counts=pub_counts)
+
+
+@app.route('/admin/producers/<int:producer_id>/publications', methods=['GET'])
+def admin_publications_review(producer_id):
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import StatProducer, StatPublication
+    producer = StatProducer.query.get_or_404(producer_id)
+    publications = (
+        StatPublication.query
+        .filter_by(producer_id=producer_id, authorisation_status='candidate')
+        .order_by(StatPublication.discovered_at.desc())
+        .all()
+    )
+    return render_template('admin_publications_review.html',
+                           producer=producer, publications=publications)
+
+
+@app.route('/admin/publications/<int:pub_id>/edit', methods=['POST'])
+def admin_publication_edit(pub_id):
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import StatPublication
+    pub = StatPublication.query.get_or_404(pub_id)
+    pub.name           = request.form.get('name', pub.name).strip()
+    pub.description    = request.form.get('description', '').strip() or None
+    pub.update_cadence = request.form.get('update_cadence') or None
+    pub.subject_area   = request.form.get('subject_area', '').strip() or None
+    db.session.commit()
+    return redirect(f'/admin/producers/{pub.producer_id}/publications')
+
+
+@app.route('/admin/publications/bulk-action', methods=['POST'])
+def admin_publications_bulk_action():
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import StatPublication
+    action        = request.form.get('action')
+    pub_ids       = request.form.getlist('pub_ids')
+    decline_reason = request.form.get('decline_reason', '').strip() or None
+    if action not in ('authorise', 'decline') or not pub_ids:
+        return redirect('/admin/producers')
+    now         = datetime.utcnow()
+    admin_user  = session.get('admin_email', 'admin')
+    producer_id = None
+    for raw_id in pub_ids:
+        pub = StatPublication.query.get(int(raw_id))
+        if pub is None or pub.authorisation_status != 'candidate':
+            continue
+        if producer_id is None:
+            producer_id = pub.producer_id
+        pub._recorded_by   = admin_user
+        pub._change_reason = decline_reason
+        if action == 'authorise':
+            pub.authorisation_status = 'authorised'
+            pub.authorised_at        = now
+            pub.authorised_by        = admin_user
+        else:
+            pub.authorisation_status = 'declined'
+            pub.declined_at          = now
+            pub.declined_by          = admin_user
+            pub.decline_reason       = decline_reason
+        db.session.flush()
+    db.session.commit()
+    redirect_to = f'/admin/producers/{producer_id}/publications' if producer_id else '/admin/producers'
+    return redirect(redirect_to)
 
 
 # ==========================================
