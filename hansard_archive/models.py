@@ -839,6 +839,8 @@ class StatProducer(db.Model):
                                    passive_deletes=True)
     audit_log    = db.relationship("StatLicenceAuditLog", back_populates="producer",
                                    cascade="all, delete-orphan")
+    auth_log     = db.relationship("StatProducerAuthLog", back_populates="producer",
+                                   cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<StatProducer id={self.id} slug={self.slug!r} licence={self.licence!r}>"
@@ -934,6 +936,36 @@ class StatLicenceAuditLog(db.Model):
     def __repr__(self):
         return (f"<StatLicenceAuditLog id={self.id} producer={self.producer_id} "
                 f"new_licence={self.new_licence!r}>")
+
+
+class StatProducerAuthLog(db.Model):
+    """
+    Append-only audit trail for authorisation_status changes on a StatProducer.
+
+    Written directly by the admin route handler on Authorise/Decline actions.
+    Application code must never UPDATE or DELETE rows in this table.
+    """
+
+    __tablename__ = "ha_stat_producer_auth_log"
+    __table_args__ = (
+        db.Index("idx_stat_producer_auth_log_producer", "producer_id"),
+    )
+
+    id            = db.Column(db.Integer, primary_key=True)
+    producer_id   = db.Column(db.Integer,
+                               db.ForeignKey("ha_stat_producer.id", ondelete="CASCADE"),
+                               nullable=False, index=True)
+    changed_at    = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    old_status    = db.Column(db.Text, nullable=False)
+    new_status    = db.Column(db.Text, nullable=False)
+    change_reason = db.Column(db.Text, nullable=True)
+    recorded_by   = db.Column(db.Text, nullable=False)
+
+    producer = db.relationship("StatProducer", back_populates="auth_log")
+
+    def __repr__(self):
+        return (f"<StatProducerAuthLog id={self.id} producer={self.producer_id} "
+                f"{self.old_status!r}->{self.new_status!r}>")
 
 
 class StatPublicationAuditLog(db.Model):

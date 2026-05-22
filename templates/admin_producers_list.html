@@ -28,6 +28,10 @@
 .b-under-review { background: #dbeafe; color: #1e40af; }
 .b-paused   { background: #f3f4f6; color: #374151; }
 .failure-hint { font-size: 11px; color: #dc2626; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-auth    { padding: 2px 8px; font-size: 11px; font-weight: 600; background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; border-radius: 3px; cursor: pointer; }
+.btn-auth:hover { background: #a7f3d0; }
+.btn-decline { padding: 2px 8px; font-size: 11px; font-weight: 600; background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; border-radius: 3px; cursor: pointer; }
+.btn-decline:hover { background: #fecaca; }
 </style>
 {% endblock %}
 
@@ -126,8 +130,21 @@
                     <span class="failure-hint" title="{{ p.discovery_failure_reason }}">{{ p.discovery_failure_reason[:80] }}</span>
                 {% endif %}
             </td>
-            <td>
-                <a href="/admin/producers/{{ p.id }}/publications" style="font-size:12px; white-space:nowrap;">Review &rarr;</a>
+            <td style="white-space:nowrap;">
+                <a href="/admin/producers/{{ p.id }}/publications" style="font-size:12px;">Review &rarr;</a>
+                {% if p.authorisation_status == 'candidate' %}
+                <form method="post" action="/admin/producers/{{ p.id }}/authorise" style="display:inline; margin-left:6px;">
+                    <button type="submit" class="btn-auth">Authorise</button>
+                </form>
+                <form method="post" action="/admin/producers/{{ p.id }}/decline" style="display:inline; margin-left:4px;" onsubmit="return attachDeclineReason(this)">
+                    <input type="hidden" name="decline_reason" value="">
+                    <button type="submit" class="btn-decline">Decline</button>
+                </form>
+                {% elif p.authorisation_status == 'authorised' and p.reviewed_at %}
+                <span style="font-size:11px; color:#065f46; margin-left:6px;">&#10003; {{ p.reviewed_at.strftime('%d %b %Y') }}</span>
+                {% elif p.authorisation_status == 'declined' and p.reviewed_at %}
+                <span style="font-size:11px; color:#6b7280; margin-left:6px;">Declined {{ p.reviewed_at.strftime('%d %b %Y') }}</span>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}
@@ -136,6 +153,12 @@
 </div>
 
 <script>
+function attachDeclineReason(form) {
+    var reason = prompt('Decline reason (optional):') || '';
+    form.querySelector('input[name="decline_reason"]').value = reason;
+    return true;
+}
+
 function applyFilters() {
     const disc = document.getElementById('filter-discovery').value;
     const auth = document.getElementById('filter-auth').value;

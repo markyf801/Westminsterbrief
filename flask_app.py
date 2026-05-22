@@ -2440,6 +2440,59 @@ def admin_publications_bulk_action():
     return redirect(redirect_to)
 
 
+@app.route('/admin/producers/<int:producer_id>/authorise', methods=['POST'])
+def admin_producer_authorise(producer_id):
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import StatProducer, StatProducerAuthLog
+    producer = StatProducer.query.get_or_404(producer_id)
+    if producer.authorisation_status != 'candidate':
+        return redirect('/admin/producers')
+    admin_user = session.get('admin_email', 'admin')
+    now = datetime.utcnow()
+    old_status = producer.authorisation_status
+    producer.authorisation_status = 'authorised'
+    producer.reviewed_by = admin_user
+    producer.reviewed_at = now
+    db.session.add(StatProducerAuthLog(
+        producer_id=producer_id,
+        changed_at=now,
+        old_status=old_status,
+        new_status='authorised',
+        recorded_by=admin_user,
+    ))
+    db.session.commit()
+    return redirect('/admin/producers')
+
+
+@app.route('/admin/producers/<int:producer_id>/decline', methods=['POST'])
+def admin_producer_decline(producer_id):
+    if not session.get('admin_authenticated'):
+        return redirect('/admin')
+    from hansard_archive.models import StatProducer, StatProducerAuthLog
+    producer = StatProducer.query.get_or_404(producer_id)
+    if producer.authorisation_status != 'candidate':
+        return redirect('/admin/producers')
+    admin_user = session.get('admin_email', 'admin')
+    now = datetime.utcnow()
+    old_status = producer.authorisation_status
+    decline_reason = request.form.get('decline_reason', '').strip() or None
+    producer.authorisation_status = 'declined'
+    producer.reviewed_by = admin_user
+    producer.reviewed_at = now
+    producer.authorisation_reason = decline_reason
+    db.session.add(StatProducerAuthLog(
+        producer_id=producer_id,
+        changed_at=now,
+        old_status=old_status,
+        new_status='declined',
+        change_reason=decline_reason,
+        recorded_by=admin_user,
+    ))
+    db.session.commit()
+    return redirect('/admin/producers')
+
+
 # ==========================================
 # 7. BLUEPRINTS
 # ==========================================
