@@ -1211,7 +1211,6 @@ def archive_mp(member_id: int):
         page          = page,
         base_qs       = base_qs,
         policy_filter = policy_filter,
-        analytics     = analytics,
         og_title      = f"{name} — Hansard Archive",
         meta_desc     = (
             f"Parliamentary contributions by {name}{' (' + party + ')' if party else ''} "
