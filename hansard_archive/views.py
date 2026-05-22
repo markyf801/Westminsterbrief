@@ -1129,6 +1129,7 @@ def archive_mp(member_id: int):
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
         page = 1
+    policy_filter = request.args.get("policy", "")
 
     # Representative name row
     name_row = (
