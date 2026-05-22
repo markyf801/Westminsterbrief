@@ -7,7 +7,5 @@ builder = "NIXPACKS"
 # Cron services: python scripts/archive_cron.py --days 3 --service-name <name>
 # Cron services use Dockerfile.cron (set in Railway UI → Service → Settings → Build → Dockerfile Path)
 # to avoid Nixpacks auto-running gunicorn at build time ($PORT is unset, causing build failure).
-healthcheckPath = "/ping"
-healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
