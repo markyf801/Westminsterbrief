@@ -154,7 +154,8 @@
 
 <script>
 function attachDeclineReason(form) {
-    var reason = prompt('Decline reason (optional):') || '';
+    var reason = prompt('Decline reason (optional):');
+    if (reason === null) return false;  // Cancel — abort submission
     form.querySelector('input[name="decline_reason"]').value = reason;
     return true;
 }
