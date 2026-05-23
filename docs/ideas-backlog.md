@@ -380,6 +380,21 @@ Scaffold page explaining the UK bill procedure for lay readers, linked from the 
 
 ---
 
+### Bill Committee Evidence on Bill Detail Pages
+
+Should committee evidence (oral/written) relating to a bill appear on the bill's detail page (`/bill/<id>`)? The stakeholder directory already ingests committee evidence into `sd_staging_committee_evidence` / `sd_engagement`, but there's no link between those records and `ha_bill`. Answering this requires two decisions:
+
+1. **Product:** does a bill detail page surface "who gave evidence on this bill?" — useful for policy professionals who want to see the scrutiny picture alongside the legislative timeline.
+2. **Data model:** how is the link established? Options include: (a) a FK `bill_id` on `sd_engagement` (requires matching committee evidence to bills — nontrivial), (b) a join table `ha_bill_committee_evidence`, or (c) a derived link via committee inquiry name pattern-matching against bill titles.
+
+Neither the ingester nor the schema currently supports this link.
+
+**Revisit trigger:** Bill detail pages (Step 8) are being built; any session touching the bill schema or the committee evidence ingester; any "what does a bill page show?" design conversation.
+
+*Captured 22 May 2026.*
+
+---
+
 ## Killed
 
 *(Nothing formally killed yet — this section is for ideas explicitly decided against, with reason recorded so they don't keep resurfacing.)*
