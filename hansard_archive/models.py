@@ -832,6 +832,9 @@ class StatProducer(db.Model):
     discovery_status             = db.Column(db.Text, nullable=False, default="pending")
     discovery_completed_at       = db.Column(db.DateTime, nullable=True)
     discovery_failure_reason     = db.Column(db.Text, nullable=True)
+    # Phase 1.8: batch resume — count of candidates processed so far; used to
+    # skip already-classified candidates when restarting an interrupted run
+    candidates_processed_count   = db.Column(db.Integer, nullable=True)
 
     parent       = db.relationship("StatProducer", remote_side="StatProducer.id",
                                    foreign_keys=[parent_id])

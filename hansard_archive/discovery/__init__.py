@@ -9,6 +9,12 @@ Pipeline:
   3. classify_candidate(cand, producer, gemini_key) — LLM decision per item
   4. Write passing candidates to ha_stat_publication as authorisation_status='candidate'
 
+Candidates are processed in batches of _BATCH_SIZE. Each batch is committed
+independently, and producer.candidates_processed_count is updated after each
+commit. On worker restart for an in_progress producer, the first
+candidates_processed_count candidates are skipped and processing resumes from
+the next one.
+
 Returns a summary dict so the caller (discovery_worker.py) can log results.
 """
 from __future__ import annotations
@@ -18,6 +24,8 @@ from datetime import datetime
 
 log = logging.getLogger("discovery")
 
+_BATCH_SIZE = 50
+
 
 def run_discovery(producer, db_session, gemini_key: str) -> dict:
     """
@@ -26,10 +34,11 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
     Returns:
         {
           "fetched":         int,   # raw candidates from strategy
-          "classified":      int,   # passed LLM classification
-          "written":         int,   # new rows inserted
-          "skipped":         int,   # already-existing (slug collision)
-          "failed_classify": int,   # LLM failures / not-a-publication
+          "classified":      int,   # passed LLM classification (this run)
+          "written":         int,   # new rows inserted (this run)
+          "skipped":         int,   # already-existing slug collisions (this run)
+          "failed_classify": int,   # LLM failures / not-a-publication (this run)
+          "resume_offset":   int,   # candidates skipped at start (0 for fresh run)
         }
 
     Raises on ManualStrategy or unrecoverable fetch failure — caller must
@@ -46,63 +55,81 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
 
     # Raises for ManualStrategy — propagated to caller
     candidates_raw = strategy.fetch_candidates(producer)
+    total_fetched = len(candidates_raw)
     log.info("run_discovery: fetched %d candidates for %s",
-             len(candidates_raw), producer.slug)
+             total_fetched, producer.slug)
+
+    # Resume: skip candidates already processed in a previous interrupted run
+    resume_offset = producer.candidates_processed_count or 0
+    if resume_offset > 0:
+        log.info("run_discovery: resuming — skipping first %d already-processed "
+                 "candidates of %d total", resume_offset, total_fetched)
+    candidates_to_process = candidates_raw[resume_offset:]
 
     written = skipped = failed_classify = 0
+    batch_num = 0
 
-    for cand in candidates_raw:
-        cand_dict = {
-            "title":            cand.title,
-            "url":              cand.url,
-            "date_hints":       cand.date_hints,
-            "description_hint": cand.description_hint,
-        }
-        result = classify_candidate(cand_dict, producer, gemini_key)
-        if result is None:
-            failed_classify += 1
-            continue
+    for batch_start in range(0, len(candidates_to_process), _BATCH_SIZE):
+        batch = candidates_to_process[batch_start:batch_start + _BATCH_SIZE]
+        batch_num += 1
 
-        slug = slugify_theme(result["name"])
-        if not slug:
-            log.warning("run_discovery: empty slug for %r — skipping", result["name"])
-            failed_classify += 1
-            continue
+        for cand in batch:
+            cand_dict = {
+                "title":            cand.title,
+                "url":              cand.url,
+                "date_hints":       cand.date_hints,
+                "description_hint": cand.description_hint,
+            }
+            result = classify_candidate(cand_dict, producer, gemini_key)
+            if result is None:
+                failed_classify += 1
+                continue
 
-        existing = (
-            db_session.query(StatPublication)
-            .filter_by(producer_id=producer.id, slug=slug)
-            .first()
-        )
-        if existing:
-            skipped += 1
-            log.debug("run_discovery: skip existing %s/%s", producer.slug, slug)
-            continue
+            slug = slugify_theme(result["name"])
+            if not slug:
+                log.warning("run_discovery: empty slug for %r — skipping", result["name"])
+                failed_classify += 1
+                continue
 
-        pub = StatPublication(
-            producer_id=producer.id,
-            slug=slug,
-            name=result["name"],
-            url=cand.url,
-            description=result.get("description"),
-            update_cadence=result.get("update_cadence"),
-            subject_area=result.get("subject_area"),
-            authorisation_status="candidate",
-            discovered_at=datetime.utcnow(),
-        )
-        db_session.add(pub)
-        db_session.flush()
-        written += 1
-        log.info("run_discovery: wrote candidate %s / %s", producer.slug, slug)
+            existing = (
+                db_session.query(StatPublication)
+                .filter_by(producer_id=producer.id, slug=slug)
+                .first()
+            )
+            if existing:
+                skipped += 1
+                log.debug("run_discovery: skip existing %s/%s", producer.slug, slug)
+                continue
 
-    db_session.commit()
+            pub = StatPublication(
+                producer_id=producer.id,
+                slug=slug,
+                name=result["name"],
+                url=cand.url,
+                description=result.get("description"),
+                update_cadence=result.get("update_cadence"),
+                subject_area=result.get("subject_area"),
+                authorisation_status="candidate",
+                discovered_at=datetime.utcnow(),
+            )
+            db_session.add(pub)
+            written += 1
+            log.info("run_discovery: wrote candidate %s / %s", producer.slug, slug)
+
+        # Commit this batch and record progress atomically
+        new_count = resume_offset + batch_start + len(batch)
+        producer.candidates_processed_count = new_count
+        db_session.commit()
+        log.info("run_discovery: batch %d complete, %d candidates processed of %d total",
+                 batch_num, new_count, total_fetched)
 
     summary = {
-        "fetched":         len(candidates_raw),
-        "classified":      len(candidates_raw) - failed_classify,
+        "fetched":         total_fetched,
+        "classified":      len(candidates_to_process) - failed_classify,
         "written":         written,
         "skipped":         skipped,
         "failed_classify": failed_classify,
+        "resume_offset":   resume_offset,
     }
     log.info("run_discovery: complete — %s", summary)
     return summary

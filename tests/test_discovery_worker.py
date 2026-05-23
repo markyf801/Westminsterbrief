@@ -131,26 +131,29 @@ class TestPickNextProducer:
             assert result is None
             db.session.rollback()
 
-    def test_ignores_already_in_progress_producers(self, test_app, db):
-        """in_progress producers are skipped — prevents duplicate processing."""
+    def test_resumes_in_progress_producers(self, test_app, db):
+        """in_progress producers are picked up for resumption, not skipped."""
         with test_app.app_context():
             from scripts.discovery_worker import _pick_next_producer
             from hansard_archive.models import StatProducer
 
-            _make_producer(db, "wkr-inprog",
-                           authorisation_status="authorised",
-                           discovery_status="in_progress")
-            db.session.commit()
-
-            # Ensure no pending authorised producers remain
+            # Ensure no other pending authorised producers remain
             db.session.query(StatProducer).filter_by(
                 authorisation_status="authorised",
                 discovery_status="pending",
             ).update({"discovery_status": "completed"})
             db.session.commit()
 
+            p = _make_producer(db, "wkr-inprog-resume",
+                               authorisation_status="authorised",
+                               discovery_status="in_progress")
+            db.session.commit()
+
             result = _pick_next_producer(db.session, StatProducer)
-            assert result is None
+            assert result is not None
+            assert result.slug == "wkr-inprog-resume"
+            # Status stays in_progress — already claimed, not re-set
+            assert result.discovery_status == "in_progress"
             db.session.rollback()
 
     def test_returns_none_when_no_pending(self, test_app, db):
@@ -159,11 +162,11 @@ class TestPickNextProducer:
             from scripts.discovery_worker import _pick_next_producer
             from hansard_archive.models import StatProducer
 
-            # Mark all as completed
-            db.session.query(StatProducer).filter_by(
-                authorisation_status="authorised",
-                discovery_status="pending",
-            ).update({"discovery_status": "completed"})
+            # Mark all pending AND in_progress as completed so nothing is claimable
+            db.session.query(StatProducer).filter(
+                StatProducer.authorisation_status == "authorised",
+                StatProducer.discovery_status.in_(["pending", "in_progress"]),
+            ).update({"discovery_status": "completed"}, synchronize_session=False)
             db.session.commit()
 
             result = _pick_next_producer(db.session, StatProducer)
@@ -175,6 +178,12 @@ class TestPickNextProducer:
         with test_app.app_context():
             from scripts.discovery_worker import _pick_next_producer
             from hansard_archive.models import StatProducer
+
+            # Clear any in_progress from earlier tests so they don't interfere
+            db.session.query(StatProducer).filter(
+                StatProducer.discovery_status.in_(["pending", "in_progress"]),
+            ).update({"discovery_status": "completed"}, synchronize_session=False)
+            db.session.commit()
 
             p1 = _make_producer(db, "wkr-order-a",
                                 authorisation_status="authorised",
@@ -295,11 +304,11 @@ class TestDryRunMode:
         with test_app.app_context():
             from hansard_archive.models import StatProducer
 
-            # Clear any pending producers left by earlier tests in this module
-            db.session.query(StatProducer).filter_by(
-                authorisation_status="authorised",
-                discovery_status="pending",
-            ).update({"discovery_status": "completed"})
+            # Clear any pending or in_progress producers left by earlier tests
+            db.session.query(StatProducer).filter(
+                StatProducer.authorisation_status == "authorised",
+                StatProducer.discovery_status.in_(["pending", "in_progress"]),
+            ).update({"discovery_status": "completed"}, synchronize_session=False)
             db.session.commit()
 
             p = _make_producer(db, "wkr-dryrun",
@@ -342,4 +351,114 @@ class TestDryRunMode:
             assert called["run"] is True
             # Status not changed in dry-run
             assert p.discovery_status == "in_progress"
+            db.session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# NullPool configuration
+# ---------------------------------------------------------------------------
+
+class TestNullPool:
+
+    def test_configure_nullpool_sets_engine_to_nullpool(self):
+        """_configure_nullpool replaces the cached engine with a NullPool engine."""
+        from flask import Flask
+        from extensions import db as _db
+        from sqlalchemy.pool import NullPool
+        from scripts.discovery_worker import _configure_nullpool
+
+        app = Flask(__name__)
+        app.config.update({
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+            "SQLALCHEMY_TRACK_MODIFICATIONS": False,
+            "SECRET_KEY": "test",
+            "TESTING": True,
+        })
+        _db.init_app(app)
+
+        _configure_nullpool(app, _db)
+
+        with app.app_context():
+            assert isinstance(_db.engine.pool, NullPool)
+
+
+# ---------------------------------------------------------------------------
+# Batch processing and resume
+# ---------------------------------------------------------------------------
+
+class TestBatchProcessing:
+
+    def _make_candidate(self, title="Test Publication", url="https://example.com/pub"):
+        from hansard_archive.discovery.strategies import CandidateItem
+        return CandidateItem(
+            title=title,
+            url=url,
+            date_hints=[],
+            description_hint="A statistical publication.",
+        )
+
+    def _fake_classify_result(self, name="Test Publication"):
+        return {
+            "name":           name,
+            "description":    "A test publication.",
+            "update_cadence": "annual",
+            "subject_area":   "education",
+        }
+
+    def test_candidates_processed_count_updated_after_run(self, test_app, db):
+        """After a full run, candidates_processed_count equals the total fetched."""
+        with test_app.app_context():
+            p = _make_producer(db, "wkr-batch-count",
+                               authorisation_status="authorised",
+                               discovery_status="in_progress")
+            db.session.commit()
+
+            candidates = [self._make_candidate(title=f"Pub {i}", url=f"https://e.com/{i}")
+                          for i in range(55)]
+
+            classify_results = [self._fake_classify_result(name=f"Publication {i}")
+                                 for i in range(55)]
+            classify_iter = iter(classify_results)
+
+            with patch("hansard_archive.discovery.strategies.select_strategy") as mock_strat, \
+                 patch("hansard_archive.discovery.classifier.classify_candidate",
+                       side_effect=lambda *a, **kw: next(classify_iter)):
+                mock_strat.return_value.fetch_candidates.return_value = candidates
+                from hansard_archive.discovery import run_discovery
+                summary = run_discovery(p, db.session, gemini_key="fake")
+
+            db.session.refresh(p)
+            assert p.candidates_processed_count == 55
+            assert summary["written"] == 55
+            assert summary["fetched"] == 55
+            db.session.rollback()
+
+    def test_resume_skips_already_processed_candidates(self, test_app, db):
+        """When candidates_processed_count=50, the first 50 candidates are not classified."""
+        with test_app.app_context():
+            p = _make_producer(db, "wkr-batch-resume",
+                               authorisation_status="authorised",
+                               discovery_status="in_progress",
+                               candidates_processed_count=50)
+            db.session.commit()
+
+            candidates = [self._make_candidate(title=f"Pub {i}", url=f"https://e.com/r{i}")
+                          for i in range(100)]
+
+            classify_call_count = {"n": 0}
+
+            def counting_classify(cand_dict, producer, key):
+                classify_call_count["n"] += 1
+                return self._fake_classify_result(name=f"Resumed pub {classify_call_count['n']}")
+
+            with patch("hansard_archive.discovery.strategies.select_strategy") as mock_strat, \
+                 patch("hansard_archive.discovery.classifier.classify_candidate",
+                       side_effect=counting_classify):
+                mock_strat.return_value.fetch_candidates.return_value = candidates
+                from hansard_archive.discovery import run_discovery
+                summary = run_discovery(p, db.session, gemini_key="fake")
+
+            assert classify_call_count["n"] == 50
+            assert summary["resume_offset"] == 50
+            assert summary["fetched"] == 100
             db.session.rollback()
