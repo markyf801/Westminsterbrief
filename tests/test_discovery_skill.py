@@ -480,6 +480,46 @@ class TestClassifier:
                 result = classify_candidate(self._candidate(), self._producer(), "fake-key")
         assert result is None
 
+    def test_string_null_cadence_normalised_to_none(self):
+        """Gemini sometimes returns the string 'null' for update_cadence instead of
+        JSON null. The classifier must normalise this to Python None so it doesn't
+        violate the ha_stat_publication ck_stat_pub_cadence CHECK constraint."""
+        from hansard_archive.discovery.classifier import classify_candidate
+        result_payload = {
+            "is_publication": True,
+            "name": "Some Statistics",
+            "description": "Some description.",
+            "update_cadence": "null",   # string "null" from LLM — the bug case
+            "subject_area": "Economy",
+        }
+        mock_resp = self._mock_gemini_response(result_payload)
+        with patch("requests.post", return_value=mock_resp):
+            result = classify_candidate(self._candidate(), self._producer(), "fake-key")
+        assert result is not None
+        assert result["update_cadence"] is None   # must be None, not the string "null"
+
+    def test_string_null_cadence_is_db_writable(self, test_app, db):
+        """A classifier result with update_cadence=None must be writable to
+        ha_stat_publication without raising CheckViolation."""
+        with test_app.app_context():
+            producer = _make_producer(db, "cadence-null-prod",
+                                      authorisation_status="authorised")
+            from hansard_archive.models import StatPublication
+            from datetime import datetime
+            pub = StatPublication(
+                producer_id=producer.id,
+                slug="null-cadence-pub",
+                name="Null Cadence Publication",
+                url="https://example.com/null-cadence",
+                update_cadence=None,      # must not raise ck_stat_pub_cadence
+                authorisation_status="candidate",
+                discovered_at=datetime.utcnow(),
+            )
+            db.session.add(pub)
+            db.session.flush()   # would raise CheckViolation if "null" string slipped through
+            assert pub.update_cadence is None
+            db.session.rollback()
+
     def test_missing_required_field_returns_none(self):
         from hansard_archive.discovery.classifier import classify_candidate
         result_payload = {
