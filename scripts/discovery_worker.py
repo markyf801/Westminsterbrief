@@ -13,8 +13,13 @@ Railway service: discovery-worker
   - Start command: python scripts/discovery_worker.py
   - Environment vars: same as main service (DATABASE_URL, GEMINI_API_KEY)
   - DISCOVERY_POLL_INTERVAL — poll delay in seconds (default: 30)
-  - DISCOVERY_DRY_RUN — if set to "1" or "true", runs the skill but does not
-    write discovery_status transitions to the producer (useful for testing)
+  - DISCOVERY_DRY_RUN — if set to "1" or "true", suppresses writes to
+    ha_stat_producer.discovery_status (in_progress / completed / failed
+    transitions are skipped). It does NOT suppress candidate creation in
+    ha_stat_publication — run_discovery() still runs in full and writes rows.
+    Use this only to test the polling/state-machine logic without dirtying
+    producer status. It is NOT a "safe no-write preview mode". To avoid
+    writing any candidates, stop the worker service entirely.
 
 Error handling:
   - Failures within a single producer's discovery are caught, recorded, and
