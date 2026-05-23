@@ -54,7 +54,7 @@ Return a JSON object with this exact structure and no other text:
   "reason": "brief explanation if false — omit this key if true",
   "name": "canonical publication name stripped of year/release suffixes",
   "description": "1-2 sentences describing what this publication covers",
-  "update_cadence": "daily|weekly|monthly|quarterly|annual|biennial|ad_hoc|one_off or null",
+  "update_cadence": one of the strings "daily","weekly","monthly","quarterly","annual","biennial","ad_hoc","one_off" — or JSON null (not the string "null") if the cadence is unknown or irregular,
   "subject_area": "free-text classification e.g. Higher Education, Crime Statistics"
 }}
 
@@ -130,6 +130,11 @@ def classify_candidate(candidate: dict, producer, gemini_key: str) -> dict | Non
             candidate.get("title"), result.get("reason", "no reason"),
         )
         return None
+
+    # Normalise null-like strings — Gemini sometimes returns "null" (string) instead
+    # of JSON null, which violates the ha_stat_publication ck_stat_pub_cadence CHECK.
+    if result.get("update_cadence") in ("null", "None", ""):
+        result["update_cadence"] = None
 
     for field_name in _REQUIRED_FIELDS:
         if not result.get(field_name):
