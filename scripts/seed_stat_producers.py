@@ -308,6 +308,23 @@ def build_seed_data() -> list[dict]:
             ),
         },
         # ----------------------------------------------------------------
+        # Independent statutory fiscal body
+        # ----------------------------------------------------------------
+        {
+            "slug": "office-for-budget-responsibility",
+            "name": "Office for Budget Responsibility",
+            "short_name": "OBR",
+            "producer_type": "ndpb",
+            "web_root_url": "https://obr.uk/",
+            "licence": "OGL_v3",
+            "licence_evidence_raw_url": _GOV_COPYRIGHT,
+            "description": (
+                "Independent statutory body that scrutinises the public finances. "
+                "Publishes Economic and Fiscal Outlooks, Fiscal Sustainability "
+                "Reports, Welfare Trends Reports and the Expenditure Audit."
+            ),
+        },
+        # ----------------------------------------------------------------
         # Other public bodies / arm's-length bodies
         # ----------------------------------------------------------------
         {
