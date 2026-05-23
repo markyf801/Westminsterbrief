@@ -49,26 +49,63 @@ _POLL_INTERVAL = int(os.environ.get("DISCOVERY_POLL_INTERVAL", "30"))
 _DRY_RUN = os.environ.get("DISCOVERY_DRY_RUN", "").lower() in ("1", "true")
 
 
+def _configure_nullpool(app, db) -> None:
+    """
+    Replace the Flask-SQLAlchemy engine with a NullPool engine for worker use.
+
+    NullPool opens a fresh DB connection per operation and closes it immediately,
+    so the worker never holds idle connections between the LLM classify calls
+    that separate each DB write. Without this, a run over 600+ candidates can
+    exhaust Railway's connection limit and starve the web service.
+
+    Flask-SQLAlchemy 3.x creates engines at init_app() time and caches them in
+    db._app_engines[app]. We replace the cached engine directly because
+    init_app() raises RuntimeError if called twice. The new engine is built with
+    create_engine() to bypass Flask-SQLAlchemy's _apply_driver_defaults(), which
+    would otherwise override poolclass=NullPool for SQLite in-memory DBs.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import NullPool
+
+    with app.app_context():
+        db.engine.dispose()
+
+    new_engine = create_engine(app.config["SQLALCHEMY_DATABASE_URI"], poolclass=NullPool)
+    db._app_engines[app][None] = new_engine
+    log.info("NullPool engine configured (driver: %s)", new_engine.url.drivername)
+
+
 def _pick_next_producer(db_session, StatProducer):
     """
-    Atomically claim the oldest pending authorised producer.
+    Atomically claim the next producer needing discovery.
 
-    Uses a flush-based optimistic lock: read + update in one session flush.
-    Railway runs a single worker instance, so this is sufficient; if multiple
-    workers are ever needed, replace with SELECT FOR UPDATE.
+    Picks up 'pending' producers (new work) AND 'in_progress' producers
+    (interrupted runs for resumption — candidates_processed_count tracks
+    where to restart). Sets status to 'in_progress' only when claiming a
+    'pending' producer; leaves 'in_progress' unchanged on resume.
+
+    Uses SELECT FOR UPDATE SKIP LOCKED. Railway runs a single worker
+    instance; replace with a stronger lock if multiple workers are added.
 
     Returns the claimed StatProducer or None if nothing is pending.
     """
+    from sqlalchemy import or_
     producer = (
         db_session.query(StatProducer)
-        .filter_by(authorisation_status="authorised", discovery_status="pending")
+        .filter(
+            StatProducer.authorisation_status == "authorised",
+            or_(
+                StatProducer.discovery_status == "pending",
+                StatProducer.discovery_status == "in_progress",
+            ),
+        )
         .order_by(StatProducer.id.asc())
         .with_for_update(skip_locked=True)
         .first()
     )
     if producer is None:
         return None
-    if not _DRY_RUN:
+    if not _DRY_RUN and producer.discovery_status == "pending":
         producer.discovery_status = "in_progress"
         db_session.flush()
         db_session.commit()
@@ -118,6 +155,7 @@ def run_worker() -> None:
     if _DRY_RUN:
         log.info("DRY RUN mode — status transitions will not be written")
 
+    _configure_nullpool(app, db)
     log.info("Discovery worker started (poll_interval=%ds)", _POLL_INTERVAL)
 
     with app.app_context():
