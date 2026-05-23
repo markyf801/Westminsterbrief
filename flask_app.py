@@ -645,9 +645,10 @@ def _run_startup_migrations():
     try:
         with db.engine.connect() as _conn:
             for _tbl, _col, _defn in [
-                ('ha_stat_producer',    'discovery_status',         "TEXT NOT NULL DEFAULT 'pending'"),
-                ('ha_stat_producer',    'discovery_completed_at',   'TIMESTAMP'),
-                ('ha_stat_producer',    'discovery_failure_reason', 'TEXT'),
+                ('ha_stat_producer',    'discovery_status',             "TEXT NOT NULL DEFAULT 'pending'"),
+                ('ha_stat_producer',    'discovery_completed_at',       'TIMESTAMP'),
+                ('ha_stat_producer',    'discovery_failure_reason',     'TEXT'),
+                ('ha_stat_producer',    'candidates_processed_count',   'INTEGER'),
                 ('ha_stat_publication', 'authorisation_status',     "TEXT NOT NULL DEFAULT 'candidate'"),
                 ('ha_stat_publication', 'subject_area',             'TEXT'),
                 ('ha_stat_publication', 'discovered_at',            'TIMESTAMP'),
