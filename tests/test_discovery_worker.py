@@ -434,7 +434,7 @@ class TestBatchProcessing:
             db.session.rollback()
 
     def test_resume_skips_already_processed_candidates(self, test_app, db):
-        """When candidates_processed_count=50, the first 50 candidates are not classified."""
+        """When candidates_processed_count=50, the first 50 candidates are not passed to the LLM."""
         with test_app.app_context():
             p = _make_producer(db, "wkr-batch-resume",
                                authorisation_status="authorised",

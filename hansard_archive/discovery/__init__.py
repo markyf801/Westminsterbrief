@@ -39,7 +39,7 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
     Returns:
         {
           "fetched":         int,   # raw candidates from strategy
-          "classified":      int,   # passed LLM classification (this run)
+          "llm_passed":      int,   # passed LLM classification (this run)
           "written":         int,   # new rows inserted (this run)
           "skipped":         int,   # already-existing slug collisions (this run)
           "failed_classify": int,   # LLM failures / not-a-publication (this run)
@@ -138,7 +138,7 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
 
     summary = {
         "fetched":         total_fetched,
-        "classified":      len(candidates_to_process) - failed_classify,
+        "llm_passed":      len(candidates_to_process) - failed_classify,
         "written":         written,
         "skipped":         skipped,
         "failed_classify": failed_classify,
