@@ -103,7 +103,8 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
             )
             if existing:
                 skipped += 1
-                log.debug("run_discovery: skip existing %s/%s", producer.slug, slug)
+                log.info("run_discovery: skip existing %s/%s (%s)",
+                         producer.slug, slug, result["name"])
                 continue
 
             raw_cadence = result.get("update_cadence")
