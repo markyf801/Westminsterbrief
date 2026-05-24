@@ -1511,6 +1511,8 @@ def _fts_search(
     date_from: str = "",
     date_to: str = "",
     title_only: bool = False,
+    skip_count: bool = False,
+    lim: int | None = None,
 ) -> tuple[list, int]:
     """
     Full-text search using Postgres tsvectors. Returns (results, total_count).
@@ -1518,6 +1520,9 @@ def _fts_search(
     Each result dict contains:
       session_id, title, date, house, debate_type, slug, department,
       snippet (Markup — safe HTML with <mark> highlights), final_rank
+
+    skip_count=True skips the COUNT query (callers that discard the total should use this).
+    lim overrides the default _PER_PAGE fetch size.
     """
     # Detect phrase query (user wrapped in double quotes)
     if q_raw.startswith('"') and q_raw.endswith('"') and len(q_raw) > 2:
@@ -1527,7 +1532,8 @@ def _fts_search(
         ts_func = "plainto_tsquery"
         q_clean = q_raw
 
-    offset = (page - 1) * _PER_PAGE
+    effective_lim = lim if lim is not None else _PER_PAGE
+    offset = (page - 1) * effective_lim
 
     policy_join = (
         "JOIN ha_session_theme sth ON sth.session_id = s.id"
@@ -1581,9 +1587,7 @@ def _fts_search(
             SELECT DISTINCT ON (session_id)
                 session_id,
                 ts_rank(speech_tsv, {ts_func}('english', :q))      AS body_rank,
-                ts_headline('english', speech_text,
-                            {ts_func}('english', :q),
-                            :hl_opts)                               AS snippet
+                speech_text                                         AS match_text
             FROM ha_contribution
             WHERE speech_tsv @@ {ts_func}('english', :q)
             ORDER BY session_id, body_rank DESC
@@ -1599,7 +1603,9 @@ def _fts_search(
             s.id, s.title, s.date, s.house, s.debate_type, s.slug, s.department,
             COALESCE(tm.title_rank, 0.0) * 3
                 + COALESCE(bc.body_rank, 0.0)                       AS final_rank,
-            bc.snippet
+            ts_headline('english', bc.match_text,
+                        {ts_func}('english', :q),
+                        :hl_opts)                                   AS snippet
         FROM ha_session s
         {policy_join}
         LEFT JOIN best_contrib bc ON bc.session_id = s.id
@@ -1617,13 +1623,13 @@ def _fts_search(
     count_params.update(extra_params)
 
     params = {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS,
-              "lim": _PER_PAGE, "off": offset}
+              "lim": effective_lim, "off": offset}
     if policy_filter:
         params["policy"] = policy_filter
     params.update(extra_params)
 
-    total   = db.session.execute(count_sql, count_params).scalar() or 0
-    rows    = db.session.execute(rows_sql, params).fetchall()
+    total = 0 if skip_count else (db.session.execute(count_sql, count_params).scalar() or 0)
+    rows  = db.session.execute(rows_sql, params).fetchall()
 
     results = []
     for row in rows:
@@ -1765,12 +1771,12 @@ def get_related_content(topic_keywords: str, exclude_uin: str | None = None, lim
     if not _is_postgres():
         return {"debates": [], "pqs": [], "bills": [], "query": topic_keywords}
     try:
-        debates_raw, _ = _fts_search(topic_keywords, page=1)
+        debates_raw, _ = _fts_search(topic_keywords, page=1, skip_count=True, lim=limit)
         debates = sorted(debates_raw, key=lambda r: r["date"] or "", reverse=True)[:limit]
     except Exception:
         debates = []
     try:
-        pqs_raw = _pq_fts_search(topic_keywords, limit=50)
+        pqs_raw = _pq_fts_search(topic_keywords, limit=limit)
         pqs = sorted(
             [r for r in pqs_raw if r["uin"] != exclude_uin],
             key=lambda r: r["tabled_date"] or "",

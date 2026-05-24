@@ -216,3 +216,62 @@ class TestArchiveRoutes:
     def test_archive_debate_detail_missing_returns_404(self, client):
         r = client.get('/archive/debate/1-january-2026/no-such-session')
         assert r.status_code == 404
+
+
+# ── get_related_content optimisation ─────────────────────────────────────────
+
+class TestGetRelatedContentParams:
+    """
+    Verify that get_related_content calls _fts_search with skip_count=True
+    and lim=limit, and _pq_fts_search with limit=limit.
+
+    These parameters eliminate a wasted COUNT(DISTINCT) query and cap
+    ts_headline generation to the number of results actually needed.
+    Both callers that DO need the count (archive_search, hansard_home)
+    pass skip_count=False (the default) — this test confirms only the
+    sidebar call uses the optimised path.
+    """
+
+    def test_skip_count_and_lim_forwarded(self, app):
+        from unittest.mock import patch
+        from hansard_archive.views import get_related_content
+
+        with app.app_context():
+            with (
+                patch('hansard_archive.views._is_postgres', return_value=True),
+                patch('hansard_archive.views._fts_search', return_value=([], 0)) as mock_fts,
+                patch('hansard_archive.views._pq_fts_search', return_value=[]),
+                patch('hansard_archive.views._bill_fts_search', return_value=[]),
+            ):
+                get_related_content("student loan repayments", limit=8)
+
+                mock_fts.assert_called_once()
+                kwargs = mock_fts.call_args.kwargs
+                assert kwargs.get('skip_count') is True, (
+                    "skip_count must be True — COUNT(DISTINCT) is discarded "
+                    "by the sidebar caller and runs for nothing"
+                )
+                assert kwargs.get('lim') == 8, (
+                    "lim must equal limit — fetching _PER_PAGE=25 results "
+                    "and slicing to 8 wastes ts_headline calls"
+                )
+
+    def test_pq_fts_limit_matches_limit(self, app):
+        from unittest.mock import patch
+        from hansard_archive.views import get_related_content
+
+        with app.app_context():
+            with (
+                patch('hansard_archive.views._is_postgres', return_value=True),
+                patch('hansard_archive.views._fts_search', return_value=([], 0)),
+                patch('hansard_archive.views._pq_fts_search', return_value=[]) as mock_pq,
+                patch('hansard_archive.views._bill_fts_search', return_value=[]),
+            ):
+                get_related_content("student loan repayments", limit=8)
+
+                mock_pq.assert_called_once()
+                kwargs = mock_pq.call_args.kwargs
+                assert kwargs.get('limit') == 8, (
+                    "_pq_fts_search must use limit=8, not the old hardcoded 50 "
+                    "— 50 ts_headline calls for a sidebar showing 8 results"
+                )
