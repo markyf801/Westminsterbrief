@@ -462,3 +462,36 @@ class TestBatchProcessing:
             assert summary["resume_offset"] == 50
             assert summary["fetched"] == 100
             db.session.rollback()
+
+    def test_invalid_update_cadence_is_nulled_not_written(self, test_app, db):
+        """LLM returning an invalid update_cadence (e.g. 'biannual') must not raise — set NULL."""
+        with test_app.app_context():
+            from hansard_archive.models import StatPublication
+
+            p = _make_producer(db, "wkr-bad-cadence",
+                               authorisation_status="authorised",
+                               discovery_status="in_progress")
+            db.session.commit()
+
+            candidates = [self._make_candidate(title="Bad Cadence Pub", url="https://e.com/bad")]
+
+            bad_result = {
+                "name":           "Bad Cadence Pub",
+                "description":    "A publication.",
+                "update_cadence": "biannual",  # invalid — not in ck_stat_pub_cadence
+                "subject_area":   "welfare",
+            }
+
+            with patch("hansard_archive.discovery.strategies.select_strategy") as mock_strat, \
+                 patch("hansard_archive.discovery.classifier.classify_candidate",
+                       return_value=bad_result):
+                mock_strat.return_value.fetch_candidates.return_value = candidates
+                from hansard_archive.discovery import run_discovery
+                summary = run_discovery(p, db.session, gemini_key="fake")
+
+            assert summary["written"] == 1
+            pub = db.session.query(StatPublication).filter_by(
+                producer_id=p.id).first()
+            assert pub is not None
+            assert pub.update_cadence is None  # nulled, not 'biannual'
+            db.session.rollback()

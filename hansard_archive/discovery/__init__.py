@@ -26,6 +26,11 @@ log = logging.getLogger("discovery")
 
 _BATCH_SIZE = 50
 
+_VALID_CADENCES = frozenset({
+    "daily", "weekly", "monthly", "quarterly",
+    "annual", "biennial", "ad_hoc", "one_off",
+})
+
 
 def run_discovery(producer, db_session, gemini_key: str) -> dict:
     """
@@ -101,13 +106,21 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
                 log.debug("run_discovery: skip existing %s/%s", producer.slug, slug)
                 continue
 
+            raw_cadence = result.get("update_cadence")
+            if raw_cadence and raw_cadence not in _VALID_CADENCES:
+                log.warning(
+                    "run_discovery: invalid update_cadence %r for %s/%s — setting NULL",
+                    raw_cadence, producer.slug, slug,
+                )
+                raw_cadence = None
+
             pub = StatPublication(
                 producer_id=producer.id,
                 slug=slug,
                 name=result["name"],
                 url=cand.url,
                 description=result.get("description"),
-                update_cadence=result.get("update_cadence"),
+                update_cadence=raw_cadence,
                 subject_area=result.get("subject_area"),
                 authorisation_status="candidate",
                 discovered_at=datetime.utcnow(),
