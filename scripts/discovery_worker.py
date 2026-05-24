@@ -172,6 +172,10 @@ def run_worker() -> None:
                 break
             except Exception as exc:
                 log.exception("Unhandled exception in worker loop: %s", exc)
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
                 time.sleep(_POLL_INTERVAL)
 
 
