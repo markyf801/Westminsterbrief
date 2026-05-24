@@ -393,6 +393,21 @@ class TestGovUkSearchStrategy:
         assert items[0].url.startswith("https://www.gov.uk")
         assert isinstance(items[0], CandidateItem)
 
+    def test_sends_order_newest_param(self):
+        """API call must include order=newest so most-recent release is stored on first write."""
+        from hansard_archive.discovery.strategies import GovUkSearchStrategy
+        strategy = GovUkSearchStrategy()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"results": []}
+        p = MagicMock()
+        p.slug = "department-for-education"
+        p.producer_type = "central_department"
+        p.web_root_url = "https://www.gov.uk/"
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            strategy.fetch_candidates(p)
+        _, kwargs = mock_get.call_args
+        assert kwargs["params"]["order"] == "newest"
+
     def test_paginates_when_full_page(self):
         from hansard_archive.discovery.strategies import GovUkSearchStrategy
         full_page  = {"results": [{"title": f"Pub {i}", "link": f"/pub{i}"} for i in range(100)]}
