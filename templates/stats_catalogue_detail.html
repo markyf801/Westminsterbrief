@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}{{ pub.name }} — {{ producer.short_name or producer.name }} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ pub.description | truncate(160, True, '…') if pub.description else pub.name ~ ' — statistical publication from ' ~ (producer.short_name or producer.name) ~ '.' }}{% endblock %}
+
+{% block extra_head %}
+<style>
+.sd-wrap        { max-width: 860px; margin: 32px auto; padding: 0 24px; }
+.sd-back        { font-size: 13px; color: #3b7dd8; text-decoration: none; display: inline-block; margin-bottom: 20px; }
+.sd-back:hover  { text-decoration: underline; }
+.sd-producer    { font-size: 13px; color: #5a6878; margin-bottom: 8px; }
+.sd-producer a  { color: #3b7dd8; text-decoration: none; }
+.sd-producer a:hover { text-decoration: underline; }
+.sd-h1          { font-size: 26px; font-weight: 700; margin: 0 0 16px; line-height: 1.3; }
+.sd-cta         { display: inline-block; padding: 10px 20px; background: #1a4a6e; color: #fff; border-radius: 5px; font-weight: 600; font-size: 14px; text-decoration: none; margin-bottom: 28px; }
+.sd-cta:hover   { background: #15395a; }
+.sd-section     { border-top: 1px solid #e5e8ec; padding: 18px 0; }
+.sd-section:last-child { border-bottom: 1px solid #e5e8ec; }
+.sd-label       { font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+.sd-value       { font-size: 14px; color: #1f2937; line-height: 1.6; }
+.sd-meta-grid   { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; margin-bottom: 4px; }
+.sd-description { font-size: 15px; color: #374151; line-height: 1.7; }
+.sd-badge       { display: inline-block; padding: 3px 9px; border-radius: 3px; font-size: 12px; font-weight: 600; }
+.b-annual       { background: #e0e7ff; color: #3730a3; }
+.b-quarterly    { background: #dbeafe; color: #1d4ed8; }
+.b-monthly      { background: #dcfce7; color: #15803d; }
+.b-weekly       { background: #d1fae5; color: #065f46; }
+.b-daily        { background: #fef9c3; color: #854d0e; }
+.b-biennial     { background: #f3f4f6; color: #374151; }
+.b-ad_hoc       { background: #fef3c7; color: #92400e; }
+.b-one_off      { background: #f1f5f9; color: #475569; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sd-wrap">
+    <a class="sd-back" href="/stats{% if request.referrer and '/stats' in request.referrer %}{{ request.referrer.split('/stats')[1] | replace(request.host_url, '') }}{% endif %}">&larr; Back to catalogue</a>
+
+    <div class="sd-producer">
+        <a href="{{ producer.web_root_url }}" target="_blank" rel="noopener">{{ producer.short_name or producer.name }}</a>
+    </div>
+
+    <h1 class="sd-h1">{{ pub.name }}</h1>
+
+    <a class="sd-cta" href="{{ pub.url }}" target="_blank" rel="noopener">View on GOV.UK ↗</a>
+
+    {% if pub.description %}
+    <div class="sd-section">
+        <div class="sd-label">Description</div>
+        <p class="sd-description">{{ pub.description }}</p>
+    </div>
+    {% endif %}
+
+    <div class="sd-section">
+        <div class="sd-meta-grid">
+            <div>
+                <div class="sd-label">Update cadence</div>
+                <div class="sd-value">
+                    {% if pub.update_cadence %}
+                    <span class="sd-badge b-{{ pub.update_cadence }}">{{ cadence_label }}</span>
+                    {% else %}
+                    <span style="color:#9ca3af;">—</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% if pub.subject_area %}
+            <div>
+                <div class="sd-label">Subject area</div>
+                <div class="sd-value">{{ pub.subject_area }}</div>
+            </div>
+            {% endif %}
+            <div>
+                <div class="sd-label">Publisher</div>
+                <div class="sd-value">
+                    <a href="{{ producer.web_root_url }}" target="_blank" rel="noopener" style="color:#3b7dd8; text-decoration:none;">{{ producer.name }}</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sd-section">
+        <div class="sd-meta-grid">
+            <div>
+                <div class="sd-label">First discovered</div>
+                <div class="sd-value">{{ pub.discovered_at.strftime('%d %B %Y') if pub.discovered_at else '—' }}</div>
+            </div>
+            <div>
+                <div class="sd-label">Last confirmed</div>
+                <div class="sd-value">{{ pub.last_seen_at.strftime('%d %B %Y') if pub.last_seen_at else '—' }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

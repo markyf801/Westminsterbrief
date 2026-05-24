@@ -60,6 +60,7 @@ from tracker import tracker_bp
 from debate_scanner import debate_scanner_bp
 from mp_search import mp_search_bp
 from stakeholder_directory.views import directory_bp
+from stats_catalogue import stats_catalogue_bp
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -2508,6 +2509,7 @@ app.register_blueprint(bills_bp)
 app.register_blueprint(brief_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(hansard_bp2)
+app.register_blueprint(stats_catalogue_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
@@ -2560,6 +2562,10 @@ def inject_version():
 def inject_admin_auth():
     from flask import session as flask_session
     return {'admin_authenticated': flask_session.get('admin_authenticated', False)}
+
+@app.context_processor
+def inject_stats_catalogue_flag():
+    return {'stats_catalogue_enabled': bool(os.environ.get('STATS_CATALOGUE_ENABLED'))}
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
