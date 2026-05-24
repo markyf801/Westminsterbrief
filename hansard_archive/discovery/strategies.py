@@ -125,6 +125,12 @@ class GovUkSearchStrategy:
                         "count":    page_size,
                         "fields[]": ["title", "description", "link",
                                      "public_timestamp"],
+                        # Newest-first ensures that when a slug collision is
+                        # detected and the candidate is skipped, the already-
+                        # stored URL belongs to the most recent release rather
+                        # than whichever release happened to come first in
+                        # default (relevance) ordering.
+                        "order":    "newest",
                     },
                     headers={"User-Agent": _UA},
                     timeout=_TIMEOUT,
