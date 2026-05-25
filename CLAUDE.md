@@ -386,6 +386,7 @@ Clear mapping to avoid confusion when discussing issues:
 ### Railway Postgres connections
 
 - **Local connections** (migration scripts, pg_dump, psql) need the **public URL** from Postgres service → Database → Config. **The actual hostname for this project is `hopper.proxy.rlwy.net:50798`** — not the generic `<region>.proxy.rlwy.net` pattern shown in Railway docs. Full URL shape: `postgresql://postgres:<password>@hopper.proxy.rlwy.net:50798/railway`. The internal hostname (`postgres.railway.internal`) only resolves inside Railway's network.
+- **Credentials are in `.env`** at the project root (`c:\Users\marky\hansard_app\.env`). The full `DATABASE_URL` is stored there — use it directly for psql, pg_dump, and diagnostic scripts rather than copying from the Railway dashboard. Example: `psql "$env:DATABASE_URL"` in PowerShell after loading the file, or just copy the value directly from `.env`.
 - **Production Flask service** uses `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a Variable Reference — not a hardcoded string. This resolves at deploy time.
 
 ### Password rotation
