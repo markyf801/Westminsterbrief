@@ -2564,10 +2564,6 @@ def archive_party(party_slug: str):
 
 # Policy area display order comes from hansard_archive/policy_areas.py — _pa.display_order().
 
-@stats_bp.route("")
-def stats_index():
-    return render_template("hansard_archive/stats_coming_soon.html")
-
 
 
 @stats_bp.route("/<string:theme_slug>")

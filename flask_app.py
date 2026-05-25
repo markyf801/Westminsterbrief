@@ -2507,9 +2507,9 @@ app.register_blueprint(directory_bp)
 app.register_blueprint(archive_bp)
 app.register_blueprint(bills_bp)
 app.register_blueprint(brief_bp)
+app.register_blueprint(stats_catalogue_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(hansard_bp2)
-app.register_blueprint(stats_catalogue_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────

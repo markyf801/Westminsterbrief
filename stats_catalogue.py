@@ -52,7 +52,8 @@ _PER_PAGE = 25
 @stats_catalogue_bp.before_request
 def _check_enabled():
     if not _ENABLED:
-        abort(404)
+        from flask import render_template as _rt
+        return _rt("hansard_archive/stats_coming_soon.html")
 
 
 @stats_catalogue_bp.route("/stats")
