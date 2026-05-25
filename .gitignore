@@ -32,6 +32,11 @@ instance/
 minister_cache.json
 .pytest_cache/
 
+# Ad-hoc diagnostic scripts (root-level only — keep scripts/ tracked)
+/check_*.py
+/debug_*.py
+/ons_*.py
+
 # Scratch / local-only files
 ClaudeAPI.txt
 WestministerBrief_BACK_UP Encyption.txt
