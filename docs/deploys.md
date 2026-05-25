@@ -51,7 +51,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-25 | `3349773` | Docs: note that DATABASE_URL is stored in .env _(retroactive)_                              | Mark     |
 | 2026-05-25 | `00dc7b7` | Chore: .gitignore patterns for ad-hoc diagnostic scripts _(retroactive)_                    | Mark     |
 | 2026-05-25 | `3e4f884` | Perf: eliminate wasted COUNT + cap ts_headline calls in PQ related-content _(retroactive)_  | Mark     |
-| 2026-05-25 | `638446c` | Chore: operational logging — deploys.md + CLAUDE.md discipline                             | Mark     |
+| 2026-05-25 | `3ffe57d` | Chore: operational logging — deploys.md + CLAUDE.md discipline                             | Mark     |
 
 ---
 
