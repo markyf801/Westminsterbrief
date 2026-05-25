@@ -37,7 +37,8 @@ At the beginning of any new working session:
 2. Check "Active priorities" to understand what's in progress and where the plans live
 3. For any module you're about to change, read its design doc (see "Project files reference")
 4. Run `git log --oneline -10` to orient to recent commits
-5. **Do not assume implicit knowledge from past sessions** — verify by reading canonical docs on disk
+5. Check `docs/deploys.md` — recent production pushes, last known-good SHA, any outstanding half-states
+6. **Do not assume implicit knowledge from past sessions** — verify by reading canonical docs on disk
 
 The spec captures locked decisions; it does not always capture what's been built since the last edit. Before drafting a plan or scoping work, ask: "What's actually been built vs what the doc lists as pending?"
 
@@ -72,6 +73,7 @@ Key documents a new session should know about:
 | `docs/stakeholder-directory-design.md` | Stakeholder Directory spec — read before touching that module |
 | `docs/pre-launch-checklist.md` | Legal/compliance + SEO checklist — do not remove noindex without working through this |
 | `docs/ideas-backlog.md` | Active ideas and killed ideas — capture new ideas here during sessions |
+| `docs/deploys.md` | Append-only ledger of production pushes and SQL — source of truth for recent production state |
 | `westminster-brief-phase-2-brief.md` | Phase 2 (paid product) master scoping doc |
 
 ---
@@ -566,6 +568,7 @@ The first full ingestion (Apr 2026) produced only 7 written evidence records vs 
 - The `SECRET_KEY` in flask_app.py is a placeholder — must be overridden by env var on Railway
 - Backup files in root (bckup_flask.py etc.) and backup templates are clutter — safe to delete eventually
 - No database migration system — relies on `db.create_all()` which is fine for now
+- **Pre-push checklist import check connects to production Postgres** (raised 2026-05-25): step 1 of the Pre-push checklist — `python -c "from flask_app import app; print('OK')"` — opens a live Postgres connection when `.env` contains a production `DATABASE_URL`. Contradicts the local→production prohibition established 2026-05-25. Fix: `DATABASE_URL=sqlite:///local_check.db python -c "from flask_app import app; print('OK')"`. Needs testing before the checklist item is updated.
 
 ## Active work in progress
 
@@ -1249,6 +1252,70 @@ Beta is only a preview layer — it does not have its own data, its own users, o
 **Never push automatically.** Always commit locally and show what changed, then wait for explicit instruction to push. The user will say "push" or "push it" when ready. This applies to small fixes and template changes as much as anything else.
 
 When Mark requests a push of a small unrelated change while in the middle of a Phase build, push only the requested change — do not bundle in-progress Phase work alongside it.
+
+## Operational logging — deploys.md
+
+`docs/deploys.md` is the append-only ledger of every production-touching
+operation. It is the source of truth for current production state.
+
+### Push discipline
+
+Before every `git push` to `master`, add a row to the push log in
+`docs/deploys.md`. The update goes in the same commit as the work — not a
+separate commit after the push.
+
+| Field | What to put |
+|-------|-------------|
+| Date | YYYY-MM-DD |
+| SHA | 7-char short SHA of HEAD commit being pushed |
+| Summary | One line — same as the commit message subject |
+| Operator | Mark (or "Claude Code" if acting on explicit instruction) |
+
+**Never push to master without updating `docs/deploys.md` first.**
+
+**Exception — emergency reverts:** If production needs an immediate hot revert
+(broken deploy, live incident), push the revert first to restore service. Update
+`docs/deploys.md` within the hour once the situation is stable. Speed of
+recovery takes priority over logging discipline.
+
+### Production SQL discipline
+
+Any SQL run directly against production Postgres — Railway Query console, psql,
+or a script using the production DATABASE_URL — must be appended to the
+"Production SQL log" section at the bottom of `docs/deploys.md`, dated and with
+the full statement(s) and a one-line context note.
+
+### Session summary protocol
+
+When Mark says "session summary please", produce:
+
+```
+## Session summary — YYYY-MM-DD
+
+**Master commits today**
+- `<sha>` — <description>
+
+**Beta commits today**
+- `<sha>` — <description>
+
+**Production SQL today**
+- <statement + context>, or: none
+
+**Outstanding items / half-states**
+- <anything left mid-flight>
+
+**Known-good master commit**
+`<sha>` — <description>
+
+**Before next session**
+- <anything to be aware of>
+```
+
+### Current state shortcut
+
+When asked "what's the current state?" or "where are we?", read
+`docs/deploys.md` and report: last master push (SHA + date), any recorded
+half-states, and the most recent production SQL entry.
 
 ## Pre-push checklist
 
