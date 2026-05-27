@@ -14,9 +14,8 @@ inject_stats_catalogue_flag context processor in flask_app.py.
 from __future__ import annotations
 
 import os
-import time
 
-from flask import Blueprint, abort, current_app, render_template, request
+from flask import Blueprint, abort, render_template, request
 
 stats_catalogue_bp = Blueprint("stats_catalogue", __name__)
 
@@ -59,14 +58,9 @@ def _check_enabled():
 
 @stats_catalogue_bp.route("/stats")
 def catalogue_list():
-    _t0 = time.monotonic()
-    current_app.logger.info("[STATS_DIAG] catalogue_list entered")
-
     from extensions import db
     from hansard_archive.models import StatProducer, StatPublication
     from sqlalchemy import or_
-
-    current_app.logger.info("[STATS_DIAG] imports done +%.3fs", time.monotonic() - _t0)
 
     q = (
         db.session.query(StatPublication, StatProducer)
@@ -102,26 +96,17 @@ def catalogue_list():
         sort = "newest"
         q = q.order_by(StatPublication.last_seen_at.desc())
 
-    current_app.logger.info("[STATS_DIAG] query built +%.3fs", time.monotonic() - _t0)
-
-    _t_count = time.monotonic()
     total = q.count()
-    current_app.logger.info("[STATS_DIAG] COUNT done (%d rows) +%.3fs (query %.3fs)",
-                            total, time.monotonic() - _t0, time.monotonic() - _t_count)
 
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (ValueError, TypeError):
         page = 1
 
-    _t_rows = time.monotonic()
     rows = q.offset((page - 1) * _PER_PAGE).limit(_PER_PAGE).all()
-    current_app.logger.info("[STATS_DIAG] main rows done (%d rows) +%.3fs (query %.3fs)",
-                            len(rows), time.monotonic() - _t0, time.monotonic() - _t_rows)
 
     total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
 
-    _t_prod = time.monotonic()
     producers = (
         db.session.query(StatProducer)
         .join(StatPublication, StatPublication.producer_id == StatProducer.id)
@@ -133,12 +118,8 @@ def catalogue_list():
         .order_by(StatProducer.name.asc())
         .all()
     )
-    current_app.logger.info("[STATS_DIAG] producers done (%d) +%.3fs (query %.3fs)",
-                            len(producers), time.monotonic() - _t0, time.monotonic() - _t_prod)
 
-    current_app.logger.info("[STATS_DIAG] calling render_template +%.3fs", time.monotonic() - _t0)
-
-    result = render_template(
+    return render_template(
         "stats_catalogue.html",
         rows=rows,
         total=total,
@@ -152,9 +133,6 @@ def catalogue_list():
         cadence_options=_CADENCE_OPTIONS,
         cadence_labels=_CADENCE_LABELS,
     )
-
-    current_app.logger.info("[STATS_DIAG] render_template done, returning +%.3fs", time.monotonic() - _t0)
-    return result
 
 
 @stats_catalogue_bp.route("/stats/<producer_slug>/<pub_slug>")
