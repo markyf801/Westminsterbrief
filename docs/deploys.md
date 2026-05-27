@@ -53,35 +53,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-25 | `3e4f884` | Perf: eliminate wasted COUNT + cap ts_headline calls in PQ related-content _(retroactive)_  | Mark     |
 | 2026-05-25 | `3ffe57d` | Chore: operational logging — deploys.md + CLAUDE.md discipline                             | Mark     |
 | 2026-05-27 | `f947ed8` | Docs: DBeaver operational note + /stats diagnostic findings update                         | Mark     |
-
----
-
-## Active investigations
-
-Half-states and ongoing diagnostics. Clear entry when resolved.
-
-### /stats page — 120-second gunicorn worker timeout on beta (opened 2026-05-25)
-
-**Status: BLOCKED — tooling limitation, investigation paused.**
-
-`GET /stats` on beta (`beta.westminsterbrief.co.uk/stats`) causes a gunicorn
-WORKER TIMEOUT after exactly 120 seconds. Production is unaffected
-(`STATS_CATALOGUE_ENABLED` not set on production; coming-soon page served).
-
-**Ruled out:**
-- Blueprint route precedence — fixed in commit `832916f` (on beta, not master)
-- wb_beta permissions — SELECT confirmed on both `ha_stat_producer` and
-  `ha_stat_publication` via Railway Query console
-- Database queries — all three catalogue queries timed via DBeaver (2026-05-27):
-  COUNT 2.7 ms, main rows 16.7 ms, producers dropdown 3.3 ms. Total ~23 ms.
-  The database is not the bottleneck.
-
-**Confirmed:** hang is in the **app layer** — somewhere between request arrival
-and query execution in `catalogue_list()`.
-
-**Next step:** instrument `catalogue_list()` with timing logs; check connection
-pool config; inspect `_check_enabled` before_request hook; check whether the
-discovery worker holds the SQLAlchemy session or connection pool at request time.
+| 2026-05-27 | `TBD`     | Fix: stats catalogue route precedence + pool_pre_ping stale connection fix                 | Mark     |
 
 ---
 

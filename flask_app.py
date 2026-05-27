@@ -91,6 +91,10 @@ if _db_url.startswith('postgres://'):
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 280,
+}
 
 db.init_app(app)
 
@@ -2507,9 +2511,9 @@ app.register_blueprint(directory_bp)
 app.register_blueprint(archive_bp)
 app.register_blueprint(bills_bp)
 app.register_blueprint(brief_bp)
+app.register_blueprint(stats_catalogue_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(hansard_bp2)
-app.register_blueprint(stats_catalogue_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
