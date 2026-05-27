@@ -53,7 +53,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-25 | `3e4f884` | Perf: eliminate wasted COUNT + cap ts_headline calls in PQ related-content _(retroactive)_  | Mark     |
 | 2026-05-25 | `3ffe57d` | Chore: operational logging — deploys.md + CLAUDE.md discipline                             | Mark     |
 | 2026-05-27 | `f947ed8` | Docs: DBeaver operational note + /stats diagnostic findings update                         | Mark     |
-| 2026-05-27 | `TBD`     | Fix: stats catalogue route precedence + pool_pre_ping stale connection fix                 | Mark     |
+| 2026-05-27 | `9289347` | Fix: stats catalogue route precedence + pool_pre_ping stale connection fix                 | Mark     |
 
 ---
 
