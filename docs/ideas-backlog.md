@@ -271,13 +271,40 @@ If accuracy is genuinely useful: publish predictions with calibrated confidence 
 
 ---
 
-### £5/Month Subscription Tier Strategy
+### £5 Paid Mailout — Cheaper Recurring Entry Product
 
-Mark wants to return to this question in a separate session. Captured here as a reminder. The context is the broader pricing and positioning question — what a £5/month tier looks like, what it includes, and how it fits between the free toolkit and the paid stakeholder briefing pack. Separate from Phase 2A.5 work.
+A cheaper recurring entry-point product alongside the eventual £49 briefing pack. Email-shaped, low-commitment, designed to build a paid email list as an asset distinct from website traffic and from the free Substack plan.
 
-**Revisit trigger:** Mark explicitly flags "subscription strategy" session; any pricing/monetisation conversation; post-launch when actual user behaviour informs what free users want to upgrade for.
+**What it is:**
+- £5 per issue or per month, recurring rather than one-off
+- Email format (not PDF), drawing on the same WB data corpus that backs the £49 pack
+- Curated regular slice of the aggregated data rather than on-demand comprehensive synthesis
 
-*Captured 13 May 2026 — deferred by Mark mid-session.*
+**Distinct from the existing free Substack plan** (Layer A editorial + Layer B automated digest, both free as marketing infrastructure per 13 May 2026 decision). The £5 mailout is paid, recurring, lower commitment than £49 pack, and builds a separate paid email list asset.
+
+**Strategic positioning — not yet decided:**
+- *Bridge product:* lives between free archive and £49 pack as a first-paid step that converts a subset of subscribers to £49 buyers
+- *Standalone complement:* serves users who want ongoing low-effort touch rather than deep on-demand synthesis — different customer relationship from £49
+
+Probably both at different times; bridge first, standalone product as it matures.
+
+**Why this works given the moat framing:**
+The £49 pack's defensibility is the WB data corpus Claude can't otherwise access. Same logic supports a £5 mailout — a regular email digest drawing on the structured Hansard/PQ/stats aggregation is something a Claude Pro user can't reproduce on their own. Different product shape, same underlying moat.
+
+**Open design questions:**
+- Cadence: weekly, monthly, event-triggered, mixed?
+- Topic scope: themed by policy area (subscriber-selected), general Westminster digest, or editor's choice?
+- Length: short (300-500 words), medium (1000-1500), or long-form?
+- Production: manual editorial under Mark's name, Code-generated and reviewed, or fully automated?
+- Platform: Substack paid tier (low lock-in concern, native handling) or separate (ConvertKit/Buttondown, more control)?
+- Lifecycle: monthly cancellable, pre-paid blocks, lifetime early-subscriber tier?
+
+**Cost economics (rough):**
+AI cost is pennies per issue at Flash-Lite/Haiku scale. Email infrastructure roughly £15-30/mo at low volume, or 10% to Substack. At £5/subscriber/month, 100 subscribers = £6,000/year gross with healthy margins.
+
+**Revisit trigger:** Free archive has stable returning audience; Phase 2B £49 pack is close to launch or recently launched; users explicitly asking for ongoing updates rather than on-demand reports; "how do we build recurring relationships with readers" or "what's the cheaper product" conversation.
+
+*Captured 13 May 2026 (initial stub) — expanded 27 May 2026 alongside £49 pack moat clarification.*
 
 ---
 
