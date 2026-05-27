@@ -56,7 +56,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-27 | `9289347` | Fix: stats catalogue route precedence + pool_pre_ping stale connection fix                 | Mark     |
 | 2026-05-27 | `2371c20` | Feat: Phase 1.8 — StatPublicationTheme model + policy_area classifier + discovery write path | Mark   |
 | 2026-05-27 | `2feda73` | Feat: Phase 1.8 — backfill script for existing stat publication policy_area tags            | Mark     |
-| 2026-05-27 | `1622d4c` | Fix: backfill written counter increments in dry-run mode too                                | Mark     |
+| 2026-05-27 | `1622d4c` | Fix: backfill written counter increments in dry-run mode too (pushed before execute run)    | Mark     |
 
 ---
 
@@ -133,3 +133,20 @@ CREATE INDEX idx_stat_pub_theme_type ON ha_stat_publication_theme(theme_type);
 ```
 
 **Verified:** `SELECT COUNT(*) FROM ha_stat_publication_theme` → 0 (empty, as expected).
+
+---
+
+### 2026-05-27 — Phase 1.8 policy_area backfill execute run
+
+**Context:** Phase 1.8 backfill of controlled policy_area tags onto existing
+`ha_stat_publication` rows. Run via Railway one-shot service
+`backfill-stat-policy-areas` using `scripts/backfill_pub_policy_areas.py --execute`.
+Not raw SQL — writes via SQLAlchemy using production `DATABASE_URL`.
+
+**Result:** 2,398 theme rows written across 1,117 publications (7 classify
+failures — all non-publication documents correctly rejected). 0 pubs with no
+tags returned.
+
+**Phase 1.8 policy_area tagging complete.** Steady-state tagging now handled
+inline by `run_discovery()` for new publications. Backfill service left dormant
+(restart policy: Never) in case re-run is needed for future producer additions.
