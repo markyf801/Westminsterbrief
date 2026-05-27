@@ -57,6 +57,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-27 | `2371c20` | Feat: Phase 1.8 — StatPublicationTheme model + policy_area classifier + discovery write path | Mark   |
 | 2026-05-27 | `2feda73` | Feat: Phase 1.8 — backfill script for existing stat publication policy_area tags            | Mark     |
 | 2026-05-27 | `1622d4c` | Fix: backfill written counter increments in dry-run mode too (pushed before execute run)    | Mark     |
+| 2026-05-27 | `b921208` | Docs: expand £5 Paid Mailout entry in ideas backlog                                         | Mark     |
 
 ---
 
