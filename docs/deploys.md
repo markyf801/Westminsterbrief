@@ -54,6 +54,8 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-25 | `3ffe57d` | Chore: operational logging — deploys.md + CLAUDE.md discipline                             | Mark     |
 | 2026-05-27 | `f947ed8` | Docs: DBeaver operational note + /stats diagnostic findings update                         | Mark     |
 | 2026-05-27 | `9289347` | Fix: stats catalogue route precedence + pool_pre_ping stale connection fix                 | Mark     |
+| 2026-05-27 | `tbc`     | Feat: Phase 1.8 — StatPublicationTheme model + policy_area classifier + discovery write path | Mark   |
+| 2026-05-27 | `tbc`     | Feat: Phase 1.8 — backfill script for existing stat publication policy_area tags            | Mark     |
 
 ---
 
