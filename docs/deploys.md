@@ -103,3 +103,32 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ha_contribution_speech_tsv
 
 **Verified:** EXPLAIN ANALYZE confirmed Bitmap Index Scan — ha_pq 4.265 ms,
 ha_contribution 0.873 ms.
+
+---
+
+### 2026-05-27 — Phase 1.8 ha_stat_publication_theme table
+
+**Context:** `db.create_all()` was not running on production (SKIP_MIGRATIONS=1 was
+accidentally set). Table created manually via DBeaver. SKIP_MIGRATIONS=1 retained
+on production service going forward — all future schema changes go via DBeaver.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798)
+
+```sql
+CREATE TABLE ha_stat_publication_theme (
+    id SERIAL PRIMARY KEY,
+    publication_id INTEGER NOT NULL REFERENCES ha_stat_publication(id) ON DELETE CASCADE,
+    theme VARCHAR(200) NOT NULL,
+    theme_type VARCHAR(20) NOT NULL DEFAULT 'specific',
+    confidence FLOAT,
+    tagged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    model_used VARCHAR(100),
+    CONSTRAINT uq_stat_pub_theme_publication_theme_type
+        UNIQUE (publication_id, theme, theme_type)
+);
+
+CREATE INDEX idx_stat_pub_theme_pub ON ha_stat_publication_theme(publication_id);
+CREATE INDEX idx_stat_pub_theme_type ON ha_stat_publication_theme(theme_type);
+```
+
+**Verified:** `SELECT COUNT(*) FROM ha_stat_publication_theme` → 0 (empty, as expected).
