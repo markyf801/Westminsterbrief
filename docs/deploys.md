@@ -60,6 +60,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-27 | `b921208` | Docs: expand £5 Paid Mailout entry in ideas backlog                                         | Mark     |
 | 2026-05-27 | `6e08efa` | Chore: strip [STATS_DIAG] timing instrumentation from stats_catalogue.py                    | Mark     |
 | 2026-05-27 | `b719891` | Chore: remove DISCOVERY_DRY_RUN flag from discovery worker                                  | Mark     |
+| 2026-05-27 | `d06658c` | Docs: close out HESA producer de-registration (deploys.md + phase-1-8-scoping.md)          | Mark     |
 
 ---
 
@@ -134,6 +135,49 @@ CREATE TABLE ha_stat_publication_theme (
 CREATE INDEX idx_stat_pub_theme_pub ON ha_stat_publication_theme(publication_id);
 CREATE INDEX idx_stat_pub_theme_type ON ha_stat_publication_theme(theme_type);
 ```
+
+### 2026-05-27 — HESA producer de-registration
+
+**Context:** HESA / Jisc (producer id 25, slug `hesa-jisc`) de-registered as an active producer. Site blocks all automated access (403 across all paths — root, `/data-and-analysis`, `/api` — confirmed 27 May 2026). No GOV.UK organisation registration exists for HESA. HESA data surfaces correctly via DfE GOV.UK publications (file URLs on DfE landing pages link directly to hesa.ac.uk). Discovery had previously run on 2026-05-23 and completed cleanly with zero candidates — the 403 was caught and swallowed by `DirectPageParserStrategy` (logged as a warning; not surfaced as a failure to the state machine). Producer was `authorisation_status = 'authorised'`, `discovery_status = 'completed'` before this update. Zero `ha_stat_publication` rows attributed to HESA.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 27 May 2026 ~21:22–21:25 BST
+
+```sql
+UPDATE ha_stat_producer
+SET authorisation_status     = 'declined',
+    authorisation_reason     = 'Site blocks all automated access (403 across all paths). HESA data surfaces transitively via DfE GOV.UK publications — no standalone discovery strategy is viable. De-registered as active producer 2026-05-27.',
+    discovery_status         = 'failed',
+    discovery_failure_reason = 'Site blocks all automated access (403 across all paths). HESA data surfaces transitively via DfE GOV.UK publications — no standalone discovery strategy is viable. De-registered as active producer 2026-05-27.',
+    updated_at               = CURRENT_TIMESTAMP
+WHERE slug = 'hesa-jisc';
+
+INSERT INTO ha_stat_producer_auth_log
+    (producer_id, changed_at, old_status, new_status, change_reason, recorded_by)
+VALUES
+    (25, CURRENT_TIMESTAMP, 'authorised', 'declined',
+     'Site blocks all automated access (403 across all paths). HESA data surfaces transitively via DfE GOV.UK publications — no standalone discovery strategy is viable. De-registered as active producer 2026-05-27.',
+     'Mark Forde (DBeaver, manual de-registration)');
+```
+
+**Result:** 1 row updated (`ha_stat_producer` id 25), 1 row inserted (`ha_stat_producer_auth_log` id 10). Zero data rows affected.
+
+**Note:** `updated_at` set explicitly because `onupdate=datetime.utcnow` is an ORM hook — raw SQL bypasses it. This is the required pattern for all raw SQL updates on ORM-managed tables.
+
+---
+
+## Railway infrastructure log
+
+One-off infrastructure changes (service additions, deletions, env var changes) that
+don't correspond to a git push or SQL operation.
+
+---
+
+### 2026-05-27 — Service teardown: backfill-stat-policy-areas
+
+**Action:** Deleted Railway service `backfill-stat-policy-areas`  
+**Reason:** One-shot policy_area backfill complete — 1,117 publications tagged and verified. Service no longer needed.  
+**Script retained:** `scripts/backfill_pub_policy_areas.py` — kept in repo for future re-runs if needed.  
+**Expected effect:** Reduce monthly Railway memory cost.
 
 **Verified:** `SELECT COUNT(*) FROM ha_stat_publication_theme` → 0 (empty, as expected).
 
