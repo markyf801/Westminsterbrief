@@ -59,6 +59,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-27 | `1622d4c` | Fix: backfill written counter increments in dry-run mode too (pushed before execute run)    | Mark     |
 | 2026-05-27 | `b921208` | Docs: expand £5 Paid Mailout entry in ideas backlog                                         | Mark     |
 | 2026-05-27 | `6e08efa` | Chore: strip [STATS_DIAG] timing instrumentation from stats_catalogue.py                    | Mark     |
+| 2026-05-27 | `b719891` | Chore: remove DISCOVERY_DRY_RUN flag from discovery worker                                  | Mark     |
 
 ---
 

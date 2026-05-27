@@ -422,13 +422,9 @@ Neither the ingester nor the schema currently supports this link.
 
 ---
 
-### Rename DISCOVERY_DRY_RUN to something less misleading
+### ~~Rename DISCOVERY_DRY_RUN to something less misleading~~
 
-`DISCOVERY_DRY_RUN=1` suppresses `ha_stat_producer.discovery_status` transitions only — it does **not** suppress candidate writes to `ha_stat_publication`. The name implies "write nothing", which is wrong and confused the first production run (2026-05-23: worker ran with DRY_RUN=1, candidates were written and then rolled back by a crash, leaving the state misleadingly clean).
-
-Options: rename to `DISCOVERY_SKIP_STATUS_TRANSITIONS`, or redesign DRY_RUN to actually suppress all writes (separate flag for state machine testing vs. full dry run).
-
-**Revisit trigger:** Any session touching the discovery worker config or adding a second DRY_RUN use case.
+**Done — flag removed entirely (2026-05-27, commit `60b5c7a`).** Resolved more decisively than a rename: the flag suppressed producer state-machine transitions only (not candidate writes), making the name actively misleading. Removing it is cleaner than renaming. Railway env var `DISCOVERY_DRY_RUN` removed from `discovery-worker` service after deploy.
 
 *Captured 2026-05-23.*
 
