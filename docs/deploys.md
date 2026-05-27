@@ -51,7 +51,13 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-25 | `3349773` | Docs: note that DATABASE_URL is stored in .env _(retroactive)_                              | Mark     |
 | 2026-05-25 | `00dc7b7` | Chore: .gitignore patterns for ad-hoc diagnostic scripts _(retroactive)_                    | Mark     |
 | 2026-05-25 | `3e4f884` | Perf: eliminate wasted COUNT + cap ts_headline calls in PQ related-content _(retroactive)_  | Mark     |
-| 2026-05-25 | `638446c` | Chore: operational logging — deploys.md + CLAUDE.md discipline                             | Mark     |
+| 2026-05-25 | `3ffe57d` | Chore: operational logging — deploys.md + CLAUDE.md discipline                             | Mark     |
+| 2026-05-27 | `f947ed8` | Docs: DBeaver operational note + /stats diagnostic findings update                         | Mark     |
+| 2026-05-27 | `9289347` | Fix: stats catalogue route precedence + pool_pre_ping stale connection fix                 | Mark     |
+| 2026-05-27 | `2371c20` | Feat: Phase 1.8 — StatPublicationTheme model + policy_area classifier + discovery write path | Mark   |
+| 2026-05-27 | `2feda73` | Feat: Phase 1.8 — backfill script for existing stat publication policy_area tags            | Mark     |
+| 2026-05-27 | `1622d4c` | Fix: backfill written counter increments in dry-run mode too (pushed before execute run)    | Mark     |
+| 2026-05-27 | `b921208` | Docs: expand £5 Paid Mailout entry in ideas backlog                                         | Mark     |
 
 ---
 
@@ -99,3 +105,49 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ha_contribution_speech_tsv
 
 **Verified:** EXPLAIN ANALYZE confirmed Bitmap Index Scan — ha_pq 4.265 ms,
 ha_contribution 0.873 ms.
+
+---
+
+### 2026-05-27 — Phase 1.8 ha_stat_publication_theme table
+
+**Context:** `db.create_all()` was not running on production (SKIP_MIGRATIONS=1 was
+accidentally set). Table created manually via DBeaver. SKIP_MIGRATIONS=1 retained
+on production service going forward — all future schema changes go via DBeaver.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798)
+
+```sql
+CREATE TABLE ha_stat_publication_theme (
+    id SERIAL PRIMARY KEY,
+    publication_id INTEGER NOT NULL REFERENCES ha_stat_publication(id) ON DELETE CASCADE,
+    theme VARCHAR(200) NOT NULL,
+    theme_type VARCHAR(20) NOT NULL DEFAULT 'specific',
+    confidence FLOAT,
+    tagged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    model_used VARCHAR(100),
+    CONSTRAINT uq_stat_pub_theme_publication_theme_type
+        UNIQUE (publication_id, theme, theme_type)
+);
+
+CREATE INDEX idx_stat_pub_theme_pub ON ha_stat_publication_theme(publication_id);
+CREATE INDEX idx_stat_pub_theme_type ON ha_stat_publication_theme(theme_type);
+```
+
+**Verified:** `SELECT COUNT(*) FROM ha_stat_publication_theme` → 0 (empty, as expected).
+
+---
+
+### 2026-05-27 — Phase 1.8 policy_area backfill execute run
+
+**Context:** Phase 1.8 backfill of controlled policy_area tags onto existing
+`ha_stat_publication` rows. Run via Railway one-shot service
+`backfill-stat-policy-areas` using `scripts/backfill_pub_policy_areas.py --execute`.
+Not raw SQL — writes via SQLAlchemy using production `DATABASE_URL`.
+
+**Result:** 2,398 theme rows written across 1,117 publications (7 classify
+failures — all non-publication documents correctly rejected). 0 pubs with no
+tags returned.
+
+**Phase 1.8 policy_area tagging complete.** Steady-state tagging now handled
+inline by `run_discovery()` for new publications. Backfill service left dormant
+(restart policy: Never) in case re-run is needed for future producer additions.

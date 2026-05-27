@@ -1,6 +1,6 @@
 # Phase 1.8 Scoping — Catalogue classification, policy area alignment, and public launch
 
-**Status:** Draft for review
+**Status:** In progress — policy_area tagging shipped 2026-05-27
 **Date:** 23 May 2026
 **Prerequisite phases:** Phase 1.6 (producer registry), Phase 1.7 (discovery skill)
 
@@ -269,10 +269,11 @@ Based on the findings above, Phase 1.8 covers:
 
 ### Schema and data model changes
 
-1. **Add controlled policy_area tagging to stat publications**, mirroring the Hansard model
+1. ✅ **Add controlled policy_area tagging to stat publications**, mirroring the Hansard model _(shipped 2026-05-27)_
    - New table `ha_stat_publication_theme` (analogous to `ha_session_theme`)
    - Supports 1–4 `policy_area` tags from the Westminster Brief 23-area controlled vocabulary (`HANSARD_POLICY_NAMES` in `hansard_archive/policy_areas.py`) — the 1-4 range reflects Hansard's empirical 2-4 mode rather than the documented 1-3 cap (see finding 11)
    - Existing `subject_area` field retained as free-text "specifics" equivalent
+   - **Distribution baseline (2026-05-27 backfill):** 1,117/1,124 publications tagged; 2,398 tag rows; 2.15 tags/publication average. Tag shape: 17.6% single-tag, 51.4% two-tag, 29.6% three-tag, 1.3% four-tag. Peak area: Welfare and benefits at 20.3% (486/2,398). 21 of 23 areas represented; `International development` and `Parliament and constitution` absent (no seeded producers in scope). Use these figures as a baseline for spotting classifier drift if the prompt is ever changed.
 
 2. **Reconsider URL semantics**
    - Decide between single `url` field (current) and `publication_url` + `data_url` (potential)
@@ -285,15 +286,15 @@ Based on the findings above, Phase 1.8 covers:
 
 ### Classifier improvements
 
-4. **Update Gemini prompt to use the Westminster Brief 23-area controlled vocabulary**
+4. ✅ **Update Gemini prompt to use the Westminster Brief 23-area controlled vocabulary** _(shipped 2026-05-27)_
    - Include the 23 policy areas in the prompt with examples
    - Require classifier to choose 1–4 from the list (target 3 — the empirical mode)
    - Keep `subject_area` as free-text for nuance
    - **Important:** explicitly clarify how "Government and public administration" should be interpreted for stat publications — only used for publications with substantive content about civil service operations, machinery of government, or public administration practice. NOT used as a procedural wrapper (the Hansard usage pattern doesn't apply because stat publications have no procedural dimension). See finding 10.
 
-5. **Backfill policy_area tags for existing candidates**
-   - Re-classify the 20 ONS + 182 DfE candidates against the new vocabulary
-   - One-off script, runs after classifier update
+5. ✅ **Backfill policy_area tags for existing candidates** _(shipped 2026-05-27)_
+   - Re-classified all 1,124 candidate/authorised publications against the new vocabulary
+   - 1,117 tagged (7 classify failures — all legitimate non-publication documents)
 
 ### Discovery worker improvements
 

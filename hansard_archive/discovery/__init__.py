@@ -51,7 +51,7 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
     """
     from hansard_archive.discovery.strategies import select_strategy
     from hansard_archive.discovery.classifier import classify_candidate
-    from hansard_archive.models import StatPublication
+    from hansard_archive.models import StatPublication, StatPublicationTheme, THEME_TYPE_POLICY_AREA
     from hansard_archive.slugs import slugify_theme
 
     strategy = select_strategy(producer)
@@ -127,6 +127,13 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
                 discovered_at=datetime.utcnow(),
             )
             db_session.add(pub)
+            for area in result.get("policy_areas", []):
+                db_session.add(StatPublicationTheme(
+                    publication=pub,
+                    theme=area,
+                    theme_type=THEME_TYPE_POLICY_AREA,
+                    model_used=result.get("model_used"),
+                ))
             written += 1
             log.info("run_discovery: wrote candidate %s / %s", producer.slug, slug)
 

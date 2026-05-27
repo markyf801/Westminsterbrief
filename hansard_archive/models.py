@@ -899,6 +899,8 @@ class StatPublication(db.Model):
     producer      = db.relationship("StatProducer", back_populates="publications")
     pub_audit_log = db.relationship("StatPublicationAuditLog", back_populates="publication",
                                     cascade="all, delete-orphan")
+    themes        = db.relationship("StatPublicationTheme", back_populates="publication",
+                                    lazy="dynamic", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<StatPublication id={self.id} producer={self.producer_id} slug={self.slug!r}>"
@@ -1004,6 +1006,46 @@ class StatPublicationAuditLog(db.Model):
     def __repr__(self):
         return (f"<StatPublicationAuditLog id={self.id} pub={self.publication_id} "
                 f"new_status={self.new_status!r}>")
+
+
+class StatPublicationTheme(db.Model):
+    """
+    Controlled policy-area tags and free-text specifics for a stat publication.
+    Mirrors HansardSessionTheme. theme_type values:
+      policy_area — one of the 23 HANSARD_POLICY_NAMES strings
+      specific    — free-text subject phrase (retained from subject_area field)
+    1-4 policy_area rows per publication. Written by run_discovery() for new
+    candidates and by the Phase 1.8 backfill script for existing rows.
+    """
+
+    __tablename__ = "ha_stat_publication_theme"
+    __table_args__ = (
+        db.Index("idx_stat_pub_theme_pub", "publication_id"),
+        db.Index("idx_stat_pub_theme_type", "theme_type"),
+        db.UniqueConstraint(
+            "publication_id", "theme", "theme_type",
+            name="uq_stat_pub_theme_publication_theme_type",
+        ),
+    )
+
+    id             = db.Column(db.Integer, primary_key=True)
+    publication_id = db.Column(
+        db.Integer,
+        db.ForeignKey("ha_stat_publication.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    theme      = db.Column(db.String(200), nullable=False)
+    theme_type = db.Column(db.String(20), nullable=False,
+                           default=THEME_TYPE_SPECIFIC, index=True)
+    confidence = db.Column(db.Float, nullable=True)
+    tagged_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    model_used = db.Column(db.String(100), nullable=True)
+
+    publication = db.relationship("StatPublication", back_populates="themes")
+
+    def __repr__(self):
+        return (f"<StatPublicationTheme pub={self.publication_id} "
+                f"[{self.theme_type}] {self.theme!r}>")
 
 
 # ---------------------------------------------------------------------------

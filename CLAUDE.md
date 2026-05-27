@@ -92,6 +92,19 @@ When calling psql in a subprocess, extract the password and pass it as `PGPASSWO
 **`stdout=PIPE` + large subprocess output = deadlock:**
 For subprocesses producing large output (e.g. psql restoring a 460 MB dump), never use `stdout=subprocess.PIPE`. The pipe buffer fills and the process hangs indefinitely. Let stdout stream to terminal; capture only stderr to a temp file if needed.
 
+**Railway Query tab rejects LIMIT on some tables (discovered 2026-05-26):**
+Queries containing `LIMIT` against `ha_stat_producer` or `ha_stat_publication` error with
+`syntax error at or near "LIMIT"` in Railway's Query tab. Confirmed on Chrome and Firefox,
+freshly typed input (not paste corruption). COUNT queries on the same tables work fine.
+Root cause unknown. Do not rely on the Railway Query tab for any SQL involving LIMIT.
+
+**Production SQL diagnostics — use DBeaver (confirmed working 2026-05-27):**
+DBeaver connects to Railway Postgres via `DATABASE_PUBLIC_URL` with SSL mode = require.
+All query types work correctly including LIMIT, DISTINCT, EXPLAIN ANALYZE. This is the
+recommended path for any production SQL that the Railway Query tab cannot handle.
+Connection details: host `hopper.proxy.rlwy.net`, port `50798`, database `railway`,
+SSL required. Credentials from `.env` (`DATABASE_URL` contains all components).
+
 **Postgres sequence desync after Railway failover:**
 After a Railway Postgres failover or WAL recovery, auto-increment sequences can reset to a low value while data remains intact. Symptom: `duplicate key value violates unique constraint "ha_session_pkey"`. Fix in Railway's Postgres Query console:
 ```sql
