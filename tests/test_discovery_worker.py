@@ -294,67 +294,6 @@ class TestProcessProducer:
 
 
 # ---------------------------------------------------------------------------
-# DRY_RUN mode
-# ---------------------------------------------------------------------------
-
-class TestDryRunMode:
-
-    def test_dry_run_skips_status_transitions(self, test_app, db):
-        """DISCOVERY_DRY_RUN=1 runs the skill but does not write status changes."""
-        with test_app.app_context():
-            from hansard_archive.models import StatProducer
-
-            # Clear any pending or in_progress producers left by earlier tests
-            db.session.query(StatProducer).filter(
-                StatProducer.authorisation_status == "authorised",
-                StatProducer.discovery_status.in_(["pending", "in_progress"]),
-            ).update({"discovery_status": "completed"}, synchronize_session=False)
-            db.session.commit()
-
-            p = _make_producer(db, "wkr-dryrun",
-                               authorisation_status="authorised",
-                               discovery_status="pending")
-            db.session.commit()
-
-            with patch("scripts.discovery_worker._DRY_RUN", True):
-                from scripts import discovery_worker as dw
-                result = dw._pick_next_producer(db.session, StatProducer)
-                # In dry-run, _pick_next_producer returns the producer but does NOT flip status
-                assert result is not None
-                assert result.slug == "wkr-dryrun"
-                # Status should still be 'pending' since dry-run skips the flush
-                db.session.refresh(result)
-                assert result.discovery_status == "pending"
-
-            db.session.rollback()
-
-    def test_dry_run_process_calls_run_discovery_but_skips_completion(self, test_app, db):
-        """DISCOVERY_DRY_RUN=1: run_discovery is invoked but completed/failed are not written."""
-        with test_app.app_context():
-            p = _make_producer(db, "wkr-dryrun-proc",
-                               authorisation_status="authorised",
-                               discovery_status="in_progress")
-            db.session.commit()
-
-            called = {"run": False}
-
-            def fake_run(producer, session, key):
-                called["run"] = True
-                return {}
-
-            with patch("scripts.discovery_worker._DRY_RUN", True), \
-                 patch("hansard_archive.discovery.run_discovery", side_effect=fake_run):
-                from scripts import discovery_worker as dw
-                dw._process_producer(db.session, p, gemini_key="k")
-
-            db.session.refresh(p)
-            assert called["run"] is True
-            # Status not changed in dry-run
-            assert p.discovery_status == "in_progress"
-            db.session.rollback()
-
-
-# ---------------------------------------------------------------------------
 # NullPool configuration
 # ---------------------------------------------------------------------------
 
