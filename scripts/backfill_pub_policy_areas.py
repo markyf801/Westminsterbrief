@@ -136,7 +136,7 @@ def _run(execute: bool) -> None:
                             theme_type=THEME_TYPE_POLICY_AREA,
                             model_used=result.get("model_used"),
                         ))
-                    written += len(areas)
+                written += len(areas)
 
                 time.sleep(_INTER_CALL_DELAY)
 

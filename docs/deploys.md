@@ -56,6 +56,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-27 | `9289347` | Fix: stats catalogue route precedence + pool_pre_ping stale connection fix                 | Mark     |
 | 2026-05-27 | `2371c20` | Feat: Phase 1.8 — StatPublicationTheme model + policy_area classifier + discovery write path | Mark   |
 | 2026-05-27 | `2feda73` | Feat: Phase 1.8 — backfill script for existing stat publication policy_area tags            | Mark     |
+| 2026-05-27 | `TBD`     | Fix: backfill written counter increments in dry-run mode too                                | Mark     |
 
 ---
 
