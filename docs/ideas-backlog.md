@@ -8,6 +8,25 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Landing page: lead with the job-to-be-done (design observation, not committed)
+
+Observation (28 May 2026): the landing page currently describes what WB *is* (parliamentary research tools) and *contains* (the tool cards), but doesn't clearly answer "what is this site for?" for a cold visitor. The job-to-be-done — understand what Parliament is doing on your topics, across otherwise-scattered sources, in one place, kept current — is the value, and it's the same thing as the data-corpus moat.
+
+Thoughts to weigh when/if revisited (none committed):
+- Lead with the job, not the tool list
+- 2–3 concrete worked examples ("see every time apprenticeship funding came up in Parliament in the last 6 months — debates, answers, bills, tagged, in one place") to make the value tangible
+- Surface the scale numbers (5k debates, 90k WQs, 621 bills, 12k orgs, daily) — currently buried in grey, but strong credibility signal for a cautious professional audience
+- Whitespace/density: this audience (GOV.UK, Hansard, Commons Library readers) may read density as credibility more than airy SaaS layouts — weigh against
+- Constraint: keep the propriety/accuracy hedging ("verify before use" etc.) — the challenge is clarity within cautious framing, not punchy marketing copy. Vagueness is the gap, not caution.
+
+Matters most because the landing page converts the widening audience shares (Teams group → parly → private office) from click into understanding. Revisit deliberately, not squeezed between build tasks.
+
+**Revisit trigger:** ahead of any deliberate push to a new audience segment; or when conversion from landing page to tool use is noticeably low.
+
+*Captured 28 May 2026 — Mark's design thoughts, explicitly not committed.*
+
+---
+
 ### Hansard Archive on Homepage + Naming Disambiguation
 
 Add a 7th card to the homepage tool grid for the Hansard Archive. Suggested card: title "Hansard Archive [BETA]", description covering 12 months of debates and WQs organised by policy area, MP, and theme with AI tagging, CTA "Open Hansard Archive →", link `/archive`. Grid treatment: 4-per-row or a featured first card rather than forcing 7 into a 3-column layout.
