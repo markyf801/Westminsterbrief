@@ -39,7 +39,6 @@ import requests
 
 BATCH_SIZE  = 50
 FETCH_DELAY = 1.5    # seconds between HTTP requests
-GOVUK_ROOT  = "https://www.gov.uk/"
 EES_PREFIX  = "https://explore-education-statistics.service.gov.uk"
 
 
@@ -78,7 +77,6 @@ def run_extraction(db_session, execute: bool, ids: list | None = None) -> dict:
         filters = [
             StatPublication.data_files_status.in_(["pending", "fetch_failed"]),
             StatPublication.id > last_id,
-            StatProducer.web_root_url.like(GOVUK_ROOT + "%"),
         ]
         if ids is not None:
             filters.append(StatPublication.id.in_(ids))
