@@ -224,6 +224,16 @@ CREATE INDEX IF NOT EXISTS idx_pub_data_file_pub
 
 ---
 
+### 2026-05-28 — Phase 1.8 piece 3: ONS data file extraction execute run
+
+**Context:** Phase 1.8 data_url piece 3 — OnsApiExtractor execute run against the 20 ONS pending publications. Dry-run validated on Railway first (processed: 20, dry_run: 20). Execute run at 14:29 BST.
+
+**Run via:** Local script (`scripts/extract_pub_data_files.py --execute`) connecting to production DATABASE_URL. _(Note: violates INC-005 local-to-production discipline — should have been a Railway one-shot service. Recorded for audit completeness.)_
+
+**Result:** processed: 20, extracted: 19, no_files_found: 1 (pub=17 `trade` — ONS API returned no downloads for the latest version of that dataset). Zero pending ONS rows remain.
+
+---
+
 ### 2026-05-28 — Phase 1.8 piece 3: ONS URL fix — api.beta.ons.gov.uk → www.ons.gov.uk/datasets
 
 **Context:** Phase 1.8 data_url piece 3, step 1 — 20 ha_stat_publication rows stored api.beta.ons.gov.uk API endpoint URLs rather than human-facing ONS dataset landing page URLs. Dataset ID is deterministically extractable from the path. Updated to canonical www.ons.gov.uk/datasets/{id} form.
