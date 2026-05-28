@@ -65,6 +65,10 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-28 | `9c2f657` | Feat: Phase 1.8 data_url piece 2 — GOV.UK extractor, orchestration script, 61 tests         | Mark     |
 | 2026-05-28 | `3dff5ee` | Fix: dedup duplicate URLs in gem-c-attachment containers (UniqueViolation on FE data library) | Mark   |
 | 2026-05-28 | `443b8f8` | Feat: Phase 1.8 data_url piece 3 — OnsApiExtractor + dispatch + 78 tests                    | Mark     |
+| 2026-05-28 | `bd57cdb` | Fix: remove GOV.UK-only producer filter from extract_pub_data_files                         | Mark     |
+| 2026-05-28 | `659d828` | Docs: log ONS piece 3 execute run + producer filter fix in deploys.md                       | Mark     |
+| 2026-05-28 | `f3e42ec` | Docs: capture 28 May forward design thinking (Phase 1.9, hub pages, landing page)           | Mark     |
+| 2026-05-28 | `a62ea96` | Feat: Phase 1.8 data_url piece 2b — sub-page prevalence diagnostic script                   | Mark     |
 
 ---
 
