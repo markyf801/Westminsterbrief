@@ -165,6 +165,61 @@ VALUES
 
 ---
 
+### 2026-05-28 — Phase 1.8 data_url schema: ha_stat_publication columns + ha_stat_publication_data_file table
+
+**Context:** Phase 1.8 data_url piece 1 — schema changes to support per-publication data file extraction. All statements run individually via DBeaver Console (cursor-position execution), one at a time.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-28 ~09:37–09:39 BST
+
+```sql
+-- Step 1: Add three columns to ha_stat_publication
+ALTER TABLE ha_stat_publication
+    ADD COLUMN IF NOT EXISTS data_files_status       VARCHAR(30) NOT NULL DEFAULT 'pending',
+    ADD COLUMN IF NOT EXISTS data_files_extracted_at TIMESTAMP   NULL,
+    ADD COLUMN IF NOT EXISTS ees_url                 TEXT        NULL;
+
+-- Step 2: Add CHECK constraint on data_files_status
+ALTER TABLE ha_stat_publication
+    ADD CONSTRAINT ck_stat_pub_data_files_status
+    CHECK (data_files_status IN (
+        'pending', 'extracted', 'fetch_failed', 'no_files_found', 'not_extractable'
+    ));
+
+-- Step 3: Index on data_files_status
+CREATE INDEX IF NOT EXISTS idx_stat_pub_data_files_status
+    ON ha_stat_publication (data_files_status);
+
+-- Step 4: Index on data_files_extracted_at
+CREATE INDEX IF NOT EXISTS idx_stat_pub_data_files_extracted_at
+    ON ha_stat_publication (data_files_extracted_at);
+
+-- Step 5: New table ha_stat_publication_data_file
+CREATE TABLE IF NOT EXISTS ha_stat_publication_data_file (
+    id              SERIAL PRIMARY KEY,
+    publication_id  INTEGER NOT NULL
+                        REFERENCES ha_stat_publication(id) ON DELETE CASCADE,
+    url             TEXT NOT NULL,
+    file_type       VARCHAR(10),
+    title           TEXT,
+    file_size_bytes INTEGER,
+    classification  VARCHAR(20)
+                        CHECK (classification IS NULL OR classification IN (
+                            'main_release', 'supporting_tables', 'technical_docs', 'other'
+                        )),
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    extracted_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_pub_data_file_url UNIQUE (publication_id, url)
+);
+
+-- Step 6: Index on publication_id for data file lookups
+CREATE INDEX IF NOT EXISTS idx_pub_data_file_pub
+    ON ha_stat_publication_data_file (publication_id);
+```
+
+**Verified:** All 4 post-DDL checks passed — columns present with correct types/nullability/defaults; `ha_stat_publication_data_file` structure correct; all constraints registered; 1,124 existing `ha_stat_publication` rows defaulted to `data_files_status = 'pending'`.
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that
