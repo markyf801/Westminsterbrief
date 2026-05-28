@@ -44,6 +44,11 @@ from hansard_archive.discovery.extractors.govuk_generic import (
     DATA_FILE_TYPES,
 )
 from hansard_archive.discovery.extractors.fallback import FallbackExtractor
+from hansard_archive.discovery.extractors.ons_api import (
+    OnsApiExtractor,
+    _dataset_id_from_url,
+    _fetch_json,
+)
 from hansard_archive.discovery.extractors import select_extractor
 
 
@@ -689,9 +694,15 @@ class TestSelectExtractor:
         ext = select_extractor(pub)
         assert isinstance(ext, GovUKGenericExtractor)
 
-    def test_ons_url_returns_fallback(self):
+    def test_ons_datasets_url_returns_ons_extractor(self):
         pub = MagicMock()
-        pub.url = "https://www.ons.gov.uk/some-stats"
+        pub.url = "https://www.ons.gov.uk/datasets/wellbeing-quarterly"
+        ext = select_extractor(pub)
+        assert isinstance(ext, OnsApiExtractor)
+
+    def test_ons_non_datasets_url_returns_fallback(self):
+        pub = MagicMock()
+        pub.url = "https://www.ons.gov.uk/economy/some-bulletin"
         ext = select_extractor(pub)
         assert isinstance(ext, FallbackExtractor)
 
@@ -776,6 +787,115 @@ class TestGovUKExtractorHTTPPaths:
         assert result.status == "extracted"
         assert result.ees_url is not None
         assert len(result.files) == 1
+
+
+# ---------------------------------------------------------------------------
+# _dataset_id_from_url
+# ---------------------------------------------------------------------------
+
+class TestDatasetIdFromUrl:
+
+    def test_standard_url(self):
+        assert _dataset_id_from_url("https://www.ons.gov.uk/datasets/wellbeing-quarterly") == "wellbeing-quarterly"
+
+    def test_trailing_slash(self):
+        assert _dataset_id_from_url("https://www.ons.gov.uk/datasets/wellbeing-quarterly/") == "wellbeing-quarterly"
+
+    def test_non_ons_url_returns_none(self):
+        assert _dataset_id_from_url("https://www.gov.uk/government/statistics/something") is None
+
+    def test_bare_prefix_returns_none(self):
+        assert _dataset_id_from_url("https://www.ons.gov.uk/datasets/") is None
+
+    def test_hyphenated_id(self):
+        assert _dataset_id_from_url("https://www.ons.gov.uk/datasets/weekly-deaths-region") == "weekly-deaths-region"
+
+
+# ---------------------------------------------------------------------------
+# OnsApiExtractor
+# ---------------------------------------------------------------------------
+
+_ONS_META = {
+    "title": "Quarterly personal well-being estimates",
+    "links": {
+        "latest_version": {
+            "href": "https://api.beta.ons.gov.uk/v1/datasets/wb-q/editions/time-series/versions/9"
+        }
+    },
+}
+
+_ONS_VERSION = {
+    "downloads": {
+        "csv":  {"href": "https://download.ons.gov.uk/datasets/wb-q/9.csv",  "size": "265571"},
+        "xls":  {"href": "https://download.ons.gov.uk/datasets/wb-q/9.xlsx", "size": "33265"},
+        "csvw": {"href": "https://download.ons.gov.uk/datasets/wb-q/9.csv-metadata.json", "size": "2779"},
+    }
+}
+
+
+class TestOnsApiExtractor:
+
+    def _extract(self, meta, version, url="https://www.ons.gov.uk/datasets/wb-q"):
+        with patch("hansard_archive.discovery.extractors.ons_api._fetch_json",
+                   side_effect=[meta, version]):
+            return OnsApiExtractor().extract(url, MagicMock())
+
+    def test_csv_and_xlsx_returned(self):
+        result = self._extract(_ONS_META, _ONS_VERSION)
+        assert result.status == "extracted"
+        assert len(result.files) == 2
+        assert {f.file_type for f in result.files} == {"csv", "xlsx"}
+
+    def test_csvw_excluded(self):
+        version = {"downloads": {
+            "csvw": {"href": "https://download.ons.gov.uk/t.json", "size": "100"},
+        }}
+        result = self._extract(_ONS_META, version)
+        assert result.status == "no_files_found"
+        assert result.files == []
+
+    def test_title_from_dataset_metadata(self):
+        result = self._extract(_ONS_META, _ONS_VERSION)
+        for f in result.files:
+            assert f.title == "Quarterly personal well-being estimates"
+
+    def test_file_size_parsed_from_size_string(self):
+        result = self._extract(_ONS_META, _ONS_VERSION)
+        csv_file = next(f for f in result.files if f.file_type == "csv")
+        assert csv_file.file_size_bytes == 265571
+
+    def test_classification_is_none(self):
+        result = self._extract(_ONS_META, _ONS_VERSION)
+        for f in result.files:
+            assert f.classification is None
+
+    def test_no_latest_version_returns_no_files_found(self):
+        meta = {"title": "T", "links": {}}
+        with patch("hansard_archive.discovery.extractors.ons_api._fetch_json", return_value=meta):
+            result = OnsApiExtractor().extract("https://www.ons.gov.uk/datasets/t", MagicMock())
+        assert result.status == "no_files_found"
+
+    def test_fetch_failed_on_dataset_metadata_error(self):
+        with patch("hansard_archive.discovery.extractors.ons_api._fetch_json", return_value=None):
+            result = OnsApiExtractor().extract("https://www.ons.gov.uk/datasets/t", MagicMock())
+        assert result.status == "fetch_failed"
+
+    def test_fetch_failed_on_version_error(self):
+        with patch("hansard_archive.discovery.extractors.ons_api._fetch_json",
+                   side_effect=[_ONS_META, None]):
+            result = OnsApiExtractor().extract("https://www.ons.gov.uk/datasets/t", MagicMock())
+        assert result.status == "fetch_failed"
+
+    def test_unrecognised_url_returns_not_extractable_without_fetch(self):
+        with patch("hansard_archive.discovery.extractors.ons_api._fetch_json") as mock_fetch:
+            result = OnsApiExtractor().extract("https://www.ons.gov.uk/somethingelse/t", MagicMock())
+        assert result.status == "not_extractable"
+        mock_fetch.assert_not_called()
+
+    def test_empty_downloads_returns_no_files_found(self):
+        version = {"downloads": {}}
+        result = self._extract(_ONS_META, version)
+        assert result.status == "no_files_found"
 
 
 # ---------------------------------------------------------------------------

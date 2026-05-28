@@ -64,6 +64,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-28 | `0e16be6` | Feat: Phase 1.8 data_url schema — StatPublication columns + StatPublicationDataFile model   | Mark     |
 | 2026-05-28 | `9c2f657` | Feat: Phase 1.8 data_url piece 2 — GOV.UK extractor, orchestration script, 61 tests         | Mark     |
 | 2026-05-28 | `3dff5ee` | Fix: dedup duplicate URLs in gem-c-attachment containers (UniqueViolation on FE data library) | Mark   |
+| 2026-05-28 | `TBD`     | Feat: Phase 1.8 data_url piece 3 — OnsApiExtractor + dispatch + 78 tests                    | Mark     |
 
 ---
 
@@ -220,6 +221,24 @@ CREATE INDEX IF NOT EXISTS idx_pub_data_file_pub
 ```
 
 **Verified:** All 4 post-DDL checks passed — columns present with correct types/nullability/defaults; `ha_stat_publication_data_file` structure correct; all constraints registered; 1,124 existing `ha_stat_publication` rows defaulted to `data_files_status = 'pending'`.
+
+---
+
+### 2026-05-28 — Phase 1.8 piece 3: ONS URL fix — api.beta.ons.gov.uk → www.ons.gov.uk/datasets
+
+**Context:** Phase 1.8 data_url piece 3, step 1 — 20 ha_stat_publication rows stored api.beta.ons.gov.uk API endpoint URLs rather than human-facing ONS dataset landing page URLs. Dataset ID is deterministically extractable from the path. Updated to canonical www.ons.gov.uk/datasets/{id} form.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-28 ~14:10 BST
+
+```sql
+UPDATE ha_stat_publication
+SET url        = 'https://www.ons.gov.uk/datasets/' ||
+                     split_part(replace(url, 'https://api.beta.ons.gov.uk/v1/datasets/', ''), '/', 1),
+    updated_at = CURRENT_TIMESTAMP
+WHERE url LIKE 'https://api.beta.ons.gov.uk/%';
+```
+
+**Result:** 20 rows updated. All now have canonical `https://www.ons.gov.uk/datasets/{dataset-id}` URLs. Zero api.beta.ons.gov.uk URLs remain in ha_stat_publication.
 
 ---
 

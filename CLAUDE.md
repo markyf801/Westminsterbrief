@@ -398,6 +398,10 @@ Clear mapping to avoid confusion when discussing issues:
 - Also set `SECRET_KEY` to a long random string in Railway env vars
 - GitHub repo: `markyf801/Westminsterbrief` — Railway auto-deploys on push to `master`
 
+### Railway one-shot services — capture logs before teardown
+
+Diagnostic logging in one-shot scripts (e.g. `[SUB_PAGE]` counts, extraction summaries) is lost when the service is deleted. Before tearing down any one-shot Railway service, export or screenshot the full log output — the diagnostic data it contains informs the next piece of work.
+
 ### Railway Postgres connections
 
 - **Local connections** (migration scripts, pg_dump, psql) need the **public URL** from Postgres service → Database → Config. **The actual hostname for this project is `hopper.proxy.rlwy.net:50798`** — not the generic `<region>.proxy.rlwy.net` pattern shown in Railway docs. Full URL shape: `postgresql://postgres:<password>@hopper.proxy.rlwy.net:50798/railway`. The internal hostname (`postgres.railway.internal`) only resolves inside Railway's network.

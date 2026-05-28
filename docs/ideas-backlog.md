@@ -422,6 +422,33 @@ Neither the ingester nor the schema currently supports this link.
 
 ---
 
+### Steady-state data file extraction cron (data_url piece 4)
+
+The data_url backfill (piece 2) is a one-shot covering existing publications. New publications created by the discovery worker get `data_files_status = 'pending'` by default but nothing currently triggers extraction on them. Steady-state coverage needs a scheduled job.
+
+**Decision (made during piece 2 scoping, 28 May 2026): daily cron, option 2.**
+
+A lightweight Railway cron runs `extract_pub_data_files.py --execute` daily, picking up any `pending` (and `fetch_failed`) publications. Same script as the backfill, deployed as a scheduled service rather than a one-shot. New publications get extracted within 24h of discovery.
+
+Ruled out:
+- Inline in discovery worker — violates failure isolation (decision H): an extraction fetch timeout must not block/slow a discovery run. Different workloads, different failure modes.
+- Manual one-shot only — fragile; new pending rows arrive continuously via the discovery cron, so a growing unextracted tail builds between manual runs.
+
+**To nail down when scoped:**
+- Selection query: `pending` AND `fetch_failed` (failed rows must be retry-eligible, not stranded)
+- Timing: after the discovery cron completes + buffer (extraction is downstream of discovery). Derive from discovery's actual schedule, not an isolated hour.
+- Memory: cron runs then exits, no persistent worker (matches policy_area pattern)
+- Re-extraction of already-`extracted` rows: separate question from daily mop-up — whether/how often to re-fetch to catch new editions (NHS-style accumulating pages, quarterly releases). Decision I from scoping flagged ~monthly with a skip for annual/biennial < 60 days old. Scope alongside or defer.
+- Piece 2b interaction: once sub-page following ships, the cron should also re-process `no_files_found` sub-page-only rows (re-queue or include in selection).
+
+**Build timing:** after piece 2 backfill verified, piece 3 (ONS), and piece 2b (sub-page following) — or whenever steady-state coverage starts mattering. Not urgent: the backfill covers all current pubs, and new ones sit safely at `pending` until the cron exists.
+
+**Revisit trigger:** piece 2 backfill complete + verified; piece 3 (ONS) scoped; or any session where the pending/unextracted tail is visibly growing.
+
+*Captured 28 May 2026.*
+
+---
+
 ### ~~Rename DISCOVERY_DRY_RUN to something less misleading~~
 
 **Done — flag removed entirely (2026-05-27, commit `60b5c7a`).** Resolved more decisively than a rename: the flag suppressed producer state-machine transitions only (not candidate writes), making the name actively misleading. Removing it is cleaner than renaming. Railway env var `DISCOVERY_DRY_RUN` removed from `discovery-worker` service after deploy.
