@@ -61,7 +61,10 @@ _GOVUK_TYPE_LABELS: dict[str, str] = {
 DATA_FILE_TYPES: frozenset[str] = frozenset({"xlsx", "xls", "ods", "csv", "pdf", "zip", "json", "xml"})
 
 # Sub-page path segments that are never data — skip fetch to avoid unnecessary HTTP calls.
+# Prefix variant: pre-release-access-to-{pub-slug}  (DBT pattern)
+# Suffix variant: {pub-slug}-pre-release-access-list (DSIT pattern)
 EXCLUDED_SUB_PAGE_PREFIXES: tuple[str, ...] = ("pre-release-access-",)
+EXCLUDED_SUB_PAGE_SUFFIXES: tuple[str, ...] = ("-pre-release-access-list",)
 
 _SIZE_RE      = re.compile(r"([\d.]+)\s*(bytes?|kb|mb|gb)", re.IGNORECASE)
 _SIZE_FACTORS = {
@@ -134,7 +137,12 @@ def _fetch(url: str, http: requests.Session) -> Optional[requests.Response]:
 def _should_fetch_sub_page(url: str) -> bool:
     """Cheap pre-fetch filter — False for path patterns that never contain data files."""
     parts = [p for p in urlparse(url).path.split("/") if p]
-    return not any(p.startswith(EXCLUDED_SUB_PAGE_PREFIXES) for p in parts)
+    for p in parts:
+        if any(p.startswith(pref) for pref in EXCLUDED_SUB_PAGE_PREFIXES):
+            return False
+        if any(p.endswith(suf) for suf in EXCLUDED_SUB_PAGE_SUFFIXES):
+            return False
+    return True
 
 
 def _follow_sub_pages(
@@ -152,6 +160,7 @@ def _follow_sub_pages(
     silently dropped (whitelist approach — harmless against unknown patterns).
     Sub-page URLs found within a sub-page are NOT followed (depth-1 only).
     """
+    log.info("Following %d sub-page(s)", len(sub_page_urls))
     extra: list[ExtractedFile] = []
     seen: set[str] = set(parent_file_urls)
     order = start_order

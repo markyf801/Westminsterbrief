@@ -42,6 +42,8 @@ from hansard_archive.discovery.extractors.govuk_generic import (
     GovUKGenericExtractor,
     EES_PREFIX,
     DATA_FILE_TYPES,
+    EXCLUDED_SUB_PAGE_PREFIXES,
+    EXCLUDED_SUB_PAGE_SUFFIXES,
 )
 from hansard_archive.discovery.extractors.fallback import FallbackExtractor
 from hansard_archive.discovery.extractors.ons_api import (
@@ -1046,6 +1048,27 @@ class TestShouldFetchSubPage:
         assert _should_fetch_sub_page(
             "https://www.gov.uk/government/statistics/some-pub/pre-release-access-to-the-report"
         ) is False
+
+    def test_dsit_suffix_variant_excluded(self):
+        """DSIT pattern: {pub-slug}-pre-release-access-list (suffix, not prefix)."""
+        from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
+        assert _should_fetch_sub_page(
+            "https://www.gov.uk/government/statistics/cyber-security-breaches-survey-2025/"
+            "cyber-security-breaches-survey-2025-pre-release-access-list"
+        ) is False
+
+    def test_mid_segment_pre_release_unrelated_allowed(self):
+        """Segment containing 'pre-release-access' in the middle is NOT excluded."""
+        from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
+        assert _should_fetch_sub_page(
+            "https://www.gov.uk/government/statistics/some-pub/something-pre-release-access-related"
+        ) is True
+
+    def test_both_constants_exported(self):
+        assert isinstance(EXCLUDED_SUB_PAGE_PREFIXES, tuple)
+        assert isinstance(EXCLUDED_SUB_PAGE_SUFFIXES, tuple)
+        assert any("pre-release-access-" in p for p in EXCLUDED_SUB_PAGE_PREFIXES)
+        assert any("pre-release-access-list" in s for s in EXCLUDED_SUB_PAGE_SUFFIXES)
 
     def test_relative_url_allowed(self):
         from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
