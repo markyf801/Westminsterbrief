@@ -60,6 +60,9 @@ _GOVUK_TYPE_LABELS: dict[str, str] = {
 # Only these types are included as data files. html/docx/etc excluded (Q2 resolution).
 DATA_FILE_TYPES: frozenset[str] = frozenset({"xlsx", "xls", "ods", "csv", "pdf", "zip", "json", "xml"})
 
+# Sub-page path segments that are never data — skip fetch to avoid unnecessary HTTP calls.
+EXCLUDED_SUB_PAGE_PREFIXES: tuple[str, ...] = ("pre-release-access-",)
+
 _SIZE_RE      = re.compile(r"([\d.]+)\s*(bytes?|kb|mb|gb)", re.IGNORECASE)
 _SIZE_FACTORS = {
     "byte": 1, "bytes": 1,
@@ -83,6 +86,15 @@ class GovUKGenericExtractor(BaseExtractor):
             return ExtractionResult(status="fetch_failed", error=f"HTTP {resp.status_code}")
 
         files, ees_url, sub_page_urls = _parse_govuk_page(resp.text)
+
+        if sub_page_urls:
+            extra = _follow_sub_pages(
+                sub_page_urls, http_session,
+                parent_file_urls={f.url for f in files},
+                start_order=len(files),
+            )
+            if extra:
+                files = files + extra
 
         if ees_url and not files:
             return ExtractionResult(status="not_extractable", ees_url=ees_url,
@@ -113,6 +125,68 @@ def _fetch(url: str, http: requests.Session) -> Optional[requests.Response]:
             log.warning("Request error for %s (attempt %d/3): %s", url, attempt + 1, exc)
     log.error("All fetch attempts exhausted for %s", url)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Sub-page following (piece 2b)
+# ---------------------------------------------------------------------------
+
+def _should_fetch_sub_page(url: str) -> bool:
+    """Cheap pre-fetch filter — False for path patterns that never contain data files."""
+    parts = [p for p in urlparse(url).path.split("/") if p]
+    return not any(p.startswith(EXCLUDED_SUB_PAGE_PREFIXES) for p in parts)
+
+
+def _follow_sub_pages(
+    sub_page_urls: list[str],
+    http: requests.Session,
+    parent_file_urls: set[str],
+    start_order: int = 0,
+) -> list[ExtractedFile]:
+    """
+    Depth-1 sub-page following.
+
+    Fetches each sub-page URL, parses attachments, and returns any new data
+    files found. Files already on the parent page (parent_file_urls) are
+    skipped to avoid duplicates. Sub-pages that yield no new files are
+    silently dropped (whitelist approach — harmless against unknown patterns).
+    Sub-page URLs found within a sub-page are NOT followed (depth-1 only).
+    """
+    extra: list[ExtractedFile] = []
+    seen: set[str] = set(parent_file_urls)
+    order = start_order
+
+    for url in sub_page_urls:
+        if not _should_fetch_sub_page(url):
+            log.info("Skipping excluded sub-page pattern: %s", url)
+            continue
+
+        resp = _fetch(url, http)
+        if resp is None or not resp.ok:
+            status = resp.status_code if resp is not None else "None"
+            log.warning("Sub-page fetch failed (status=%s): %s", status, url)
+            continue
+
+        sub_files, _ees, _sub_sub = _parse_govuk_page(resp.text)
+        new_files = [f for f in sub_files if f.url not in seen]
+        if not new_files:
+            log.debug("Sub-page yielded no new data files (silently dropped): %s", url)
+            continue
+
+        log.info("Sub-page %s yielded %d new file(s)", url, len(new_files))
+        for f in new_files:
+            extra.append(ExtractedFile(
+                url=f.url,
+                file_type=f.file_type,
+                title=f.title,
+                file_size_bytes=f.file_size_bytes,
+                classification=f.classification,
+                display_order=order,
+            ))
+            seen.add(f.url)
+            order += 1
+
+    return extra
 
 
 # ---------------------------------------------------------------------------

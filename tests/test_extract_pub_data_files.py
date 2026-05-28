@@ -1015,3 +1015,288 @@ class TestFailureIsolation:
         assert stats["processed"] == 2
         assert stats["unhandled_error"] == 1
         assert stats["dry_run"] == 1   # pub_ok processed in dry-run mode
+
+
+# ---------------------------------------------------------------------------
+# _should_fetch_sub_page (piece 2b pre-fetch filter)
+# ---------------------------------------------------------------------------
+
+class TestShouldFetchSubPage:
+
+    def test_normal_sub_page_allowed(self):
+        from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
+        assert _should_fetch_sub_page(
+            "https://www.gov.uk/government/statistics/some-pub/main-findings"
+        ) is True
+
+    def test_technical_report_allowed(self):
+        from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
+        assert _should_fetch_sub_page(
+            "https://www.gov.uk/government/statistics/some-pub/technical-report"
+        ) is True
+
+    def test_pre_release_access_list_excluded(self):
+        from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
+        assert _should_fetch_sub_page(
+            "https://www.gov.uk/government/statistics/some-pub/pre-release-access-list"
+        ) is False
+
+    def test_pre_release_access_to_excluded(self):
+        from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
+        assert _should_fetch_sub_page(
+            "https://www.gov.uk/government/statistics/some-pub/pre-release-access-to-the-report"
+        ) is False
+
+    def test_relative_url_allowed(self):
+        from hansard_archive.discovery.extractors.govuk_generic import _should_fetch_sub_page
+        assert _should_fetch_sub_page(
+            "/government/publications/some-pub/data-tables"
+        ) is True
+
+
+# ---------------------------------------------------------------------------
+# Sub-page following (piece 2b) — GovUKGenericExtractor.extract()
+# ---------------------------------------------------------------------------
+
+_PARENT_WITH_SUBPAGES = """
+<section class="gem-c-attachment govuk-!-margin-bottom-6">
+  <div class="gem-c-attachment__details">
+    <h3 class="gem-c-attachment__title">
+      <a class="gem-c-attachment__link"
+         href="/government/statistics/some-pub/main-findings">
+        Main findings
+      </a>
+    </h3>
+  </div>
+</section>
+<section class="gem-c-attachment govuk-!-margin-bottom-6">
+  <div class="gem-c-attachment__details">
+    <h3 class="gem-c-attachment__title">
+      <a class="gem-c-attachment__link"
+         href="/government/statistics/some-pub/technical-report">
+        Technical report
+      </a>
+    </h3>
+  </div>
+</section>
+"""
+
+_SUB_PAGE_WITH_FILES = """
+<section class="gem-c-attachment govuk-!-margin-bottom-6">
+  <div class="gem-c-attachment__details">
+    <h3 class="gem-c-attachment__title">
+      <a class="gem-c-attachment__link"
+         href="https://assets.publishing.service.gov.uk/media/sub/data.csv">
+        Dataset CSV
+      </a>
+    </h3>
+    <p class="gem-c-attachment__metadata">
+      <span class="gem-c-attachment__attribute">
+        <abbr title="Comma-separated values">CSV</abbr>
+      </span>
+    </p>
+  </div>
+</section>
+"""
+
+_PARENT_WITH_PRE_RELEASE = """
+<section class="gem-c-attachment govuk-!-margin-bottom-6">
+  <div class="gem-c-attachment__details">
+    <h3 class="gem-c-attachment__title">
+      <a class="gem-c-attachment__link"
+         href="/government/statistics/some-pub/pre-release-access-list">
+        Pre-release access list
+      </a>
+    </h3>
+  </div>
+</section>
+"""
+
+
+def _make_resp(ok=True, status_code=200, text=""):
+    resp = MagicMock()
+    resp.ok = ok
+    resp.status_code = status_code
+    resp.text = text
+    return resp
+
+
+class TestSubPageFollowing:
+
+    def _extractor(self):
+        from hansard_archive.discovery.extractors.govuk_generic import GovUKGenericExtractor
+        return GovUKGenericExtractor()
+
+    def test_sub_page_files_attributed_to_parent(self):
+        """Files found on depth-1 sub-pages are included in the extraction result."""
+        http = MagicMock()
+        http.get.side_effect = [
+            _make_resp(text=_PARENT_WITH_SUBPAGES),   # parent page
+            _make_resp(text=_SUB_PAGE_WITH_FILES),     # main-findings sub-page
+            _make_resp(text=_EMPTY_GOVSPEAK),          # technical-report sub-page (empty)
+        ]
+        result = self._extractor().extract(
+            "https://www.gov.uk/government/statistics/some-pub", http
+        )
+        assert result.status == "extracted"
+        assert any("data.csv" in f.url for f in result.files)
+
+    def test_status_extracted_when_only_sub_pages_have_files(self):
+        """When parent has no direct files but sub-pages do, status is 'extracted'."""
+        http = MagicMock()
+        http.get.side_effect = [
+            _make_resp(text=_PARENT_WITH_SUBPAGES),
+            _make_resp(text=_SUB_PAGE_WITH_FILES),
+            _make_resp(text=_EMPTY_GOVSPEAK),
+        ]
+        result = self._extractor().extract(
+            "https://www.gov.uk/government/statistics/some-pub", http
+        )
+        assert result.status == "extracted"
+        assert len(result.files) >= 1
+
+    def test_pre_release_sub_page_not_fetched(self):
+        """Sub-pages with pre-release-access path are skipped — no extra HTTP call."""
+        http = MagicMock()
+        http.get.side_effect = [
+            _make_resp(text=_PARENT_WITH_PRE_RELEASE),  # parent page only
+        ]
+        result = self._extractor().extract(
+            "https://www.gov.uk/government/statistics/some-pub", http
+        )
+        # Only one HTTP call — the pre-release sub-page was not fetched
+        assert http.get.call_count == 1
+        assert result.status == "no_files_found"
+
+    def test_empty_sub_page_silently_dropped(self):
+        """A sub-page that yields no data files does not affect result status."""
+        parent_html = """
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="/government/statistics/pub/empty-sub">empty</a></h3>
+          </div>
+        </section>
+        """
+        http = MagicMock()
+        http.get.side_effect = [
+            _make_resp(text=parent_html),
+            _make_resp(text=_EMPTY_GOVSPEAK),  # sub-page is empty
+        ]
+        result = self._extractor().extract(
+            "https://www.gov.uk/government/statistics/pub", http
+        )
+        assert result.status == "no_files_found"
+        assert result.files == []
+
+    def test_depth_1_only_sub_page_sub_pages_not_followed(self):
+        """Sub-page URLs found within a sub-page are NOT fetched (depth-1 only)."""
+        parent_html = """
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="/government/statistics/pub/sub-page">sub</a></h3>
+          </div>
+        </section>
+        """
+        # Sub-page itself contains only another sub-page link (depth-2)
+        sub_html = """
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="/government/statistics/pub/sub-page/deeper">deeper</a></h3>
+          </div>
+        </section>
+        """
+        http = MagicMock()
+        http.get.side_effect = [
+            _make_resp(text=parent_html),
+            _make_resp(text=sub_html),
+        ]
+        result = self._extractor().extract(
+            "https://www.gov.uk/government/statistics/pub", http
+        )
+        # Only 2 HTTP calls: parent + one sub-page. The deeper link is NOT fetched.
+        assert http.get.call_count == 2
+        assert result.status == "no_files_found"
+
+    def test_sub_page_duplicate_files_not_added(self):
+        """A file URL already on the parent page is not duplicated from sub-page."""
+        shared_url = "https://assets.publishing.service.gov.uk/media/shared/data.csv"
+        parent_with_file_and_subpage = f"""
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link" href="{shared_url}">Data</a></h3>
+            <p class="gem-c-attachment__metadata">
+              <span class="gem-c-attachment__attribute">
+                <abbr title="Comma-separated values">CSV</abbr>
+              </span>
+            </p>
+          </div>
+        </section>
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="/government/statistics/pub/sub-page">sub</a></h3>
+          </div>
+        </section>
+        """
+        sub_with_same_file = f"""
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link" href="{shared_url}">Data again</a></h3>
+            <p class="gem-c-attachment__metadata">
+              <span class="gem-c-attachment__attribute">
+                <abbr title="Comma-separated values">CSV</abbr>
+              </span>
+            </p>
+          </div>
+        </section>
+        """
+        http = MagicMock()
+        http.get.side_effect = [
+            _make_resp(text=parent_with_file_and_subpage),
+            _make_resp(text=sub_with_same_file),
+        ]
+        result = self._extractor().extract(
+            "https://www.gov.uk/government/statistics/pub", http
+        )
+        assert result.status == "extracted"
+        urls = [f.url for f in result.files]
+        assert urls.count(shared_url) == 1
+
+    def test_display_order_continues_after_parent_files(self):
+        """Sub-page files have display_order continuing from the last parent file."""
+        parent_with_file_and_subpage = """
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="https://assets.publishing.service.gov.uk/media/parent/data.xlsx">
+              Parent file</a></h3>
+            <p class="gem-c-attachment__metadata">
+              <span class="gem-c-attachment__attribute">
+                <abbr title="MS Excel Spreadsheet">XLSX</abbr>
+              </span>
+            </p>
+          </div>
+        </section>
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="/government/statistics/pub/sub-page">sub</a></h3>
+          </div>
+        </section>
+        """
+        http = MagicMock()
+        http.get.side_effect = [
+            _make_resp(text=parent_with_file_and_subpage),
+            _make_resp(text=_SUB_PAGE_WITH_FILES),
+        ]
+        result = self._extractor().extract(
+            "https://www.gov.uk/government/statistics/pub", http
+        )
+        assert result.status == "extracted"
+        orders = [f.display_order for f in result.files]
+        assert orders == sorted(orders)   # monotonically increasing
+        assert orders[0] == 0
+        assert orders[-1] == len(result.files) - 1
