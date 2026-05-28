@@ -125,6 +125,7 @@ def _parse_govuk_page(html: str) -> tuple[list[ExtractedFile], Optional[str], li
     files:         list[ExtractedFile] = []
     ees_url:       Optional[str]       = None
     sub_page_urls: list[str]           = []
+    seen_urls:     set[str]            = set()
     order = 0
 
     for attach in _find_attachments(soup):
@@ -144,6 +145,9 @@ def _parse_govuk_page(html: str) -> tuple[list[ExtractedFile], Optional[str], li
         if href.startswith("/"):
             href = "https://www.gov.uk" + href
 
+        if href in seen_urls:
+            continue
+
         if href.startswith(EES_PREFIX):
             ees_url = ees_url or href
             continue
@@ -154,6 +158,7 @@ def _parse_govuk_page(html: str) -> tuple[list[ExtractedFile], Optional[str], li
                 sub_page_urls.append(href)
             continue
 
+        seen_urls.add(href)
         files.append(ExtractedFile(
             url=href,
             file_type=file_type,
@@ -165,7 +170,6 @@ def _parse_govuk_page(html: str) -> tuple[list[ExtractedFile], Optional[str], li
         order += 1
 
     # Inline attachment links — span.gem-c-attachment-link inside govspeak
-    seen_urls = {f.url for f in files}
     for span in soup.find_all("span", class_="gem-c-attachment-link"):
         a = span.find("a", href=True)
         if not a:

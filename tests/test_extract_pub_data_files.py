@@ -398,6 +398,36 @@ class TestParseGovukPage:
         assert len(sub_page_urls) == 2
         assert all("cyber-security" in u for u in sub_page_urls)
 
+    def test_duplicate_url_in_attachment_containers_deduplicated(self):
+        """Same file URL appearing in two gem-c-attachment containers → only one ExtractedFile."""
+        html = """
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="https://assets.publishing.service.gov.uk/media/abc/data.csv">
+              Dataset
+            </a></h3>
+            <p class="gem-c-attachment__metadata">
+              <span class="gem-c-attachment__attribute"><abbr title="Comma-separated values">CSV</abbr></span>
+            </p>
+          </div>
+        </section>
+        <section class="gem-c-attachment govuk-!-margin-bottom-6">
+          <div class="gem-c-attachment__details">
+            <h3><a class="gem-c-attachment__link"
+                   href="https://assets.publishing.service.gov.uk/media/abc/data.csv">
+              Dataset (duplicate)
+            </a></h3>
+            <p class="gem-c-attachment__metadata">
+              <span class="gem-c-attachment__attribute"><abbr title="Comma-separated values">CSV</abbr></span>
+            </p>
+          </div>
+        </section>
+        """
+        files, _ees, _sub = _parse_govuk_page(html)
+        assert len(files) == 1
+        assert files[0].url == "https://assets.publishing.service.gov.uk/media/abc/data.csv"
+
     def test_direct_asset_link_not_collected_as_subpage(self):
         """assets.publishing links do not appear in sub_page_urls."""
         html = """
