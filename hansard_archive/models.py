@@ -870,6 +870,12 @@ class StatPublication(db.Model):
         db.CheckConstraint(
             "authorisation_status IN ('candidate','under_review','authorised','declined','paused')",
             name="ck_stat_pub_auth_status"),
+        db.CheckConstraint(
+            "data_files_status IN "
+            "('pending','extracted','fetch_failed','no_files_found','not_extractable')",
+            name="ck_stat_pub_data_files_status"),
+        db.Index("idx_stat_pub_data_files_status", "data_files_status"),
+        db.Index("idx_stat_pub_data_files_extracted_at", "data_files_extracted_at"),
     )
 
     id             = db.Column(db.Integer, primary_key=True)
@@ -895,12 +901,18 @@ class StatPublication(db.Model):
     declined_at          = db.Column(db.DateTime, nullable=True)
     declined_by          = db.Column(db.Text, nullable=True)
     decline_reason       = db.Column(db.Text, nullable=True)
+    # Phase 1.8: data file extraction tracking
+    data_files_status       = db.Column(db.String(30), nullable=False, default="pending")
+    data_files_extracted_at = db.Column(db.DateTime, nullable=True)
+    ees_url                 = db.Column(db.Text, nullable=True)
 
     producer      = db.relationship("StatProducer", back_populates="publications")
     pub_audit_log = db.relationship("StatPublicationAuditLog", back_populates="publication",
                                     cascade="all, delete-orphan")
     themes        = db.relationship("StatPublicationTheme", back_populates="publication",
                                     lazy="dynamic", cascade="all, delete-orphan")
+    data_files    = db.relationship("StatPublicationDataFile", back_populates="publication",
+                                    cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<StatPublication id={self.id} producer={self.producer_id} slug={self.slug!r}>"
@@ -1046,6 +1058,50 @@ class StatPublicationTheme(db.Model):
     def __repr__(self):
         return (f"<StatPublicationTheme pub={self.publication_id} "
                 f"[{self.theme_type}] {self.theme!r}>")
+
+
+class StatPublicationDataFile(db.Model):
+    """
+    A data file attached to a StatPublication, extracted from the publication's
+    landing page. One row per distinct file URL per publication.
+
+    classification values (nullable):
+      main_release      — the primary dataset/release file
+      supporting_tables — supplementary data tables
+      technical_docs    — methodology notes, quality reports, technical annexes
+      other             — other attachments (press notices, infographics, etc.)
+
+    Rows are written by the data_url extractor (Phase 1.8). Append-only per URL —
+    existing rows are updated in place if re-extracted; do not duplicate by URL.
+    """
+
+    __tablename__ = "ha_stat_publication_data_file"
+    __table_args__ = (
+        db.UniqueConstraint("publication_id", "url", name="uq_pub_data_file_url"),
+        db.CheckConstraint(
+            "classification IS NULL OR classification IN "
+            "('main_release','supporting_tables','technical_docs','other')",
+            name="ck_pub_data_file_classification",
+        ),
+    )
+
+    id              = db.Column(db.Integer, primary_key=True)
+    publication_id  = db.Column(db.Integer,
+                                db.ForeignKey("ha_stat_publication.id", ondelete="CASCADE"),
+                                nullable=False, index=True)
+    url             = db.Column(db.Text, nullable=False)
+    file_type       = db.Column(db.String(10), nullable=True)
+    title           = db.Column(db.Text, nullable=True)
+    file_size_bytes = db.Column(db.Integer, nullable=True)
+    classification  = db.Column(db.String(20), nullable=True)
+    display_order   = db.Column(db.Integer, nullable=False, default=0)
+    extracted_at    = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    publication = db.relationship("StatPublication", back_populates="data_files")
+
+    def __repr__(self):
+        return (f"<StatPublicationDataFile id={self.id} pub={self.publication_id} "
+                f"type={self.file_type!r} classification={self.classification!r}>")
 
 
 # ---------------------------------------------------------------------------

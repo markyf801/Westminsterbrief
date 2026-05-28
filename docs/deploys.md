@@ -59,6 +59,8 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-27 | `1622d4c` | Fix: backfill written counter increments in dry-run mode too (pushed before execute run)    | Mark     |
 | 2026-05-27 | `b921208` | Docs: expand £5 Paid Mailout entry in ideas backlog                                         | Mark     |
 | 2026-05-27 | `6e08efa` | Chore: strip [STATS_DIAG] timing instrumentation from stats_catalogue.py                    | Mark     |
+| 2026-05-27 | `b719891` | Chore: remove DISCOVERY_DRY_RUN flag from discovery worker                                  | Mark     |
+| 2026-05-27 | `d06658c` | Docs: close out HESA producer de-registration (deploys.md + phase-1-8-scoping.md)          | Mark     |
 
 ---
 
@@ -133,6 +135,104 @@ CREATE TABLE ha_stat_publication_theme (
 CREATE INDEX idx_stat_pub_theme_pub ON ha_stat_publication_theme(publication_id);
 CREATE INDEX idx_stat_pub_theme_type ON ha_stat_publication_theme(theme_type);
 ```
+
+### 2026-05-27 — HESA producer de-registration
+
+**Context:** HESA / Jisc (producer id 25, slug `hesa-jisc`) de-registered as an active producer. Site blocks all automated access (403 across all paths — root, `/data-and-analysis`, `/api` — confirmed 27 May 2026). No GOV.UK organisation registration exists for HESA. HESA data surfaces correctly via DfE GOV.UK publications (file URLs on DfE landing pages link directly to hesa.ac.uk). Discovery had previously run on 2026-05-23 and completed cleanly with zero candidates — the 403 was caught and swallowed by `DirectPageParserStrategy` (logged as a warning; not surfaced as a failure to the state machine). Producer was `authorisation_status = 'authorised'`, `discovery_status = 'completed'` before this update. Zero `ha_stat_publication` rows attributed to HESA.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 27 May 2026 ~21:22–21:25 BST
+
+```sql
+UPDATE ha_stat_producer
+SET authorisation_status     = 'declined',
+    authorisation_reason     = 'Site blocks all automated access (403 across all paths). HESA data surfaces transitively via DfE GOV.UK publications — no standalone discovery strategy is viable. De-registered as active producer 2026-05-27.',
+    discovery_status         = 'failed',
+    discovery_failure_reason = 'Site blocks all automated access (403 across all paths). HESA data surfaces transitively via DfE GOV.UK publications — no standalone discovery strategy is viable. De-registered as active producer 2026-05-27.',
+    updated_at               = CURRENT_TIMESTAMP
+WHERE slug = 'hesa-jisc';
+
+INSERT INTO ha_stat_producer_auth_log
+    (producer_id, changed_at, old_status, new_status, change_reason, recorded_by)
+VALUES
+    (25, CURRENT_TIMESTAMP, 'authorised', 'declined',
+     'Site blocks all automated access (403 across all paths). HESA data surfaces transitively via DfE GOV.UK publications — no standalone discovery strategy is viable. De-registered as active producer 2026-05-27.',
+     'Mark Forde (DBeaver, manual de-registration)');
+```
+
+**Result:** 1 row updated (`ha_stat_producer` id 25), 1 row inserted (`ha_stat_producer_auth_log` id 10). Zero data rows affected.
+
+**Note:** `updated_at` set explicitly because `onupdate=datetime.utcnow` is an ORM hook — raw SQL bypasses it. This is the required pattern for all raw SQL updates on ORM-managed tables.
+
+---
+
+### 2026-05-28 — Phase 1.8 data_url schema: ha_stat_publication columns + ha_stat_publication_data_file table
+
+**Context:** Phase 1.8 data_url piece 1 — schema changes to support per-publication data file extraction. All statements run individually via DBeaver Console (cursor-position execution), one at a time.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-28 ~09:37–09:39 BST
+
+```sql
+-- Step 1: Add three columns to ha_stat_publication
+ALTER TABLE ha_stat_publication
+    ADD COLUMN IF NOT EXISTS data_files_status       VARCHAR(30) NOT NULL DEFAULT 'pending',
+    ADD COLUMN IF NOT EXISTS data_files_extracted_at TIMESTAMP   NULL,
+    ADD COLUMN IF NOT EXISTS ees_url                 TEXT        NULL;
+
+-- Step 2: Add CHECK constraint on data_files_status
+ALTER TABLE ha_stat_publication
+    ADD CONSTRAINT ck_stat_pub_data_files_status
+    CHECK (data_files_status IN (
+        'pending', 'extracted', 'fetch_failed', 'no_files_found', 'not_extractable'
+    ));
+
+-- Step 3: Index on data_files_status
+CREATE INDEX IF NOT EXISTS idx_stat_pub_data_files_status
+    ON ha_stat_publication (data_files_status);
+
+-- Step 4: Index on data_files_extracted_at
+CREATE INDEX IF NOT EXISTS idx_stat_pub_data_files_extracted_at
+    ON ha_stat_publication (data_files_extracted_at);
+
+-- Step 5: New table ha_stat_publication_data_file
+CREATE TABLE IF NOT EXISTS ha_stat_publication_data_file (
+    id              SERIAL PRIMARY KEY,
+    publication_id  INTEGER NOT NULL
+                        REFERENCES ha_stat_publication(id) ON DELETE CASCADE,
+    url             TEXT NOT NULL,
+    file_type       VARCHAR(10),
+    title           TEXT,
+    file_size_bytes INTEGER,
+    classification  VARCHAR(20)
+                        CHECK (classification IS NULL OR classification IN (
+                            'main_release', 'supporting_tables', 'technical_docs', 'other'
+                        )),
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    extracted_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_pub_data_file_url UNIQUE (publication_id, url)
+);
+
+-- Step 6: Index on publication_id for data file lookups
+CREATE INDEX IF NOT EXISTS idx_pub_data_file_pub
+    ON ha_stat_publication_data_file (publication_id);
+```
+
+**Verified:** All 4 post-DDL checks passed — columns present with correct types/nullability/defaults; `ha_stat_publication_data_file` structure correct; all constraints registered; 1,124 existing `ha_stat_publication` rows defaulted to `data_files_status = 'pending'`.
+
+---
+
+## Railway infrastructure log
+
+One-off infrastructure changes (service additions, deletions, env var changes) that
+don't correspond to a git push or SQL operation.
+
+---
+
+### 2026-05-27 — Service teardown: backfill-stat-policy-areas
+
+**Action:** Deleted Railway service `backfill-stat-policy-areas`  
+**Reason:** One-shot policy_area backfill complete — 1,117 publications tagged and verified. Service no longer needed.  
+**Script retained:** `scripts/backfill_pub_policy_areas.py` — kept in repo for future re-runs if needed.  
+**Expected effect:** Reduce monthly Railway memory cost.
 
 **Verified:** `SELECT COUNT(*) FROM ha_stat_publication_theme` → 0 (empty, as expected).
 

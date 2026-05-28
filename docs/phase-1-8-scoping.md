@@ -73,6 +73,8 @@ This is the systematic pattern in UK statistical publishing: the policy-owning d
 
 **Implication:** the producer registry can probably be simplified from ~150 individual producers to ~25-30 core gov.uk-hosting departments and major ALBs, with smaller bodies reached transitively through their parent department's gov.uk publications list. This avoids the bot-blocking issue (HESA, etc.) for most cases.
 
+**Empirical confirmation (2026-05-27):** HESA / Jisc de-registered as a standalone producer. hesa.ac.uk returns 403 across all paths (root, `/data-and-analysis`, `/api`); no GOV.UK organisation registration exists. Discovery ran on 2026-05-23 and completed with zero candidates — the 403 was swallowed silently by `DirectPageParserStrategy` and not surfaced to the state machine. HESA data surfaces correctly via DfE GOV.UK publications (file URLs on DfE landing pages link directly to hesa.ac.uk). Confirms the transitive coverage principle; HESA is the first case demonstrating that producers without an accessible publication surface are correctly reached via their gov.uk partner department. See `docs/deploys.md` (2026-05-27 Production SQL log) for the de-registration statement and audit log reference.
+
 ### 4. Publication URL semantics matter
 
 Some publication URLs point to landing pages (gov.uk page describing the publication). Some point to the actual data (a PDF, an API endpoint). These are sometimes the same, sometimes different.
@@ -283,6 +285,7 @@ Based on the findings above, Phase 1.8 covers:
    - Audit existing producers against the gov.uk-as-primary-source insight
    - Identify which producers should be deprecated in favour of transitive discovery via gov.uk
    - Likely reduces registry from ~150 to ~25-30 active producers
+   - **First confirmed case (2026-05-27):** HESA / Jisc (slug `hesa-jisc`) de-registered — 403 across all paths, zero publications attributed, transitive coverage via DfE confirmed. See `docs/deploys.md` Production SQL log.
 
 ### Classifier improvements
 
