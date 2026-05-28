@@ -8,6 +8,25 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Landing page: lead with the job-to-be-done (design observation, not committed)
+
+Observation (28 May 2026): the landing page currently describes what WB *is* (parliamentary research tools) and *contains* (the tool cards), but doesn't clearly answer "what is this site for?" for a cold visitor. The job-to-be-done — understand what Parliament is doing on your topics, across otherwise-scattered sources, in one place, kept current — is the value, and it's the same thing as the data-corpus moat.
+
+Thoughts to weigh when/if revisited (none committed):
+- Lead with the job, not the tool list
+- 2–3 concrete worked examples ("see every time apprenticeship funding came up in Parliament in the last 6 months — debates, answers, bills, tagged, in one place") to make the value tangible
+- Surface the scale numbers (5k debates, 90k WQs, 621 bills, 12k orgs, daily) — currently buried in grey, but strong credibility signal for a cautious professional audience
+- Whitespace/density: this audience (GOV.UK, Hansard, Commons Library readers) may read density as credibility more than airy SaaS layouts — weigh against
+- Constraint: keep the propriety/accuracy hedging ("verify before use" etc.) — the challenge is clarity within cautious framing, not punchy marketing copy. Vagueness is the gap, not caution.
+
+Matters most because the landing page converts the widening audience shares (Teams group → parly → private office) from click into understanding. Revisit deliberately, not squeezed between build tasks.
+
+**Revisit trigger:** ahead of any deliberate push to a new audience segment; or when conversion from landing page to tool use is noticeably low.
+
+*Captured 28 May 2026 — Mark's design thoughts, explicitly not committed.*
+
+---
+
 ### Hansard Archive on Homepage + Naming Disambiguation
 
 Add a 7th card to the homepage tool grid for the Hansard Archive. Suggested card: title "Hansard Archive [BETA]", description covering 12 months of debates and WQs organised by policy area, MP, and theme with AI tagging, CTA "Open Hansard Archive →", link `/archive`. Grid treatment: 4-per-row or a featured first card rather than forcing 7 into a 3-column layout.
@@ -419,6 +438,56 @@ Neither the ingester nor the schema currently supports this link.
 **Revisit trigger:** Bill detail pages (Step 8) are being built; any session touching the bill schema or the committee evidence ingester; any "what does a bill page show?" design conversation.
 
 *Captured 22 May 2026.*
+
+---
+
+### Steady-state data file extraction cron (data_url piece 4)
+
+The data_url backfill (piece 2) is a one-shot covering existing publications. New publications created by the discovery worker get `data_files_status = 'pending'` by default but nothing currently triggers extraction on them. Steady-state coverage needs a scheduled job.
+
+**Decision (made during piece 2 scoping, 28 May 2026): daily cron, option 2.**
+
+A lightweight Railway cron runs `extract_pub_data_files.py --execute` daily, picking up any `pending` (and `fetch_failed`) publications. Same script as the backfill, deployed as a scheduled service rather than a one-shot. New publications get extracted within 24h of discovery.
+
+Ruled out:
+- Inline in discovery worker — violates failure isolation (decision H): an extraction fetch timeout must not block/slow a discovery run. Different workloads, different failure modes.
+- Manual one-shot only — fragile; new pending rows arrive continuously via the discovery cron, so a growing unextracted tail builds between manual runs.
+
+**To nail down when scoped:**
+- Selection query: `pending` AND `fetch_failed` (failed rows must be retry-eligible, not stranded)
+- Timing: after the discovery cron completes + buffer (extraction is downstream of discovery). Derive from discovery's actual schedule, not an isolated hour.
+- Memory: cron runs then exits, no persistent worker (matches policy_area pattern)
+- Re-extraction of already-`extracted` rows: separate question from daily mop-up — whether/how often to re-fetch to catch new editions (NHS-style accumulating pages, quarterly releases). Decision I from scoping flagged ~monthly with a skip for annual/biennial < 60 days old. Scope alongside or defer.
+- Piece 2b interaction: once sub-page following ships, the cron should also re-process `no_files_found` sub-page-only rows (re-queue or include in selection).
+
+**Constraint added 28 May 2026 — do NOT re-attempt the 47 Phase 1.9 HTML-content publications.**
+
+Piece 2b dry-run (28 May 2026) confirmed that 47 `no_files_found` GOV.UK publications
+serve their statistical data as HTML content on sub-pages — no `gem-c-attachment`
+downloadable files exist on the parent page OR the sub-pages. Sub-page following has
+been attempted and yielded zero files. Recovering these is Phase 1.9's job, not
+piece 4's.
+
+The selection query must NOT re-attempt these 47 IDs:
+```
+664, 686, 687, 695, 705, 720, 733, 743, 750, 751, 775, 814, 828, 835, 838,
+847, 848, 859, 862, 1124, 1128, 1133, 1135, 1164, 1166, 1167, 1193, 1198,
+1202, 1205, 1207, 1246, 1272, 1280, 1296, 1309, 1400, 1438, 1454, 1460,
+1494, 1504, 1505, 1541, 1549, 1601, 1602
+```
+
+Implementation options to pick from at design time:
+- Explicit ID exclusion in the selection query
+- New status value `html_content_only` distinguishing these from other `no_files_found` rows
+- Boolean flag on `ha_stat_publication` marking "Phase 1.9 candidate" (most extensible)
+
+Full context in `docs/phase-1-9-scoping.md` (section: "Empirical finding from Phase 1.8 piece 2b").
+
+**Build timing:** after piece 2 backfill verified, piece 3 (ONS), and piece 2b (sub-page following) — or whenever steady-state coverage starts mattering. Not urgent: the backfill covers all current pubs, and new ones sit safely at `pending` until the cron exists.
+
+**Revisit trigger:** piece 2 backfill complete + verified; piece 3 (ONS) scoped; or any session where the pending/unextracted tail is visibly growing.
+
+*Captured 28 May 2026.*
 
 ---
 

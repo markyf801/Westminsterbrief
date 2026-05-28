@@ -39,7 +39,6 @@ import requests
 
 BATCH_SIZE  = 50
 FETCH_DELAY = 1.5    # seconds between HTTP requests
-GOVUK_ROOT  = "https://www.gov.uk/"
 EES_PREFIX  = "https://explore-education-statistics.service.gov.uk"
 
 
@@ -75,10 +74,16 @@ def run_extraction(db_session, execute: bool, ids: list | None = None) -> dict:
 
     log.info("Querying first batch (last_id=%d ids=%s)", last_id, ids)
     while True:
+        # Include no_files_found when specific IDs are given — allows re-processing
+        # of publications that previously had no direct files but now have sub-pages.
+        status_filter = (
+            ["pending", "fetch_failed", "no_files_found"]
+            if ids is not None
+            else ["pending", "fetch_failed"]
+        )
         filters = [
-            StatPublication.data_files_status.in_(["pending", "fetch_failed"]),
+            StatPublication.data_files_status.in_(status_filter),
             StatPublication.id > last_id,
-            StatProducer.web_root_url.like(GOVUK_ROOT + "%"),
         ]
         if ids is not None:
             filters.append(StatPublication.id.in_(ids))
