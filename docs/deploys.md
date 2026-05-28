@@ -64,7 +64,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-28 | `0e16be6` | Feat: Phase 1.8 data_url schema — StatPublication columns + StatPublicationDataFile model   | Mark     |
 | 2026-05-28 | `9c2f657` | Feat: Phase 1.8 data_url piece 2 — GOV.UK extractor, orchestration script, 61 tests         | Mark     |
 | 2026-05-28 | `3dff5ee` | Fix: dedup duplicate URLs in gem-c-attachment containers (UniqueViolation on FE data library) | Mark   |
-| 2026-05-28 | `TBD`     | Feat: Phase 1.8 data_url piece 3 — OnsApiExtractor + dispatch + 78 tests                    | Mark     |
+| 2026-05-28 | `443b8f8` | Feat: Phase 1.8 data_url piece 3 — OnsApiExtractor + dispatch + 78 tests                    | Mark     |
 
 ---
 
