@@ -61,6 +61,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-27 | `6e08efa` | Chore: strip [STATS_DIAG] timing instrumentation from stats_catalogue.py                    | Mark     |
 | 2026-05-27 | `b719891` | Chore: remove DISCOVERY_DRY_RUN flag from discovery worker                                  | Mark     |
 | 2026-05-27 | `d06658c` | Docs: close out HESA producer de-registration (deploys.md + phase-1-8-scoping.md)          | Mark     |
+| 2026-05-28 | `0e16be6` | Feat: Phase 1.8 data_url schema — StatPublication columns + StatPublicationDataFile model   | Mark     |
 
 ---
 
