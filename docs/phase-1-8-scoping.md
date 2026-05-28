@@ -351,6 +351,10 @@ Based on the findings above, Phase 1.8 covers:
 
 ## Phase 1.9 direction (for context)
 
+> **Expanded vision recorded 28 May 2026** — see `docs/phase-1-9-scoping.md`
+> for the full vision note including SEO rationale, OGL licensing basis,
+> store/link boundary, accuracy constraints, and what needs scoping before build.
+
 Phase 1.9 will build a per-publication extraction worker that produces:
 
 - A text summary of what the publication says (1–2 paragraphs)
