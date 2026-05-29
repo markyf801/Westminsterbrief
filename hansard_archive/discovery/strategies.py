@@ -74,9 +74,14 @@ class OnsApiStrategy:
                     url = f"https://www.ons.gov.uk{uri}" if uri else ""
                 if not title or not url:
                     continue
+                # ONS API field: release_date (ISO date string, e.g. "2024-03-21T00:00:00.000Z")
+                date_hints = []
+                if item.get("release_date"):
+                    date_hints.append(item["release_date"][:10])
                 items.append(CandidateItem(
                     title=title,
                     url=url,
+                    date_hints=date_hints,
                     description_hint=item.get("description", ""),
                     raw_metadata=item,
                 ))
