@@ -70,6 +70,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-28 | `f3e42ec` | Docs: capture 28 May forward design thinking (Phase 1.9, hub pages, landing page)           | Mark     |
 | 2026-05-28 | `a62ea96` | Feat: Phase 1.8 data_url piece 2b — sub-page prevalence diagnostic script                   | Mark     |
 | 2026-05-28 | `e2f5b6f` | Merge feature/phase-1-8-data-url-piece-2b: piece 2b sub-page following + Phase 1.9 docs     | Mark     |
+| 2026-05-28 | `edb7ccb` | Docs: week-of-26-May housekeeping (CLAUDE.md discipline, INC-006, deploys.md reconciliation) | Mark     |
 
 ---
 
