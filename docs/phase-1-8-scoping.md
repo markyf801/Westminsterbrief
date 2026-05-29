@@ -337,6 +337,16 @@ Based on the findings above, Phase 1.8 covers:
    - Better filtering (show only candidates above/below confidence thresholds, if those exist)
    - Edit workflow improvements
 
+12. **Producer registry curation** — ongoing editorial judgment, chipped at in
+    small sessions alongside other work. Not a fixed block of work with an end
+    state. Producer counts at any point in time (e.g. DfE 182, DWP 502
+    candidate pool) are the size of the working set, not a target to clear. The
+    unit of work is the per-producer authorised/declined/pending decision; HESA
+    de-registration on 27 May 2026 was the first declined case. State is tracked
+    in the `ha_stat_producer` table (`authorisation_status`) and in the
+    `ha_stat_producer_auth_log` audit trail; significant decisions are noted in
+    `docs/deploys.md`.
+
 ---
 
 ## Phase 1.8 out of scope (deferred to Phase 1.9+)
