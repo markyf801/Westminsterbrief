@@ -905,6 +905,9 @@ class StatPublication(db.Model):
     data_files_status       = db.Column(db.String(30), nullable=False, default="pending")
     data_files_extracted_at = db.Column(db.DateTime, nullable=True)
     ees_url                 = db.Column(db.Text, nullable=True)
+    # Phase 1.9: source publication date — GOV.UK first_published_at or ONS release_date.
+    # NULL if source doesn't provide it. Backfilled for existing rows by scripts/backfill_pub_dates.py.
+    first_published_at      = db.Column(db.Date, nullable=True)
 
     producer      = db.relationship("StatProducer", back_populates="publications")
     pub_audit_log = db.relationship("StatPublicationAuditLog", back_populates="publication",

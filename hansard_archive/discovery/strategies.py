@@ -74,9 +74,14 @@ class OnsApiStrategy:
                     url = f"https://www.ons.gov.uk{uri}" if uri else ""
                 if not title or not url:
                     continue
+                # ONS API field: release_date (ISO date string, e.g. "2024-03-21T00:00:00.000Z")
+                date_hints = []
+                if item.get("release_date"):
+                    date_hints.append(item["release_date"][:10])
                 items.append(CandidateItem(
                     title=title,
                     url=url,
+                    date_hints=date_hints,
                     description_hint=item.get("description", ""),
                     raw_metadata=item,
                 ))
@@ -124,7 +129,7 @@ class GovUkSearchStrategy:
                         "start":    start,
                         "count":    page_size,
                         "fields[]": ["title", "description", "link",
-                                     "public_timestamp"],
+                                     "public_timestamp", "first_published_at"],
                         # Newest-first ensures that when a slug collision is
                         # detected and the candidate is skipped, the already-
                         # stored URL belongs to the most recent release rather
@@ -143,7 +148,12 @@ class GovUkSearchStrategy:
                     if url and not url.startswith("http"):
                         url = f"https://www.gov.uk{url}"
                     date_hints = []
-                    if r.get("public_timestamp"):
+                    # Prefer first_published_at (originally published) over
+                    # public_timestamp (last updated) — same semantic as the
+                    # Content API used in the backfill script.
+                    if r.get("first_published_at"):
+                        date_hints.append(r["first_published_at"][:10])
+                    elif r.get("public_timestamp"):
                         date_hints.append(r["public_timestamp"][:10])
                     items.append(CandidateItem(
                         title=r.get("title", ""),

@@ -20,11 +20,21 @@ Returns a summary dict so the caller (discovery_worker.py) can log results.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date as date_type, datetime
 
 log = logging.getLogger("discovery")
 
 _BATCH_SIZE = 50
+
+
+def _parse_date_hint(hints: list[str]) -> date_type | None:
+    """Return the first parseable YYYY-MM-DD date from date_hints, or None."""
+    for hint in hints:
+        try:
+            return date_type.fromisoformat(hint[:10])
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return None
 
 _VALID_CADENCES = frozenset({
     "daily", "weekly", "monthly", "quarterly",
@@ -125,6 +135,9 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
                 subject_area=result.get("subject_area"),
                 authorisation_status="candidate",
                 discovered_at=datetime.utcnow(),
+                # GOV.UK: public_timestamp (last updated) from Search API.
+                # ONS: release_date from datasets API. NULL if neither provides it.
+                first_published_at=_parse_date_hint(cand.date_hints),
             )
             db_session.add(pub)
             for area in result.get("policy_areas", []):
