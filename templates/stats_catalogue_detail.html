@@ -201,5 +201,23 @@
         {% endif %}
     </div>
 
+
+    {# Related publications — same producer, shared policy area #}
+    {% if related_publications %}
+    <div class="sd-section">
+        <div class="sd-label">Other publications from {{ producer.short_name or producer.name }} in this area</div>
+        <ul style="margin: 8px 0 0; padding: 0; list-style: none;">
+            {% for rel in related_publications %}
+            <li style="padding: 7px 0; border-bottom: 1px solid #f3f4f6; font-size: 14px;">
+                <a href="{{ url_for('stats_catalogue.catalogue_detail', producer_slug=producer.slug, pub_slug=rel.slug) }}" style="color: #3b7dd8; text-decoration: none;">{{ rel.name }}</a>
+                {% if rel.last_seen_at %}
+                <span style="font-size: 12px; color: #9ca3af; margin-left: 8px;">Last checked {{ rel.last_seen_at.strftime('%d %b %Y') }}</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
 </div>
 {% endblock %}

@@ -318,6 +318,83 @@ prerequisite for anything involving briefing content.
 
 ---
 
+## Spike findings — Phase 1.9 detail-page review (28 May 2026)
+
+Recorded from the Phase 1.9 spike review of rendered stat-publication detail
+pages on beta. These are observations about what the minimal default floor
+looks like and what enhancements would add value.
+
+### Publication date — missing field, backfillable
+
+The government publication date (when the statistical release was published)
+is not currently in the DB. `StatPublication` only has `first_seen_at` /
+`last_seen_at` (WB-internal ingestion dates). The GOV.UK Content API provides
+`first_published_at` for every publication — the discovery worker never
+captured it.
+
+**To add:** new `first_published_at DATE` column on `ha_stat_publication`;
+discovery worker captures it from the GOV.UK API response; backfill script
+for the existing 1,124 rows (~1,200 API calls, feasible at GOV.UK rate limits).
+
+This is the most obviously missing field on the detail page. Should be
+high priority in Phase 1.9.
+
+### File titles — data quality gap for older publications
+
+Many publications have `NULL` titles on their `StatPublicationDataFile` rows.
+The extractor captures titles from `gem-c-attachment__link` anchor text, but
+older or differently-structured GOV.UK pages yield empty anchor text. Fallback
+logic uses: title → classification → cleaned URL filename. The URL filename
+fallback is readable (e.g. `sfr-30-hours-free-childcare-summer-term-2019`) but
+not ideal.
+
+No schema change needed. Potential improvement: re-fetch title from GOV.UK
+attachment metadata for rows where `title IS NULL` as a one-shot enrichment.
+
+### Same-series publications — currently no link between editions
+
+Statistical releases come in series across time — "Higher Education Student
+Statistics" 2021/22, 2022/23, 2023/24 are editions of one series. Currently
+each appears as an isolated publication with no link in WB between editions.
+
+**Why it matters:** series context gives users temporal anchor — cadence,
+freshness, historical depth — without requiring WB to resolve the fuzzy
+"which date" question.
+
+**Why it's hard:** no `series_id` in source data; no series structure in
+GOV.UK/ONS APIs. Series membership must be inferred from title patterns,
+with real edge cases:
+- Clean year suffix: "...2021/22" / "...2022/23" — easy
+- Date-range suffix: "...July 2022 to end-March 2026" — harder
+- Renames between editions: "Survey 2024" → "Report 2025" — breaks pattern
+- One-off publications with no series at all
+- Discontinued series
+
+**Design questions:** title-pattern matching (cheap, fragile) vs LLM-based
+detection (expensive, robust) vs manual curation (impractical at scale)?
+Schema: `series_id` column or separate join table? Display: chronological
+list on detail page, or separate series-overview pages?
+
+**Scope:** real Phase 1.9 build, not spike. One of the distinct enhancement
+candidates above the floor.
+
+### Three distinct cross-publication groupings — separated
+
+Three related but distinct grouping ideas emerged. Each answers a different
+user question and should be scoped separately:
+
+1. **Same-series** (finding above) — different editions of the SAME release
+   across time. Tightest grouping, most temporally informative, hardest to detect.
+2. **Same producer + same policy area** — different publications from the same
+   department on the same topic. Easy from current data (producer_id + policy_area
+   tag join). **Added to spike** — cheap, gives detail pages immediate cross-linking.
+3. **Same policy area, any producer** — taxonomy-wide hub pages. Discussed 28 May
+   (hub pages and topic summaries thread). Loosest grouping, broadest reach.
+
+All three are valuable; #1 and #3 deferred; #2 added to spike build (28 May).
+
+---
+
 ## Empirical finding from Phase 1.8 piece 2b — 47 known HTML-content targets (28 May 2026)
 
 **Recorded from:** piece 2b dry-run diagnostic (feature/phase-1-8-data-url-piece-2b, commit ad2c72a)

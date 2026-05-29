@@ -137,10 +137,11 @@ def catalogue_list():
 
 @stats_catalogue_bp.route("/stats/<producer_slug>/<pub_slug>")
 def catalogue_detail(producer_slug, pub_slug):
-    from hansard_archive.models import StatProducer, StatPublication, StatPublicationTheme
-
-    THEME_TYPE_POLICY_AREA = "policy_area"
-    THEME_TYPE_SPECIFIC    = "specific"
+    from extensions import db
+    from hansard_archive.models import (
+        StatProducer, StatPublication, StatPublicationTheme,
+        THEME_TYPE_POLICY_AREA, THEME_TYPE_SPECIFIC,
+    )
 
     producer = StatProducer.query.filter_by(
         slug=producer_slug,
@@ -155,9 +156,29 @@ def catalogue_detail(producer_slug, pub_slug):
     if pub.authorisation_status not in ("candidate", "authorised"):
         abort(404)
 
-    all_themes     = pub.themes.all()
-    policy_areas   = sorted({t.theme for t in all_themes if t.theme_type == THEME_TYPE_POLICY_AREA})
+    all_themes      = pub.themes.all()
+    policy_areas    = sorted({t.theme for t in all_themes if t.theme_type == THEME_TYPE_POLICY_AREA})
     specific_themes = sorted({t.theme for t in all_themes if t.theme_type == THEME_TYPE_SPECIFIC})
+
+    # Related: same producer + at least one shared policy area, up to 8
+    related_publications = []
+    if policy_areas:
+        related_publications = (
+            db.session.query(StatPublication)
+            .join(StatPublicationTheme,
+                  StatPublicationTheme.publication_id == StatPublication.id)
+            .filter(
+                StatPublication.producer_id == pub.producer_id,
+                StatPublication.id != pub.id,
+                StatPublication.authorisation_status.in_(["candidate", "authorised"]),
+                StatPublicationTheme.theme_type == THEME_TYPE_POLICY_AREA,
+                StatPublicationTheme.theme.in_(policy_areas),
+            )
+            .distinct()
+            .order_by(StatPublication.last_seen_at.desc())
+            .limit(8)
+            .all()
+        )
 
     return render_template(
         "stats_catalogue_detail.html",
@@ -166,4 +187,5 @@ def catalogue_detail(producer_slug, pub_slug):
         cadence_label=_CADENCE_LABELS.get(pub.update_cadence, "—"),
         policy_areas=policy_areas,
         specific_themes=specific_themes,
+        related_publications=related_publications,
     )
