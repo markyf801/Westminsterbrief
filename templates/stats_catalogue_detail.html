@@ -124,11 +124,11 @@
     <div class="sd-section">
         <div class="sd-meta-grid">
             <div>
-                <div class="sd-label">First discovered</div>
-                <div class="sd-value">{{ pub.discovered_at.strftime('%d %B %Y') if pub.discovered_at else '—' }}</div>
+                <div class="sd-label">Added to Westminster Brief</div>
+                <div class="sd-value">{{ pub.discovered_at.strftime('%d %B %Y') if pub.discovered_at else pub.first_seen_at.strftime('%d %B %Y') if pub.first_seen_at else '—' }}</div>
             </div>
             <div>
-                <div class="sd-label">Last confirmed</div>
+                <div class="sd-label">Last checked</div>
                 <div class="sd-value">{{ pub.last_seen_at.strftime('%d %B %Y') if pub.last_seen_at else '—' }}</div>
             </div>
         </div>
