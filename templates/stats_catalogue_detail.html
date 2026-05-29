@@ -156,7 +156,10 @@
                         {%- elif f.classification -%}
                             {{ f.classification | replace('_', ' ') | title }}
                         {%- else -%}
-                            {{ f.file_type | upper if f.file_type else 'Data file' }}
+                            {%- set _fname = f.url.split('/')[-1] -%}
+                            {%- set _parts = _fname.split('.') -%}
+                            {%- set _noext = _parts[:-1] | join('.') if _parts | length > 1 else _fname -%}
+                            {{ _noext | replace('-', ' ') | replace('_', ' ') | title }}
                         {%- endif -%}
                     </a></td>
                     <td><span class="sd-file-type">{{ f.file_type or '?' }}</span></td>
