@@ -137,7 +137,10 @@ def catalogue_list():
 
 @stats_catalogue_bp.route("/stats/<producer_slug>/<pub_slug>")
 def catalogue_detail(producer_slug, pub_slug):
-    from hansard_archive.models import StatProducer, StatPublication
+    from hansard_archive.models import StatProducer, StatPublication, StatPublicationTheme
+
+    THEME_TYPE_POLICY_AREA = "policy_area"
+    THEME_TYPE_SPECIFIC    = "specific"
 
     producer = StatProducer.query.filter_by(
         slug=producer_slug,
@@ -152,9 +155,15 @@ def catalogue_detail(producer_slug, pub_slug):
     if pub.authorisation_status not in ("candidate", "authorised"):
         abort(404)
 
+    all_themes     = pub.themes.all()
+    policy_areas   = sorted({t.theme for t in all_themes if t.theme_type == THEME_TYPE_POLICY_AREA})
+    specific_themes = sorted({t.theme for t in all_themes if t.theme_type == THEME_TYPE_SPECIFIC})
+
     return render_template(
         "stats_catalogue_detail.html",
         pub=pub,
         producer=producer,
         cadence_label=_CADENCE_LABELS.get(pub.update_cadence, "—"),
+        policy_areas=policy_areas,
+        specific_themes=specific_themes,
     )

@@ -19,7 +19,7 @@
 .sd-value       { font-size: 14px; color: #1f2937; line-height: 1.6; }
 .sd-meta-grid   { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; margin-bottom: 4px; }
 .sd-description { font-size: 15px; color: #374151; line-height: 1.7; }
-.sd-badge       { display: inline-block; padding: 3px 9px; border-radius: 3px; font-size: 12px; font-weight: 600; }
+.sd-badge       { display: inline-block; padding: 3px 9px; border-radius: 3px; font-size: 12px; font-weight: 600; margin: 2px 3px 2px 0; }
 .b-annual       { background: #e0e7ff; color: #3730a3; }
 .b-quarterly    { background: #dbeafe; color: #1d4ed8; }
 .b-monthly      { background: #dcfce7; color: #15803d; }
@@ -28,12 +28,25 @@
 .b-biennial     { background: #f3f4f6; color: #374151; }
 .b-ad_hoc       { background: #fef3c7; color: #92400e; }
 .b-one_off      { background: #f1f5f9; color: #475569; }
+.b-policy       { background: #e0f2fe; color: #0369a1; text-decoration: none; }
+.b-policy:hover { background: #bae6fd; }
+.b-specific     { background: #f0fdf4; color: #166534; }
+.sd-files-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.sd-files-table th { text-align: left; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.06em; padding: 4px 8px 8px 0; border-bottom: 1px solid #e5e8ec; }
+.sd-files-table td { padding: 8px 8px 8px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; color: #374151; }
+.sd-files-table tr:last-child td { border-bottom: none; }
+.sd-files-table a { color: #3b7dd8; text-decoration: none; }
+.sd-files-table a:hover { text-decoration: underline; }
+.sd-file-type   { display: inline-block; padding: 1px 6px; border-radius: 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; background: #f3f4f6; color: #4b5563; }
+.sd-no-files    { font-size: 14px; color: #6b7280; line-height: 1.7; }
+.sd-no-files a  { color: #3b7dd8; }
+.sd-freshness   { font-size: 12px; color: #9ca3af; margin-top: 10px; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="sd-wrap">
-    <a class="sd-back" href="/stats{% if request.referrer and '/stats' in request.referrer %}{{ request.referrer.split('/stats')[1] | replace(request.host_url, '') }}{% endif %}">&larr; Back to catalogue</a>
+    <a class="sd-back" href="/stats">&larr; Back to catalogue</a>
 
     <div class="sd-producer">
         <a href="{{ producer.web_root_url }}" target="_blank" rel="noopener">{{ producer.short_name or producer.name }}</a>
@@ -41,8 +54,9 @@
 
     <h1 class="sd-h1">{{ pub.name }}</h1>
 
-    <a class="sd-cta" href="{{ pub.url }}" target="_blank" rel="noopener">View on GOV.UK ↗</a>
+    <a class="sd-cta" href="{{ pub.url }}" target="_blank" rel="noopener">View on source ↗</a>
 
+    {# Description — omitted entirely if not available #}
     {% if pub.description %}
     <div class="sd-section">
         <div class="sd-label">Description</div>
@@ -50,6 +64,35 @@
     </div>
     {% endif %}
 
+    {# Policy area tags #}
+    {% if policy_areas %}
+    <div class="sd-section">
+        <div class="sd-label">Policy areas</div>
+        <div style="margin-top: 6px;">
+            {% for pa in policy_areas %}
+            <a class="sd-badge b-policy" href="/stats/{{ pa | slugify }}">{{ pa }}</a>
+            {% endfor %}
+        </div>
+        {% if specific_themes %}
+        <div style="margin-top: 8px;">
+            {% for theme in specific_themes %}
+            <span class="sd-badge b-specific">{{ theme }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% elif specific_themes %}
+    <div class="sd-section">
+        <div class="sd-label">Topics</div>
+        <div style="margin-top: 6px;">
+            {% for theme in specific_themes %}
+            <span class="sd-badge b-specific">{{ theme }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# Metadata grid #}
     <div class="sd-section">
         <div class="sd-meta-grid">
             <div>
@@ -77,6 +120,7 @@
         </div>
     </div>
 
+    {# Dates #}
     <div class="sd-section">
         <div class="sd-meta-grid">
             <div>
@@ -89,5 +133,62 @@
             </div>
         </div>
     </div>
+
+    {# Data files section #}
+    <div class="sd-section">
+        <div class="sd-label">Data files</div>
+
+        {% if pub.data_files_status == 'extracted' and pub.data_files %}
+        <table class="sd-files-table">
+            <thead>
+                <tr>
+                    <th>File</th>
+                    <th>Type</th>
+                    <th>Size</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in pub.data_files | sort(attribute='display_order') %}
+                <tr>
+                    <td><a href="{{ f.url }}" target="_blank" rel="noopener">{{ f.title or f.url.split('/')[-1] }}</a></td>
+                    <td><span class="sd-file-type">{{ f.file_type or '?' }}</span></td>
+                    <td>
+                        {% if f.file_size_bytes %}
+                            {% if f.file_size_bytes >= 1048576 %}
+                                {{ '%.1f' | format(f.file_size_bytes / 1048576) }} MB
+                            {% elif f.file_size_bytes >= 1024 %}
+                                {{ (f.file_size_bytes // 1024) }} KB
+                            {% else %}
+                                {{ f.file_size_bytes }} bytes
+                            {% endif %}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if pub.data_files_extracted_at %}
+        <p class="sd-freshness">Data files last checked: {{ pub.data_files_extracted_at.strftime('%d %B %Y') }}</p>
+        {% endif %}
+
+        {% elif pub.data_files_status == 'not_extractable' %}
+        <p class="sd-no-files" style="margin-top: 8px;">
+            This publication's data is hosted on an external platform (such as the
+            DfE Explore Education Statistics service) that serves files directly.
+            <a href="{{ pub.ees_url or pub.url }}" target="_blank" rel="noopener">Access the data on the source platform ↗</a>
+        </p>
+
+        {% else %}
+        {# no_files_found, fetch_failed, pending, or extracted-with-no-files #}
+        <p class="sd-no-files" style="margin-top: 8px;">
+            No data files are available for this publication via Westminster Brief.
+            View the full publication on {{ producer.short_name or producer.name }}:
+            <a href="{{ pub.url }}" target="_blank" rel="noopener">{{ pub.url }}</a>
+        </p>
+        {% endif %}
+    </div>
+
 </div>
 {% endblock %}
