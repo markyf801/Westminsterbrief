@@ -71,6 +71,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-28 | `a62ea96` | Feat: Phase 1.8 data_url piece 2b — sub-page prevalence diagnostic script                   | Mark     |
 | 2026-05-28 | `e2f5b6f` | Merge feature/phase-1-8-data-url-piece-2b: piece 2b sub-page following + Phase 1.9 docs     | Mark     |
 | 2026-05-28 | `edb7ccb` | Docs: week-of-26-May housekeeping (CLAUDE.md discipline, INC-006, deploys.md reconciliation) | Mark     |
+| 2026-05-29 | `dc05450` | Phase 1.9: spike (stat detail pages), A1/A2/A3 first_published_at, related pubs section      | Mark     |
 
 ---
 
