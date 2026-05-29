@@ -2,6 +2,75 @@
 
 ---
 
+## INC-006 — DISCOVERY_DRY_RUN ambiguity caused unexpected Gemini API spend
+
+**Date:** 27 May 2026
+**Severity:** Low — no data integrity impact, contained cost overrun
+**Status:** Resolved (same day)
+
+### What happened
+
+A producer-discovery script was run with the intent of validating producer
+classification logic without spending Gemini API tokens. The `DISCOVERY_DRY_RUN`
+env var was set, but the script's interpretation of "dry run" did not include
+"skip Gemini calls" — only "skip DB writes." Result: Gemini classification was
+invoked for ~150 candidate publications during what was assumed to be a zero-cost
+validation pass.
+
+### Root cause
+
+The `DISCOVERY_DRY_RUN` flag's behaviour was ambiguous. The flag suppressed
+database writes (its original purpose) but the producer-discovery flow had been
+extended to call Gemini for classification BEFORE the write step. The flag was
+never extended to also suppress the LLM call.
+
+The script's docstring said "dry run mode" without specifying which side effects
+were suppressed. The operator assumed broader suppression than was implemented.
+
+### Cost impact
+
+~150 Gemini Flash-Lite classification calls at standard rates. Total overrun
+under £1. Not financially material; flagged because the operational discipline
+matters more than the cost.
+
+### Resolution
+
+1. `DISCOVERY_DRY_RUN` flag retired entirely (commit `b719891`, 27 May 2026)
+2. Producer-discovery script now requires explicit `--execute` flag to run any
+   side-effecting operation, matching the pattern of all other scripts in the
+   codebase (`extract_pub_data_files.py`, backfill scripts)
+3. No "dry run" partial-suppression modes — either fully dry (no DB, no LLM,
+   no external API calls) or fully executing
+
+### Commits
+
+- `b719891` — Chore: remove DISCOVERY_DRY_RUN flag from discovery worker
+
+### Lessons learned
+
+Partial-suppression flags accumulate semantic drift as scripts grow. A flag that
+meant "no DB writes" in v1 doesn't reliably mean "no side effects" in v3 when v2
+added an LLM call. Either fully-dry or fully-executing is unambiguous; partial
+modes invite the operator to assume more suppression than the code implements.
+
+The correct pattern (required for all scripts going forward): any script that
+touches the DB, calls an external API, or spends money requires an explicit
+`--execute` flag. Without it, the script logs what it would do and exits cleanly.
+
+---
+
+## INC-005 — Local-to-production connection prohibition
+
+*(Captured as CLAUDE.md discipline rule, not a discrete incident.)*
+
+---
+
+## INC-004 — Railway log buffering masked sub-page fetch
+
+*(Captured as CLAUDE.md one-shot service rule, not a discrete incident.)*
+
+---
+
 ## INC-003 — Mobile search timeout
 **Date:** 2026-05-22
 **Duration:** Unknown — observed approximately 16:00 UTC; resolved by next-day check on 23 May

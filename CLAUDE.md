@@ -105,6 +105,31 @@ recommended path for any production SQL that the Railway Query tab cannot handle
 Connection details: host `hopper.proxy.rlwy.net`, port `50798`, database `railway`,
 SSL required. Credentials from `.env` (`DATABASE_URL` contains all components).
 
+**DBeaver multi-statement execution: verify against DB state, not against intent:**
+DBeaver's default execution mode runs the statement under the cursor, not the entire script. A multi-statement block can appear "run" when only one statement actually executed.
+
+After any multi-statement DBeaver operation:
+1. SELECT against the expected end-state — not against the queries that were "supposed to run"
+2. Confirm row counts, status values, timestamps match the intended change
+3. If verification disagrees with intent: the script didn't run as expected; investigate before declaring done
+
+Failure mode: assuming a block ran because no errors appeared. Errors only show for the cursor-position statement. Other statements may have been silently skipped. Refined from several near-misses 28 May 2026.
+
+**Raw SQL must explicitly set `updated_at` on ORM-managed tables:**
+SQLAlchemy's `onupdate=datetime.utcnow` hook fires only when the ORM mutates a row. Raw SQL UPDATE statements (via DBeaver, psql, or `connection.execute`) bypass the ORM and will NOT trigger the hook.
+
+```sql
+-- WRONG — updated_at stays at previous value
+UPDATE ha_stat_producer SET authorisation_status = 'declined' WHERE id = 25;
+
+-- RIGHT — explicitly set updated_at
+UPDATE ha_stat_producer
+SET authorisation_status = 'declined', updated_at = NOW()
+WHERE id = 25;
+```
+
+The audit trail relies on `updated_at`; a silent stale value undermines downstream reasoning about when changes happened. Pattern first applied: HESA de-registration 27 May 2026.
+
 **Postgres sequence desync after Railway failover:**
 After a Railway Postgres failover or WAL recovery, auto-increment sequences can reset to a low value while data remains intact. Symptom: `duplicate key value violates unique constraint "ha_session_pkey"`. Fix in Railway's Postgres Query console:
 ```sql
@@ -401,6 +426,18 @@ Clear mapping to avoid confusion when discussing issues:
 ### Railway one-shot services — capture logs before teardown
 
 Diagnostic logging in one-shot scripts (e.g. `[SUB_PAGE]` counts, extraction summaries) is lost when the service is deleted. Before tearing down any one-shot Railway service, export or screenshot the full log output — the diagnostic data it contains informs the next piece of work.
+
+**Detailed sequence — do not skip steps 3 and 4:**
+
+1. Deploy and run the service
+2. Wait for "Exited" / "Stopped" / "Completed" state in the Railway dashboard
+3. Export the FULL log to a local file via Railway's log download
+4. Open the file locally and verify it contains the expected content (search for summary blocks, CSV markers, specific log line patterns — don't trust that export succeeded, confirm by inspection)
+5. ONLY after local file confirmed: delete the service
+
+This applies to ALL one-shot services regardless of whether logs "look" important at the time. The piece 2b diagnostic re-scan (28 May 2026) was needed precisely because the earlier piece 2 backfill's `[SUB_PAGE]` diagnostic logs were lost on teardown.
+
+If a diagnostic script writes a summary block + CSV section + per-row log lines, the local capture must contain all three before teardown.
 
 ### Railway Postgres connections
 

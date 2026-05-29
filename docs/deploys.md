@@ -264,6 +264,39 @@ don't correspond to a git push or SQL operation.
 
 ---
 
+### 2026-05-28 — Phase 1.8 piece 2b: sub-page prevalence diagnostic + dry-run
+
+**Piece 2b diagnostic re-scan (one-shot service):**
+One-shot Railway service over 108 `no_files_found` GOV.UK publications. 47 of 108
+(44%) found to have sub-pages. Zero fetch errors. DWP accounts for 25 of 47.
+Log captured locally before teardown. 47 pub IDs recorded in
+`docs/phase-1-9-scoping.md` as Phase 1.9 HTML-extraction targets.
+
+**Piece 2b dry-run (one-shot service, no --execute):**
+Dry-run over 6 representative publications (IDs 1167, 1198, 1193, 664, 1454, 1272)
+spanning DSIT, DBT, DWP, DfT, Defra. Mechanics validated: sub-pages followed
+correctly; pre-release-access exclusion works for DBT prefix variant and DSIT
+suffix variant; scenario B (sub-pages fetched, no files, stays `no_files_found`)
+confirmed. Zero data-file yield — sub-pages contain HTML statistical content, not
+`gem-c-attachment` downloads. Full execute on all 47 deferred; 47 IDs documented
+as Phase 1.9 targets.
+
+**Final extraction state across all 1,124 publications (confirmed 28 May 2026):**
+`extracted: 962 | no_files_found: 109 | not_extractable: 53 | pending: 0`
+
+---
+
+### 2026-05-28 — Phase 1.8 piece 2: GOV.UK extractor backfill execute run
+
+**Context:** Phase 1.8 data_url piece 2 — `GovUKGenericExtractor` + `FallbackExtractor`
++ `select_extractor` dispatch. Backfill run as Railway one-shot service over all
+GOV.UK-producer pending publications (7 producers). Mid-run bug: `UniqueViolation`
+on `uq_pub_data_file_url` — dedup fix committed (`3dff5ee`) and one-shot
+re-deployed cleanly. Final result: all GOV.UK publications processed. ONS
+publications (non-GOV.UK domain) correctly skipped, staying `pending` for piece 3.
+
+---
+
 ### 2026-05-27 — Service teardown: backfill-stat-policy-areas
 
 **Action:** Deleted Railway service `backfill-stat-policy-areas`  
