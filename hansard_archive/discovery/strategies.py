@@ -129,7 +129,7 @@ class GovUkSearchStrategy:
                         "start":    start,
                         "count":    page_size,
                         "fields[]": ["title", "description", "link",
-                                     "public_timestamp"],
+                                     "public_timestamp", "first_published_at"],
                         # Newest-first ensures that when a slug collision is
                         # detected and the candidate is skipped, the already-
                         # stored URL belongs to the most recent release rather
@@ -148,7 +148,12 @@ class GovUkSearchStrategy:
                     if url and not url.startswith("http"):
                         url = f"https://www.gov.uk{url}"
                     date_hints = []
-                    if r.get("public_timestamp"):
+                    # Prefer first_published_at (originally published) over
+                    # public_timestamp (last updated) — same semantic as the
+                    # Content API used in the backfill script.
+                    if r.get("first_published_at"):
+                        date_hints.append(r["first_published_at"][:10])
+                    elif r.get("public_timestamp"):
                         date_hints.append(r["public_timestamp"][:10])
                     items.append(CandidateItem(
                         title=r.get("title", ""),
