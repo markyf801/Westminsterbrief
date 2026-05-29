@@ -150,7 +150,15 @@
             <tbody>
                 {% for f in pub.data_files | sort(attribute='display_order') %}
                 <tr>
-                    <td><a href="{{ f.url }}" target="_blank" rel="noopener">{{ f.title or f.url.split('/')[-1] }}</a></td>
+                    <td><a href="{{ f.url }}" target="_blank" rel="noopener">
+                        {%- if f.title -%}
+                            {{ f.title }}
+                        {%- elif f.classification -%}
+                            {{ f.classification | replace('_', ' ') | title }}
+                        {%- else -%}
+                            {{ f.file_type | upper if f.file_type else 'Data file' }}
+                        {%- endif -%}
+                    </a></td>
                     <td><span class="sd-file-type">{{ f.file_type or '?' }}</span></td>
                     <td>
                         {% if f.file_size_bytes %}
