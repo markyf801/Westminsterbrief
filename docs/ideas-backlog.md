@@ -460,6 +460,29 @@ Ruled out:
 - Re-extraction of already-`extracted` rows: separate question from daily mop-up — whether/how often to re-fetch to catch new editions (NHS-style accumulating pages, quarterly releases). Decision I from scoping flagged ~monthly with a skip for annual/biennial < 60 days old. Scope alongside or defer.
 - Piece 2b interaction: once sub-page following ships, the cron should also re-process `no_files_found` sub-page-only rows (re-queue or include in selection).
 
+**Constraint added 28 May 2026 — do NOT re-attempt the 47 Phase 1.9 HTML-content publications.**
+
+Piece 2b dry-run (28 May 2026) confirmed that 47 `no_files_found` GOV.UK publications
+serve their statistical data as HTML content on sub-pages — no `gem-c-attachment`
+downloadable files exist on the parent page OR the sub-pages. Sub-page following has
+been attempted and yielded zero files. Recovering these is Phase 1.9's job, not
+piece 4's.
+
+The selection query must NOT re-attempt these 47 IDs:
+```
+664, 686, 687, 695, 705, 720, 733, 743, 750, 751, 775, 814, 828, 835, 838,
+847, 848, 859, 862, 1124, 1128, 1133, 1135, 1164, 1166, 1167, 1193, 1198,
+1202, 1205, 1207, 1246, 1272, 1280, 1296, 1309, 1400, 1438, 1454, 1460,
+1494, 1504, 1505, 1541, 1549, 1601, 1602
+```
+
+Implementation options to pick from at design time:
+- Explicit ID exclusion in the selection query
+- New status value `html_content_only` distinguishing these from other `no_files_found` rows
+- Boolean flag on `ha_stat_publication` marking "Phase 1.9 candidate" (most extensible)
+
+Full context in `docs/phase-1-9-scoping.md` (section: "Empirical finding from Phase 1.8 piece 2b").
+
 **Build timing:** after piece 2 backfill verified, piece 3 (ONS), and piece 2b (sub-page following) — or whenever steady-state coverage starts mattering. Not urgent: the backfill covers all current pubs, and new ones sit safely at `pending` until the cron exists.
 
 **Revisit trigger:** piece 2 backfill complete + verified; piece 3 (ONS) scoped; or any session where the pending/unextracted tail is visibly growing.

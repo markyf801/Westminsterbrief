@@ -315,3 +315,75 @@ surfaces about a topic beyond raw parliamentary data. The four points on the
 spectrum (store references / factual framing / AI explainers / reproduced content)
 want deciding together, with the Open Parliament Licence check as a specific
 prerequisite for anything involving briefing content.
+
+---
+
+## Empirical finding from Phase 1.8 piece 2b — 47 known HTML-content targets (28 May 2026)
+
+**Recorded from:** piece 2b dry-run diagnostic (feature/phase-1-8-data-url-piece-2b, commit ad2c72a)
+
+### What was found
+
+The Phase 1.8 piece 2b diagnostic identified 47 GOV.UK statistical publications
+(out of 108 `no_files_found` GOV.UK publications) whose landing pages link to
+HTML sub-pages rather than directly to downloadable data files. The sub-page
+follower correctly returned `no_files_found` for all of these — there are no
+`gem-c-attachment` download components on the sub-pages.
+
+However, the sub-pages **do contain the actual statistical data**, presented as
+HTML content on the page: figures, tables, narrative with embedded statistics.
+The data is there; it is just not in a downloadable file format.
+
+**Representative example (pub=664, DWP):**
+
+Landing page: `https://www.gov.uk/government/statistics/move-to-universal-credit-july-2022-to-end-march-2026`
+
+Sub-page: `https://www.gov.uk/government/statistics/move-to-universal-credit-july-2022-to-end-march-2026/completing-the-move-to-universal-credit-statistics-related-to-the-move-of-households-claiming-tax-credits-and-dwp-benefits-to-universal-credit-data`
+
+The sub-page has statistics on it — figures, data — but no file download buttons.
+"Print this page" is the only export avenue. The data lives in the HTML.
+
+### Composition of the 47
+
+DWP dominates (25 of 47 pubs). Remaining are DfT, DBT, DSIT, Defra and others.
+Full ID list:
+```
+664, 686, 687, 695, 705, 720, 733, 743, 750, 751, 775, 814, 828, 835, 838,
+847, 848, 859, 862, 1124, 1128, 1133, 1135, 1164, 1166, 1167, 1193, 1198,
+1202, 1205, 1207, 1246, 1272, 1280, 1296, 1309, 1400, 1438, 1454, 1460,
+1494, 1504, 1505, 1541, 1549, 1601, 1602
+```
+
+### Why this matters for Phase 1.9
+
+These 47 publications are **confirmed Phase 1.9 targets** with known sub-page
+URLs. The data is:
+- Accessible (OGL, publicly available HTML)
+- Already located (sub-page URLs captured by piece 2b via `sub_page_urls` in
+  `ExtractionResult` and logged during the dry-run)
+- Known to contain statistics (verified by manual browser check, 28 May 2026)
+
+Phase 1.9 HTML extraction has a concrete starting cohort rather than an
+abstract target. The sub-page URLs for these 47 publications can be retrieved
+from the `ha_stat_publication` table (via `sub_page_urls` if stored, or by
+re-running the piece 2b extractor in read-only mode).
+
+### What Phase 1.9 needs to handle for this cohort
+
+These pages appear to use GOV.UK's `govspeak` HTML rendering (standard
+gov.uk statistics presentation). The content likely includes:
+- A headline summary / "main points" section (potentially liftable curation —
+  see "lift-vs-manufacture distinction" section above)
+- Data presented in `<table>` elements within `div.govspeak`
+- Narrative paragraphs with inline figures
+
+Phase 1.9's HTML extraction path should target `div.govspeak` content on these
+sub-pages, not the landing page (which only contains sub-page links).
+
+### Current DB state for these 47 publications
+
+All 47 remain at `data_files_status = 'no_files_found'`. Piece 2b correctly
+declined to set them to `extracted` (no downloadable files found). If a future
+Phase 1.9 build ingests HTML content from sub-pages, these rows would likely
+need a new status value (e.g. `html_content_only`) to distinguish "no files,
+but sub-page HTML content available" from "no files and no content either".

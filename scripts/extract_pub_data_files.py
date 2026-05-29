@@ -74,8 +74,15 @@ def run_extraction(db_session, execute: bool, ids: list | None = None) -> dict:
 
     log.info("Querying first batch (last_id=%d ids=%s)", last_id, ids)
     while True:
+        # Include no_files_found when specific IDs are given — allows re-processing
+        # of publications that previously had no direct files but now have sub-pages.
+        status_filter = (
+            ["pending", "fetch_failed", "no_files_found"]
+            if ids is not None
+            else ["pending", "fetch_failed"]
+        )
         filters = [
-            StatPublication.data_files_status.in_(["pending", "fetch_failed"]),
+            StatPublication.data_files_status.in_(status_filter),
             StatPublication.id > last_id,
         ]
         if ids is not None:
