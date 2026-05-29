@@ -258,6 +258,29 @@ WHERE url LIKE 'https://api.beta.ons.gov.uk/%';
 
 ---
 
+### 2026-05-29 — Phase 1.9: add first_published_at column to ha_stat_publication
+
+**Context:** Phase 1.9 publication date work (A1) — add source publication date column.
+Discovery worker and backfill script will populate it going forward.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-29 ~18:20 BST
+
+```sql
+ALTER TABLE ha_stat_publication
+ADD COLUMN IF NOT EXISTS first_published_at DATE NULL;
+```
+
+**Verified:**
+```sql
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'ha_stat_publication'
+  AND column_name = 'first_published_at';
+-- Result: first_published_at | date | YES
+```
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that
