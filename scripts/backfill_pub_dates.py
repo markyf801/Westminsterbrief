@@ -70,7 +70,7 @@ def _fetch_govuk_date(pub_url: str, http: requests.Session) -> date_type | None:
                 time.sleep(wait)
                 continue
             if resp.status_code == 404:
-                log.debug("GOV.UK Content API 404 for %s", path)
+                log.info("GOV.UK Content API 404 for %s", path)
                 return None
             if not resp.ok:
                 log.warning("GOV.UK Content API %d for %s", resp.status_code, path)
