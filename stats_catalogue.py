@@ -94,7 +94,11 @@ def catalogue_list():
         q = q.order_by(StatPublication.name.asc())
     else:
         sort = "newest"
-        q = q.order_by(StatPublication.last_seen_at.desc())
+        # Newest-first by source publication date; undated rows last, stable by id.
+        q = q.order_by(
+            StatPublication.first_published_at.desc().nullslast(),
+            StatPublication.id.desc(),
+        )
 
     total = q.count()
 
@@ -175,7 +179,10 @@ def catalogue_detail(producer_slug, pub_slug):
                 StatPublicationTheme.theme.in_(policy_areas),
             )
             .distinct()
-            .order_by(StatPublication.last_seen_at.desc())
+            .order_by(
+                StatPublication.first_published_at.desc().nullslast(),
+                StatPublication.id.desc(),
+            )
             .limit(8)
             .all()
         )

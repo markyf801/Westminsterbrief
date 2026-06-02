@@ -123,6 +123,12 @@
     {# Dates #}
     <div class="sd-section">
         <div class="sd-meta-grid">
+            {% if pub.first_published_at %}
+            <div>
+                <div class="sd-label">Published</div>
+                <div class="sd-value">{{ pub.first_published_at.strftime('%d %B %Y') }}</div>
+            </div>
+            {% endif %}
             <div>
                 <div class="sd-label">Added to Westminster Brief</div>
                 <div class="sd-value">{{ pub.discovered_at.strftime('%d %B %Y') if pub.discovered_at else pub.first_seen_at.strftime('%d %B %Y') if pub.first_seen_at else '—' }}</div>
