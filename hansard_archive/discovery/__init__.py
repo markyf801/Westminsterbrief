@@ -20,21 +20,11 @@ Returns a summary dict so the caller (discovery_worker.py) can log results.
 from __future__ import annotations
 
 import logging
-from datetime import date as date_type, datetime
+from datetime import datetime
 
 log = logging.getLogger("discovery")
 
 _BATCH_SIZE = 50
-
-
-def _parse_date_hint(hints: list[str]) -> date_type | None:
-    """Return the first parseable YYYY-MM-DD date from date_hints, or None."""
-    for hint in hints:
-        try:
-            return date_type.fromisoformat(hint[:10])
-        except (ValueError, TypeError, AttributeError):
-            continue
-    return None
 
 _VALID_CADENCES = frozenset({
     "daily", "weekly", "monthly", "quarterly",
@@ -59,11 +49,14 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
     Raises on ManualStrategy or unrecoverable fetch failure — caller must
     catch and record on the producer row.
     """
+    import requests
     from hansard_archive.discovery.strategies import select_strategy
     from hansard_archive.discovery.classifier import classify_candidate
+    from hansard_archive.discovery.pub_dates import resolve_publication_date
     from hansard_archive.models import StatPublication, StatPublicationTheme, THEME_TYPE_POLICY_AREA
     from hansard_archive.slugs import slugify_theme
 
+    http_session = requests.Session()
     strategy = select_strategy(producer)
     log.info("run_discovery: producer=%s strategy=%s",
              producer.slug, type(strategy).__name__)
@@ -135,9 +128,11 @@ def run_discovery(producer, db_session, gemini_key: str) -> dict:
                 subject_area=result.get("subject_area"),
                 authorisation_status="candidate",
                 discovered_at=datetime.utcnow(),
-                # GOV.UK: public_timestamp (last updated) from Search API.
-                # ONS: release_date from datasets API. NULL if neither provides it.
-                first_published_at=_parse_date_hint(cand.date_hints),
+                # Authoritative publication date via Content API (GOV.UK) /
+                # datasets API (ONS) — NOT the Search API public_timestamp,
+                # which is last-updated. Resolved at write-time for new rows
+                # only (cheap). NULL if the source provides no date.
+                first_published_at=resolve_publication_date(cand.url, http_session),
             )
             db_session.add(pub)
             for area in result.get("policy_areas", []):

@@ -1,15 +1,20 @@
 """
-Backfill first_published_at on ha_stat_publication.
+Backfill / correct / compare first_published_at on ha_stat_publication.
 
-For each publication where first_published_at IS NULL:
-  - GOV.UK pubs: call the GOV.UK Content API (first_published_at field)
-  - ONS pubs:    call the ONS datasets API (release_date field)
-  - Others:      skip — no structured date source available
+Authoritative date source (via hansard_archive.discovery.pub_dates):
+  - GOV.UK pubs: GOV.UK Content API first_published_at
+  - ONS pubs:    ONS datasets API release_date
+
+Modes:
+  (default, dry-run)  log what WOULD be written for NULL rows; write nothing
+  --execute           populate NULL rows only (original backfill behaviour)
+  --compare           READ-ONLY over ALL rows: fetch authoritative date, log
+                      MATCH / DIFFER vs stored value (diagnostic — no writes)
+  --refresh --execute write authoritative date to ALL rows where it DIFFERS
+                      from the stored value (corrective pass)
 
 Deploy as a Railway one-shot service (restart: Never, SKIP_MIGRATIONS=1).
 CAPTURE LOGS BEFORE TEARDOWN — log file is the only persistent output.
-
-Dry-run by default. Pass --execute to write to the database.
 """
 from __future__ import annotations
 
@@ -17,7 +22,6 @@ import logging
 import os
 import sys
 import time
-from datetime import date as date_type
 from urllib.parse import urlparse
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,11 +35,10 @@ logging.basicConfig(
 
 import requests
 
-GOVUK_CONTENT_API = "https://www.gov.uk/api/content"
-ONS_DATASETS_API  = "https://api.beta.ons.gov.uk/v1/datasets"
-FETCH_DELAY       = 1.5
-BATCH_SIZE        = 50
-UA                = "WestminsterBrief/2 (+https://westminsterbrief.co.uk)"
+from hansard_archive.discovery.pub_dates import resolve_publication_date
+
+FETCH_DELAY = 1.5
+BATCH_SIZE  = 50
 
 
 def _configure_nullpool(app, db) -> None:
@@ -54,100 +57,36 @@ def _configure_nullpool(app, db) -> None:
     log.info("NullPool engine configured (driver: %s)", new_engine.url.drivername)
 
 
-def _fetch_govuk_date(pub_url: str, http: requests.Session) -> date_type | None:
+def run_backfill(db_session, execute: bool, compare: bool, refresh: bool) -> dict:
     """
-    Fetch first_published_at from the GOV.UK Content API.
-    Returns None if the field is absent or the request fails.
+    compare=True  → READ-ONLY over ALL rows; log MATCH/DIFFER; never writes.
+    refresh=True  → process ALL rows; write only where authoritative DIFFERS.
+    neither       → process NULL rows only (original backfill).
+    execute gates all writes (ignored when compare=True).
     """
-    path = urlparse(pub_url).path
-    api_url = f"{GOVUK_CONTENT_API}{path}"
-    for attempt in range(3):
-        try:
-            resp = http.get(api_url, timeout=20, headers={"User-Agent": UA})
-            if resp.status_code == 429:
-                wait = 2 ** (attempt + 1) * 5
-                log.warning("429 rate-limited (GOV.UK Content API) — waiting %ds", wait)
-                time.sleep(wait)
-                continue
-            if resp.status_code == 404:
-                log.info("GOV.UK Content API 404 for %s", path)
-                return None
-            if not resp.ok:
-                log.warning("GOV.UK Content API %d for %s", resp.status_code, path)
-                return None
-            raw = resp.json().get("first_published_at", "")
-            if not raw:
-                return None
-            return date_type.fromisoformat(raw[:10])
-        except (requests.RequestException, ValueError, TypeError) as exc:
-            log.warning("GOV.UK Content API error (attempt %d) for %s: %s",
-                        attempt + 1, path, exc)
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-    return None
-
-
-def _fetch_ons_date(pub_url: str, http: requests.Session) -> date_type | None:
-    """
-    Fetch release_date from the ONS datasets API.
-    URL form: https://www.ons.gov.uk/datasets/{dataset_id}
-    Returns None if the field is absent or the request fails.
-    """
-    parts = [p for p in urlparse(pub_url).path.split("/") if p]
-    # Expect path like /datasets/{dataset_id}
-    if len(parts) < 2 or parts[0] != "datasets":
-        log.warning("ONS URL doesn't match /datasets/{id} pattern: %s", pub_url)
-        return None
-    dataset_id = parts[1]
-    api_url = f"{ONS_DATASETS_API}/{dataset_id}"
-    for attempt in range(3):
-        try:
-            resp = http.get(api_url, timeout=20, headers={"User-Agent": UA})
-            if resp.status_code == 429:
-                wait = 2 ** (attempt + 1) * 5
-                log.warning("429 rate-limited (ONS API) — waiting %ds", wait)
-                time.sleep(wait)
-                continue
-            if not resp.ok:
-                log.warning("ONS API %d for dataset %s", resp.status_code, dataset_id)
-                return None
-            raw = resp.json().get("release_date", "")
-            if not raw:
-                return None
-            return date_type.fromisoformat(raw[:10])
-        except (requests.RequestException, ValueError, TypeError) as exc:
-            log.warning("ONS API error (attempt %d) for %s: %s",
-                        attempt + 1, dataset_id, exc)
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-    return None
-
-
-def run_backfill(db_session, execute: bool) -> dict:
     from datetime import datetime
     from hansard_archive.models import StatProducer, StatPublication
     from sqlalchemy.orm import joinedload
 
-    stats = {"processed": 0, "populated": 0, "null_result": 0,
-             "skipped_no_source": 0, "errors": 0}
+    stats = {"processed": 0, "match": 0, "differ": 0, "null_result": 0,
+             "written": 0, "skipped_no_source": 0, "errors": 0}
     http = requests.Session()
     last_id = 0
+    scan_all = compare or refresh
 
-    log.info("Starting publication date backfill — execute=%s", execute)
+    log.info("Starting pub-date pass — compare=%s refresh=%s execute=%s",
+             compare, refresh, execute)
 
     while True:
-        batch = (
+        q = (
             db_session.query(StatPublication)
             .options(joinedload(StatPublication.producer))
             .join(StatProducer)
-            .filter(
-                StatPublication.first_published_at.is_(None),
-                StatPublication.id > last_id,
-            )
-            .order_by(StatPublication.id)
-            .limit(BATCH_SIZE)
-            .all()
+            .filter(StatPublication.id > last_id)
         )
+        if not scan_all:
+            q = q.filter(StatPublication.first_published_at.is_(None))
+        batch = q.order_by(StatPublication.id).limit(BATCH_SIZE).all()
         if not batch:
             break
 
@@ -155,31 +94,35 @@ def run_backfill(db_session, execute: bool) -> dict:
             last_id = pub.id
             stats["processed"] += 1
             producer_slug = pub.producer.slug if pub.producer else "unknown"
+            stored = pub.first_published_at
 
             try:
-                if pub.url.startswith("https://www.gov.uk/"):
-                    date_val = _fetch_govuk_date(pub.url, http)
-                    source   = "govuk_content_api:first_published_at"
-                elif pub.url.startswith("https://www.ons.gov.uk/datasets/"):
-                    date_val = _fetch_ons_date(pub.url, http)
-                    source   = "ons_api:release_date"
-                else:
-                    log.debug("pub=%d no date source for URL %s", pub.id, pub.url)
-                    stats["skipped_no_source"] += 1
+                fetched = resolve_publication_date(pub.url, http)
+
+                if fetched is None:
+                    log.info("pub=%d producer=%s NULL-result stored=%s url=%.70s",
+                             pub.id, producer_slug, stored, pub.url)
+                    stats["null_result"] += 1
                     continue
 
-                if date_val is None:
-                    log.info("pub=%d producer=%s NULL date  source=%s url=%.70s",
-                             pub.id, producer_slug, source, pub.url)
-                    stats["null_result"] += 1
+                if stored == fetched:
+                    stats["match"] += 1
+                    if compare:
+                        log.info("pub=%d producer=%s MATCH date=%s",
+                                 pub.id, producer_slug, fetched)
                 else:
-                    log.info("pub=%d producer=%s date=%s source=%s",
-                             pub.id, producer_slug, date_val, source)
-                    stats["populated"] += 1
-                    if execute:
-                        pub.first_published_at = date_val
+                    stats["differ"] += 1
+                    log.info("pub=%d producer=%s DIFFER added=%s stored=%s fetched=%s url=%.70s",
+                             pub.id, producer_slug,
+                             pub.discovered_at.date() if pub.discovered_at else None,
+                             stored, fetched, pub.url)
+                    # Write only outside compare mode, when executing, and when
+                    # there is a real change (covers both NULL-fill and refresh).
+                    if execute and not compare:
+                        pub.first_published_at = fetched
                         pub.updated_at = datetime.utcnow()
                         db_session.commit()
+                        stats["written"] += 1
 
             except Exception as exc:
                 log.exception("Unhandled error pub=%d: %s", pub.id, exc)
@@ -191,30 +134,39 @@ def run_backfill(db_session, execute: bool) -> dict:
 
             time.sleep(FETCH_DELAY)
 
-    log.info("Backfill complete: %s", stats)
+    log.info("Pass complete: %s", stats)
     return stats
 
 
-def run(execute: bool = False) -> None:
+def run(execute: bool = False, compare: bool = False, refresh: bool = False) -> None:
     from flask_app import app, db
 
     _configure_nullpool(app, db)
 
     with app.app_context():
-        run_backfill(db_session=db.session, execute=execute)
+        run_backfill(db_session=db.session, execute=execute,
+                     compare=compare, refresh=refresh)
 
 
 def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(
-        description="Backfill first_published_at on ha_stat_publication"
+        description="Backfill / compare / refresh first_published_at on ha_stat_publication"
     )
     parser.add_argument(
         "--execute", action="store_true",
         help="Write dates to database (default: dry-run, log only)",
     )
+    parser.add_argument(
+        "--compare", action="store_true",
+        help="READ-ONLY: scan all rows, log MATCH/DIFFER vs authoritative date",
+    )
+    parser.add_argument(
+        "--refresh", action="store_true",
+        help="Scan all rows (not just NULL); with --execute, correct DIFFER rows",
+    )
     args = parser.parse_args()
-    run(execute=args.execute)
+    run(execute=args.execute, compare=args.compare, refresh=args.refresh)
 
 
 if __name__ == "__main__":
