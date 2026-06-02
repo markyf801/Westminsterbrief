@@ -282,6 +282,24 @@ WHERE table_name = 'ha_stat_publication'
 
 ---
 
+### 2026-05-29 — Phase 1.9: first_published_at backfill execute run
+
+**Context:** Phase 1.9 A3 — backfill `first_published_at` on existing
+`ha_stat_publication` rows. GOV.UK rows via GOV.UK Content API
+(`first_published_at`); ONS rows via ONS datasets API (`release_date`).
+
+**Run via:** Railway one-shot service `scripts/backfill_pub_dates.py --execute`
+(internal DATABASE_URL, SKIP_MIGRATIONS=1, Restart: Never). Dry-run validated
+first (1104 populated / 20 null / 0 errors); 6-row spot-check against source
+pages confirmed dates correct before execute. Not raw SQL — writes via
+SQLAlchemy per-row commit, `updated_at` set explicitly.
+
+**Result:** 1,104 of 1,124 rows populated; 20 NULL (source provides no date);
+0 errors. Date range 2008-03-01 to 2026-05-28. NULLs handled by NULLS LAST
+ordering in the catalogue (no separate UX treatment needed at this count).
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that

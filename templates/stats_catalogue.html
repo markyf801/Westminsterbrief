@@ -115,7 +115,7 @@
                 <th style="width:45%">Publication</th>
                 <th style="width:20%">Producer</th>
                 <th style="width:12%">Cadence</th>
-                <th style="width:15%">Subject</th>
+                <th style="width:15%">Published</th>
                 <th style="width:8%">Source</th>
             </tr>
         </thead>
@@ -139,7 +139,7 @@
                     <span style="color:#9ca3af;">—</span>
                     {% endif %}
                 </td>
-                <td style="font-size:12px; color:#5a6878;">{{ pub.subject_area or '' }}</td>
+                <td style="font-size:12px; color:#5a6878;">{{ pub.first_published_at.strftime('%d %b %Y') if pub.first_published_at else '' }}</td>
                 <td>
                     <a class="sc-govuk-link" href="{{ pub.url }}" target="_blank" rel="noopener">GOV.UK ↗</a>
                 </td>
