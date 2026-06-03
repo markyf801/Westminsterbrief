@@ -74,6 +74,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-29 | `dc05450` | Phase 1.9: spike (stat detail pages), A1/A2/A3 first_published_at, related pubs section      | Mark     |
 | 2026-06-02 | `36ad8a0` | Phase 1.9: B1-B4 catalogue date UI; pub-date bug fix (shared Content-API helper, discovery worker) | Mark |
 | 2026-06-03 | `be4706a` | INC-007 writeup + pub_dates tests; ONS release_date fix (follow latest_version)              | Mark     |
+| 2026-06-03 | `94e0936` | Per-producer date label (Published vs Latest release) + ONS semantic note; working-with-opus update | Mark |
 
 ---
 
