@@ -459,6 +459,7 @@ Ruled out:
 - Memory: cron runs then exits, no persistent worker (matches policy_area pattern)
 - Re-extraction of already-`extracted` rows: separate question from daily mop-up — whether/how often to re-fetch to catch new editions (NHS-style accumulating pages, quarterly releases). Decision I from scoping flagged ~monthly with a skip for annual/biennial < 60 days old. Scope alongside or defer.
 - Piece 2b interaction: once sub-page following ships, the cron should also re-process `no_files_found` sub-page-only rows (re-queue or include in selection).
+- **ONS date refresh (added 3 June 2026):** piece 4's selection logic must cover a SECOND job beyond data-files — re-fetching ONS `first_published_at` (latest-version release_date) and updating-where-changed. ONS dates go stale because the discovery worker only INSERTs and never updates existing rows, so each new weekly/quarterly ONS version leaves the stored "Latest release" date behind. GOV.UK first-published is immune (write-once). One cron, two jobs — don't build a separate mechanism. Full context in `docs/phase-1-9-scoping.md` (ONS publication date section). Needs to be live within the first few weeks of /stats going public, before drift misleads.
 
 **Constraint added 28 May 2026 — do NOT re-attempt the 47 Phase 1.9 HTML-content publications.**
 

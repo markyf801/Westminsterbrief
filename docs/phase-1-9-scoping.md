@@ -413,6 +413,30 @@ noted not fixed.
 row, both producers — mirroring how GOV.UK's own pages show both lines. More
 build than 20 ONS rows justify pre-launch; capture and defer.
 
+**ONS dates go stale — steady-state refresh obligation (found 3 June 2026).**
+The re-compare surfaced 2 ONS weekly-deaths rows that DIFFERed: stored
+2026-05-29 vs fetched 2026-06-03, because ONS published the scheduled weekly
+version between the populate and the re-compare (next_release was confirmed
+3 June). Not contamination — real source movement caught mid-window.
+
+**The architectural asymmetry (a consequence of the date-semantic choice, not a
+flaw):** GOV.UK first-published is *write-once-correct-forever*. ONS latest-release
+is *write-then-must-be-refreshed*. Root cause: the discovery worker only INSERTs
+and skips existing rows (`if existing: skip; continue`), so nothing updates an ONS
+row's `first_published_at` when a new version drops. Left unaddressed, ONS
+weekly/quarterly dates drift and the "Latest release [date]" label becomes
+**confidently wrong over time — worse than no date**.
+
+**Fix (do NOT build a separate mechanism):** fold ONS date-refresh into the
+piece-4 steady-state extraction cron already backlogged in
+`docs/ideas-backlog.md`. One cron, two jobs — re-fetch ONS latest-release and
+update-where-changed, alongside the data-files run. Piece 4's selection logic,
+when built, covers BOTH data-files extraction AND ONS date refresh.
+
+**Timing:** not a launch blocker (current drift is hours, immaterial to ordering),
+but it needs to be live before ONS dates drift enough to mislead — realistically
+within the first few weeks of /stats being public.
+
 See INC-007 for the GOV.UK-side date work this sits alongside.
 
 ### Three distinct cross-publication groupings — separated
