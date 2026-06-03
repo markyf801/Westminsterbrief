@@ -72,6 +72,8 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-05-28 | `e2f5b6f` | Merge feature/phase-1-8-data-url-piece-2b: piece 2b sub-page following + Phase 1.9 docs     | Mark     |
 | 2026-05-28 | `edb7ccb` | Docs: week-of-26-May housekeeping (CLAUDE.md discipline, INC-006, deploys.md reconciliation) | Mark     |
 | 2026-05-29 | `dc05450` | Phase 1.9: spike (stat detail pages), A1/A2/A3 first_published_at, related pubs section      | Mark     |
+| 2026-06-02 | `1538449` | Phase 1.9: B1-B4 catalogue date UI; pub-date bug fix (shared Content-API helper, discovery worker) | Mark |
+| 2026-06-03 | `be4706a` | INC-007 writeup + pub_dates tests; ONS release_date fix (follow latest_version)              | Mark     |
 
 ---
 
