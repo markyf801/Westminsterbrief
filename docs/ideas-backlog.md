@@ -443,6 +443,13 @@ Neither the ingester nor the schema currently supports this link.
 
 ### Steady-state data file extraction cron (data_url piece 4)
 
+> **Related — see `docs/re-discovery-scoping.md`** (added 3 June 2026): piece 4 is the
+> downstream maintenance half of a two-mechanism freshness design. The upstream half —
+> new-publication re-discovery — is a committed pre-launch gate with design substantially
+> worked out (incl. the ONS dataset-ID normalisation that unifies new-pub discovery with
+> ONS date-refresh). Read that doc before building piece 4; its two-mechanism split and
+> Decision-H reasoning shape where each job lives.
+
 The data_url backfill (piece 2) is a one-shot covering existing publications. New publications created by the discovery worker get `data_files_status = 'pending'` by default but nothing currently triggers extraction on them. Steady-state coverage needs a scheduled job.
 
 **Decision (made during piece 2 scoping, 28 May 2026): daily cron, option 2.**
