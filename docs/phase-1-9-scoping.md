@@ -378,6 +378,17 @@ list on detail page, or separate series-overview pages?
 **Scope:** real Phase 1.9 build, not spike. One of the distinct enhancement
 candidates above the floor.
 
+### ONS publications have no captured publication date (20 rows)
+
+The compare pass (2 June 2026) confirmed all 20 ONS `ha_stat_publication` rows
+have NULL `first_published_at` — the ONS datasets API does not return a usable
+`release_date` for them via the current path (`/v1/datasets/{id}` → `release_date`).
+They sort last under the catalogue's NULLS-LAST ordering, so this is graceful,
+not broken. Follow-up options: (a) inspect the ONS API response shape to find
+where the release/edition date actually lives (likely on the edition/version,
+not the dataset root); (b) accept NULL for v1. Not a launch blocker. See INC-007
+for the GOV.UK-side date work this sits alongside.
+
 ### Three distinct cross-publication groupings — separated
 
 Three related but distinct grouping ideas emerged. Each answers a different

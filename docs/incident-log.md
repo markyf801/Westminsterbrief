@@ -2,6 +2,76 @@
 
 ---
 
+## INC-007 — Discovery worker wrote last-updated date instead of publication date
+
+**Date found:** 2 June 2026 (pre-launch spot-check)
+**Severity:** Low — caught before /stats launched; production /stats flag-gated OFF throughout; no user impact
+**Status:** Resolved (root cause fixed; data verified clean)
+
+### What happened
+
+Phase 1.9 added a `first_published_at` column to `ha_stat_publication` so the
+stats catalogue could order newest-first by source publication date (a launch
+criterion). A pre-launch spot-check of a real page (MCS domestic battery
+statistics, DESNZ) showed the catalogue's "Published" date as 28 May 2026,
+while the GOV.UK source page showed "Published 29 May 2025 / Last updated
+28 May 2026". The catalogue was showing the LAST-UPDATED date, not the
+publication date — the exact misleading-order failure the feature exists to
+prevent.
+
+### Root cause
+
+Two code paths populated the column using different GOV.UK APIs:
+
+- A3 backfill (existing rows) used the GOV.UK **Content API**, which exposes
+  `first_published_at` correctly.
+- A2 discovery worker (new rows) used the GOV.UK **Search API**, which does
+  NOT expose `first_published_at` at all — only `public_timestamp`
+  (last-updated). An earlier "alignment" change requested `first_published_at`
+  from the Search API, silently got nothing back, and fell through to
+  `public_timestamp`. So the discovery worker wrote the updated date.
+
+Verified directly against both APIs: the Search API result objects contain no
+`first_published_at` field; the Content API returns it.
+
+### Resolution
+
+1. **Shared helper (root-cause fix):** `hansard_archive/discovery/pub_dates.py`
+   is now the single source of truth — GOV.UK Content API `first_published_at`,
+   ONS datasets API `release_date`, no fallback to any other field. Both the
+   discovery worker (A2) and the backfill/compare script (A3) import it, so the
+   two paths cannot diverge again. Commit `c0456e4`.
+2. **A2 fixed:** discovery worker resolves the date via the Content API at
+   new-row write time (cheap — new rows only), not from Search API hints. The
+   `_parse_date_hint` path was deleted; `public_timestamp` is no longer a date
+   source anywhere (it survives only as free-text classifier context).
+3. **Read-only compare pass** over all 1,124 rows confirmed the existing data
+   was already clean: `match: 1104, differ: 0, null_result: 20 (all ONS),
+   errors: 0`. No corrective write was needed — the only wrong values had
+   already resolved (GOV.UK metadata was in flux around the 28 May republish;
+   stored and live now agree).
+
+### Known follow-up (not a regression)
+
+20 ONS publications have NULL `first_published_at` — the ONS datasets API does
+not return a usable `release_date` for them via the current path. They sort
+last under NULLS-LAST. Tracked as a Phase 1.9 follow-up (investigate ONS date
+capture vs accept NULL); not blocking.
+
+### Lessons learned
+
+- **Silent fallbacks hide field-name mistakes.** Requesting a non-existent API
+  field and falling through to a different one produced plausible-but-wrong
+  data with no error. The fix removes the fallback entirely: absent date → None.
+- **Two code paths populating one column must share the fetch logic.** The
+  shared helper makes divergence structurally impossible — the same principle
+  as a single source of truth for any cross-path constant.
+- **Spot-checking real pages against source pre-launch is the process working.**
+  The dry-run mechanics looked fine; only eyeballing a real page against GOV.UK
+  surfaced the semantic error. This is why the launch criterion required it.
+
+---
+
 ## INC-006 — DISCOVERY_DRY_RUN ambiguity caused unexpected Gemini API spend
 
 **Date:** 27 May 2026

@@ -75,13 +75,20 @@ def fetch_govuk_first_published(pub_url: str, http: requests.Session | None = No
 
 def fetch_ons_release_date(pub_url: str, http: requests.Session | None = None) -> date_type | None:
     """
-    ONS datasets API release_date. Handles both stored forms of the URL:
+    ONS release_date. The date lives on the VERSION, not the dataset root:
+      dataset root → links.latest_version.href → version.release_date
+
+    Handles both stored forms of the URL:
       - https://www.ons.gov.uk/datasets/{dataset_id}
       - https://api.beta.ons.gov.uk/v1/datasets/{dataset_id}/editions/.../versions/N
     """
+    # Already a version endpoint — read release_date directly.
+    if "api.beta.ons.gov.uk" in pub_url and "/versions/" in pub_url:
+        version = _get_json(pub_url, http)
+        return _parse_iso_date(version.get("release_date", "")) if version else None
+
     parts = [p for p in urlparse(pub_url).path.split("/") if p]
     # www.ons.gov.uk/datasets/{id}  →  parts = ["datasets", "{id}", ...]
-    # api.beta.ons.gov.uk/v1/datasets/{id}/...  →  parts = ["v1", "datasets", "{id}", ...]
     dataset_id = None
     if "datasets" in parts:
         idx = parts.index("datasets")
@@ -90,10 +97,22 @@ def fetch_ons_release_date(pub_url: str, http: requests.Session | None = None) -
     if not dataset_id:
         log.warning("ONS URL has no extractable dataset id: %s", pub_url)
         return None
-    data = _get_json(f"{ONS_DATASETS_API}/{dataset_id}", http)
-    if not data:
+
+    root = _get_json(f"{ONS_DATASETS_API}/{dataset_id}", http)
+    if not root:
         return None
-    return _parse_iso_date(data.get("release_date", ""))
+    # Some datasets expose release_date on the root; prefer it when present.
+    direct = _parse_iso_date(root.get("release_date", ""))
+    if direct:
+        return direct
+    # Otherwise follow latest_version → version.release_date (the usual case).
+    version_href = ((root.get("links") or {}).get("latest_version") or {}).get("href", "")
+    if not version_href:
+        return None
+    version = _get_json(version_href, http)
+    if not version:
+        return None
+    return _parse_iso_date(version.get("release_date", ""))
 
 
 def resolve_publication_date(pub_url: str, http: requests.Session | None = None) -> date_type | None:
