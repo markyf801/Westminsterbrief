@@ -1256,6 +1256,8 @@ feature/xxx  →  beta  →  master
 - Once validated on beta, merge `beta` → `master` (and Railway auto-deploys production)
 - `beta` branch must always be a superset of `master` — never merge master back to beta selectively
 
+**Return to beta after operational master work.** Sometimes there's a legitimate reason to be on `master` directly — e.g. a Railway one-shot service tracks `master`, so a script/fix must land there to be deployable. When that happens: finish the operational reason, then **switch back to `beta` for subsequent commits**. Don't keep committing on `master` by momentum — including doc commits. Changes flow UP (`feature → beta → master`); committing on master out of momentum inverts that and leaves beta behind, defeating beta-as-superset (beta is meant to see things *before* master). The `master → beta` reconciliation merge is an occasional fix for when this slips, NOT a routine direction — routine use erodes the point. (Same failure shape as other drifts: a correct reason to deviate, then drifting past the reason. Watch for it.)
+
 ### Railway service configuration (set once in Railway dashboard)
 
 | Variable | Value |
