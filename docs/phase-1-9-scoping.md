@@ -378,16 +378,42 @@ list on detail page, or separate series-overview pages?
 **Scope:** real Phase 1.9 build, not spike. One of the distinct enhancement
 candidates above the floor.
 
-### ONS publications have no captured publication date (20 rows)
+### ONS publication date — resolved; semantic settled (3 June 2026)
 
-The compare pass (2 June 2026) confirmed all 20 ONS `ha_stat_publication` rows
-have NULL `first_published_at` — the ONS datasets API does not return a usable
-`release_date` for them via the current path (`/v1/datasets/{id}` → `release_date`).
-They sort last under the catalogue's NULLS-LAST ordering, so this is graceful,
-not broken. Follow-up options: (a) inspect the ONS API response shape to find
-where the release/edition date actually lives (likely on the edition/version,
-not the dataset root); (b) accept NULL for v1. Not a launch blocker. See INC-007
-for the GOV.UK-side date work this sits alongside.
+The compare pass (2 June) found all 20 ONS rows had NULL `first_published_at`.
+Root cause: `release_date` lives on the dataset's latest **version**
+(`links.latest_version.href` → version), not the dataset root. The shared helper
+now follows that link (commit `be4706a`); the 20 rows are populated.
+
+**Semantic decision (Opus, 3 June): keep ONS = latest-version release_date.**
+GOV.UK first_published_at and ONS latest-version release_date are the same
+concept through different data models — both answer "when was the most recent
+genuine data release?". GOV.UK models a new release as a new page (new
+first_published_at); ONS models it as a new version under the same URL. The
+GOV.UK first-over-last rule exists because GOV.UK "updates" are often trivial
+(typo/metadata); an ONS new version is a genuine release (e.g. a new week's
+data). So they agree in intent. Using ONS first-version would wrongly sort
+genuinely-fresh series as years old — rejected.
+
+**Label fix shipped:** the detail page labels the date per producer —
+"Published" for GOV.UK (first-published), "Latest release" for ONS
+(latest-version). Same stored value and unified sort key; honest label per data
+model. The catalogue **list** header stays the generic "Published" (GOV.UK-
+dominated scan view; the detail page is the scrutiny surface).
+
+**Known edge case (acceptable):** ONS corrections create a new version with a
+new `release_date`, so a correction occasionally bumps recency (the trivial-
+update problem in reverse). ONS exposes `alerts` / `latest_changes` arrays on
+the version that *could* distinguish corrections from new data, but they're
+empty for normal releases and we don't inspect them. Negligible for 20 rows;
+noted not fixed.
+
+**Future enhancement (not now):** the fully-consistent end-state shows BOTH
+"Published" (first release) and "Last updated / Latest" (freshness) for every
+row, both producers — mirroring how GOV.UK's own pages show both lines. More
+build than 20 ONS rows justify pre-launch; capture and defer.
+
+See INC-007 for the GOV.UK-side date work this sits alongside.
 
 ### Three distinct cross-publication groupings — separated
 

@@ -120,12 +120,16 @@
         </div>
     </div>
 
-    {# Published date — source's own first-published date; section omitted if absent #}
+    {# Source publication date. Label differs by producer data model:
+       GOV.UK = discrete page, the date is first-published.
+       ONS    = versioned series, the date is the latest version's release.
+       Both answer "most recent genuine release"; the label is honest per type. #}
     {% if pub.first_published_at %}
+    {% set is_ons = 'ons.gov.uk' in pub.url %}
     <div class="sd-section">
         <div class="sd-meta-grid">
             <div>
-                <div class="sd-label">Published</div>
+                <div class="sd-label">{{ 'Latest release' if is_ons else 'Published' }}</div>
                 <div class="sd-value">{{ pub.first_published_at.strftime('%d %B %Y') }}</div>
             </div>
         </div>
