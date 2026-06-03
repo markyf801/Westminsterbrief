@@ -107,24 +107,45 @@ class TestFetchGovukFirstPublished:
 
 class TestFetchOnsReleaseDate:
 
-    def test_extracts_release_date_from_human_url(self):
-        http = MagicMock()
-        http.get.return_value = _mock_resp(json_body={"release_date": "2024-03-21T00:00:00.000Z"})
-        result = fetch_ons_release_date("https://www.ons.gov.uk/datasets/wellbeing", http)
-        assert result == date(2024, 3, 21)
-        assert http.get.call_args[0][0] == "https://api.beta.ons.gov.uk/v1/datasets/wellbeing"
+    _ROOT_WITH_VERSION = {
+        "title": "Wellbeing",
+        "links": {"latest_version": {
+            "href": "https://api.beta.ons.gov.uk/v1/datasets/wellbeing/editions/time-series/versions/9"}},
+    }
+    _VERSION = {"release_date": "2023-11-28T00:00:00.000Z", "last_updated": "2023-12-11"}
 
-    def test_extracts_dataset_id_from_api_url_form(self):
+    def test_follows_latest_version_for_release_date(self):
+        """release_date lives on the version, reached via the dataset root."""
+        http = MagicMock()
+        http.get.side_effect = [
+            _mock_resp(json_body=self._ROOT_WITH_VERSION),   # dataset root
+            _mock_resp(json_body=self._VERSION),             # latest version
+        ]
+        result = fetch_ons_release_date("https://www.ons.gov.uk/datasets/wellbeing", http)
+        assert result == date(2023, 11, 28)
+        # first call = dataset root
+        assert http.get.call_args_list[0][0][0] == "https://api.beta.ons.gov.uk/v1/datasets/wellbeing"
+        # second call = the version href from the root
+        assert "versions/9" in http.get.call_args_list[1][0][0]
+
+    def test_prefers_release_date_on_root_when_present(self):
+        http = MagicMock()
+        http.get.return_value = _mock_resp(json_body={"release_date": "2024-03-21"})
+        result = fetch_ons_release_date("https://www.ons.gov.uk/datasets/x", http)
+        assert result == date(2024, 3, 21)
+        assert http.get.call_count == 1   # no need to follow the version
+
+    def test_version_url_form_read_directly(self):
         http = MagicMock()
         http.get.return_value = _mock_resp(json_body={"release_date": "2024-03-21"})
         result = fetch_ons_release_date(
             "https://api.beta.ons.gov.uk/v1/datasets/abc/editions/time-series/versions/9", http)
         assert result == date(2024, 3, 21)
-        assert http.get.call_args[0][0] == "https://api.beta.ons.gov.uk/v1/datasets/abc"
+        assert http.get.call_count == 1   # direct version read, no root fetch
 
-    def test_no_release_date_returns_none(self):
+    def test_no_version_and_no_root_date_returns_none(self):
         http = MagicMock()
-        http.get.return_value = _mock_resp(json_body={"title": "Some dataset"})
+        http.get.return_value = _mock_resp(json_body={"title": "No dates", "links": {}})
         assert fetch_ons_release_date("https://www.ons.gov.uk/datasets/x", http) is None
 
     def test_unextractable_dataset_id_returns_none(self):
