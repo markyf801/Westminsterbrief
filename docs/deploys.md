@@ -79,7 +79,8 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-05 | `3f558a4` | Fix: migrate Research Tool Debate-Contributions tab off TheyWorkForYou (member_id-keyed; fixes new-peer failures e.g. Baroness Smith) | Mark |
 | 2026-06-05 | `4de1874` | Feat: preload minister field with all ministers (Debate Contributions tab usable without choosing a department) | Mark |
 | 2026-06-05 | `f3b4c80` | Feat: re-discovery — pre-classify dedup + run_rediscovery + cron (keeps catalogue current). Schema `last_rediscovered_at` added via DBeaver first. | Mark |
-| 2026-06-05 | `2a214de` | Repo hygiene: harden .gitignore (backups/logs/scratch) + CLAUDE.md "never git add -A" rule, after the add-A junk-staging incident | Claude Code |
+| 2026-06-05 | `cf27fe7` | Repo hygiene: harden .gitignore (backups/logs/scratch) + CLAUDE.md "never git add -A" rule, after the add-A junk-staging incident | Claude Code |
+| 2026-06-05 | `18b8c71` | Fix: discovery strategies raise StrategyFetchError on fetch failure (Issue B) — failed fetch no longer swallowed to [] / silently stamped; surfaces as failed/errors instead | Claude Code |
 
 ---
 
@@ -327,6 +328,31 @@ session (pid 86956, a leftover `SELECT ha_stat_producer`) holding ACCESS SHARE.
 Cleared with `pg_terminate_backend(86956)` (idle, read-only — no data lost); the
 ALTER then completed instantly. **Verified:** column present,
 `timestamp without time zone`.
+
+---
+
+### 2026-06-05 — Clear DSIT false re-discovery stamp
+
+**Context:** The 5 June re-discovery execute run (pre-Issue-B-fix) swallowed
+DSIT's GOV.UK Search 422 into an empty result, so DSIT was stamped
+`last_rediscovered_at = 2026-06-05 12:20:57.793` despite never being fetched
+(silent-blindness, Issue B). The Issue B code fix prevents this going forward but
+doesn't un-stamp the existing false stamp. Cleared so the first post-fix cron run
+re-attempts DSIT (where its 422 will now fail loud rather than silently skip for a
+day). Single-row scoped; `updated_at` set per the raw-SQL-on-ORM-table rule.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-05 14:09 BST.
+
+```sql
+UPDATE ha_stat_producer
+SET last_rediscovered_at = NULL,
+    updated_at = NOW()
+WHERE slug = 'department-for-science-innovation-and-technology';
+```
+
+**Result:** `Updated Rows: 1`. **Verified:** DSIT `last_rediscovered_at` = NULL,
+`updated_at` = 2026-06-05 14:09:16, `discovery_status` unchanged (`completed`).
+The other 7 producers' stamps left intact (they fetched candidates legitimately).
 
 ---
 

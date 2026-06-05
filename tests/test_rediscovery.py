@@ -262,3 +262,24 @@ class TestRunRediscovery:
             assert db.session.query(StatPublication).filter_by(producer_id=p.id).count() == 0
             assert p.last_rediscovered_at is None            # not stamped on dry-run
             db.session.rollback()
+
+    def test_fetch_failure_propagates_and_does_not_stamp(self, test_app, db):
+        """Issue B (silent-blindness): a fetch FAILURE (e.g. a 422) must raise and
+        NOT stamp last_rediscovered_at — so the producer stays due, is retried, and
+        the failure surfaces in the cron's error count, rather than being marked
+        're-discovered just now' while never actually checked. A genuine empty
+        result is different and handled elsewhere (it returns [] and stamps)."""
+        from hansard_archive.discovery.strategies import StrategyFetchError
+        with test_app.app_context():
+            p = _producer(db, "rd-fetchfail")
+            db.session.commit()
+            with patch("hansard_archive.discovery.strategies.GovUkSearchStrategy.fetch_candidates",
+                       side_effect=StrategyFetchError("422 boom")), \
+                 patch("hansard_archive.discovery.strategies.GovUkSearchStrategy.can_handle",
+                       return_value=True), \
+                 patch("hansard_archive.discovery.strategies.OnsApiStrategy.can_handle",
+                       return_value=False):
+                with pytest.raises(StrategyFetchError):
+                    run_rediscovery(p, db.session, "key", dry_run=False)
+            assert p.last_rediscovered_at is None            # NOT stamped on failure
+            db.session.rollback()
