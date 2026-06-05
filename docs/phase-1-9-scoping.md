@@ -233,6 +233,60 @@ lines drawn so that conversation starts from the right place.
 
 ---
 
+## Key-findings lift — slice evaluated, DEFERRED (5 June 2026)
+
+A vertical slice built and evaluated the end-state "lift the source's own stated
+key findings onto the stat-detail page" enhancement (LIFT verbatim + attributed,
+NOT AI-synthesis). **Decision: deferred, not abandoned. The floor (abstract +
+files + tags + dates + source links) is the stats-catalogue product.** Key-findings
+adds unpredictable richness on a minority of pages for significant build+maintain
+cost — not worth a speculative wide build before the catalogue has any user
+validation. Ship the floor; revive only on demand signal.
+
+**Slice code:** preserved on branch `feature/stats-key-findings-slice` (commit
+`8877ccd`) and in git history. Removed from beta to keep it clean — nothing
+graduated. The runnable proof + this capture are the revival starting point.
+
+### What the slice proved
+- **It works.** Lifting the source's own findings renders **cleanly on bulleted
+  HTML-release pages** (e.g. DWP "Main Stories" — crisp verbatim figures like
+  "2,353,319 individuals sent migration notices"). The extractor (`hansard_archive/
+  stats_findings.py` on the branch) matches a bounded heading set
+  (Main points / Key findings / Main Stories / Summary / Main facts and figures…),
+  follows one content sub-page (piece-2b style), and falls to the floor cleanly on
+  any miss.
+- **Bullets-only is the quality policy.** Bullet findings = clean. **Prose
+  "Summary" sections are ragged** (they drag in intro/methodology; e.g. DSIT cyber
+  survey) and the abstract already serves them — so lift only bulleted findings,
+  prose → floor.
+- **Yield ~10–15%.** Liftable ≈ the piece-2b HTML-release set (the 47 sub-page
+  pubs + full-release main pages). The other ~85–90% (attachment-only PDF/Excel/
+  CSV) → floor by definition. Bullets-only trims yield further but keeps every box
+  clean.
+
+### Notes for a possible revival
+- **Value-by-attention may exceed value-by-count.** The liftable set (proper
+  release pages) may be the high-traffic/important major releases — so the ~10–15%
+  could carry disproportionate value. Re-check against real traffic if revived.
+- **Build EES FIRST if revived.** The ~53 EES pubs (`explore-education-statistics`
+  platform, currently `not_extractable`) have structured "headline facts and
+  figures" — the cleanest, most reliable lift (better than scraping gov.uk HTML),
+  and education stats are core to the HE-policy audience. Needs a separate small
+  EES extractor (different platform). The current slice extractor only handles
+  `www.gov.uk`.
+- **Revival trigger:** revisit ONLY if the launched catalogue gets real traffic
+  AND users show engagement/demand for findings on the pages that would have them.
+  Demand-driven, not speculative.
+
+### What this unblocks
+Deferring key-findings removes the build-rabbit-hole that was sitting in front of
+launch. The floor is built and validated. The launch path is now unobstructed:
+**re-discovery (so the catalogue doesn't freeze) + one-time producer batch +
+/stats disclaimer + flip `STATS_CATALOGUE_ENABLED`.** Key-findings is no longer
+in that path.
+
+---
+
 ## Taxonomy hub pages + topic context — design thinking (28 May 2026, NOT decided)
 
 ### Hub-and-spoke / pillar-cluster model — ENDORSED (it's already the plan)
