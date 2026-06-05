@@ -2377,6 +2377,119 @@ def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
 
 
 # ==========================================
+# LOCAL DB minister lookup (replaces TWFY for the Debate Contributions tab)
+# Keyed on member_id throughout — no name-search against TWFY. The only
+# name→id step is resolving the controlled dropdown selection against our own
+# member cache. Removes the new-peer failure class (TWFY can't resolve peers
+# created ~2023+ by name; the local DB knows them by member_id).
+# ==========================================
+
+def _resolve_member_id(minister_name):
+    """Resolve a controlled dropdown minister name to a local cached_member
+    member_id. Exact match first, then a normalised match across the cache.
+    Returns (member_id, matched_name, is_lord) or (None, None, False). No API."""
+    from cache_models import CachedMember
+    name = (minister_name or '').strip()
+    if not name:
+        return None, None, False
+    m = CachedMember.query.filter_by(name=name).first()
+    if not m:
+        target = _normalise_name(name)
+        if target:
+            for cm in CachedMember.query.all():
+                if _normalise_name(cm.name or '') == target:
+                    m = cm
+                    break
+    if not m:
+        return None, None, False
+    return m.member_id, m.name, (m.house == 'Lords')
+
+
+def fetch_minister_debates_local(member_id, topic, start_date, end_date, house_filter='all'):
+    """Local replacement for fetch_minister_debates. Finds every Hansard session
+    the member spoke in (by member_id), optionally filtered by topic / date /
+    house. Returns dicts matching the template contract exactly:
+    {id, title, date, url, type, contributions, group_key}. url is the INTERNAL
+    archive link (keeps users on WB, per the source-link policy)."""
+    import calendar
+    from datetime import datetime as _dt
+    from sqlalchemy import func
+    from extensions import db
+    from hansard_archive.models import (
+        HansardSession, HansardContribution, HansardSessionTheme,
+    )
+
+    houses = None
+    if house_filter == 'commons':
+        houses = ['Commons']        # Westminster Hall sits under house='Commons'
+    elif house_filter == 'lords':
+        houses = ['Lords']
+
+    def _parse(d):
+        try:
+            return _dt.strptime(d, '%Y-%m-%d').date() if d else None
+        except ValueError:
+            return None
+    sd, ed = _parse(start_date), _parse(end_date)
+
+    q = (db.session.query(
+            HansardSession.id, HansardSession.title, HansardSession.date,
+            HansardSession.debate_type, HansardSession.slug,
+            func.count(HansardContribution.id).label('contribs'))
+         .join(HansardContribution, HansardContribution.session_id == HansardSession.id)
+         .filter(HansardContribution.member_id == member_id,
+                 HansardSession.is_container.is_(False)))
+    if houses:
+        q = q.filter(HansardSession.house.in_(houses))
+    if sd:
+        q = q.filter(HansardSession.date >= sd)
+    if ed:
+        q = q.filter(HansardSession.date <= ed)
+    q = q.group_by(HansardSession.id, HansardSession.title, HansardSession.date,
+                   HansardSession.debate_type, HansardSession.slug)
+    rows = q.all()
+
+    # Topic filter (optional) — debate-level (title / theme tag / any speech in the
+    # session), NOT just the minister's own words. Consistent with the Research
+    # Tool principle that ministers rarely use the search keywords themselves.
+    if topic:
+        topic_l = topic.lower()
+        ids = [r.id for r in rows]
+        keep = {r.id for r in rows if topic_l in (r.title or '').lower()}
+        if ids:
+            for (sid,) in (db.session.query(HansardSessionTheme.session_id)
+                           .filter(HansardSessionTheme.session_id.in_(ids),
+                                   func.lower(HansardSessionTheme.theme).like(f"%{topic_l}%"))
+                           .distinct().all()):
+                keep.add(sid)
+            for (sid,) in (db.session.query(HansardContribution.session_id)
+                           .filter(HansardContribution.session_id.in_(ids),
+                                   func.lower(HansardContribution.speech_text).like(f"%{topic_l}%"))
+                           .distinct().all()):
+                keep.add(sid)
+        rows = [r for r in rows if r.id in keep]
+
+    result = []
+    for r in rows:
+        title = r.title or ""
+        url = ""
+        if r.slug:
+            url_date = f"{r.date.day}-{calendar.month_name[r.date.month].lower()}-{r.date.year}"
+            url = f"/archive/debate/{url_date}/{r.slug}"
+        result.append({
+            'id': r.id,
+            'title': title,
+            'date': r.date.isoformat(),
+            'url': url,
+            'type': get_debate_type(title),
+            'contributions': r.contribs,
+            'group_key': _debate_group_key(title),
+        })
+    result.sort(key=lambda x: x['date'], reverse=True)
+    return result
+
+
+# ==========================================
 # ROUTE 0a: EXPAND TOPIC TERMS API (used by preview-and-edit UI)
 # ==========================================
 @debate_scanner_bp.route('/api/expand_topic', methods=['POST'])
@@ -3216,19 +3329,21 @@ def debates_minister():
         house_filter = request.form.get('house_filter', 'all')
 
         if not minister_name:
-            error_message = "Please enter a minister's name."
-        elif not TWFY_API_KEY:
-            error_message = "TWFY API key is not configured."
+            error_message = "Please select a minister."
         else:
-            person_id, matched_name, is_lord = lookup_twfy_person(minister_name)
-            if not person_id:
-                error_message = f"Could not find '{minister_name}' on TheyWorkForYou. Try their full name."
+            # Local resolution: controlled dropdown name → cached_member member_id.
+            # No TWFY — fixes the new-peer failure class (e.g. Baroness Smith of
+            # Malvern, a 2024 peer TWFY can't resolve by name).
+            member_id, matched_name, is_lord = _resolve_member_id(minister_name)
+            if not member_id:
+                error_message = f"Could not find '{minister_name}' in the member directory."
             else:
-                minister_info = {'name': matched_name, 'person_id': person_id, 'is_lord': is_lord}
-                date_range = get_twfy_date_range(start_date, end_date)
-                minister_debates = fetch_minister_debates(person_id, topic, date_range, house_filter)
+                minister_info = {'name': matched_name, 'member_id': member_id, 'is_lord': is_lord}
+                minister_debates = fetch_minister_debates_local(
+                    member_id, topic, start_date, end_date, house_filter)
                 if not minister_debates:
-                    error_message = f"No debates found for {matched_name}. Try a broader topic or date range."
+                    error_message = (f"No contributions found for {matched_name} in the last "
+                                     "12 months. Try a broader topic, a wider date range, or another chamber.")
 
     return render_template('debate_scanner.html',
                            mode='minister',
@@ -3249,43 +3364,41 @@ def debates_minister():
 @debate_scanner_bp.route('/debates_minister_analyze', methods=['POST'])
 @limiter.limit("10 per minute; 100 per day")
 def debates_minister_analyze():
+    from hansard_archive.models import HansardContribution
+
     selected = request.form.getlist('selected_debates')
     minister_name = request.form.get('minister_name', 'the Minister').strip()
 
     if not selected:
         return "Please select at least one debate.", 400
 
+    # Assemble transcripts from the LOCAL DB by session_id (the checkbox now
+    # carries session_id||title||date). Full session text — all speakers, in
+    # speech order — so Gemini has the Q&A context; it focuses on the minister
+    # via the prompt. No external fetch, no TWFY.
     full_transcript_text = ""
     for item in selected:
         parts = item.split('||')
-        url = parts[0]
-        title = parts[1] if len(parts) > 1 else "Unknown"
+        try:
+            session_id = int(parts[0])
+        except (ValueError, IndexError):
+            continue
+        title = parts[1] if len(parts) > 1 else "Debate"
         date_val = parts[2] if len(parts) > 2 else ""
 
-        cached = CachedTranscript.get(url)
-        if cached:
-            full_transcript_text += f"### {cached.title} ({cached.date})\n\n{cached.transcript_text}\n\n"
+        contribs = (HansardContribution.query
+                    .filter_by(session_id=session_id)
+                    .order_by(HansardContribution.speech_order)
+                    .all())
+        if not contribs:
             continue
-
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            resp = requests.get(url, headers=headers, timeout=20)
-            if resp.status_code == 200:
-                html = resp.text
-                for tag in ['head', 'script', 'style', 'nav', 'header', 'footer']:
-                    html = re.sub(rf'<{tag}.*?>.*?</{tag}>', '', html, flags=re.DOTALL | re.IGNORECASE)
-                clean_text = re.sub(r'<[^>]+>', ' ', html)
-                clean_text = re.sub(r'\s+', ' ', clean_text).strip()[:60000]
-                try:
-                    CachedTranscript.store(url=url, title=title, date=date_val, house='', transcript_text=clean_text)
-                except Exception:
-                    pass
-                full_transcript_text += f"### {title} ({date_val})\n\n{clean_text}\n\n"
-        except Exception:
-            pass
+        body = "\n\n".join(
+            f"{c.member_name or 'Unknown'}: {c.speech_text}" for c in contribs
+        )
+        full_transcript_text += f"### {title} ({date_val})\n\n{body}\n\n"
 
     if not full_transcript_text:
-        return "Could not extract content from the selected debates.", 400
+        return "Could not assemble transcripts for the selected debates.", 400
 
     if not GEMINI_API_KEY:
         return "Gemini API key is not configured.", 500

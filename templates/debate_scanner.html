@@ -656,6 +656,7 @@
             Showing debates for <strong>{{ minister_info.name }}</strong>
             {% if minister_info.is_lord %}<span class="topic-party-badge">Lords</span>{% endif %}
             — {{ minister_debates|length }} sessions found
+            <span style="color:#5a6878;">(contributions in the last 12 months)</span>
         </div>
         {% endif %}
 
@@ -669,7 +670,7 @@
                     {# Single session — show flat as before #}
                     {% set d = glist[0] %}
                     <div style="display:flex; align-items:flex-start; gap:15px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #f0f0f0;">
-                        <input type="checkbox" name="selected_debates" value="{{ d.url }}||{{ d.title }}||{{ d.date }}" style="width:18px; height:18px; margin-top:3px; cursor:pointer;">
+                        <input type="checkbox" name="selected_debates" value="{{ d.id }}||{{ d.title }}||{{ d.date }}" style="width:18px; height:18px; margin-top:3px; cursor:pointer;">
                         <div style="flex:1;">
                             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                 <span style="background:#eef2f5; color:#005a8f; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:700;">{{ d.type }}</span>
@@ -677,7 +678,7 @@
                             </div>
                             <div style="font-size:12px; color:#777; margin-top:4px;">
                                 📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
-                                &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on Hansard</a>
+                                {% if d.url %}&nbsp;·&nbsp; <a href="{{ d.url }}" style="color:#005a8f; text-decoration:none;">↗ View debate</a>{% endif %}
                             </div>
                         </div>
                     </div>
@@ -695,7 +696,7 @@
                             {% for d in glist %}
                             <div style="display:flex; align-items:flex-start; gap:12px; margin-bottom:7px; padding:6px 8px; background:#fff; border-radius:4px; border:1px solid #eee;"
                                  data-group="{{ group_key | e }}">
-                                <input type="checkbox" name="selected_debates" value="{{ d.url }}||{{ d.title }}||{{ d.date }}"
+                                <input type="checkbox" name="selected_debates" value="{{ d.id }}||{{ d.title }}||{{ d.date }}"
                                        class="group-child" style="width:16px; height:16px; margin-top:3px; cursor:pointer;">
                                 <div style="flex:1;">
                                     <div style="font-size:13px; color:#222; font-weight:500;">
@@ -703,7 +704,7 @@
                                     </div>
                                     <div style="font-size:11px; color:#777; margin-top:2px;">
                                         📅 {{ d.date }} &nbsp;·&nbsp; 🗣️ {{ d.contributions }} contribution{{ 's' if d.contributions != 1 else '' }}
-                                        &nbsp;·&nbsp; <a href="{{ d.url }}" target="_blank" style="color:#005a8f; text-decoration:none;">↗ View on Hansard</a>
+                                        {% if d.url %}&nbsp;·&nbsp; <a href="{{ d.url }}" style="color:#005a8f; text-decoration:none;">↗ View debate</a>{% endif %}
                                     </div>
                                 </div>
                             </div>
