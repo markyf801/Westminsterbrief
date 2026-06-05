@@ -78,6 +78,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-03 | `d0c9b93` | Docs: ONS date-staleness finding (piece-4 task) + CLAUDE.md branch-flow rule (return to beta after operational master work) | Mark |
 | 2026-06-05 | `3f558a4` | Fix: migrate Research Tool Debate-Contributions tab off TheyWorkForYou (member_id-keyed; fixes new-peer failures e.g. Baroness Smith) | Mark |
 | 2026-06-05 | `4de1874` | Feat: preload minister field with all ministers (Debate Contributions tab usable without choosing a department) | Mark |
+| 2026-06-05 | `feat/stats-rediscovery` | Feat: re-discovery — pre-classify dedup + run_rediscovery + cron (keeps catalogue current). Schema `last_rediscovered_at` added via DBeaver first. | Mark |
 
 ---
 
@@ -303,6 +304,28 @@ SQLAlchemy per-row commit, `updated_at` set explicitly.
 **Result:** 1,104 of 1,124 rows populated; 20 NULL (source provides no date);
 0 errors. Date range 2008-03-01 to 2026-05-28. NULLs handled by NULLS LAST
 ordering in the catalogue (no separate UX treatment needed at this count).
+
+---
+
+### 2026-06-05 — Phase 1.9 re-discovery: add last_rediscovered_at column
+
+**Context:** Re-discovery cadence tracking — when a completed producer was last
+re-scanned for new publications. Production-first (SKIP_MIGRATIONS=1 means the
+startup ALTER does not run on production), applied BEFORE pushing the code that
+SELECTs this column.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-05.
+
+```sql
+ALTER TABLE ha_stat_producer
+ADD COLUMN IF NOT EXISTS last_rediscovered_at TIMESTAMP NULL;
+```
+
+**Note:** first attempt blocked ~3 min on a stale `idle in transaction` DBeaver
+session (pid 86956, a leftover `SELECT ha_stat_producer`) holding ACCESS SHARE.
+Cleared with `pg_terminate_backend(86956)` (idle, read-only — no data lost); the
+ALTER then completed instantly. **Verified:** column present,
+`timestamp without time zone`.
 
 ---
 

@@ -835,6 +835,10 @@ class StatProducer(db.Model):
     # Phase 1.8: batch resume — count of candidates processed so far; used to
     # skip already-classified candidates when restarting an interrupted run
     candidates_processed_count   = db.Column(db.Integer, nullable=True)
+    # Phase 1.9: re-discovery cadence. When a completed producer was last
+    # re-scanned for NEW publications. Selected/cadenced on this — NOT by
+    # flipping discovery_status (keeps initial-discovery and re-discovery distinct).
+    last_rediscovered_at         = db.Column(db.DateTime, nullable=True)
 
     parent       = db.relationship("StatProducer", remote_side="StatProducer.id",
                                    foreign_keys=[parent_id])
