@@ -41,6 +41,12 @@
 .sd-no-files    { font-size: 14px; color: #6b7280; line-height: 1.7; }
 .sd-no-files a  { color: #3b7dd8; }
 .sd-freshness   { font-size: 12px; color: #9ca3af; margin-top: 10px; }
+.sd-findings    { margin: 8px 0 0; padding-left: 20px; }
+.sd-findings li { font-size: 15px; color: #1f2937; line-height: 1.7; margin-bottom: 8px; }
+.sd-findings-attrib { font-size: 12px; color: #6b7280; line-height: 1.6; margin-top: 12px;
+                      padding: 8px 12px; background: #f8fafc; border-left: 3px solid #cbd5e1; border-radius: 0 4px 4px 0; }
+.sd-findings-attrib a { color: #3b7dd8; text-decoration: none; }
+.sd-findings-attrib a:hover { text-decoration: underline; }
 </style>
 {% endblock %}
 
@@ -61,6 +67,26 @@
     <div class="sd-section">
         <div class="sd-label">Description</div>
         <p class="sd-description">{{ pub.description }}</p>
+    </div>
+    {% endif %}
+
+    {# Key findings — LIFTED verbatim from the source's own stated findings, NOT
+       authored by WB. Omitted entirely when no recognised findings section
+       exists (→ floor). SLICE: only populated when ?findings=1. #}
+    {% if key_findings %}
+    <div class="sd-section">
+        <div class="sd-label">Key findings — as stated by {{ producer.short_name or producer.name }}</div>
+        <ul class="sd-findings">
+            {% for item in key_findings.items %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+        <p class="sd-findings-attrib">
+            Lifted verbatim from {{ producer.short_name or producer.name }}'s own
+            &ldquo;{{ key_findings.heading }}&rdquo; section — these are the source's stated
+            findings, presented unaltered, not Westminster Brief's analysis.
+            <a href="{{ key_findings.source_url }}" target="_blank" rel="noopener">View on source ↗</a>
+        </p>
     </div>
     {% endif %}
 
