@@ -2520,6 +2520,26 @@ def api_ministers_by_dept():
     return jsonify(sorted(by_dept.keys()))
 
 
+@debate_scanner_bp.route('/api/all_ministers')
+def api_all_ministers():
+    """Flattened, unique, sorted list of all current ministers across every
+    department — the same source the department picker uses. Lets the minister
+    field be browsable without first choosing a department (consistency with the
+    Hansard Research tab). Resolution is unchanged: these are the same names the
+    department flow already submits and resolves via cached_member."""
+    from flask import jsonify
+    by_dept = get_minister_list().get('by_dept', {})
+    seen, names = set(), []
+    for ministers in by_dept.values():
+        for m in ministers:
+            n = (m.get('name') or '').strip()
+            if n and n not in seen:
+                seen.add(n)
+                names.append(n)
+    names.sort()
+    return jsonify([{"name": n} for n in names])
+
+
 # ==========================================
 # ROUTE 1: SCAN AND GROUP BY THEME (STEP 1)
 # ==========================================
