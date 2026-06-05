@@ -368,6 +368,8 @@ Option 1 is cleanest. Add `govuk_publications_url TEXT` to `ha_bill` schema; pop
 
 ### Research Tool → Local DB Migration (Replace External API with ha_* tables)
 
+> **"Debate Contributions" tab promoted to approved scope — see `docs/research-tool-db-migration-scoping.md`** (5 June 2026). A live bug (Baroness Smith of Malvern fails TWFY name lookup — she's a 2024 peer TWFY can't resolve by name) traced to this tab still using TWFY. Crux data-check PASSED: Lords contributions 98.1% ID-keyed; Baroness Smith joins to 1,472 contributions by `member_id` → clean ID-keyed swap, not migration-plus-linking. Approved, plan-mode queued behind the stats launch-decision. The scoping doc holds the locked scope/decisions; plan-mode it from there at its slot.
+
 **Context:** The Parliamentary Research Tool (`/debates`, `debate_scanner.py`) currently fetches live from the Hansard Parliament API (or TWFY fallback) on every search. The local `ha_*` DB now contains essentially the same data — the migration would replace the fetch layer with DB queries.
 
 **Audit result (20 May 2026):** Local DB covers all fields the Research Tool needs:
