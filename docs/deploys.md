@@ -78,7 +78,8 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-03 | `d0c9b93` | Docs: ONS date-staleness finding (piece-4 task) + CLAUDE.md branch-flow rule (return to beta after operational master work) | Mark |
 | 2026-06-05 | `3f558a4` | Fix: migrate Research Tool Debate-Contributions tab off TheyWorkForYou (member_id-keyed; fixes new-peer failures e.g. Baroness Smith) | Mark |
 | 2026-06-05 | `4de1874` | Feat: preload minister field with all ministers (Debate Contributions tab usable without choosing a department) | Mark |
-| 2026-06-05 | `feat/stats-rediscovery` | Feat: re-discovery — pre-classify dedup + run_rediscovery + cron (keeps catalogue current). Schema `last_rediscovered_at` added via DBeaver first. | Mark |
+| 2026-06-05 | `f3b4c80` | Feat: re-discovery — pre-classify dedup + run_rediscovery + cron (keeps catalogue current). Schema `last_rediscovered_at` added via DBeaver first. | Mark |
+| 2026-06-05 | `2a214de` | Repo hygiene: harden .gitignore (backups/logs/scratch) + CLAUDE.md "never git add -A" rule, after the add-A junk-staging incident | Claude Code |
 
 ---
 

@@ -46,3 +46,22 @@ downloads/
 static/og_default_files/
 *.docx
 *.webp
+
+# Backups (*.db above does NOT catch the .db.backup suffix — 380MB intelligence.db.backup)
+*.backup
+*.db.backup
+
+# Logs (run logs, dev-server logs, backfill logs)
+logs/
+*.log
+
+# Ad-hoc / scratch scripts + their outputs (underscore-prefix convention in scripts/)
+scripts/_*
+*_output.txt
+
+# Scratch screenshots in static/
+static/screenshot_*.png
+static/ss_*.png
+
+# Claude Code local session state
+.claude/

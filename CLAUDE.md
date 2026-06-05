@@ -1309,6 +1309,21 @@ Beta is only a preview layer — it does not have its own data, its own users, o
 
 When Mark requests a push of a small unrelated change while in the middle of a Phase build, push only the requested change — do not bundle in-progress Phase work alongside it.
 
+### Never `git add -A` / `git add .` in this repo — explicit paths only
+
+The working tree permanently carries untracked clutter — manifesto PDFs in
+`docs/`, a 380 MB `intelligence.db.backup`, run/backfill logs under `logs/`,
+underscore-prefixed scratch scripts in `scripts/`, `*_output.txt` probes,
+scratch screenshots in `static/`. A blanket `git add -A` (or `git add .`) sweeps
+all of it into the commit. This happened 2026-06-05 during the re-discovery
+merge: a single `git add -A` staged ~400 MB of junk including the db backup
+blob; the commit had to be unwound and rebuilt from explicit paths.
+
+**Rule:** stage with explicit paths only — `git add path/to/file ...`. Never
+`git add -A` or `git add .`. The `.gitignore` was hardened the same day (backups,
+logs, `scripts/_*`, screenshots, `.claude/`) as a structural backstop, but the
+clutter set drifts — do not rely on `.gitignore` alone; name the files you mean.
+
 ## Operational logging — deploys.md
 
 `docs/deploys.md` is the append-only ledger of every production-touching
