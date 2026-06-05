@@ -1411,8 +1411,13 @@
 
     function setMinisterFromPicker(name) {
         if (!name) return;
-        var opt = new Option(name, name, true, true);
-        $('#ministerNameInput').append(opt).trigger('change');
+        // Field is preloaded with all ministers; select the existing option
+        // (adding it only if somehow absent). Helper defined in the init block.
+        if (window._addMinisterOption) {
+            window._addMinisterOption(name, true);
+        } else {
+            $('#ministerNameInput').append(new Option(name, name, true, true)).trigger('change');
+        }
     }
 
     function showMinisterLoading() {
@@ -1521,23 +1526,38 @@
 </style>
 <script>
 $(document).ready(function() {
-    $('#ministerNameInput').select2({
-        placeholder: 'e.g. Bridget Phillipson, Baroness Smith...',
-        minimumInputLength: 3,
-        ajax: {
-            url: '/api/search_members',
-            dataType: 'json',
-            delay: 250,
-            processResults: function(data) {
-                return { results: data.results.map(r => ({ id: r.text, text: r.text })) };
-            }
-        }
+    var $min = $('#ministerNameInput');
+    $min.select2({
+        placeholder: 'Type or pick a minister…',
+        width: '100%'
     });
-    var prefill = document.getElementById('ministerNameInput').dataset.prefill;
-    if (prefill) {
-        var opt = new Option(prefill, prefill, true, true);
-        $('#ministerNameInput').append(opt).trigger('change');
+
+    function ministerOptionExists(name) {
+        return $min.find('option').filter(function () { return this.value === name; }).length > 0;
     }
+    function addMinisterOption(name, selected) {
+        if (!ministerOptionExists(name)) {
+            $min.append(new Option(name, name, false, false));
+        }
+        if (selected) { $min.val(name).trigger('change'); }
+    }
+    // Expose for the department-picker convenience flow.
+    window._addMinisterOption = addMinisterOption;
+
+    var prefill = $min[0].dataset.prefill;
+
+    // Preload every current minister so the field is browsable/searchable
+    // without first choosing a department (consistency with the Hansard tab).
+    fetch('/api/all_ministers')
+        .then(r => r.json())
+        .then(function (list) {
+            list.forEach(function (m) { addMinisterOption(m.name, false); });
+            $min.trigger('change.select2');
+            if (prefill) { addMinisterOption(prefill, true); }
+        })
+        .catch(function () {
+            if (prefill) { addMinisterOption(prefill, true); }
+        });
 });
 </script>
 {% endblock %}
