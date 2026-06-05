@@ -187,16 +187,6 @@ def catalogue_detail(producer_slug, pub_slug):
             .all()
         )
 
-    # SLICE (eval only): lift the source's stated key findings, fetch-at-render,
-    # gated behind ?findings=1 so normal pages stay fast. None → floor.
-    key_findings = None
-    if request.args.get("findings"):
-        try:
-            from hansard_archive.stats_findings import lift_key_findings
-            key_findings = lift_key_findings(pub.url)
-        except Exception:
-            key_findings = None
-
     return render_template(
         "stats_catalogue_detail.html",
         pub=pub,
@@ -205,5 +195,4 @@ def catalogue_detail(producer_slug, pub_slug):
         policy_areas=policy_areas,
         specific_themes=specific_themes,
         related_publications=related_publications,
-        key_findings=key_findings,
     )
