@@ -2334,7 +2334,6 @@ def _compute_party_data(slug: str) -> dict | None:
 
     total_contributions = 0
     dtype_breakdown:    list[dict] = []
-    top_policy_areas:   list[dict] = []
     top_voices:         list[dict] = []
     recent_activity:    list[dict] = []
 
@@ -2372,38 +2371,6 @@ def _compute_party_data(slug: str) -> dict | None:
                 "count":       row.n,
             }
             for row in dtype_rows
-        ]
-
-        # Top policy areas — count distinct sessions with party contributions
-        contrib_session_q = (
-            db.session.query(HansardContribution.session_id)
-            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-            .filter(
-                HansardSession.is_container == False,
-                HansardContribution.party.in_(contrib_codes),
-            )
-        )
-        policy_rows = (
-            db.session.query(
-                HansardSessionTheme.theme,
-                func.count(HansardSessionTheme.session_id).label("n"),
-            )
-            .filter(
-                HansardSessionTheme.session_id.in_(contrib_session_q),
-                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-            )
-            .group_by(HansardSessionTheme.theme)
-            .order_by(func.count(HansardSessionTheme.session_id).desc())
-            .limit(8)
-            .all()
-        )
-        top_policy_areas = [
-            {
-                "theme": row.theme,
-                "slug":  slugify_theme(row.theme),
-                "count": row.n,
-            }
-            for row in policy_rows
         ]
 
         # Most active voices — top 10 contributors by contribution count
@@ -2514,7 +2481,6 @@ def _compute_party_data(slug: str) -> dict | None:
         "member_counts":      member_counts,
         "total_contributions":total_contributions,
         "dtype_breakdown":    dtype_breakdown,
-        "top_policy_areas":   top_policy_areas,
         "top_voices":         top_voices,
         "recent_activity":    recent_activity,
         "recent_pqs":         recent_pqs,
@@ -2565,7 +2531,6 @@ def archive_party(party_slug: str):
         lords_count     = lords_count,
         total_contributions = data["total_contributions"],
         dtype_breakdown = data["dtype_breakdown"],
-        top_policy_areas= data["top_policy_areas"],
         top_voices      = data["top_voices"],
         recent_activity = data["recent_activity"],
         recent_pqs      = data["recent_pqs"],

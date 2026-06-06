@@ -328,22 +328,6 @@ body { background: #f0f2f5; }
     </div>
     {% endif %}
 
-    {# --- Top policy areas --- #}
-    {% if top_policy_areas %}
-    <div class="party-section">
-        <h2 class="party-section-title">Top policy areas by activity</h2>
-        <p class="party-section-note">Sessions in the archive where {{ party_name }} members contributed, by policy area.</p>
-        <div class="party-policy-list">
-            {% for item in top_policy_areas %}
-            <a class="party-policy-item" href="/archive/policy/{{ item.slug }}">
-                <span class="party-policy-name">{{ item.theme }}</span>
-                <span class="party-policy-count">{{ item.count }} session{{ 's' if item.count != 1 else '' }}</span>
-            </a>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-
     {# --- Most active voices --- #}
     {% if top_voices %}
     <div class="party-section">
