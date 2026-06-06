@@ -1314,8 +1314,6 @@ Beta is only a preview layer — it does not have its own data, its own users, o
 
 ## Working in parallel — two consoles, one repo
 
-### Working in parallel (two Claude Code consoles, one working directory + one .git)
-
 When two consoles work the same repo at once (e.g. one on stats, one on manifesto/templates), they SHARE one working tree, one HEAD, and one .git. File edits to DIFFERENT files don't collide. The hazards are shared-state operations. Rules:
 
 **1. Both consoles stay on the same branch (normally `beta`). No branch switching while the other is active.**
