@@ -1312,6 +1312,36 @@ Beta is only a preview layer — it does not have its own data, its own users, o
 - Use beta as a staging environment for schema migrations (apply to production directly)
 - Push directly to `beta` branch for production-bound changes — go through `feature/* → beta → master`
 
+## Working in parallel — two consoles, one repo
+
+### Working in parallel (two Claude Code consoles, one working directory + one .git)
+
+When two consoles work the same repo at once (e.g. one on stats, one on manifesto/templates), they SHARE one working tree, one HEAD, and one .git. File edits to DIFFERENT files don't collide. The hazards are shared-state operations. Rules:
+
+**1. Both consoles stay on the same branch (normally `beta`). No branch switching while the other is active.**
+There is ONE checked-out branch (shared HEAD). A `git checkout`/`switch`/`reset` in one console changes the working tree under the other mid-edit. If a console genuinely needs a different branch, it must coordinate first (tell the other, agree a pause) — never switch unilaterally while the other is mid-flight.
+
+**2. Edit different files. Same-file parallel edits are not allowed without explicit coordination.**
+Divide by area (e.g. one console: stats code; other: templates/CSS). If both need the same file, serialise it — one finishes and commits before the other starts. Don't both edit one file simultaneously.
+
+**3. Master-promotion is SERIALISED — only ONE console pushes/merges to master at a time.**
+This is the real collision point (it's what required stopping a push mid-flight on 6 Jun). Committing to beta in parallel is fine (commits interleave safely). But two consoles doing beta→master merge+push simultaneously collide. So: before any console promotes to master, confirm the other console is NOT also about to. Live production fixes take master priority — the other console pauses its own master-push until the fix has landed. One master-promotion in flight at a time, full stop.
+
+**4. No uncommitted changes left floating while the other console is active.**
+An uncommitted change is INVISIBLE to the other console and can be clobbered by a checkout, swept into the wrong commit, or forgotten (the 6 Jun admin.html situation). If you have a change you're not ready to commit, either commit it (WIP commit is fine, amend later) or `git stash` it — so it's visible and safe, not floating in the shared working tree.
+
+**5. Explicit paths only — NEVER `git add -A`.** (Already a standing rule, doubly critical in parallel: add -A in one console sweeps in the OTHER console's uncommitted changes + untracked clutter.) Stage only the specific files you own in this commit.
+
+**6. No `reset`/`rebase`/branch-delete/force-push while the other console is active.**
+These rewrite shared history or state. Coordinate (agree a pause) before any history-altering operation. Never unilaterally.
+
+**7. When the situation changes, re-check stale instructions before running them.**
+An instruction written before new information (e.g. before a production bug was found) may be wrong to run now. If something material changed since an instruction was given, pause and re-confirm rather than executing the now-stale plan. (6 Jun: a test-push instruction was correctly stopped because a production 500 was found after it was written, making it the wrong moment to push to master.)
+
+### If parallel work gets frequent: consider `git worktree`
+
+Careful coexistence (the rules above) is enough for occasional parallel work (edit templates while doing stats on beta). If two-console work becomes routine, set up a `git worktree` — each console gets its OWN directory + branch (fully separate working files, shared history). That eliminates the shared-HEAD/working-tree hazard entirely (rules 1, 2, 4 stop mattering; only rule 3 — serialised master-promotion — still applies because they share history). Worth it if parallel becomes the norm; overkill for occasional.
+
 ## Git and pushing
 
 **Never push automatically.** Always commit locally and show what changed, then wait for explicit instruction to push. The user will say "push" or "push it" when ready. This applies to small fixes and template changes as much as anything else.
