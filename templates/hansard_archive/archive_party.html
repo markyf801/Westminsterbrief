@@ -122,6 +122,17 @@ body { background: #f0f2f5; }
 .pp-hidden-area { display: none; }
 .pp-hidden-area.pp-revealed { display: block; }
 
+/* Activity lists — policy areas & voices (were unstyled → run-on inline text) */
+.party-policy-list, .party-voices-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.party-policy-item, .party-voice-item {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 6px 10px; border: 1px solid #e6e8ee; border-radius: 6px;
+    text-decoration: none; color: inherit; font-size: 13px;
+}
+.party-policy-item:hover, .party-voice-item:hover { background: #f7f9fc; }
+.party-policy-name, .party-voice-name { font-weight: 500; }
+.party-policy-count, .party-voice-count { color: #666; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* ── Existing party section styles (unchanged) ────────────── */
 </style>
 {% endblock %}
@@ -178,7 +189,7 @@ body { background: #f0f2f5; }
     <div class="party-section pp-section">
         <h2 class="pp-section-title">Manifesto commitments — {{ year_group.heading }}</h2>
         <p class="pp-section-sub">
-            Verbatim excerpts organised by GOV.UK policy area,
+            Verbatim excerpts organised by policy area,
             linked to recent parliamentary activity in the archive.
         </p>
 
@@ -280,26 +291,11 @@ body { background: #f0f2f5; }
     </div>
     {% endif %}
 
-    {# --- Monthly activity chart --- #}
-    {% if monthly_data %}
-    <div class="party-section">
-        <h2 class="party-section-title">Monthly activity (last 12 months)</h2>
-        <div class="party-timeline">
-            {% for item in monthly_data %}
-            <div class="party-timeline-col" title="{{ item.label }}: {{ item.count }} contribution{{ 's' if item.count != 1 else '' }}">
-                <div class="party-timeline-bar" style="height: {{ item.pct }}%; background: {{ party_colour }};"></div>
-                <span class="party-timeline-month">{{ item.month_abbr }}</span>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-
     {# --- Top policy areas --- #}
     {% if top_policy_areas %}
     <div class="party-section">
         <h2 class="party-section-title">Top policy areas by activity</h2>
-        <p class="party-section-note">Sessions in the archive where {{ party_name }} members contributed, by GOV.UK policy area.</p>
+        <p class="party-section-note">Sessions in the archive where {{ party_name }} members contributed, by policy area.</p>
         <div class="party-policy-list">
             {% for item in top_policy_areas %}
             <a class="party-policy-item" href="/archive/policy/{{ item.slug }}">
@@ -365,6 +361,9 @@ body { background: #f0f2f5; }
                     {% if pq.is_answered %}<span class="ah-card-contribs">Answered</span>{% endif %}
                 </div>
                 <a class="ah-card-title" href="/archive/pq/{{ pq.uin }}">{{ pq.heading }}</a>
+                {% if pq.question_text %}
+                <div class="party-contrib-excerpt">{{ pq.question_text }}{% if pq.question_truncated %}…{% endif %}</div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>

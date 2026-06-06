@@ -2284,7 +2284,6 @@ def _compute_party_data(slug: str) -> dict | None:
 
     total_contributions = 0
     dtype_breakdown:    list[dict] = []
-    monthly_data:       list[dict] = []
     top_policy_areas:   list[dict] = []
     top_voices:         list[dict] = []
     recent_activity:    list[dict] = []
@@ -2324,36 +2323,6 @@ def _compute_party_data(slug: str) -> dict | None:
             }
             for row in dtype_rows
         ]
-
-        # Monthly activity timeline — Postgres only
-        if _is_postgres():
-            twelve_months_ago = (date_type.today().replace(day=1) - timedelta(days=365))
-            monthly_sql = sqla_text("""
-                SELECT DATE_TRUNC('month', s.date) AS mo, COUNT(c.id) AS n
-                FROM ha_contribution c
-                JOIN ha_session s ON s.id = c.session_id
-                WHERE s.is_container = FALSE
-                  AND c.party = ANY(:codes)
-                  AND s.date >= :cutoff
-                GROUP BY mo
-                ORDER BY mo
-            """)
-            monthly_rows = db.session.execute(monthly_sql, {
-                "codes": contrib_codes,
-                "cutoff": twelve_months_ago,
-            }).fetchall()
-            if monthly_rows:
-                max_n = max(r[1] for r in monthly_rows) or 1
-                monthly_data = [
-                    {
-                        "month":       r[0],
-                        "label":       r[0].strftime("%b %Y") if r[0] else "",
-                        "month_abbr":  r[0].strftime("%b") if r[0] else "",
-                        "count":       r[1],
-                        "pct":         round(r[1] / max_n * 100),
-                    }
-                    for r in monthly_rows
-                ]
 
         # Top policy areas — count distinct sessions with party contributions
         contrib_session_q = (
@@ -2471,6 +2440,8 @@ def _compute_party_data(slug: str) -> dict | None:
                 {
                     "uin":           pq.uin,
                     "heading":       pq.heading or pq.uin,
+                    "question_text": (pq.question_text or "")[:300],
+                    "question_truncated": len(pq.question_text or "") > 300,
                     "asking_member": pq.asking_member or "",
                     "answering_body":pq.answering_body or "",
                     "human_date":    _human_date(pq.tabled_date) if pq.tabled_date else "",
@@ -2493,7 +2464,6 @@ def _compute_party_data(slug: str) -> dict | None:
         "member_counts":      member_counts,
         "total_contributions":total_contributions,
         "dtype_breakdown":    dtype_breakdown,
-        "monthly_data":       monthly_data,
         "top_policy_areas":   top_policy_areas,
         "top_voices":         top_voices,
         "recent_activity":    recent_activity,
@@ -2545,7 +2515,6 @@ def archive_party(party_slug: str):
         lords_count     = lords_count,
         total_contributions = data["total_contributions"],
         dtype_breakdown = data["dtype_breakdown"],
-        monthly_data    = data["monthly_data"],
         top_policy_areas= data["top_policy_areas"],
         top_voices      = data["top_voices"],
         recent_activity = data["recent_activity"],
