@@ -641,10 +641,14 @@ class TestMigrationModule:
 
 class TestSeedScript:
 
-    def test_build_seed_data_returns_29_entries(self):
+    def test_build_seed_data_returns_30_entries(self):
+        # Exact-count guard — deliberately brittle so an UNINTENDED add/removal
+        # to the seed list trips this test for human review. 30 = original 29 +
+        # office-for-budget-responsibility (OBR, deliberate add, deploys 3a1a328).
+        # If this fails, confirm the change is intended before bumping the number.
         from scripts.seed_stat_producers import build_seed_data
         data = build_seed_data()
-        assert len(data) == 29, f"Expected 29 producers, got {len(data)}"
+        assert len(data) == 30, f"Expected 30 producers, got {len(data)}"
 
     def test_no_duplicate_slugs_in_seed_data(self):
         from scripts.seed_stat_producers import build_seed_data
@@ -685,7 +689,10 @@ class TestSeedScript:
             before = db.session.query(StatProducer).count()
             seed(db.session, StatProducer, producers, execute=True)
             after = db.session.query(StatProducer).count()
-            assert after - before == 29
+            # Assert all seeded producers were inserted — derive from the data,
+            # not a magic number, so a legitimate seed-list change doesn't re-break
+            # this behavioural test (the exact-count guard above is the count check).
+            assert after - before == len(producers)
 
     def test_seed_idempotent_no_duplicates_on_rerun(self, test_app, db):
         from hansard_archive.models import StatProducer
