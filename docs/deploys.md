@@ -83,6 +83,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-05 | `a2d5b23` | Fix: discovery strategies raise StrategyFetchError on fetch failure (Issue B) — failed fetch no longer swallowed to [] / silently stamped; surfaces as failed/errors instead | Claude Code |
 | 2026-06-06 | `59d31ff` | Docs: record rediscovery-cron in CLAUDE.md (password-rotation list + cron schedule); correct Issue B push-row SHA | Claude Code |
 | 2026-06-06 | `3cc992f` | Fix: restore `ManifestoChunk` import in `hansard_archive/views.py` — every `/archive/party/<slug>` page was 500ing (NameError; usage present, import dropped by the fb21bcd revert + partial re-merge). Verified on beta: Labour renders 775 manifesto excerpts across 24 policy areas. | Claude Code |
+| 2026-06-06 | `b4212af` | Fix: GOV.UK discovery `order=newest` → `-public_timestamp` (Issue A). `newest` 422s for ALL GOV.UK producers (not just DSIT); silently broke GOV.UK discovery 24 May–6 Jun (hidden by the swallow bug, surfaced by Issue B). Cherry-picked from beta `998b7b9` via worktree. | Claude Code |
 
 ---
 

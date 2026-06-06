@@ -399,8 +399,12 @@ class TestGovUkSearchStrategy:
         assert items[0].url.startswith("https://www.gov.uk")
         assert isinstance(items[0], CandidateItem)
 
-    def test_sends_order_newest_param(self):
-        """API call must include order=newest so most-recent release is stored on first write."""
+    def test_sends_newest_first_order_param(self):
+        """API call must sort newest-first so the most-recent release is stored on
+        first write. The GOV.UK Search API sort value is a field name with a
+        leading '-' for descending: '-public_timestamp'. The literal 'newest' is
+        NOT valid and returns HTTP 422 — this assertion guards against regressing
+        to it (it silently broke all GOV.UK discovery 24 May–6 Jun 2026)."""
         from hansard_archive.discovery.strategies import GovUkSearchStrategy
         strategy = GovUkSearchStrategy()
         mock_resp = MagicMock()
@@ -412,7 +416,8 @@ class TestGovUkSearchStrategy:
         with patch("requests.get", return_value=mock_resp) as mock_get:
             strategy.fetch_candidates(p)
         _, kwargs = mock_get.call_args
-        assert kwargs["params"]["order"] == "newest"
+        assert kwargs["params"]["order"] == "-public_timestamp"
+        assert kwargs["params"]["order"] != "newest"  # the invalid value that 422s
 
     def test_paginates_when_full_page(self):
         from hansard_archive.discovery.strategies import GovUkSearchStrategy

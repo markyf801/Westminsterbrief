@@ -151,7 +151,13 @@ class GovUkSearchStrategy:
                         # stored URL belongs to the most recent release rather
                         # than whichever release happened to come first in
                         # default (relevance) ordering.
-                        "order":    "newest",
+                        # NB: the GOV.UK Search API sort value is a field name
+                        # with a leading "-" for descending — "-public_timestamp"
+                        # is newest-first. The literal "newest" is NOT a valid
+                        # value and returns HTTP 422 (regression from 24 May 2026,
+                        # deploys 0389784; silently swallowed until the Issue B
+                        # raise-on-fetch-failure fix surfaced it 6 Jun 2026).
+                        "order":    "-public_timestamp",
                     },
                     headers={"User-Agent": _UA},
                     timeout=_TIMEOUT,
