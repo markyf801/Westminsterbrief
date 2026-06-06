@@ -654,6 +654,7 @@ def _run_startup_migrations():
                 ('ha_stat_producer',    'discovery_completed_at',       'TIMESTAMP'),
                 ('ha_stat_producer',    'discovery_failure_reason',     'TEXT'),
                 ('ha_stat_producer',    'candidates_processed_count',   'INTEGER'),
+                ('ha_stat_producer',    'last_rediscovered_at',         'TIMESTAMP'),
                 ('ha_stat_publication', 'authorisation_status',     "TEXT NOT NULL DEFAULT 'candidate'"),
                 ('ha_stat_publication', 'subject_area',             'TEXT'),
                 ('ha_stat_publication', 'discovered_at',            'TIMESTAMP'),

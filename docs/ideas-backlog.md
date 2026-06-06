@@ -8,6 +8,39 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Triage the 15 pre-existing full-suite test failures — don't normalise a red suite
+
+As of 5 June 2026 the full `pytest tests/` run shows **15 failures, 425 passed** — all in `test_producer_authorisation.py` (13: `TestStatProducerAuthLogModel`, `TestAdminAuthGuard`, `TestAuthoriseRoute`, `TestDeclineRoute`) and `test_stats_registry.py::TestSeedScript` (2: `test_build_seed_data_returns_29_entries`, `test_seed_inserts_all_producers`). Confirmed pre-existing (identical with the Issue-B-fix changes stashed), so not a regression — but a chronically-red suite is how a real regression hides as "failure #16, unnoticed."
+
+Two specific concerns:
+- **Producer authorisation routes (13 failures):** producer authorisation is a launch gate (batch-authorising ~21 producers via `/admin` before the stats catalogue goes public). These failures are *probably* test drift (admin-session fixture, route signature), but it must be confirmed the `/admin` authorise + decline routes actually work before relying on them for the batch.
+- **Seed-count 29 (2 failures):** likely just HESA de-registration drift (28 producers now, not 29) — update the expected count, or confirm the seed list is intentionally shorter.
+
+Action: triage each cluster as known-benign (and fix/mark accordingly) vs unknown (investigate). Goal is a green suite so the next genuine regression is visible. The earlier `project_preexisting_test_fixes` set (`test_llm_fallback`, tracker-badge) is no longer in the failing set, so the red-suite membership has already drifted once — another reason to get it to zero and keep it there.
+
+**Revisit trigger:** before the producer batch-authorisation launch step; or as a standalone chore branch. Not blocking the Issue B fix.
+
+*Captured 5 June 2026 — surfaced while verifying the Issue B fix caused no regressions.*
+
+---
+
+### DSIT GOV.UK search fails with 422 (Issue A — still open; Issue B fixed)
+
+The 5 June 2026 re-discovery execute run surfaced two linked problems via DSIT (`department-for-science-innovation-and-technology`), while the other 7 authorised producers returned 20 candidates between them (100% deduped). Issue B (the architectural one) is now fixed; Issue A (the DSIT query itself) remains open.
+
+**Issue A — DSIT GOV.UK search query is broken (422), not empty. STILL OPEN.** The execute log shows:
+`WARNING GovUkSearchStrategy: fetch failed for department-for-science-innovation-and-technology — 422 Client Error: Unknown Error` for URL
+`https://www.gov.uk/api/search.json?filter_organisations[]=department-for-science-innovation-and-technology&filter_content_store_document_type[]=statistics_announcement&filter_content_store_document_type[]=official_statistics&filter_content_store_document_type[]=statistical_data_set&start=0&count=100&fields[]=...&order=newest`.
+A 422 means GOV.UK is *rejecting* the request — most likely the org slug or one of the `content_store_document_type` filter values is no longer accepted. So `fetched=0` is a failed fetch, not DSIT being quiet. A genuinely-new DSIT statistics publication would never be detected. **Action:** reproduce the call, identify which filter/slug the API rejects (try the org slug alone, then add filters back one at a time), fix the strategy. This is the same strategy that seeded DSIT originally, so either the org slug or the API contract drifted. **Note:** now that Issue B is fixed, DSIT will be marked `failed`/error each run (not silently stamped), so the breakage is visible — but DSIT new pubs still won't be detected until the query is fixed.
+
+**Issue B — fetch-failure was swallowed to `[]` and still stamped. FIXED 5 Jun 2026 (commit on master).** `GovUkSearchStrategy.fetch_candidates` caught the 422 and returned `[]` (the `except: return []` anti-pattern), and `run_rediscovery` stamped `last_rediscovered_at` unconditionally — so a failed fetch looked identical to "nothing new" and the producer was marked re-discovered while blind, with `errors=0` hiding it. Fix: all three HTTP strategies (`OnsApiStrategy`, `GovUkSearchStrategy`, `DirectPageParserStrategy`) now raise `StrategyFetchError` on a hard fetch failure (genuine HTTP-200-empty still returns `[]`). This honours the existing `run_discovery` contract ("raises on unrecoverable fetch failure — caller must catch and record"). The raise propagates to: the discovery worker → marks producer `failed` (not `completed`); the re-discovery cron → counts `errors`, rolls back, and `run_rediscovery` aborts *before* its stamp → **no stamp on failure**. Tests: `test_fetch_failure_propagates_and_does_not_stamp` (re-discovery), updated `test_raises_on_request_failure` (strategy). Protects *all* producers, not just DSIT.
+
+**Revisit trigger (Issue A):** before relying on re-discovery for full catalogue-coverage trust; or when auditing producer discovery queries. Not a blocker for scheduling the daily cron — the 7 healthy producers work correctly and DSIT's breakage is now visible rather than silent.
+
+*Captured 5 June 2026 — surfaced by the re-discovery dry-run, sharpened by the execute run's 422.*
+
+---
+
 ### Landing page: lead with the job-to-be-done (design observation, not committed)
 
 Observation (28 May 2026): the landing page currently describes what WB *is* (parliamentary research tools) and *contains* (the tool cards), but doesn't clearly answer "what is this site for?" for a cold visitor. The job-to-be-done — understand what Parliament is doing on your topics, across otherwise-scattered sources, in one place, kept current — is the value, and it's the same thing as the data-corpus moat.

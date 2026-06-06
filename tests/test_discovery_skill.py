@@ -359,15 +359,21 @@ class TestOnsApiStrategy:
         assert items[0].title == "Consumer Price Inflation"
         assert isinstance(items[0], CandidateItem)
 
-    def test_returns_empty_on_request_failure(self):
-        from hansard_archive.discovery.strategies import OnsApiStrategy
+    def test_raises_on_request_failure(self):
+        # Contract (corrected 5 Jun 2026): a fetch FAILURE must raise
+        # StrategyFetchError, not swallow to [] — a swallowed failure is
+        # indistinguishable from a genuine empty result and silently marks the
+        # producer completed/re-discovered while blind. A genuine empty (HTTP 200,
+        # no items) still returns []; only a hard failure raises.
+        from hansard_archive.discovery.strategies import OnsApiStrategy, StrategyFetchError
         import requests as req_mod
+        import pytest
         strategy = OnsApiStrategy()
         with patch("requests.get", side_effect=req_mod.RequestException("timeout")):
             p = MagicMock()
             p.slug = "office-for-national-statistics"
-            items = strategy.fetch_candidates(p)
-        assert items == []
+            with pytest.raises(StrategyFetchError):
+                strategy.fetch_candidates(p)
 
 
 class TestGovUkSearchStrategy:

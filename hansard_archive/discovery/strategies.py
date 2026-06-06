@@ -32,6 +32,20 @@ _STAT_KEYWORDS = re.compile(
 )
 
 
+class StrategyFetchError(Exception):
+    """Raised when a strategy cannot complete a fetch (HTTP error, network failure,
+    unparseable response) — as opposed to a genuine HTTP-200-empty result.
+
+    Honours the run_discovery contract ("raises on unrecoverable fetch failure —
+    caller must catch and record on the producer row"). Without this, a failed
+    fetch (e.g. a 422 from the GOV.UK Search API) is swallowed into an empty list
+    and is indistinguishable from "nothing new" — so the producer gets marked
+    completed / re-discovered despite never being checked. That silent-blindness
+    is the exact catalogue-freeze failure the discovery/re-discovery layer exists
+    to prevent. A genuine empty result still returns [] and does NOT raise.
+    """
+
+
 @dataclass
 class CandidateItem:
     title:            str
@@ -87,6 +101,8 @@ class OnsApiStrategy:
                 ))
         except Exception as exc:
             log.warning("OnsApiStrategy: fetch failed — %s", exc)
+            raise StrategyFetchError(
+                f"OnsApiStrategy fetch failed for {producer.slug}: {exc}") from exc
         log.info("OnsApiStrategy: %d candidates", len(items))
         return items
 
@@ -167,7 +183,8 @@ class GovUkSearchStrategy:
                 start += page_size
             except Exception as exc:
                 log.warning("GovUkSearchStrategy: fetch failed for %s — %s", org_slug, exc)
-                break
+                raise StrategyFetchError(
+                    f"GovUkSearchStrategy fetch failed for {org_slug}: {exc}") from exc
         log.info("GovUkSearchStrategy: %d candidates for %s", len(items), org_slug)
         return items
 
@@ -238,6 +255,8 @@ class DirectPageParserStrategy:
         except Exception as exc:
             log.warning("DirectPageParserStrategy: failed for %s — %s",
                         producer.web_root_url, exc)
+            raise StrategyFetchError(
+                f"DirectPageParserStrategy fetch failed for {producer.web_root_url}: {exc}") from exc
         log.info("DirectPageParserStrategy: %d candidates for %s",
                  len(items), producer.web_root_url)
         return items

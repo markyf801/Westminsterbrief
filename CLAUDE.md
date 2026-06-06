@@ -462,6 +462,7 @@ Sequence after regenerating the Postgres password:
    - `pq-cron-monday`
    - `backup-cron-r2`
    - `member-cache-refresh`
+   - `rediscovery-cron`
 3. Verify Flask picked up the new credential: hit `/health` and confirm `status=ok`
 
 Variable References are not "live" — they resolve at deploy time only.
@@ -498,6 +499,14 @@ WMS are classified within the same Hansard ingestion — no separate cron. Theme
 | `member-cache-refresh` | `0 2 * * 0` | Sunday 02:00 UTC — bulk-refresh all current MPs + Lords into `cached_member` |
 
 Run once manually after initial deployment: `python scripts/refresh_member_cache.py`. After that, searches resolve member names/party/constituency entirely from the DB; no per-request Parliament API calls.
+
+**Stats catalogue re-discovery** (`scripts/rediscovery_cron.py`):
+
+| Service | Cron (UTC) | Purpose |
+|---|---|---|
+| `rediscovery-cron` | `0 6 * * *` | 06:00 UTC daily — re-scan authorised+completed producers for NEW publications (pre-classify URL/dataset-ID dedup, so only genuinely-new pubs hit Gemini) + refresh ONS latest-release dates. Tracked by `last_rediscovered_at` (daily cadence). |
+
+Keeps the stats catalogue current so it doesn't freeze at first-discovery. `--execute` writes; default is dry-run. Headline metric is `SKIPPED_KNOWN` (a healthy run is mostly-skips). A fetch failure now raises `StrategyFetchError` → counted in `errors`, producer NOT stamped (re-attempted next run) — so a broken producer query fails loud rather than silently re-stamping (Issue B, fixed 5 Jun 2026). Respects Decision H — discovery only, no data-file extraction. Known open: DSIT's GOV.UK query 422s (Issue A, `docs/ideas-backlog.md`) — expect `errors=1` every run until fixed.
 
 **Other**:
 - `backup-cron-r2` — daily pg_dump to Cloudflare R2
@@ -1308,6 +1317,21 @@ Beta is only a preview layer — it does not have its own data, its own users, o
 **Never push automatically.** Always commit locally and show what changed, then wait for explicit instruction to push. The user will say "push" or "push it" when ready. This applies to small fixes and template changes as much as anything else.
 
 When Mark requests a push of a small unrelated change while in the middle of a Phase build, push only the requested change — do not bundle in-progress Phase work alongside it.
+
+### Never `git add -A` / `git add .` in this repo — explicit paths only
+
+The working tree permanently carries untracked clutter — manifesto PDFs in
+`docs/`, a 380 MB `intelligence.db.backup`, run/backfill logs under `logs/`,
+underscore-prefixed scratch scripts in `scripts/`, `*_output.txt` probes,
+scratch screenshots in `static/`. A blanket `git add -A` (or `git add .`) sweeps
+all of it into the commit. This happened 2026-06-05 during the re-discovery
+merge: a single `git add -A` staged ~400 MB of junk including the db backup
+blob; the commit had to be unwound and rebuilt from explicit paths.
+
+**Rule:** stage with explicit paths only — `git add path/to/file ...`. Never
+`git add -A` or `git add .`. The `.gitignore` was hardened the same day (backups,
+logs, `scripts/_*`, screenshots, `.claude/`) as a structural backstop, but the
+clutter set drifts — do not rely on `.gitignore` alone; name the files you mean.
 
 ## Operational logging — deploys.md
 
