@@ -8,6 +8,21 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### PQ Answers as Attributed Government Statistics
+Mine the PQ answer text already held in the database (~90k PQs, policy-area tagged) for government-stated figures, and surface them as attributed statistics — "this figure was stated by [department] on [date], in answer to PQ [UIN]: '250,000 students received loans in 2024-25'." Faithful, attributed, dated, with permanent reference — the same lift-and-attribute model as stated key-findings (NOT synthesis; stays on the right side of the free-archive no-synthesis line). Source is ALREADY SOLVED — the PQ answers are in the DB (no Hansard search needed; it's extraction from text already held). Best home is the PQ PAGES (the validated, used feature), NOT the unlaunched stats catalogue — enriches the gem using data already held.
+
+**Two empirical unknowns to test with a SLICE before building (same discipline as the key-findings slice):**
+- YIELD: what fraction of PQ answers actually contain a clean, liftable figure? Likely a minority — many PQ answers are non-answers ("information not held centrally", "I refer the member to...", referrals, deflections). Test on a real sample across policy areas.
+- EXTRACTION ACCURACY (the real risk): extracting figures from prose can introduce errors WORSE than no feature — a wrong government figure presented as fact gets quoted and relied on, on a tool civil servants use. Caveats matter ("approximately 250,000, excludes part-time, subject to revision"). Must be conservative extraction (only unambiguous caveat-free figures) AND always shown IN CONTEXT (surrounding sentence + source PQ link), never a bare number divorced from its qualifiers.
+
+**Guardrail:** figures must always carry their context/caveats and link to the source PQ. Never a bare extracted number. Conservative extraction over high yield — a missed figure is fine (falls back to no-figure-shown); a mangled figure is a credibility-killer.
+
+**Revisit trigger:** post-launch; any "how do we add stats to pages" or "enrich PQ pages" conversation; capacity for an extraction slice to test yield + accuracy. Test with a slice (yield + extraction accuracy on a real sample) before any build.
+
+*Captured 6 June 2026 — Mark's idea. The source is already in hand (PQ answer text); the open questions are yield (how many answers have liftable figures) and extraction accuracy (can figures be lifted without mangling caveats — the credibility risk). Slice-to-test, not build.*
+
+---
+
 ### Party pages need restructuring + contain some incorrect information
 
 Production `/archive/party/<slug>` pages now render manifesto content (after the 6 June 2026 party-page 500 fix — `a286b1d`, restored ManifestoChunk import). They're live, but the site is pre-launch (`noindex` + robots-blocked), so they won't appear in search — only reachable by direct URL. Low exposure, not urgent. Mark's read (6 June): "not the end of the world if found; they need work — some information is incorrect, just needs restructuring."
