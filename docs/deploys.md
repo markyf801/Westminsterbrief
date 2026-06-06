@@ -358,6 +358,35 @@ The other 7 producers' stamps left intact (they fetched candidates legitimately)
 
 ---
 
+### 2026-06-06 — Clear remaining 6 central-department false re-discovery stamps
+
+**Context:** Root-causing the DSIT 422 (Issue A) revealed it was `order=newest`
+(invalid GOV.UK Search sort value, HTTP 422) affecting **every** GOV.UK producer,
+not just DSIT. So the 5 June execute run (pre-Issue-B, `errors=0`) silently 422'd
+and false-stamped **all 7 central departments**, not just DSIT — the "20 fetched"
+were entirely ONS. Only DSIT was cleared on 5 June. With the order fix now on
+production (`14f0099`), clearing the other 6 so they re-run immediately and pick
+up the ~2-week GOV.UK backlog (rather than waiting out the 24h cadence). Scoped to
+`central_department` with a non-null stamp (DSIT already NULL → not re-touched;
+ONS is not `central_department` and legitimately stamped → untouched). `updated_at`
+set per the raw-SQL-on-ORM-table rule.
+
+**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-06 11:25 BST.
+
+```sql
+UPDATE ha_stat_producer
+SET last_rediscovered_at = NULL,
+    updated_at = NOW()
+WHERE producer_type = 'central_department'
+  AND last_rediscovered_at IS NOT NULL;
+```
+
+**Result:** `Updated Rows: 6` (DfE, DWP, DBT, DESNZ, DfT, DEFRA). Next cron run
+will re-attempt them with the fixed `order` param — expect `new > 0` (legitimate
+catch-up, not a dedup failure).
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that
