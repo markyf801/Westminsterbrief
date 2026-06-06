@@ -8,6 +8,20 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Party pages need restructuring + contain some incorrect information
+
+Production `/archive/party/<slug>` pages now render manifesto content (after the 6 June 2026 party-page 500 fix — `a286b1d`, restored ManifestoChunk import). They're live, but the site is pre-launch (`noindex` + robots-blocked), so they won't appear in search — only reachable by direct URL. Low exposure, not urgent. Mark's read (6 June): "not the end of the world if found; they need work — some information is incorrect, just needs restructuring."
+
+The pages need: (a) correction of factually-wrong content, and (b) layout/structure rework. Connected to the manifesto workstream (ManifestoChunk content + the manifesto-review admin flow currently disabled in `templates/admin.html`, awaiting rebuild — see `docs/manifesto-status-opus-brief.md`).
+
+Action when revisited: walk each party page, list what's incorrect (specifics not yet captured — gather when actioned), then restructure. **Must be done before removing `noindex` / any launch / advertising** — incorrect content is fine hidden, not fine indexed.
+
+**Revisit trigger:** before the pre-launch checklist removes `noindex`; when the manifesto workstream resumes; before advertising the site.
+
+*Captured 6 June 2026 — flagged by Mark on seeing the party pages live post-500-fix.*
+
+---
+
 ### Sinn Féin party config — mojibake in `_PARTY_SLUG_MAP` (data-quality bug)
 
 `hansard_archive/views.py` `_PARTY_SLUG_MAP["sinn-fein"]` has UTF-8-read-as-Latin-1
