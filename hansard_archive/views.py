@@ -45,6 +45,8 @@ from hansard_archive.models import (
     HansardSessionTheme,
     HaPQ,
     HaPQTheme,
+    ManifestoChunk,
+    ManifestoChunkTag,
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
     UpcomingRelease,
