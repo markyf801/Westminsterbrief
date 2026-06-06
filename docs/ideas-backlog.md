@@ -8,6 +8,22 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Sinn Féin party config — mojibake in `_PARTY_SLUG_MAP` (data-quality bug)
+
+`hansard_archive/views.py` `_PARTY_SLUG_MAP["sinn-fein"]` has UTF-8-read-as-Latin-1
+corruption: `full_name` = `"Sinn FÃ©in"` and `cached_names` = `{"Sinn FÃ©in"}`
+([views.py:2094](../hansard_archive/views.py#L2094)); also `member_summary` joiner
+`" Â· "` ([views.py:2531](../hansard_archive/views.py#L2531)). **Real consequence:**
+the corrupted `cached_names` won't match the correctly-encoded `"Sinn Féin"` in
+`cached_member`, so Sinn Féin's MP/Lord counts likely render as zero. The display
+name is also garbled. Pre-existing; **not** the cause of the party-page 500 (that
+was the missing `ManifestoChunk` import, fixed in `ca00919` / `3cc992f`).
+Deliberately kept out of that hotfix to keep its blast radius minimal.
+
+**Revisit trigger:** during the manifesto/Tier 3 review pass, or any Sinn Féin
+party-page work. Fix = correct the three strings to proper UTF-8; verify member
+counts populate. Check the source file for other mojibake while there.
+
 ### Triage the 15 pre-existing full-suite test failures — don't normalise a red suite
 
 As of 5 June 2026 the full `pytest tests/` run shows **15 failures, 425 passed** — all in `test_producer_authorisation.py` (13: `TestStatProducerAuthLogModel`, `TestAdminAuthGuard`, `TestAuthoriseRoute`, `TestDeclineRoute`) and `test_stats_registry.py::TestSeedScript` (2: `test_build_seed_data_returns_29_entries`, `test_seed_inserts_all_producers`). Confirmed pre-existing (identical with the Issue-B-fix changes stashed), so not a regression — but a chronically-red suite is how a real regression hides as "failure #16, unnoticed."
