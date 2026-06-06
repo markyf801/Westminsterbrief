@@ -2126,18 +2126,67 @@ _party_data_cache: dict[str, tuple[dict, float]] = {}
 _PARTY_CACHE_TTL = 3600  # 1 hour
 
 
+def _recent_party_sessions(contrib_codes: list[str], policy_area: str, limit: int = 3) -> list[dict]:
+    """Up to `limit` recent non-container sessions where the party contributed
+    and the session is tagged to `policy_area`. Newest first."""
+    if not contrib_codes:
+        return []
+    contrib_sids = (
+        db.session.query(HansardContribution.session_id)
+        .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+        .filter(
+            HansardSession.is_container == False,
+            HansardContribution.party.in_(contrib_codes),
+        )
+    )
+    tagged_sids = (
+        db.session.query(HansardSessionTheme.session_id)
+        .filter(
+            HansardSessionTheme.theme == policy_area,
+            HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+        )
+    )
+    rows = (
+        HansardSession.query
+        .filter(
+            HansardSession.is_container == False,
+            HansardSession.id.in_(contrib_sids),
+            HansardSession.id.in_(tagged_sids),
+        )
+        .order_by(HansardSession.date.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "title":             s.title,
+            "slug":              s.slug,
+            "human_date":        _human_date(s.date),
+            "url_date":          _url_date(s.date),
+            "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+        }
+        for s in rows
+    ]
+
+
 def _compute_party_policy_positions(
     party_slug: str,
     contrib_codes: list[str],
     is_government: bool,
     manifesto_labels: dict,
-) -> list[dict]:
+) -> dict:
     """
-    Return a list of year-groups, each containing per-policy-area records:
-    - chunk texts (all approved chunks where this area is primary)
-    - up to 3 recent sessions where the party contributed on that area
-    - up to 2 WMS (Labour only)
-    Groups are sorted newest-year-first; policy areas alphabetical within each group.
+    Return {"year_groups": [...], "other_activity_areas": [...]}.
+
+    year_groups: per manifesto-year, per-policy-area records — chunk texts (all
+    approved chunks where this area is primary), up to 3 recent sessions where the
+    party contributed on that area, up to 2 WMS (government parties). Newest year
+    first; policy areas alphabetical within each group.
+
+    other_activity_areas: policy areas where the party has parliamentary activity
+    but NO approved manifesto commitment in any year — ordered by activity volume
+    descending, each with up to 3 recent sessions. Empty when every active area
+    already has a commitment (e.g. Labour/Conservative/Lib Dem).
     """
     chunk_rows = (
         db.session.query(ManifestoChunk, ManifestoChunkTag.policy_area)
@@ -2154,7 +2203,7 @@ def _compute_party_policy_positions(
     )
 
     if not chunk_rows:
-        return []
+        return {"year_groups": [], "other_activity_areas": []}
 
     # Group by (year, policy_area)
     year_area_chunks: dict[int, dict[str, list]] = defaultdict(lambda: defaultdict(list))
@@ -2172,42 +2221,7 @@ def _compute_party_policy_positions(
         for policy_area in sorted(area_chunks):
             all_chunks = sorted(area_chunks[policy_area], key=lambda c: c.id)
 
-            sessions: list[dict] = []
-            if contrib_codes:
-                contrib_sids = (
-                    db.session.query(HansardContribution.session_id)
-                    .join(HansardSession, HansardSession.id == HansardContribution.session_id)
-                    .filter(
-                        HansardSession.is_container == False,
-                        HansardContribution.party.in_(contrib_codes),
-                    )
-                )
-                tagged_sids = (
-                    db.session.query(HansardSessionTheme.session_id)
-                    .filter(
-                        HansardSessionTheme.theme == policy_area,
-                        HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-                    )
-                )
-                session_rows = (
-                    HansardSession.query
-                    .filter(
-                        HansardSession.is_container == False,
-                        HansardSession.id.in_(contrib_sids),
-                        HansardSession.id.in_(tagged_sids),
-                    )
-                    .order_by(HansardSession.date.desc())
-                    .limit(3)
-                    .all()
-                )
-                for s in session_rows:
-                    sessions.append({
-                        "title":             s.title,
-                        "slug":              s.slug,
-                        "human_date":        _human_date(s.date),
-                        "url_date":          _url_date(s.date),
-                        "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
-                    })
+            sessions = _recent_party_sessions(contrib_codes, policy_area)
 
             wms: list[dict] = []
             if is_government:
@@ -2261,7 +2275,43 @@ def _compute_party_policy_positions(
             "positions": positions,
         })
 
-    return year_groups
+    # Other areas of parliamentary activity — areas the party is active in that
+    # have NO approved manifesto commitment in any year, ordered by volume desc.
+    manifesto_areas = {pa for _chunk, pa in chunk_rows}
+    other_activity_areas: list[dict] = []
+    if contrib_codes:
+        contrib_session_q = (
+            db.session.query(HansardContribution.session_id)
+            .join(HansardSession, HansardSession.id == HansardContribution.session_id)
+            .filter(
+                HansardSession.is_container == False,
+                HansardContribution.party.in_(contrib_codes),
+            )
+        )
+        activity_rows = (
+            db.session.query(
+                HansardSessionTheme.theme,
+                func.count(HansardSessionTheme.session_id).label("n"),
+            )
+            .filter(
+                HansardSessionTheme.session_id.in_(contrib_session_q),
+                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+            )
+            .group_by(HansardSessionTheme.theme)
+            .order_by(func.count(HansardSessionTheme.session_id).desc())
+            .all()
+        )
+        for theme, n in activity_rows:
+            if theme in manifesto_areas:
+                continue
+            other_activity_areas.append({
+                "policy_area": theme,
+                "slug":        slugify_theme(theme),
+                "total":       n,
+                "sessions":    _recent_party_sessions(contrib_codes, theme),
+            })
+
+    return {"year_groups": year_groups, "other_activity_areas": other_activity_areas}
 
 
 def _compute_party_data(slug: str) -> dict | None:
@@ -2519,7 +2569,8 @@ def archive_party(party_slug: str):
         top_voices      = data["top_voices"],
         recent_activity = data["recent_activity"],
         recent_pqs      = data["recent_pqs"],
-        policy_year_groups = data["policy_positions"],
+        policy_year_groups = data["policy_positions"]["year_groups"],
+        other_activity_areas = data["policy_positions"]["other_activity_areas"],
         is_government   = cfg.get("is_government", False),
         og_title        = f"{name} — Hansard Archive — Westminster Brief",
         meta_desc       = (

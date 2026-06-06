@@ -121,6 +121,8 @@ body { background: #f0f2f5; }
 .pp-show-toggle:hover { text-decoration: underline; }
 .pp-hidden-area { display: none; }
 .pp-hidden-area.pp-revealed { display: block; }
+.pp-seeall { display: inline-block; margin-top: 6px; font-size: 12px; color: #4a7fa5; text-decoration: none; }
+.pp-seeall:hover { text-decoration: underline; }
 
 /* Activity lists — policy areas & voices (were unstyled → run-on inline text) */
 .party-policy-list, .party-voices-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
@@ -219,7 +221,7 @@ body { background: #f0f2f5; }
                 {% endfor %}
 
                 {% if pos.sessions %}
-                <div class="pp-activity-label">Recent parliamentary activity</div>
+                <div class="pp-activity-label">Recent parliamentary activity in this area</div>
                 <ul class="pp-sessions">
                     {% for s in pos.sessions %}
                     <li>
@@ -229,6 +231,7 @@ body { background: #f0f2f5; }
                     </li>
                     {% endfor %}
                 </ul>
+                <a class="pp-seeall" href="/archive/policy/{{ pos.slug }}">See all activity in this area →</a>
                 {% else %}
                 <p class="pp-no-sessions">No archived sessions found for this area yet.</p>
                 {% endif %}
@@ -258,6 +261,40 @@ body { background: #f0f2f5; }
         {% endif %}
     </div>
     {% endfor %}
+
+    {# --- Other areas of parliamentary activity (active areas with no manifesto commitment) --- #}
+    {% if other_activity_areas %}
+    <div class="party-section pp-section">
+        <h2 class="pp-section-title">Other areas of parliamentary activity</h2>
+        <p class="pp-section-sub">
+            Further policy areas with recent parliamentary activity by {{ party_name }} in the archive.
+        </p>
+        {% for area in other_activity_areas %}
+        <div class="pp-area" id="oa-{{ area.slug }}">
+            <div class="pp-area-header" onclick="togglePpArea(this)">
+                <span class="pp-area-name">{{ area.policy_area }}</span>
+                <span class="pp-area-count">{{ "{:,}".format(area.total) }} session{{ 's' if area.total != 1 else '' }}</span>
+                <span class="pp-area-chevron">▶</span>
+            </div>
+            <div class="pp-area-body">
+                {% if area.sessions %}
+                <div class="pp-activity-label">Recent parliamentary activity in this area</div>
+                <ul class="pp-sessions">
+                    {% for s in area.sessions %}
+                    <li>
+                        <span class="pp-session-date">{{ s.human_date }}</span>
+                        <a class="pp-session-link" href="/archive/debate/{{ s.url_date }}/{{ s.slug }}">{{ s.title }}</a>
+                        <span class="pp-session-dtype">{{ s.debate_type_label }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                <a class="pp-seeall" href="/archive/policy/{{ area.slug }}">See all activity in this area →</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     {# --- Activity summary --- #}
     {% if total_contributions %}
