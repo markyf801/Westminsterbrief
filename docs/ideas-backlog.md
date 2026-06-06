@@ -17,9 +17,24 @@ Mine the PQ answer text already held in the database (~90k PQs, policy-area tagg
 
 **Guardrail:** figures must always carry their context/caveats and link to the source PQ. Never a bare extracted number. Conservative extraction over high yield — a missed figure is fine (falls back to no-figure-shown); a mangled figure is a credibility-killer.
 
-**Revisit trigger:** post-launch; any "how do we add stats to pages" or "enrich PQ pages" conversation; capacity for an extraction slice to test yield + accuracy. Test with a slice (yield + extraction accuracy on a real sample) before any build.
+**Trial evidence (6 June 2026) — two trials, both pointing to PQ-answers-ONLY:**
 
-*Captured 6 June 2026 — Mark's idea. The source is already in hand (PQ answer text); the open questions are yield (how many answers have liftable figures) and extraction accuracy (can figures be lifted without mangling caveats — the credibility risk). Slice-to-test, not build.*
+*Trial 1 — extraction on a real debate* (Lords, "AI: Impact on Human Relationships and Society", 5 Jun): a 13-speaker debate yielded ~12 liftable figures (high yield). But almost all were peers *citing third parties* (Barclays, OBR, Male Allies UK, Milburn, Durham) — i.e. "a peer quoted this stat", not "the government stated it." Weaker provenance than a PQ answer.
+
+*Trial 2 — source verification of those debate figures* (traced each to its origin): **of ~11 cited figures, only 4 verified cleanly.** Three failure tiers:
+- **CLEAN (4):** OBR 40% UK occupations exposed to AI, Durham VAWG report, Evo 2 (9.3T nucleotides), DfE AI tutors end-2027 — figure + source confirm. Safe.
+- **DRIFTED (the insidious tier):** Male Allies UK "26% preferred AI companion to real human connection" — but the source's 26% was "*liked the attention*"; the "*preferred to real-life*" figure was **36%**. The peer FUSED two stats into a claim neither supports. The *number* (26%) is real and verifiable — so a naive ✓-check ("does 26% appear in the source?") would PASS it and propagate the misquote as verified fact. **This is why automated ✓/⚠ verification is dangerous: drift passes the check while being false.**
+- **UNTRACEABLE:** Barclays 70–90% (source real, specific figure unconfirmed in any public summary), Milburn "7% of 14–16s unfit for work" (not found), and unnamed-source figures (3–27% hallucination, ⅓ of teens, >50% use generative AI) — can't be confirmed; live only in the spoken claim.
+
+**The decisive structural finding: PQ answers are VERIFIED-BY-CONSTRUCTION; debate citations are not.** A government figure in a PQ answer IS its own primary source — the department stating it is the authority; the figure and its source are the same object. No tracing, no drift (it's not paraphrasing a third party — it's stating its own data), no fusion risk. **The verification problem you'd have to build for debate-stats is the problem PQ-stats DOESN'T HAVE.** Debate citations are NEVER primary — a peer's spoken recollection of someone else's figure, two hops from authority, mediated by memory/paraphrase; >half fail to trace or are mangled.
+
+**DECISION (confirmed by both trials): build from PQ ANSWERS only. Debate-citation extraction REJECTED** — it would require a hard verification layer that *still* fails the majority of the time (the drift trap passes misquotes), whereas PQ figures need no verification. The verification idea (✓/⚠ stamps), once tested, became another argument FOR PQ-only: the source you'd verify (debates) is the one to avoid; the source to use (PQs) is self-verifying.
+
+**Still slice-to-test before build** — even verified-by-construction, extraction must preserve the PQ answer's OWN caveats faithfully (a department's figure can carry "data not held in this format" / "provisional" / "excludes X" qualifiers — same fidelity discipline, just no third-party tracing needed). Test PQ-answer yield + extraction accuracy on a real sample first.
+
+**Revisit trigger:** post-launch; any "how do we add stats to pages" or "enrich PQ pages" conversation; capacity for an extraction slice to test yield + accuracy. Test with a slice (yield + extraction accuracy on a real sample) before any build. Homed on PQ pages.
+
+*Captured 6 June 2026 — Mark's idea. Two same-day trials (debate extraction + source verification) settled the source question: PQ answers only; debate-citation extraction rejected (third-party, untraceable/drifted >half the time). Open questions now narrowed to PQ-answer yield + caveat-faithful extraction. Slice-to-test, not build.*
 
 ---
 
