@@ -80,7 +80,8 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-05 | `4de1874` | Feat: preload minister field with all ministers (Debate Contributions tab usable without choosing a department) | Mark |
 | 2026-06-05 | `f3b4c80` | Feat: re-discovery — pre-classify dedup + run_rediscovery + cron (keeps catalogue current). Schema `last_rediscovered_at` added via DBeaver first. | Mark |
 | 2026-06-05 | `cf27fe7` | Repo hygiene: harden .gitignore (backups/logs/scratch) + CLAUDE.md "never git add -A" rule, after the add-A junk-staging incident | Claude Code |
-| 2026-06-05 | `18b8c71` | Fix: discovery strategies raise StrategyFetchError on fetch failure (Issue B) — failed fetch no longer swallowed to [] / silently stamped; surfaces as failed/errors instead | Claude Code |
+| 2026-06-05 | `a2d5b23` | Fix: discovery strategies raise StrategyFetchError on fetch failure (Issue B) — failed fetch no longer swallowed to [] / silently stamped; surfaces as failed/errors instead | Claude Code |
+| 2026-06-06 | `59d31ff` | Docs: record rediscovery-cron in CLAUDE.md (password-rotation list + cron schedule); correct Issue B push-row SHA | Claude Code |
 
 ---
 
