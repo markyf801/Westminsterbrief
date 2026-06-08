@@ -167,3 +167,49 @@ first; it's free and either clears or declines cleanly.
 - **`views.py` untouched** — guaranteed by the `producer/` prefix.
 
 **Effort:** ~half-day. No new data, no `views.py`, no migration.
+
+---
+
+## Sibling: per-policy-area stats pages (`/stats/<theme_slug>`) — build at step 4
+
+Same feature from the other axis. Per-producer = "who published it"; per-policy =
+"what it's about" — *"all Health and social care statistics, across every producer"*.
+Arguably the more valuable axis for a policy person (their topic across all sources).
+Build it **together** with the per-producer pages at step 4 so both genuinely share
+the `_stats_pub_card.html` partial (created once, used by both) rather than building
+one ahead of the other and retrofitting.
+
+**The 500 is already cleared** (commit `b57a14a`, 8 Jun): `stats_theme.html` was
+recreated as the original (headline-stat + upcoming releases), template-only, dead
+links dropped. So `/stats/<theme_slug>` renders 200 today. **This section is the
+ENHANCEMENT only** — adding the cross-source publication list. Net-new: the original
+template never had a publication list.
+
+**Scope of the enhancement (net-new vs the current restored page):**
+- A publication list on each policy-area page: all publications tagged to that policy
+  area, across all producers, using the shared `_stats_pub_card.html` partial.
+- Same quality bar as per-producer: distinct `<title>`/H1/context, on-load server-side
+  render (indexable), breadcrumb, thin-content gate.
+- **Thin-content gate:** 0 visible publications → 404 (consistency). Data is healthy —
+  2,301/2,308 publications tagged; the 22 populated areas range 539 (Employment) down
+  to 3 (International development) — so the gate rarely if ever fires, but apply it.
+
+**This one DOES touch `views.py`** — unlike the per-producer pages (which the
+`producer/` prefix keeps out of `views.py`). The `stats_theme` handler
+([`views.py`](../hansard_archive/views.py) ~L2556) must gain:
+- A `StatPublicationTheme` query (theme_type='policy_area') joined to `StatPublication`,
+  resolved via the **brief-slug → Hansard-name bridge** `_pa.hansard_names_for_slug()`
+  (the handler already uses `_pa`). This matters: the `/stats/` brief-slug ≠ the
+  `ha_session_theme`/`StatPublicationTheme` policy name in **17 cases** (e.g.
+  `/stats/education` → *"Education, training and skills"* **and** *"Children and
+  families"* — one slug, two areas). Naive slugify will not match.
+- The thin-content gate.
+- → **Manifesto-console coordination + serialised master-promotion** required at build
+  time (shared `views.py`). This is the one difference from the per-producer lane's
+  "`views.py` untouched" guarantee.
+
+**Namespace:** `/stats/<theme_slug>` (1-seg, this) coexists with `/stats/producer/<slug>`
+(per-producer) — Werkzeug ranks the literal `producer` segment above the `<theme_slug>`
+converter, so no collision. Edge case to verify when per-producer lands: a bare
+`/stats/producer` (no second segment) falls through to the theme route → `producer`
+isn't a valid policy slug → `abort(404)`, harmless.
