@@ -387,6 +387,34 @@ catch-up, not a dedup failure).
 
 ---
 
+### 2026-06-08 — Decline 3 devolved producers + enrich NISRA reason
+
+**Context:** Stats-catalogue launch prep, step 1 (scope check before producer
+authorisation). Scottish Government, Welsh Government, and NISRA are devolved
+(`devolved_administration` / `devolved_body`) — outside Westminster Brief's
+UK-central-government scope ("no devolved coverage yet"). Declined per the HESA
+precedent so they don't surface in the candidate finder or get authorised.
+
+**Declines** — via `/admin` decline route (not raw SQL; `reviewed_by='admin'`,
+audit-log written), 2026-06-08 ~12:50 BST: `scottish-government`,
+`welsh-government`, `nisra` → `authorisation_status='declined'`, reason
+"currently out of scope".
+
+**Reason enrich (raw SQL)** — NISRA only, to record the ONS-vs-NISRA distinction
+so a future review doesn't re-surface it as "but it's a statistics agency".
+Run via DBeaver, 2026-06-08 14:59 BST:
+
+```sql
+UPDATE ha_stat_producer
+SET authorisation_reason = 'Devolved statistics body (Northern Ireland) — outside scope. NISRA is the devolved equivalent of ONS, producing NI official statistics FOR the devolved administration; the ONS-in/NISRA-out split is consistent (ONS UK-wide, NISRA NI-only). Excluded despite being a "statistics agency". No devolved coverage yet; deferred, revisitable.',
+    updated_at = NOW()
+WHERE slug = 'nisra';
+```
+
+**Result:** `Updated Rows: 1`. All three remain declined; gating holds.
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that
