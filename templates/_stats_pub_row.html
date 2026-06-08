@@ -10,7 +10,7 @@
     </td>
     {% if show_producer is not defined or show_producer %}
     <td>
-        <span class="sc-producer" style="font-size:13px; color:#374151;">{{ producer.short_name or producer.name }}</span>
+        <a class="sc-producer-link" href="/stats/producer/{{ producer.slug }}">{{ producer.short_name or producer.name }}</a>
     </td>
     {% endif %}
     <td>

@@ -143,6 +143,17 @@ class TestCatalogueCrossLink:
         assert "Browse by producer" in body
         assert "/stats/producer/dept-browse" in body
 
+    def test_producer_column_links_to_producer_page(self, app, db, client_enabled):
+        # The Producer column in each catalogue row links to that producer's hub.
+        with app.app_context():
+            p = _producer(db, "dept-rowlink", "Department Rowlink", short="DRL")
+            _pub(db, p, "rowlink-pub", "Rowlink Publication")
+            db.session.commit()
+        body = client_enabled.get("/stats").get_data(as_text=True)
+        # The producer short name renders inside an anchor to the producer page.
+        assert 'href="/stats/producer/dept-rowlink"' in body
+        assert "sc-producer-link" in body
+
     def test_catalogue_still_lists_publications(self, app, db, client_enabled):
         # Regression: the card-partial extraction must not change the catalogue's
         # publication listing.
