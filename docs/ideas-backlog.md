@@ -8,6 +8,16 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Post-launch: revisit the 4 paused stats producers (Ofcom, OBR, OfS, Ofgem)
+Paused pre-launch (8 Jun 2026) because discovery returned 0 publications — but they are **not** dead surfaces. Root cause diagnosed: all 4 are `producer_type` regulator/ndpb (or have `gov.uk` in the URL), so `select_strategy()` routes them to `GovUkSearchStrategy`, which queries the GOV.UK Search API for their org slug filtered to *statistics document types* (`official_statistics` / `statistical_data_set` / `statistics_announcement`). Those return **0** for all 4 — yet each org has a real gov.uk presence (Ofcom 384 docs, Ofgem 136, OBR 60, OfS 40), just none tagged as statistics doc-types. Their actual statistics live on their **own domains** (ofcom.org.uk, obr.uk, officeforstudents.org.uk, ofgem.gov.uk). `DirectPageParserStrategy` (own-domain) never gets a chance because `GovUkSearchStrategy.can_handle()` claims them first via `producer_type`.
+
+**Per-body decision when revisited (fix-or-deregister, per the strategic call):**
+- **Parser-fixable** → the body has a real own-domain publication surface the GovUkSearchStrategy isn't reaching. Fix = route to an own-domain/bespoke parser (Wave-2 risk class), verify it extracts, repopulate, un-pause → it gets a page.
+- **Transitively covered** → its key stats already surface via a parent dept's GOV.UK pubs (Ofgem→DESNZ? OfS→DfE? OBR→HMT? Ofcom→DCMS?). If so, **decline** (HESA precedent — no standalone row needed).
+- **No accessible surface** → decline.
+
+The thin-content gate keeps this clean: each either repopulates (real page) or stays out (no empty page). Note: `GovUkSearchStrategy.can_handle()` short-circuiting own-domain regulators is the structural bug — worth a broader look (does any other regulator/ndpb get mis-routed?).
+
 ### PQ Answers as Attributed Government Statistics
 Mine the PQ answer text already held in the database (~90k PQs, policy-area tagged) for government-stated figures, and surface them as attributed statistics — "this figure was stated by [department] on [date], in answer to PQ [UIN]: '250,000 students received loans in 2024-25'." Faithful, attributed, dated, with permanent reference — the same lift-and-attribute model as stated key-findings (NOT synthesis; stays on the right side of the free-archive no-synthesis line). Source is ALREADY SOLVED — the PQ answers are in the DB (no Hansard search needed; it's extraction from text already held). Best home is the PQ PAGES (the validated, used feature), NOT the unlaunched stats catalogue — enriches the gem using data already held.
 
