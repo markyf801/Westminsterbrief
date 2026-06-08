@@ -1092,6 +1092,23 @@ def _build_sitemap_core_xml() -> str:
         urls.append((f"{BASE}/archive/department/{_slugify_theme(dept)}",
                      max_d.isoformat() if max_d else ""))
 
+    # Stats catalogue + per-producer pages — only when the catalogue is live
+    # (STATS_CATALOGUE_ENABLED), and only producers with >=1 visible publication
+    # (the thin-content gate — the sitemap never points at an empty producer page).
+    if os.environ.get('STATS_CATALOGUE_ENABLED'):
+        from hansard_archive.models import StatProducer, StatPublication
+        urls.append((f"{BASE}/stats", ""))
+        for (slug, max_d) in (db.session
+                              .query(StatProducer.slug,
+                                     sqlfunc.max(StatPublication.first_published_at))
+                              .join(StatPublication,
+                                    StatPublication.producer_id == StatProducer.id)
+                              .filter(StatProducer.authorisation_status == 'authorised',
+                                      StatPublication.authorisation_status.in_(['candidate', 'authorised']))
+                              .group_by(StatProducer.slug).all()):
+            urls.append((f"{BASE}/stats/producer/{slug}",
+                         max_d.isoformat() if max_d else ""))
+
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
