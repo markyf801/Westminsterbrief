@@ -415,6 +415,43 @@ WHERE slug = 'nisra';
 
 ---
 
+### 2026-06-08 — Licence batch: OfS + Ofcom cleared, UCAS declined-in-error + pubs removed
+
+**Context:** Wave 2 licence triage (surfacing-rights check on non-OGL producers
+before authorising). Run via DBeaver, 2026-06-08 ~15:25–15:43 BST.
+
+**OfS** — licence verified OGL ("all OfS-owned content re-usable under OGL").
+`UPDATE … SET licence='OGL_v3', licence_evidence_raw_url='https://www.officeforstudents.org.uk/copyright/', updated_at=NOW()` + a matching `ha_stat_licence_audit_log` row (raw SQL bypasses the ORM licence-audit listener).
+
+**Ofcom** — licence verified permissive re-use ("may be reproduced free of charge in
+any format, accurately, with acknowledgement"); metadata-listing + linking well
+within terms. `licence='Custom_Open', licence_evidence_raw_url='https://www.ofcom.org.uk/about-ofcom/our-website/copyright'` + audit row.
+
+**UCAS — caught: authorised in error.** UCAS (custom non-OGL restrictive licence)
+had been `authorised` (auth-log: `candidate→authorised` 12:28) and discovered — **8
+publications** present. Restrictive-licence content that would have surfaced on
+`STATS_CATALOGUE_ENABLED` flip. Fixed pre-launch:
+```sql
+UPDATE ha_stat_producer SET authorisation_status='declined',
+  authorisation_reason='Custom non-OGL licence (restrictive) — does not clear surfacing rights (list+link). Declined; authorised in error 8 Jun 2026, 8 publications removed.',
+  updated_at=NOW() WHERE slug='ucas';
+INSERT INTO ha_stat_producer_auth_log (producer_id, changed_at, old_status, new_status, change_reason, recorded_by)
+  VALUES ((SELECT id FROM ha_stat_producer WHERE slug='ucas'), NOW(), 'authorised', 'declined', '…', 'Mark Forde (DBeaver, correcting erroneous authorisation)');
+-- then delete the 8 pubs + child rows (scoped producer_id=ucas):
+DELETE FROM ha_stat_publication_theme     WHERE publication_id IN (SELECT id FROM ha_stat_publication WHERE producer_id=(SELECT id FROM ha_stat_producer WHERE slug='ucas'));
+DELETE FROM ha_stat_publication_data_file  WHERE publication_id IN (…);
+DELETE FROM ha_stat_publication_audit_log  WHERE publication_id IN (…);
+DELETE FROM ha_stat_publication            WHERE producer_id=(SELECT id FROM ha_stat_producer WHERE slug='ucas');
+```
+**Result:** UCAS `declined`; `DELETE` removed 8 pubs; post-check `pubs=0, theme=0,
+data_file=0, audit=0`. Exposure closed, no orphaned rows.
+
+**Lesson:** verify `authorisation_status` against DB state before launch — a producer
+can be authorised-and-discovered while assumed declined. The licence gate must run
+*before* authorisation, not after.
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that
