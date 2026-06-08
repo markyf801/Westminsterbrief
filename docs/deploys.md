@@ -481,6 +481,38 @@ known coverage limit, separate DirectPageParser follow-up.)
 
 ---
 
+### 2026-06-08 — Pause 4 own-domain regulators (Ofcom, OBR, OfS, Ofgem) — empty discovery
+
+**Context:** Pre-launch cleanup of the stats-catalogue producer set. Strategic call:
+**no producer expansion** pre-launch (transitive coverage via the 17 departments =
+correct scope; the "Wave 1 authorise" brief assumed a candidate pool that was never
+seeded — the table holds only the original 30 from `build_seed_data()`). The 4
+own-domain regulators were `authorised` but discovery returned 0 publications — routed
+to `GovUkSearchStrategy` via `producer_type` regulator/ndpb, which queries GOV.UK
+statistics document types (0 for these; their stats live on their own domains).
+De-registered so the launch set is all-populated. **Paused, not declined** — they are
+mis-routed live bodies, to revisit post-launch (DirectPageParser fix or
+transitive-coverage assessment). Root cause + per-body decision captured in
+`docs/ideas-backlog.md`. Run via DBeaver, 2026-06-08 ~21:03 BST.
+
+First attempt no-op'd (DBeaver multi-statement gotcha — only `COMMIT` ran under the
+cursor; caught by verifying against DB state, not the success message). Re-run the
+`UPDATE` as a standalone statement:
+```sql
+UPDATE ha_stat_producer
+SET authorisation_status='paused',
+    authorisation_reason='Discovery returned 0 publications: stats on own domain, not GOV.UK statistics doc types. Paused pre-launch; revisit post-launch (parser or transitive-coverage assessment).',
+    updated_at=NOW()
+WHERE slug IN ('ofcom','office-for-budget-responsibility','office-for-students','ofgem')
+  AND authorisation_status='authorised';
+```
+**Result:** `Updated Rows: 4`; all 4 verified → `paused`. Authorised producers with
+zero publications = **0**. Launch set = **21 authorised producers, all populated**
+(lowest NHS England=1, FCDO=7, DSIT=20). NB: the `ha_stat_producer_auth_log` parity
+INSERT was not run in the same pass (audit recorded here instead).
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that
