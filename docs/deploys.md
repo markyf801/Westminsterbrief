@@ -452,6 +452,35 @@ can be authorised-and-discovered while assumed declined. The licence gate must r
 
 ---
 
+### 2026-06-08 — UCAS decline (applied) + DCMS/MHCLG GOV.UK org-slug fix
+
+**Context:** Closing out producer population. Run via DBeaver, 2026-06-08 ~17:30 BST.
+
+**UCAS decline finally applied.** The earlier decline `UPDATE` had silently not run
+(DBeaver multi-statement gotcha — only the auth-log INSERT executed). Re-run as a
+single standalone statement and verified against DB state:
+```sql
+UPDATE ha_stat_producer SET authorisation_status='declined', updated_at=NOW() WHERE slug='ucas';
+-- verified: SELECT … → 'declined'
+```
+
+**DCMS + MHCLG org-slug fix.** Both returned 0 candidates because the seed
+`web_root_url` slug didn't match GOV.UK's actual org slug (the GovUkSearch org
+filter derives from `web_root_url`). Tested the live GOV.UK Search API to find the
+correct slugs: DCMS needs "and" *added* (`department-for-culture-media-and-sport`,
+80 pubs); MHCLG needs "and" *removed* (`ministry-of-housing-communities-local-government`,
+100 pubs). Fixed `web_root_url` + cleared `last_rediscovered_at` to re-trigger:
+```sql
+UPDATE ha_stat_producer SET web_root_url='…/department-for-culture-media-and-sport', last_rediscovered_at=NULL, updated_at=NOW() WHERE slug='department-for-culture-media-and-sport';
+UPDATE ha_stat_producer SET web_root_url='…/ministry-of-housing-communities-local-government', last_rediscovered_at=NULL, updated_at=NOW() WHERE slug='ministry-of-housing-communities-and-local-government';
+```
+**Result:** re-discovery run (16:45) populated both — MHCLG `new=71`, DCMS `new=35`,
+`errors=0`. Seed script `build_seed_data()` updated to the correct slugs for
+permanence. (Own-domain regulators Ofcom/OBR/OfS/Ofgem remain 0 via GovUkSearch —
+known coverage limit, separate DirectPageParser follow-up.)
+
+---
+
 ## Railway infrastructure log
 
 One-off infrastructure changes (service additions, deletions, env var changes) that

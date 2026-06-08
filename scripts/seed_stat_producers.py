@@ -172,7 +172,8 @@ def build_seed_data() -> list[dict]:
             "name": "Ministry of Housing, Communities and Local Government",
             "short_name": "MHCLG",
             "producer_type": "central_department",
-            "web_root_url": "https://www.gov.uk/government/organisations/ministry-of-housing-communities-and-local-government",
+            # GOV.UK org slug drops "and" — must match for GovUkSearchStrategy (8 Jun 2026 fix)
+            "web_root_url": "https://www.gov.uk/government/organisations/ministry-of-housing-communities-local-government",
             "licence": "OGL_v3",
             "licence_evidence_raw_url": _GOV_COPYRIGHT,
             "description": (
@@ -261,7 +262,8 @@ def build_seed_data() -> list[dict]:
             "name": "Department for Culture, Media and Sport",
             "short_name": "DCMS",
             "producer_type": "central_department",
-            "web_root_url": "https://www.gov.uk/government/organisations/department-for-culture-media-sport",
+            # GOV.UK org slug includes "and" — must match for GovUkSearchStrategy (8 Jun 2026 fix)
+            "web_root_url": "https://www.gov.uk/government/organisations/department-for-culture-media-and-sport",
             "licence": "OGL_v3",
             "licence_evidence_raw_url": _GOV_COPYRIGHT,
             "description": (
