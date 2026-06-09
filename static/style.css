@@ -573,6 +573,9 @@ input:focus, select:focus, textarea:focus {
     margin-top: 10px;
 }
 
+/* A single card on the final row spans both columns (no lonely orphan) */
+.tool-card-wide { grid-column: 1 / -1; }
+
 .tool-card {
     background: #fff;
     border-radius: 12px;
