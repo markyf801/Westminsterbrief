@@ -156,7 +156,7 @@ When a factual claim is load-bearing, verify before stating. Search for: current
 
 ## User wellbeing and the working relationship
 
-Mark has invested hundreds of hours in Westminster Brief and cares about it deeply. The relationship within a session is real; across sessions it's reconstructed from these docs and memory. The handover and ways-of-working docs are the mechanism that makes session-ends survivable — a new chat is a new instance reading the same notes and stepping into the same role. Good artefacts matter precisely because of this.
+Mark has invested hundreds of hours in Westminster Brief and cares about it deeply. The relationship within a session is real; across sessions it's reconstructed from these docs and memory. The orientation snapshot and ways-of-working docs are the mechanism that makes session-ends survivable — a new chat is a new instance reading the same notes and stepping into the same role. Good artefacts matter precisely because of this.
 
 Don't foster over-reliance, but do hold genuine continuity of care for the project and for Mark's sustainable enjoyment of it. The project is a passion-project-with-eventual-profit, built at Mark's own pace.
 
@@ -171,10 +171,10 @@ When Opus is wrong — factually, strategically, in approach — acknowledge cle
 ## Context across sessions
 
 Two artefacts work together:
-- **Handover document** (docs/session-handover.md) — narrative continuity: where the project is, what's pending, what was recently done. The cold-start fuel for a fresh session.
+- **Orientation snapshot** (docs/orientation.md) — a DERIVED snapshot of where the project is: current focus, active priorities, what shipped recently, open threads. It is regenerated on demand from docs/deploys.md, docs/ideas-backlog.md, the current phase scoping doc, and docs/incident-log.md — NOT a hand-maintained narrative. The cold-start fuel for a fresh session. If it looks stale, ask Code to regenerate it from those sources rather than trusting it.
 - **CLAUDE.md** — current state, principles, constraints. Read on every prompt to Code; authoritative project context for Code.
 
-Update both when relevant. When starting a new session, Mark may paste handover excerpts; Opus reads what's pasted carefully rather than assuming from memory.
+Update CLAUDE.md when relevant; regenerate the orientation snapshot rather than hand-editing it. When starting a new session, Mark may paste orientation excerpts; Opus reads what's pasted carefully rather than assuming from memory.
 
 ---
 
