@@ -11,6 +11,11 @@
     <h1 class="sc-h1">Statistical Publications Catalogue</h1>
     <p class="sc-sub">Statistical publications discovered from UK government departments and agencies. {{ total }} publication{{ 's' if total != 1 else '' }} indexed.</p>
 
+    <div class="sc-note">
+        <p><strong>About this catalogue.</strong> Westminster Brief catalogues statistical publications produced by UK government departments, agencies and other public bodies. It is a navigational index: each entry links to the publication on its official source (GOV.UK, ONS and others), where the figures, methodology and full release live. We list and link to publications — we do not reproduce the underlying data. Always check the source for the authoritative, most recent figures.</p>
+        <p>Coverage is limited to a selection of producers and is expanding. Source material is Crown copyright and, except where otherwise noted, is licensed under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noopener">Open Government Licence v3.0</a>.</p>
+    </div>
+
     <form method="GET" action="/stats" class="sc-filters">
         <input type="text" name="q" value="{{ search }}" placeholder="Search title or description…">
         <select name="producer">
