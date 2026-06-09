@@ -1,0 +1,27 @@
+{# Single publication table row. Expects `pub`, `producer`, `cadence_labels` in
+   context. Set `show_producer = false` to omit the Producer column (per-producer
+   page); defaults to showing it (catalogue). #}
+<tr>
+    <td>
+        <a class="sc-pub-name" href="/stats/{{ producer.slug }}/{{ pub.slug }}">{{ pub.name }}</a>
+        {% if pub.description %}
+        <div class="sc-producer">{{ pub.description | truncate(100, True, '…') }}</div>
+        {% endif %}
+    </td>
+    {% if show_producer is not defined or show_producer %}
+    <td>
+        <a class="sc-producer-link" href="/stats/producer/{{ producer.slug }}">{{ producer.short_name or producer.name }}</a>
+    </td>
+    {% endif %}
+    <td>
+        {% if pub.update_cadence %}
+        <span class="sc-badge b-{{ pub.update_cadence }}">{{ cadence_labels[pub.update_cadence] }}</span>
+        {% else %}
+        <span style="color:#9ca3af;">—</span>
+        {% endif %}
+    </td>
+    <td style="font-size:12px; color:#5a6878;">{{ pub.first_published_at.strftime('%d %b %Y') if pub.first_published_at else '' }}</td>
+    <td>
+        <a class="sc-govuk-link" href="{{ pub.url }}" target="_blank" rel="noopener">{{ 'ONS ↗' if 'ons.gov.uk' in pub.url else 'GOV.UK ↗' }}</a>
+    </td>
+</tr>

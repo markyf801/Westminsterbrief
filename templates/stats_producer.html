@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ producer.name }} — Statistical Publications | Westminster Brief{% endblock %}
+{% block meta_description %}Statistical publications from {{ producer.name }}, catalogued by Westminster Brief — newest first, each linked to its source on GOV.UK.{% endblock %}
+
+{% block extra_head %}
+{% include "_stats_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="sc-wrap">
+    <p class="sc-crumb"><a href="/archive">Hansard</a> &rsaquo; <a href="/stats">Statistics</a> &rsaquo; {{ producer.name }}</p>
+
+    <h1 class="sc-h1">{{ producer.name }}</h1>
+
+    <p class="sc-context">
+        {%- if producer.description %}
+        {{ producer.description }}
+        {%- else %}
+        {{ producer.name }} is {{ type_label }} that publishes UK official statistics.
+        Westminster Brief tracks {{ total }} statistical publication{{ 's' if total != 1 }}
+        from {{ producer.short_name or producer.name }}{%
+            if date_min and date_max and date_min == date_max %}, published on {{ date_max.strftime('%d %b %Y') }}{%
+            elif date_min and date_max %}, published between {{ date_min.strftime('%d %b %Y') }} and {{ date_max.strftime('%d %b %Y') }}{%
+            endif %}.
+        {%- endif %}
+    </p>
+
+    <div class="sc-toolbar">
+        <span class="sc-count">
+            {% if total_pages > 1 %}Showing {{ (page - 1) * 25 + 1 }}–{{ [page * 25, total] | min }} of {{ total }}
+            {% else %}{{ total }} publication{{ 's' if total != 1 else '' }}
+            {% endif %}
+        </span>
+    </div>
+
+    {% set show_producer = false %}
+    <table class="sc-table">
+        <thead>
+            <tr>
+                <th style="width:55%">Publication</th>
+                <th style="width:15%">Cadence</th>
+                <th style="width:18%">Published</th>
+                <th style="width:12%">Source</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for pub in rows %}
+            {% include "_stats_pub_row.html" %}
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if total_pages > 1 %}
+    <nav class="sc-pagination" aria-label="Pagination">
+        {% if page > 1 %}<a href="?page={{ page - 1 }}">&laquo; Prev</a>{% endif %}
+        {% for p in range(1, total_pages + 1) %}
+            {% if p == page %}<span class="current">{{ p }}</span>
+            {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}<a href="?page={{ p }}">{{ p }}</a>
+            {% elif p == 2 or p == total_pages - 1 %}<span class="ellipsis">…</span>
+            {% endif %}
+        {% endfor %}
+        {% if page < total_pages %}<a href="?page={{ page + 1 }}">Next &raquo;</a>{% endif %}
+    </nav>
+    {% endif %}
+
+    <p class="sc-crumb" style="margin-top:28px;">&larr; <a href="/stats">Back to the full statistics catalogue</a></p>
+</div>
+{% endblock %}

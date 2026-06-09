@@ -48,6 +48,19 @@ _CADENCE_OPTIONS = [
 
 _PER_PAGE = 25
 
+# producer_type → human label for the per-producer page context sentence
+# (article baked in so the sentence reads "{name} is {label} that publishes…").
+_PRODUCER_TYPE_LABELS = {
+    "central_department":      "a central government department",
+    "executive_agency":        "an executive agency",
+    "ndpb":                    "a non-departmental public body",
+    "regulator":               "a regulator",
+    "gss_producer":            "a national statistics producer",
+    "other_public_body":       "a public body",
+    "devolved_administration": "a devolved administration",
+    "devolved_body":           "a devolved public body",
+}
+
 
 @stats_catalogue_bp.before_request
 def _check_enabled():
@@ -195,4 +208,64 @@ def catalogue_detail(producer_slug, pub_slug):
         policy_areas=policy_areas,
         specific_themes=specific_themes,
         related_publications=related_publications,
+    )
+
+
+@stats_catalogue_bp.route("/stats/producer/<slug>")
+def producer_page(slug):
+    from extensions import db
+    from hansard_archive.models import StatProducer, StatPublication
+    from sqlalchemy import func
+
+    producer = StatProducer.query.filter_by(
+        slug=slug, authorisation_status="authorised",
+    ).first_or_404()
+
+    _visible = StatPublication.authorisation_status.in_(["candidate", "authorised"])
+    base_q = (
+        db.session.query(StatPublication)
+        .filter(StatPublication.producer_id == producer.id, _visible)
+    )
+
+    total = base_q.count()
+    if total == 0:
+        abort(404)   # thin-content gate: no page for an unpopulated producer
+
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
+
+    rows = (
+        base_q.order_by(
+            StatPublication.first_published_at.desc().nullslast(),
+            StatPublication.id.desc(),
+        )
+        .offset((page - 1) * _PER_PAGE)
+        .limit(_PER_PAGE)
+        .all()
+    )
+    total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
+
+    # Date span for the fallback context sentence (min/max ignore nulls).
+    date_min, date_max = (
+        db.session.query(
+            func.min(StatPublication.first_published_at),
+            func.max(StatPublication.first_published_at),
+        )
+        .filter(StatPublication.producer_id == producer.id, _visible)
+        .one()
+    )
+
+    return render_template(
+        "stats_producer.html",
+        producer=producer,
+        type_label=_PRODUCER_TYPE_LABELS.get(producer.producer_type, "a public body"),
+        rows=rows,
+        total=total,
+        page=page,
+        total_pages=total_pages,
+        date_min=date_min,
+        date_max=date_max,
+        cadence_labels=_CADENCE_LABELS,
     )
