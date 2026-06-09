@@ -59,7 +59,7 @@
         <a href="/debates"  {% if request.path.startswith('/debates') %}class="nav-active"{% endif %}>Research</a>
         <a href="/mp_search"{% if request.path == '/mp_search' or request.path == '/biography' %}class="nav-active"{% endif %}>Members</a>
         <a href="/directory" {% if request.path.startswith('/directory') %}class="nav-active"{% endif %}>Directory</a>
-        {% if stats_catalogue_enabled %}<a href="/stats" {% if request.path.startswith('/stats') %}class="nav-active"{% endif %}>Statistics</a>{% endif %}
+        {% if stats_catalogue_enabled %}<a href="/stats" {% if request.path.startswith('/stats') %}class="nav-active"{% endif %}>Statistical Publications</a>{% endif %}
         <span class="nav-divider"></span>
         <a href="/history-of-hansard" {% if request.path == '/history-of-hansard' %}class="nav-active"{% endif %}>History of Hansard</a>
         {% if current_user.is_authenticated %}
