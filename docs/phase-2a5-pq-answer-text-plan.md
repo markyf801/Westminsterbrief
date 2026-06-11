@@ -39,6 +39,16 @@ Fable session 11 Jun 2026.
   pause if >2× off; (b) `--test` first chunk → spot-check 5 rows' answer *values*
   against Hansard online; (c) report dry-run count + test results to Mark for
   explicit go before the full detached run.
+- Verification amendments (11 Jun): the longest-answer ("API ceiling") check must
+  include an **inline-table regression check** — confirm `<table>` markup survives
+  in stored `answer_text` and renders as a real table on `/archive/pq/{uin}`, i.e.
+  the `html_sanitizer.py` fix (commit `2fa2897`, 22 May) holds on the new path.
+  Attachments: **no handling exists** (confirmed 11 Jun — captured in ideas-backlog),
+  so the attachment check is a **no-crash check only** (attachment-bearing answers
+  ingest without error; their content/links are not preserved — known limitation).
+- Note: the table-preserving sanitizer (22 May) postdates the May answer backfill
+  (13–14 May), so older May-backfilled rows may hold table-stripped answers — a
+  possible separate re-pass, out of scope for the pre-May backfill.
 - Stays ahead of the Hansard debates backfill, which remains queued (decision #2).
 
 **Retention re-scope (locked 11 June 2026):** the Stage 0 figures below
