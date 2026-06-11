@@ -88,6 +88,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-09 | `5f7ebff` | Stats Catalogue: landing card (7th tool, last position, peer styling) + nav link "Statistical Publications", both gated on `STATS_CATALOGUE_ENABLED` so they appear only with the flip. Ships DARK. File-scoped promotion of `base.html` + `home.html` only (both identical master==beta otherwise; no Manifesto work). | Claude Code |
 | 2026-06-09 | `d2e8949` | Stats Catalogue: landing card spans both columns on the final grid row (`.tool-card-wide`, no orphan). Ships DARK. File-scoped promotion of `home.html` + `static/style.css` only (CSS change is the single `.tool-card-wide` rule; no Manifesto CSS). | Claude Code |
 | 2026-06-09 | `a171844` | Hotfix: add missing `templates/hansard_archive/stats_theme.html` (b57a14a, template-only). It was deleted by fb21bcd but the `stats_theme` route/handler remained → every `/stats/<theme_slug>` policy page = TemplateNotFound 500, exposed live at the catalogue flip via detail-page policy badges. Live verify caught it. Single-file promotion from beta; `views.py` and the 3 other diverging `hansard_archive/*.html` (Manifesto party-page work) untouched. | Claude Code |
+| 2026-06-11 | `388d8e0` | Add Bing (msvalidate.01) site verification meta tag to base head (template-only, single static `<meta>`; no Jinja/Python) | Claude Code |
 
 ---
 
