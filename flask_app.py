@@ -995,6 +995,16 @@ def health():
 def robots():
     return app.send_static_file('robots.txt')
 
+
+# IndexNow verification key — hosted at site root as {key}.txt (UTF-8, key as
+# content) so Bing/Yandex can verify ownership for IndexNow URL submissions.
+INDEXNOW_KEY = '57848e15fdbbb776280cb0cb7d59bfe4'
+
+
+@app.route(f'/{INDEXNOW_KEY}.txt')
+def indexnow_key_file():
+    return app.send_static_file(f'{INDEXNOW_KEY}.txt')
+
 _sitemap_core_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_pqs1_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_pqs2_cache:  dict = {'xml': None, 'ts': 0.0}
