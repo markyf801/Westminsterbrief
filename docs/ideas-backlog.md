@@ -8,6 +8,37 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### PQ answer attachments not ingested or linked — needs addressing
+
+Parliament WQ answers can carry attachments (e.g. an answer of the form "The
+information is provided in the attached document" with a linked PDF/spreadsheet).
+**There is currently no attachment handling anywhere in the PQ path** — no field
+read in `hansard_archive/pq_ingestor.py`, no column on the `HaPQ` model, and the
+`html_sanitizer.py` fix (which preserves inline tables, commit `2fa2897`) does
+NOT touch attachments (different concern). The sanitizer also strips `<a>` hrefs,
+so even an inline link to the attachment is removed from stored `answer_text`.
+
+Net effect: for any PQ whose substantive answer lives in an attachment, Westminster
+Brief shows only the (often near-empty) covering text and no route to the document.
+This is a **content-completeness gap**, not a crash — attachment-bearing answers
+ingest fine; they're just thin.
+
+Scope to consider when revisited: read the individual endpoint's attachment
+field(s) (confirm exact shape — likely `attachments[]` / `attachmentCount`), add a
+model column or child table, surface attachment links on the PQ detail page (with
+OPL attribution to the parliament.uk source). Touches schema + ingestor + template
+— a small feature, not a backfill tweak. If built, a re-ingest pass would backfill
+attachment links onto existing rows.
+
+**Revisit trigger:** surfaced 11 Jun 2026 while scoping the pre-May PQ backfill
+(amendment-4 attachments check). Confirmed absent by codebase search. Mark: "no
+crash vital, but capture something we need to address." Candidate for a dedicated
+small feature branch after the pre-May backfill + verification are done.
+
+*Captured 11 June 2026.*
+
+---
+
 ### Triage the 15 pre-existing full-suite test failures — don't normalise a red suite
 
 As of 5 June 2026 the full `pytest tests/` run shows **15 failures, 425 passed** — all in `test_producer_authorisation.py` (13: `TestStatProducerAuthLogModel`, `TestAdminAuthGuard`, `TestAuthoriseRoute`, `TestDeclineRoute`) and `test_stats_registry.py::TestSeedScript` (2: `test_build_seed_data_returns_29_entries`, `test_seed_inserts_all_producers`). Confirmed pre-existing (identical with the Issue-B-fix changes stashed), so not a regression — but a chronically-red suite is how a real regression hides as "failure #16, unnoticed."
