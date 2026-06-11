@@ -328,7 +328,7 @@ published than be surprised.
 - Free during beta, future paid features may exist but core archive 
   remains free
 - Data sources used (Hansard, Parliament APIs, etc.)
-- Limitations clearly stated (12-month archive window, current scope)
+- Limitations clearly stated (archive covers the current Parliament from 9 July 2024; current scope — retention posture locked 11 June 2026, 12-month rolling-window framing retired)
 - AI usage and verification approach
 - Privacy and propriety stance (no contact details, no devolved coverage 
   yet, etc.)

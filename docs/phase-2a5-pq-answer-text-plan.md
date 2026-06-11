@@ -1,5 +1,33 @@
 # Phase 2A.5 — PQ Answer Text: Full-Text Backfill
 
+## Current status (11 June 2026) — read first
+
+**The PQ answer-caching build largely ran 13–14 May 2026.** Stages 0–2 below are
+complete; the ingestor (`hansard_archive/pq_ingestor.py`) now fetches the
+**individual endpoint by default** for every PQ (full answer + question text,
+`is_holding`, `is_withdrawn`), and the daily PQ cron has been storing full
+answers since. The schema (`api_id` column), OPL attribution, and the two-stage
+backfill script (`scripts/backfill_pq_answers.py`) all exist. Stage A completed;
+Stage B was launched overnight 14 May (ETA ~05:30 UTC). **The only unrecorded
+item is the formal post-Stage-B verification sign-off** (checklist items 8 / 1–5
+below) — that was never logged as complete in this doc or `deploys.md`.
+
+**Retention re-scope (locked 11 June 2026):** the Stage 0 figures below
+(90,280 total PQs / 74,511 truncated) reflect the **then-current ~12-month
+rolling window**, *not* the new "current Parliament from 9 July 2024" posture.
+Extending the PQ archive back to 9 July 2024 is part of the **Hansard backfill**
+(queued behind this, do not start) — not the answer-text caching of PQs already
+in the DB. Any PQs tabled 9 Jul 2024 → ~May 2025 that were never ingested will
+need their *full answers fetched at ingest time* by the same individual-endpoint
+path the ingestor already uses — no separate answer-backfill design needed, but
+the count grows once those rows land. Get a fresh production count before sizing.
+
+Two answer-backfill scripts exist in `scripts/`: `backfill_pq_answers.py` (the
+two-stage version referenced here — the live one) and `backfill_pq_full_answers.py`
+(an earlier single-pass draft — superseded; candidate for cleanup).
+
+---
+
 ## Stage 0 Findings (13 May 2026)
 
 ### Current DB state

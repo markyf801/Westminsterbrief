@@ -57,6 +57,14 @@ Current work queue. Each item has a plan or location:
 
 Phase 2 (paid product: stakeholder briefing pack) is on hold until Phase 2A.5 items are cleared. Plan: `westminster-brief-phase-2-brief.md` (project root).
 
+### Locked decisions (11 June 2026)
+
+**1. Retention posture — LOCKED.** Westminster Brief holds the **full record of the current Parliament**, from **9 July 2024** (first sitting). The **12-month rolling window is retired as a product concept** — do not describe the archive as a 12-month window in product copy, FAQ, or limitations statements; describe it as "the current Parliament". **Nothing prunes historical data.** No job, script, or cron may delete or age-out parliamentary records (PQs, sessions, contributions, themes) on a rolling-window basis. The next-election archive question (what happens to this Parliament's record at dissolution) is **deferred to dissolution** — do not design for it now.
+
+Note: this is distinct from the **7-day rolling ingest window** used by the PQ cron (`ingest_pq_cron.py`) and the backup rotation in `prune_old_backups.py` — those are operational and unaffected. The retired concept is the *product-facing archive depth*, not ingest cadence or backup rotation.
+
+**2. Ingestion sequencing — LOCKED.** PQ answer caching (Phase 2A.5 top priority) runs **first**; the Hansard backfill to 9 July 2024 is **queued behind it** (brief exists — **do not start it** without explicit instruction). The two backfills **must not run concurrently** (Railway connection-pool pressure + API courtesy to Parliament/TWFY). See the status block in `docs/phase-2a5-pq-answer-text-plan.md` before assuming either is unstarted — the PQ answer caching build largely ran 13–14 May 2026.
+
 ---
 
 ## Project files reference
