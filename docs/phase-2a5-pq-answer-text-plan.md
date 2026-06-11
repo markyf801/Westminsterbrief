@@ -24,6 +24,23 @@ PQs were never ingested, so they need ingesting *with* full answers — a single
 default), not a separate answer-only backfill. Implementation brief written for a
 Fable session 11 Jun 2026.
 
+**Pre-May backfill — approved execution plan (11 Jun 2026):**
+- New script `scripts/backfill_pq_pre_window.py`; reuses `ingest_pq_date_range`;
+  day-chunked; checkpoint-resumable; OperationalError→`db.engine.dispose()` retry;
+  0.5s individual-endpoint delay; Railway one-shot service (preferred) or nohup.
+- Range: `[2024-07-09, MIN(tabled_date) in ha_pq]` read at runtime, small overlap,
+  idempotent upsert-by-UIN. Expected MIN after the run is **mid-July 2024** (tabling
+  opens after State Opening, not 9 Jul) — flag only if MIN > end of July 2024.
+- **Tagging: `--no-tag` on the bulk ingest (LOCKED).** Theme tagging runs as a
+  separate follow-up pass *after* verification. No inline Gemini tagging on this run.
+- **Cron coexistence OK:** the daily PQ cron may run during the backfill (disjoint
+  date ranges, idempotent) — but don't start within 30 min of a cron window.
+- **Gated execution (LOCKED):** (a) `--dry-run` → report count vs 30k–50k estimate,
+  pause if >2× off; (b) `--test` first chunk → spot-check 5 rows' answer *values*
+  against Hansard online; (c) report dry-run count + test results to Mark for
+  explicit go before the full detached run.
+- Stays ahead of the Hansard debates backfill, which remains queued (decision #2).
+
 **Retention re-scope (locked 11 June 2026):** the Stage 0 figures below
 (90,280 total PQs / 74,511 truncated) reflect the **then-current ~12-month
 rolling window**, *not* the new "current Parliament from 9 July 2024" posture.
