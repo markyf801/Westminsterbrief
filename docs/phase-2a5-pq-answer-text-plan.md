@@ -7,10 +7,22 @@ complete; the ingestor (`hansard_archive/pq_ingestor.py`) now fetches the
 **individual endpoint by default** for every PQ (full answer + question text,
 `is_holding`, `is_withdrawn`), and the daily PQ cron has been storing full
 answers since. The schema (`api_id` column), OPL attribution, and the two-stage
-backfill script (`scripts/backfill_pq_answers.py`) all exist. Stage A completed;
-Stage B was launched overnight 14 May (ETA ~05:30 UTC). **The only unrecorded
-item is the formal post-Stage-B verification sign-off** (checklist items 8 / 1–5
-below) — that was never logged as complete in this doc or `deploys.md`.
+backfill script (`scripts/backfill_pq_answers.py`) all exist.
+
+**The May 2026 answer backfill is confirmed complete / green-lit** (Mark, 11 Jun
+2026 — "that is when we did it"). Full answers are cached for every PQ that was
+in the DB as of 14 May (the then-current ~12-month window). The only loose end
+is the formal post-Stage-B verification sign-off (checklist items 8 / 1–5 below),
+never logged in this doc or `deploys.md` — worth a one-off confirmation pass but
+not blocking.
+
+**Outstanding work = the dates *before* the May backfill.** The DB's PQ coverage
+starts at whatever the 12-month backfill's floor was (~May 2025); under the new
+retention posture we want full answers back to **9 July 2024**. Those pre-floor
+PQs were never ingested, so they need ingesting *with* full answers — a single
+`ingest_pq_date_range()` pass (individual-endpoint answer fetch is already the
+default), not a separate answer-only backfill. Implementation brief written for a
+Fable session 11 Jun 2026.
 
 **Retention re-scope (locked 11 June 2026):** the Stage 0 figures below
 (90,280 total PQs / 74,511 truncated) reflect the **then-current ~12-month
