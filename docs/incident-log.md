@@ -2,6 +2,82 @@
 
 ---
 
+## INC-008 — Cross-session UIN collision corrupted 690 PQ rows during pre-window backfill test
+
+**Date found:** 13 June 2026 (caught at the gated `--test` step of the pre-window PQ backfill)
+**Severity:** Medium — 690 recent (May-2026) PQ rows had content fields overwritten with July-2024 data; corruption window ~2h; caught by the insert/update-split tripwire before any full run; repaired same day
+**Status:** Resolved — 689 rows fixed by re-ingest, 1 (UIN 444) restored from backup, 9 stray rows deleted; full-table corruption fingerprint = 0. Backfill blocked pending identity-key decision.
+
+### What happened
+
+The Phase 2A.5 pre-window PQ backfill (`scripts/backfill_pq_pre_window.py`) ingests
+Written Questions tabled 9 Jul 2024 → the current floor, reusing `ingest_pq_date_range`
+(upsert by UIN). Its gated `--test` chunk (re-ingest 2024-07-09..17) reported
+**inserted=9, updated=690** instead of the expected ~699 inserts. The 690 "updated"
+rows were existing **May-2026** questions: their `question_text`, `answer_text`, members,
+`answer_date`, `is_answered`/`is_holding`/`is_withdrawn`, and `api_id` were overwritten
+with **July-2024** content. `tabled_date`/`uin`/`heading`/`chamber` were left unchanged
+(the update path doesn't set them), producing mismatched rows (May-2026 dates, July-2024
+content).
+
+### Root cause
+
+**WQ UINs reset per parliamentary session and are NOT globally unique.** A new session
+began ~13 May 2026, resetting UINs to low numbers (1, 10, 444, HL50, …); July 2024 (start
+of the 2024-25 session) carries those same low UINs. `ha_pq.uin` has a `UNIQUE` constraint,
+so the ingestor's upsert-by-UIN matched the 690 July-2024 questions to the already-present
+May-2026 rows and **overwrote them** (collide-and-overwrite) instead of inserting.
+Confirmed: 699 July source UINs = 690 collisions with May-2026 rows + 9 genuinely new
+inserts.
+
+### Resolution
+
+1. **Stopped at the gated test** — the insert/update split (`updated=690`) was the tripwire;
+   no full run was attempted.
+2. **Confirmed pre-incident backup** (`daily/2026-06-13.sql.gz.gpg`, R2, 03:02 UTC, ~15h
+   before the incident) as fallback — `backup-r2` cron run recorded `ok`; object confirmed
+   in the R2 dashboard (147 MB).
+3. **Bulk repair** — re-ingested 2026-05-13..14 via `ingest_pq_date_range` (each UIN
+   re-fetched from the individual endpoint → correct current content). Result
+   `inserted=12, updated=1815, errors=0` (1827 = all WQs tabled those 2 days; the 12 inserts
+   were genuine May-2026 questions previously missing from the DB). Fixed 689 of the 690.
+4. **Residue: 1 row (UIN 444)** escaped the bulk repair because its real May-2026 question
+   had been **withdrawn at source** and no longer appears in the live API (confirmed: not
+   returned for any May-2026 window, even `answered=Any`). The bad test had also overwritten
+   its `api_id` to the July id (1721729), so the individual endpoint returned July data too.
+   Restored from the pre-incident backup: extracted the correct row from the decrypted dump
+   and ran a targeted `UPDATE … WHERE uin='444' AND tabled_date='2026-05-13'`. The real
+   question is a withdrawn Home Office/Greenpeace PQ (`is_withdrawn=true`, `answer_date=NULL`,
+   `api_id=1904612`) — which is exactly why it had vanished from the live API.
+5. **Removed the 9 stray rows** — the 9 genuinely-new July-2024 inserts (UINs 900027–900039,
+   tabled 2024-07-17) that didn't collide: `DELETE FROM ha_pq WHERE tabled_date < '2025-05-06'`
+   (9 rows; FK-safe, no theme tags).
+6. **Verified clean** — full-table corruption fingerprints all 0 (`answer_date < tabled_date`;
+   2024-answer-on-2026-row; test-window `updated_at` residue); strays 0; `MIN(tabled_date)`
+   back to 2025-05-06; total 100,527.
+
+### Follow-ups
+
+- **`scripts/backfill_pq_pre_window.py` is blocked** pending an identity-key decision — the
+  backfill cannot key on UIN across a session boundary. Options: `api_id` (globally unique)
+  as identity, or a composite key (uin + session/tabled_date). Cross-cutting (schema +
+  `/archive/pq/{uin}` routing/SEO + `HaPQTheme` FK) → separate scoping pass.
+- **CLAUDE.md known-issue added** (UIN non-uniqueness; dry-runs must predict insert/update split).
+- **Pre-existing, separate:** recent-session PQ rows lack `heading` (cron ingests before
+  Parliament assigns it; update path never refreshes it) — logged in `ideas-backlog.md`,
+  noted as kin to the identity-key problem (both: ingest-once-never-re-pull).
+
+### Lessons
+
+- A dry-run that counts **source rows** is insufficient for an upsert ingestion — it must
+  predict the **insert/update split against the existing DB**. The source-count dry-run
+  looked healthy (58,129, within estimate); the collision was only visible as the
+  insert/update split at the gated test.
+- The gated `--test` (first chunk, with the split tripwire) is what contained the blast
+  radius to 690 rows instead of the full ~58k range.
+
+---
+
 ## INC-007 — Discovery worker wrote last-updated date instead of publication date
 
 **Date found:** 2 June 2026 (pre-launch spot-check)

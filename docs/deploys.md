@@ -578,3 +578,34 @@ tags returned.
 **Phase 1.8 policy_area tagging complete.** Steady-state tagging now handled
 inline by `run_discovery()` for new publications. Backfill service left dormant
 (restart policy: Never) in case re-run is needed for future producer additions.
+
+---
+
+### 2026-06-13 — INC-008: pre-window PQ backfill UIN-collision corruption + repair
+
+**Context:** Gated `--test` of `scripts/backfill_pq_pre_window.py` (re-ingest 2024-07-09..17
+via `ingest_pq_date_range`, production `DATABASE_URL`) collided on non-unique cross-session
+WQ UINs and overwrote 690 May-2026 `ha_pq` rows with July-2024 content. Full write-up:
+incident-log INC-008. No full backfill run was made; script now blocked pending identity-key
+decision.
+
+**Production writes (all 2026-06-13):**
+
+1. `--test` chunk (script) — introduced the corruption: `inserted=9, updated=690`.
+2. Repair re-ingest (script): `ingest_pq_date_range(2026-05-13, 2026-05-14)` →
+   `inserted=12, updated=1815, errors=0` (fixed 689/690).
+3. UIN 444 restore from the `daily/2026-06-13` backup (DBeaver, manual SQL):
+   ```sql
+   UPDATE ha_pq SET question_text='…Home Office: Greenpeace…', answer_text=NULL,
+     answer_date=NULL, is_answered=false, is_holding=false, is_withdrawn=true,
+     answering_member=NULL, answering_mnis_id=NULL, answering_body='Home Office',
+     answering_body_id=1, asking_member=NULL, asking_mnis_id=4872, api_id=1904612,
+     updated_at=NOW() WHERE uin='444' AND tabled_date='2026-05-13';   -- 1 row
+   ```
+4. Stray-row cleanup (DBeaver, manual SQL):
+   ```sql
+   DELETE FROM ha_pq WHERE tabled_date < '2025-05-06';   -- 9 rows (UINs 900027–900039)
+   ```
+
+**Verified:** corruption fingerprints 0/0/0, strays 0, `MIN(tabled_date)`=2025-05-06,
+total 100,527. Operator: Mark (DBeaver writes) + Claude Code (scripts, on Mark's instruction).

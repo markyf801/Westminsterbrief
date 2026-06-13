@@ -8,6 +8,16 @@ When Claude Code encounters a new idea mid-session that isn't being actioned imm
 
 ## Active
 
+### Recent-session PQ rows lack `heading` (cron ingests before Parliament assigns it)
+
+PQ rows from the current session (everything tabled ~May 2026+) have `heading=NULL`: overall `ha_pq` is 89.8% populated, but the control window 8–11 Jun 2026 is 0/2,145. Cause: the daily PQ cron ingests a question shortly after tabling — *before* Parliament assigns its heading — and nothing re-pulls it later (the ingestor's update path never sets `heading`). Confirmed 13 Jun 2026 during INC-008 verification: the 12 rows re-inserted that day *did* get headings, because Parliament had since assigned them. Detail pages still render (fall back to question text) and search works (matches `question_text`), so impact is cosmetic/SEO — but headings make better page titles.
+
+**Kinship with the identity-key problem (INC-008):** both are the same shape — *the cron ingests a row once and never re-pulls or re-keys it.* Heading-staleness and cross-session UIN collision would both be addressed by a **re-pull mechanism** — periodically re-fetch recent-session rows from the individual endpoint by `api_id` (globally unique, unlike UIN), refreshing `heading` and any late-assigned fields. Worth scoping the two together.
+
+**Revisit trigger:** when the INC-008 identity-key decision is scoped; or any "PQ pages look bare / missing titles" / SEO-on-PQ-pages conversation.
+
+*Captured 13 June 2026 during INC-008 verification.*
+
 ### Post-launch: revisit the 4 paused stats producers (Ofcom, OBR, OfS, Ofgem)
 Paused pre-launch (8 Jun 2026) because discovery returned 0 publications — but they are **not** dead surfaces. Root cause diagnosed: all 4 are `producer_type` regulator/ndpb (or have `gov.uk` in the URL), so `select_strategy()` routes them to `GovUkSearchStrategy`, which queries the GOV.UK Search API for their org slug filtered to *statistics document types* (`official_statistics` / `statistical_data_set` / `statistics_announcement`). Those return **0** for all 4 — yet each org has a real gov.uk presence (Ofcom 384 docs, Ofgem 136, OBR 60, OfS 40), just none tagged as statistics doc-types. Their actual statistics live on their **own domains** (ofcom.org.uk, obr.uk, officeforstudents.org.uk, ofgem.gov.uk). `DirectPageParserStrategy` (own-domain) never gets a chance because `GovUkSearchStrategy.can_handle()` claims them first via `producer_type`.
 
