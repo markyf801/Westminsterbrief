@@ -879,3 +879,35 @@ def test_commits_after_every_page(db, paged_api, monkeypatch):
     res = _ingest()
     assert res["inserted"] == 5
     assert len(commits) == 3
+
+
+def test_stage_b_uses_the_ingestor_truncation_rule(db, monkeypatch):
+    import dotenv
+    from hansard_archive.models import HaPQ
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)   # never read a .env
+    mod = _load_script("backfill_pq_answers")
+    stored = {
+        1201: _CUT,                                     # exactly the cap
+        1202: "<p>" + "y" * 250 + "...",                # near the cap, ends in "..."
+        1203: None,                                     # answered, no text yet
+        1204: "<p>A complete short answer.</p>",       # fine
+        1205: "w" * 400 + "...",                        # long, not a bulk copy
+    }
+    for api_id, text in stored.items():
+        db.session.add(_pq(api_id=api_id, uin=str(api_id), is_answered=True, answer_text=text,
+                           answer_date=date(2026, 9, 1)))
+    db.session.commit()
+    fetched = []
+
+    def fake_full(api_id):
+        fetched.append(api_id)
+        return "<p>" + "z" * 600 + "</p>", False, False, date(2026, 9, 3)
+    monkeypatch.setattr(mod, "_get_full_answer", fake_full)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    mod.stage_b(db, HaPQ)
+
+    assert sorted(fetched) == [1201, 1202, 1203]
+    db.session.expire_all()
+    row = HaPQ.query.filter_by(api_id=1203).one()
+    assert row.answer_text.startswith("<p>zzz") and row.answer_date == date(2026, 9, 3)

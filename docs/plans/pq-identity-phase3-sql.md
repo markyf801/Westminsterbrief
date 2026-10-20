@@ -49,7 +49,7 @@ What this means:
   second row instead. There is no "inserts fail safely until an index is
   dropped" phase — the old plan's step "drop the unique `uin` index" is gone.
   The first ordinary collision is expected in early December 2026, so the
-  deploy (step 1) is the deadline item.
+  deploy (step 2) is the deadline item.
 - Nothing has been damaged, so **no restore is needed**. The snapshot exists for
   undo only.
 - The 100 duplicate rows are why the unique indexes don't exist yet. The real
@@ -95,14 +95,20 @@ December.
 | # | Step | Status |
 |---|---|---|
 | 0 | Snapshot `ha_pq` + `ha_pq_theme` | **Done 2026-10-20** |
-| 1 | Deploy the code | |
-| 2 | Read-only checks | before and after every step |
-| 3 | Merge duplicates — `dedupe_pq.py` dry run → apply | straight after step 1 |
+| 1 | Read-only checks | **before the deploy**, then after every step |
+| 2 | Deploy the code | |
+| 3 | Merge duplicates — `dedupe_pq.py` dry run → apply | straight after step 2 |
 | 4 | Unique indexes on `api_id` and `(tabled_date, lower(uin))` | straight after step 3 |
 | 5 | Fill missing `api_id` — `backfill_pq_api_id.py` dry run → apply | |
 | 6 | Answers catch-up, then headings backfill | |
 | 7 | Re-tag | |
 | 8 | Optional: legacy-UIN table; `api_id NOT NULL` | before December / only if possible |
+
+**Do steps 2 → 3 → 4 in one sitting**, between cron windows, with no Monday
+morning in between (or pause `pq-cron-monday` until step 4 is done). Until the
+unique api_id index exists, two PQ runs overlapping (e.g. a long Monday run
+and the next cron) could each insert the same new question; the code commits
+every page to keep that window small, but only the index closes it.
 
 The brief listed the api_id backfill before the indexes. The indexes come first
 here because nothing in step 5 depends on them being absent (the backfill
@@ -122,28 +128,7 @@ back by naming the other columns (see step 3's undo), never `SELECT *`.
 
 ---
 
-## 1. Deploy the code
-
-Merge `fix/pq-identity-phase3` → `beta` → `master` with the `docs/deploys.md`
-row in the same commit, outside cron windows. Then:
-
-- `/health` shows the new commit.
-- The next PQ cron log has `identity_mismatch=0`, `failed=0`, `page_errors=0`.
-
-Expect cron alerts until step 3 is done if any of the 100 duplicates fall in a
-cron's 7-day window (step 2 shows their dates): a question that matches two
-rows is counted as `identity_mismatch` and left untouched, and more than 5 in
-one pass stops that pass. That is the code protecting the data, not a fault —
-run step 3 before the next cron.
-
-The cron now emails on **any** `identity_mismatch`, `failed` or `page_errors`
-(one email per run), not only at 3+ errors.
-
-Undo: redeploy the previous master SHA. Safe while there are no cross-session
-collisions (the old code overwrites on a collision, so don't stay on it past
-late November).
-
-## 2. Read-only checks (run between every step)
+## 1. Read-only checks (before the deploy, and between every step)
 
 Start command:
 
@@ -155,10 +140,33 @@ The file runs in a `READ ONLY` transaction and rolls back. It prints: indexes
 and any INVALID index; `b_dup_uin_groups`, `c_no_api_id`,
 `d_dup_api_id_groups`, `d_extra_rows`, `e_dup_date_uin_groups`,
 `g_missing_headings`, `answers_to_fetch`, `untagged`; the dates of the api_id
-duplicates; collision zone per numbering series; `new_rows_sharing_old_uin`;
+duplicates (last tabled, last answered) and `in_cron_window` — how many the
+next cron will meet; collision zone per numbering series; `new_rows_sharing_old_uin`;
 `h_old_rows_with_new_api_id`; snapshot row counts.
 
 Expected now: d = 100 groups / 100 extra rows, e = 100, c = 7,373, h = 0.
+Run it once **before** deploying and keep the output as the baseline.
+
+## 2. Deploy the code
+
+Merge `fix/pq-identity-phase3` → `beta` → `master` with the `docs/deploys.md`
+row in the same commit, outside cron windows. Then:
+
+- `/health` shows the new commit.
+- The next PQ cron log has `identity_mismatch=0`, `failed=0`, `page_errors=0`.
+
+Expect cron alerts until step 3 is done if any of the 100 duplicates fall in a
+cron's 7-day window (step 1 shows their dates and `in_cron_window`): a question that matches two
+rows is counted as `identity_mismatch` and left untouched, and more than 5 in
+one pass stops that pass. That is the code protecting the data, not a fault —
+run step 3 before the next cron.
+
+The cron now emails on **any** `identity_mismatch`, `failed` or `page_errors`
+(one email per run), not only at 3+ errors.
+
+Undo: redeploy the previous master SHA. Safe while there are no cross-session
+collisions (the old code overwrites on a collision, so don't stay on it past
+late November).
 
 ## 3. Merge duplicates
 
@@ -169,22 +177,27 @@ fields are filled, how many themes move, which other tables are re-pointed):
 python scripts/dedupe_pq.py
 ```
 
-Read the whole log. Expect 100 groups, about 100 rows to delete, and no
-REVIEW lines. A REVIEW group (rows that disagree on api_id, or one api_id
-with different dates/UINs) is never merged — bring it to a session before
-going on. Then:
+Read the whole log. Expect 100 groups and about 100 rows to delete. A REVIEW
+group is never merged: rows that disagree on api_id, one api_id with different
+dates/UINs, or rows holding different versions of the question — answer text
+beyond a truncated prefix (e.g. holding vs substantive answer), answer date,
+holding/withdrawn flag, question text beyond a prefix. Any REVIEW group blocks
+step 4 (the unique indexes would fail): bring them to a session, decide which
+row is right, and re-run. Then:
 
 ```
 python scripts/dedupe_pq.py --apply
 ```
 
-Rules: keep the row with the most complete data (ties: earliest id); fill its
-empty fields from the duplicate, never overwrite; move themes without
+Rules: keep the row with the newest data — latest answer date, then latest
+`updated_at`, then the most complete, then the earliest id; fill its empty
+fields from the duplicate, never overwrite (a truncated question/answer text
+is replaced by the full copy of the same text); move themes without
 duplicating; re-point every foreign key to `ha_pq.id` (read from the schema —
 today only `ha_pq_theme`); one locked transaction per group. Exit 0 = clean,
 3 = groups left for review, 1 = a group failed (rolled back, listed).
 
-Check (step 2): `d_dup_api_id_groups = 0`, `e_dup_date_uin_groups = 0`,
+Check (step 1): `d_dup_api_id_groups = 0`, `e_dup_date_uin_groups = 0`,
 `total_rows` down by the number deleted, `h = 0`.
 
 Undo (deleted and kept ids are in the log; replace `…`):
@@ -203,10 +216,14 @@ SELECT id, uin, heading, question_text, answer_text, asking_member,
        is_withdrawn, chamber, api_id, ingested_at, updated_at
 FROM ha_pq_snap_20261020 WHERE id IN (…deleted ids…);
 -- 3. kept rows back to their snapshot values
-UPDATE ha_pq p SET heading = s.heading, answer_text = s.answer_text,
-       api_id = s.api_id, asking_member = s.asking_member,
-       answering_member = s.answering_member, answer_date = s.answer_date,
-       is_answered = s.is_answered, updated_at = NOW()
+UPDATE ha_pq p SET api_id = s.api_id, heading = s.heading,
+       question_text = s.question_text, answer_text = s.answer_text,
+       answer_date = s.answer_date, is_answered = s.is_answered,
+       is_holding = s.is_holding,
+       asking_member = s.asking_member, asking_mnis_id = s.asking_mnis_id,
+       answering_member = s.answering_member, answering_mnis_id = s.answering_mnis_id,
+       answering_body = s.answering_body, answering_body_id = s.answering_body_id,
+       chamber = s.chamber, updated_at = NOW()
 FROM ha_pq_snap_20261020 s WHERE s.id = p.id AND p.id IN (…kept ids…);
 -- 4. themes for both sets back to the snapshot
 DELETE FROM ha_pq_theme WHERE pq_id IN (…kept ids…, …deleted ids…);
@@ -220,7 +237,7 @@ has that isn't listed, except `question_tsv`.)
 
 ## 4. Unique indexes — the protection against storing a question twice
 
-Only when step 2 shows `d_dup_api_id_groups = 0` and
+Only when step 1 shows `d_dup_api_id_groups = 0` and
 `e_dup_date_uin_groups = 0`. Each its own run, api_id first:
 
 ```
@@ -236,7 +253,7 @@ wait for step 5. `CONCURRENTLY` doesn't block reads or writes; a few seconds on
 130k rows. With these in place a second copy of a question can't be inserted:
 the new code counts that as `failed` (cron alert) and moves on.
 
-Check (step 2): both indexes listed, `invalid_index` empty. If a build fails it
+Check (step 1): both indexes listed, `invalid_index` empty. If a build fails it
 leaves an INVALID index — drop it, re-run step 3's dry run, retry:
 
 ```
@@ -254,8 +271,12 @@ python scripts/backfill_pq_api_id.py
 ```
 
 Looks each row up on `/questions/<tabled_date>/<uin>` and only writes the
-api_id when the API returns the same UIN and date, the start of the question
-text matches, and no other row has that api_id. Never changes uin, date or
+api_id when the API returns the same UIN and date, the question text matches
+(first 120 characters after the standard "To ask the Secretary of State for
+…," / "To ask His Majesty's Government" opener, which thousands of questions
+share), and no other row has that api_id. Every match is logged as
+`WRITTEN id=… uin=… tabled=… api_id=…` (keep the log: it is the undo list); a
+unique-index violation on one row is counted as `failed` and the run goes on. Never changes uin, date or
 text. The log lists NOT_FOUND (e.g. withdrawn questions), TEXT_MISMATCH,
 AMBIGUOUS and CONFLICT rows — keep it; those rows need a decision by hand.
 Decision rule: TEXT_MISMATCH or AMBIGUOUS 0 → apply; a handful → read them
@@ -268,7 +289,7 @@ python scripts/backfill_pq_api_id.py --apply
 A 429 or 5 API errors in a row stops it (exit 2) and prints the id to resume
 from: `python scripts/backfill_pq_api_id.py --apply --after-id <id>`.
 
-Check (step 2): `c_no_api_id` down by the number written; d, e, h still 0.
+Check (step 1): `c_no_api_id` down by the number written; d, e, h still 0.
 
 Undo:
 
@@ -308,7 +329,7 @@ insert/update/mismatch split: expect mostly updates, few inserts, 0 mismatches. 
 were left without answer text, run `python scripts/backfill_pq_answers.py
 --stage b` once more.
 
-Check (step 2): `g_missing_headings` falls (rows Parliament hasn't headed yet
+Check (step 1): `g_missing_headings` falls (rows Parliament hasn't headed yet
 stay NULL), `answers_to_fetch` near 0, d, e, h still 0.
 
 Undo: headings from the snapshot —
@@ -326,11 +347,11 @@ python scripts/ingest_pq_cron.py --days 1 --answered-days 0 --service-name pq-re
 ```
 
 This tags every untagged row in one go (Gemini Flash-Lite batches): look at
-`untagged` in step 2 first. A few hundred is fine; tens of thousands takes
+`untagged` in step 1 first. A few hundred is fine; tens of thousands takes
 hours and real Gemini spend — raise it at a session first (the tagger takes a
 `limit`, but the cron script has no flag for it yet).
 
-Check (step 2): `untagged` falls to about the number of brand-new rows.
+Check (step 1): `untagged` falls to about the number of brand-new rows.
 Whether to re-tag rows tagged by the old echoed-UIN mapping (sample 200 first,
 or all ~14K batches) is still an open decision.
 
@@ -366,10 +387,18 @@ Undo: `ALTER TABLE ha_pq ALTER COLUMN api_id DROP NOT NULL;`
 
 ---
 
+## Phase 4 must land before December
+
+Until the date + UIN URLs (`/archive/pq/<date>/<uin>`, plan §4) ship,
+`/archive/pq/<uin>` opens the earliest-stored row with that UIN. Once a new
+question reuses an old UIN (first expected late November / early December)
+the new question's page, sitemap entry and list links open the OLD question.
+The data is right after this work; the URLs are not until Phase 4.
+
 ## After everything
 
 - PQ cron logs: `identity_mismatch=0` on every run; no alert emails.
-- Step 2: d, e, h = 0; `new_rows_sharing_old_uin` may grow from December —
+- Step 1: d, e, h = 0; `new_rows_sharing_old_uin` may grow from December —
   that is now expected (two questions, two rows).
 - Close INC-008 in `docs/incident-log.md`; update CLAUDE.md "Known issues"
   (it still says `ha_pq.uin` is UNIQUE).

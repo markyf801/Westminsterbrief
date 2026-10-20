@@ -30,15 +30,23 @@ SELECT
   (SELECT count(*) FROM (SELECT 1 FROM ha_pq GROUP BY tabled_date, lower(uin)
                          HAVING count(*) > 1) e)                      AS e_dup_date_uin_groups,
   (SELECT count(*) FROM ha_pq WHERE heading IS NULL)                  AS g_missing_headings,
+  -- missing, or the ingestor's _looks_truncated rule (258 chars, or 248-298 ending "...")
   (SELECT count(*) FROM ha_pq WHERE is_answered IS TRUE
      AND (answer_text IS NULL OR answer_text = ''
-          OR length(answer_text) = 258))                              AS answers_to_fetch,
+          OR length(answer_text) = 258
+          OR (length(answer_text) BETWEEN 248 AND 298
+              AND rtrim(answer_text) LIKE '%...')))                   AS answers_to_fetch,
   (SELECT count(*) FROM ha_pq p WHERE NOT EXISTS
      (SELECT 1 FROM ha_pq_theme t WHERE t.pq_id = p.id))              AS untagged;
 
--- Where the api_id duplicates sit (inside the PQ cron's 7-day window?)
+-- Where the api_id duplicates sit. in_cron_window = duplicate rows the PQ cron
+-- will meet on its next run (tabled or answered in the last 7 days): each one is
+-- an identity_mismatch until dedupe runs, and more than 5 stops that pass.
 SELECT min(tabled_date) AS dup_first_tabled, max(tabled_date) AS dup_last_tabled,
-       min(ingested_at) AS dup_first_ingested, max(ingested_at) AS dup_last_ingested
+       max(answer_date) AS dup_last_answered,
+       min(ingested_at) AS dup_first_ingested, max(ingested_at) AS dup_last_ingested,
+       count(*) FILTER (WHERE tabled_date >= current_date - 6
+                           OR answer_date >= current_date - 6) AS in_cron_window
 FROM ha_pq
 WHERE api_id IN (SELECT api_id FROM ha_pq WHERE api_id IS NOT NULL
                  GROUP BY api_id HAVING count(*) > 1);
