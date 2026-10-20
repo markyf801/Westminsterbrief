@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Member Profiles — Westminster Brief{% endblock %}
-{% block meta_description %}Generate a professional profile for any MP or Peer: career history, government roles, committee memberships, registered interests, and recent parliamentary activity. Export to Word.{% endblock %}
+{% block meta_description %}Profiles of every current MP and Peer: current role, government and opposition posts, committee memberships, registered interests and recent parliamentary activity, with links to the official record. Download to Word.{% endblock %}
 {% block og_title %}Member Profiles — Westminster Brief{% endblock %}
-{% block og_description %}Professional profiles for any MP or Peer: career history, ministerial roles, committee memberships, registered interests, and recent activity.{% endblock %}
+{% block og_description %}Profiles of every current MP and Peer: roles, committees, registered interests and recent parliamentary activity, with links to the official record.{% endblock %}
 
 {% block content %}
 <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
@@ -10,118 +10,39 @@
 <div class="box">
     <h2>Member Profiles</h2>
     <p class="page-desc">
-        Search for any MP or Peer to generate a profile covering their current role, career history, register of interests, and recent parliamentary activity. Export to Word.
+        Find any current MP or Peer to see their profile: current role, government and opposition posts, committee memberships, registered interests and recent activity in the Westminster Brief archive. Each profile can be downloaded to Word.
     </p>
 
     <form method="POST" action="/biography">
         <div class="form-row">
             <div class="form-group" style="flex:1;">
-                <label class="form-label">Member Name:</label>
+                <label class="form-label" for="member-search">Member name</label>
                 <select name="member_id" id="member-search" style="width:100%;" required></select>
             </div>
             <div>
-                <button type="submit" class="btn-search">Find Member</button>
+                <button type="submit" class="btn-search">Open profile</button>
             </div>
         </div>
     </form>
-    
+
     {% if error_message %}
     <p style="color: #d9534f; margin-top: 10px; font-weight: bold;">{{ error_message }}</p>
     {% endif %}
+
+    <p style="font-size:12.5px; color:#6b7684; margin-top:14px;">
+        Member details come from the UK Parliament Members API and are refreshed weekly. Profile summaries are AI-generated from those records (and, where matched, Wikipedia) and are labelled as such — check the official record before relying on them.
+    </p>
 </div>
-
-{% if mp_data %}
-<div class="box" style="margin-top: 20px;">
-    <div style="display: flex; gap: 20px; align-items: flex-start;">
-        <div style="text-align: center; min-width: 160px;">
-            {% if mp_data.image_url %}
-            <img src="{{ mp_data.image_url }}" alt="{{ mp_data.name }}" style="max-width: 150px; border-radius: 5px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            {% endif %}
-            
-            <div style="font-size: 13px; text-align: left; padding: 10px; background: #fdfdfd; border-radius: 5px; border: 1px solid #eee;">
-                <p style="margin-bottom: 8px; font-weight: bold; color: #1a4a6e; border-bottom: 1px solid #ddd; padding-bottom: 4px;">Activity Links</p>
-                <a href="https://hansard.parliament.uk/search/MemberContributions?memberId={{ mp_data.id }}" target="_blank" style="display: block; margin-bottom: 6px; color: #005a8f; text-decoration: none;">Spoken (Hansard)</a>
-                <a href="https://members.parliament.uk/member/{{ mp_data.id }}/writtenquestions" target="_blank" style="display: block; margin-bottom: 6px; color: #005a8f; text-decoration: none;">Written Questions</a>
-                <a href="https://members.parliament.uk/member/{{ mp_data.id }}/contact" target="_blank" style="display: block; color: #005a8f; text-decoration: none;">Parliament Profile</a>
-            </div>
-        </div>
-
-        <div style="flex-grow: 1;">
-            <h2 style="margin-top: 0;">{{ mp_data.name }}</h2>
-            <p style="margin: 5px 0;"><strong>Party:</strong> {{ mp_data.party }}</p>
-            <p style="margin: 5px 0;"><strong>Constituency/Membership:</strong> {{ mp_data.constituency }}</p>
-            
-            <button id="generateBtn" class="btn-search" style="margin-top: 15px; display: inline-flex; align-items: center; gap: 10px;" onclick="generateProfile()">
-                <span id="btnText">Generate AI Profile</span>
-                <span id="btnSpinner" class="spinner"></span>
-            </button>
-        </div>
-    </div>
-</div>
-
-<div id="ai-section" class="box" style="margin-top: 20px; border-top: 4px solid #005a8f; display: none;">
-    <h3 style="margin-bottom: 15px;">AI-Enhanced History &amp; Interests</h3>
-    
-    <div id="bio-loading-container">
-        <p id="bio-status-label" style="color: #666; font-style: italic;">
-            Analyzing parliamentary records... (may take up to 30 seconds)
-        </p>
-    </div>
-
-    <div id="bio-content" style="display: none;">
-        <div id="bio-text" style="font-size: 15px; line-height: 1.6;"></div>
-
-        <div style="margin-top:1rem;padding:.6rem .9rem;background:#fffbea;border-left:3px solid #f0ad4e;border-radius:4px;font-size:.82rem;color:#666;">
-            <strong style="color:#856404;">⚠ Data sources and currency</strong><br>
-            Career history and background draw partly on <strong>Wikipedia</strong>, which is publicly editable and may contain errors — verify against official sources before use in ministerial briefings.
-            Registered interests are fetched live from the Parliament Members API and reflect the register at the time of generation (<span id="bio-fetch-time"></span>).
-            Interests may not reflect declarations made in the last 24–48 hours.
-        </div>
-
-        <div style="margin-top: 25px; text-align: right; border-top: 1px solid #eee; padding-top: 15px;">
-            <form method="POST" action="/export_biography_word">
-                <input type="hidden" name="mp_name" value="{{ mp_data.name }}">
-                <input type="hidden" name="party" value="{{ mp_data.party }}">
-                <input type="hidden" name="constituency" value="{{ mp_data.constituency }}">
-                <input type="hidden" name="image_url" value="{{ mp_data.image_url }}">
-                <input type="hidden" name="member_id" value="{{ mp_data.id }}">
-                <input type="hidden" name="bio_text" id="hidden-bio-text">
-                
-                <button type="submit" class="btn-search">⬇ Download Biography</button>
-            </form>
-        </div>
-    </div>
-</div>
-{% endif %}
 
 <style>
-    .spinner {
-        display: none;
-        width: 16px;
-        height: 16px;
-        border: 2px solid rgba(255,255,255,0.4);
-        border-top: 2px solid #fff;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    
     .select2-container { font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; }
-    /* Select2 height/padding only — colours handled by global dark theme */
-    .select2-container--default .select2-selection--single {
-        height: 40px;
-        padding: 5px;
-    }
-    .box a:hover { text-decoration: underline !important; }
+    .select2-container--default .select2-selection--single { height: 40px; padding: 5px; }
 </style>
 
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-
 <script>
     $(document).ready(function() {
-        // Initialize the searchable dropdown
         $('#member-search').select2({
             placeholder: 'Start typing a name (e.g. Bridget Phillipson, Smith of Malvern)...',
             minimumInputLength: 3,
@@ -129,54 +50,9 @@
                 url: '/api/search_members',
                 dataType: 'json',
                 delay: 250,
-                processResults: function (data) {
-                    return { results: data.results };
-                }
+                processResults: function (data) { return { results: data.results }; }
             }
         });
     });
-
-    async function generateProfile() {
-        const btn = document.getElementById('generateBtn');
-        const text = document.getElementById('btnText');
-        const spinner = document.getElementById('btnSpinner');
-        const section = document.getElementById('ai-section');
-        const bioContent = document.getElementById('bio-content');
-        const loadingContainer = document.getElementById('bio-loading-container');
-
-        btn.disabled = true;
-        text.innerText = "Processing...";
-        spinner.style.display = 'block';
-        section.style.display = 'block';
-        loadingContainer.style.display = 'block';
-        bioContent.style.display = 'none';
-
-        try {
-            const response = await fetch('/api/biography', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    mp_name: "{{ mp_data.name if mp_data else '' }}", 
-                    member_id: "{{ mp_data.id if mp_data else '' }}"
-                })
-            });
-            const data = await response.json();
-            
-            if (data.biography) {
-                document.getElementById('bio-text').innerHTML = marked.parse(data.biography);
-                document.getElementById('hidden-bio-text').value = data.biography;
-                document.getElementById('bio-fetch-time').textContent =
-                    new Date().toLocaleString('en-GB', {day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'});
-                loadingContainer.style.display = 'none';
-                bioContent.style.display = 'block';
-            }
-        } catch (error) {
-            document.getElementById('bio-status-label').textContent = "Connection error. Please reload and try again.";
-        } finally {
-            btn.disabled = false;
-            text.innerText = "Update AI Profile";
-            spinner.style.display = 'none';
-        }
-    }
 </script>
 {% endblock %}

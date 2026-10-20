@@ -85,6 +85,23 @@ collision known issue in `CLAUDE.md`).
 Run once manually after initial deployment. After that, searches resolve member
 names/party/constituency from the DB; no per-request Parliament API calls.
 
+### Member profiles + AI biographies (`scripts/refresh_members.py`) — to be created
+
+Feeds `member_profile` / `member_biography`, which `/members/<id>/<slug>`,
+`/mp_search` and `/biography` read instead of calling Parliament on page view.
+Needs `migrations/members_profile_tables.py --execute` run once first (one-off,
+`SKIP_MIGRATIONS=1`). Both services: Dockerfile.cron, `SKIP_MIGRATIONS=1`,
+`DATABASE_URL` reference; the bio job also needs `GEMINI_API_KEY`.
+
+| Service | Cron (UTC) | Start command | Purpose |
+|---|---|---|---|
+| `member-profile-refresh` | `0 3 * * 0` | `python scripts/refresh_members.py` | Weekly — identity, posts, committees, contact, interests, archive activity counts (~4,400 polite requests, ~30–40 min) |
+| `member-bio-refresh` | `0 4 2 * *` | `python scripts/refresh_members.py --regenerate-bios` | Monthly — same refresh, then Gemini Flash-Lite bios only where inputs changed |
+
+After a reshuffle, run `python scripts/refresh_members.py --regenerate-bios --member-id <id>`
+(repeatable) as a one-off rather than waiting for the schedule. `--dry-run`
+predicts the insert/update/unchanged split and bio count without writing.
+
 ### Stats catalogue re-discovery (`scripts/rediscovery_cron.py`)
 
 | Service | Cron (UTC) | Purpose |

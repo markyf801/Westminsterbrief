@@ -272,3 +272,84 @@ class CachedMember(db.Model):
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+
+class MemberProfile(db.Model):
+    """Stored profile for an MP or Peer, refreshed offline by scripts/refresh_members.py.
+
+    /members/<id>/<slug>, /mp_search and /biography read from this table instead
+    of calling the Parliament Members API on page view. On production the table
+    is created by migrations/members_profile_tables.py (the web service runs
+    with SKIP_MIGRATIONS=1, so db.create_all() does not run there).
+
+    Photos are not stored — thumbnail_url points at Parliament's image.
+    """
+    __tablename__ = 'member_profile'
+
+    member_id         = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    slug              = db.Column(db.String(300), nullable=False, index=True)  # stable-first: set once
+    name              = db.Column(db.String(300), nullable=False)               # nameDisplayAs
+    name_list_as      = db.Column(db.String(300))
+    full_title        = db.Column(db.String(400))
+    party             = db.Column(db.String(100))
+    party_abbreviation = db.Column(db.String(20))
+    party_colour      = db.Column(db.String(6))
+    house             = db.Column(db.String(20))                                # 'Commons' | 'Lords'
+    membership_from   = db.Column(db.String(200))                               # constituency, or 'Life peer' etc.
+    membership_start  = db.Column(db.Date)
+    is_current        = db.Column(db.Boolean, nullable=False, default=True)
+    status_description = db.Column(db.String(200))
+    thumbnail_url     = db.Column(db.String(500))
+    current_role      = db.Column(db.String(500))                               # current govt/opposition post(s)
+
+    # Lists of {name, start, end, info} — dates as 'YYYY-MM-DD' strings
+    government_posts  = db.Column(db.JSON)
+    opposition_posts  = db.Column(db.JSON)
+    other_posts       = db.Column(db.JSON)
+    committees        = db.Column(db.JSON)
+    contact           = db.Column(db.JSON)    # [{type, address, phone, email, website}]
+    interests         = db.Column(db.JSON)    # [{category, description}]
+    wikipedia_url     = db.Column(db.String(500))
+
+    # Activity derived from our own DB (ha_pq, ha_contribution) at refresh time
+    wq_12m            = db.Column(db.Integer)
+    wq_total          = db.Column(db.Integer)
+    sessions_12m      = db.Column(db.Integer)
+    contributions_12m = db.Column(db.Integer)
+    last_spoke_on     = db.Column(db.Date)
+    top_policy_areas  = db.Column(db.JSON)    # [{theme, sessions}] — debates, last 12 months
+    wq_departments    = db.Column(db.JSON)    # [{department, questions}] — WQs asked, last 12 months
+
+    summary_refreshed_at  = db.Column(db.DateTime)   # Members/Search pass
+    details_refreshed_at  = db.Column(db.DateTime)   # Biography / Contact / Interests pass
+    activity_refreshed_at = db.Column(db.DateTime)
+    created_at        = db.Column(db.DateTime, default=datetime.utcnow)
+    # Set explicitly by the refresh only when profile content changes (sitemap lastmod) — no onupdate,
+    # because every run bumps the *_refreshed_at stamps.
+    updated_at        = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def last_updated(self):
+        stamps = [s for s in (self.details_refreshed_at, self.summary_refreshed_at) if s]
+        return max(stamps) if stamps else None
+
+
+class MemberBiography(db.Model):
+    """Pre-generated AI biography for a member (one row per member).
+
+    Generated offline by scripts/refresh_members.py --regenerate-bios with a
+    Gemini Flash-Lite class model. source_hash covers the prompt version and
+    every input the prompt used, so a bio is only regenerated when its inputs
+    change. Free feature: Gemini only, never Claude.
+    """
+    __tablename__ = 'member_biography'
+
+    member_id       = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    bio_text        = db.Column(db.Text)              # NULL until a generation succeeds
+    model_used      = db.Column(db.String(100))
+    prompt_version  = db.Column(db.String(20))
+    source_hash     = db.Column(db.String(64))
+    sources         = db.Column(db.JSON)              # [{label, url}]
+    generated_at    = db.Column(db.DateTime)
+    last_attempt_at = db.Column(db.DateTime)
+    last_error      = db.Column(db.String(500))

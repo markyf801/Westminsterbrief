@@ -1,4 +1,10 @@
-import requests, json, io, time, re, logging
+import io
+import json
+import logging
+import re
+import time
+
+import requests
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from flask import Blueprint, render_template, request, send_file, jsonify, copy_current_request_context
@@ -11,6 +17,11 @@ try:
     from docx.oxml.ns import qn
 except ImportError:
     Document = None
+
+from member_profiles import (
+    AI_LABEL, BOLD_RE, BULLET_RE, HEADING_RE, fetch_member_photo, get_biography, get_profile,
+    member_header, profile_tab_data, render_bio_html,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +50,6 @@ DEPARTMENTS = {
 
 # ── Module-level caches {key: (data, timestamp)} ─────────────────────────────
 
-_profile_cache: dict = {}   # keyed on "header_{id}" or "profile_{id}"
 _speech_cache: dict = {}    # keyed on member_id (int)
 _archive_range_cache: dict = {}
 
@@ -87,10 +97,16 @@ def add_hyperlink(paragraph, url, text):
     hyperlink.set(qn('r:id'), r_id)
     new_run = OxmlElement('w:r')
     rPr = OxmlElement('w:rPr')
-    c = OxmlElement('w:color'); c.set(qn('w:val'), '0000FF'); rPr.append(c)
-    u = OxmlElement('w:u'); u.set(qn('w:val'), 'single'); rPr.append(u)
+    c = OxmlElement('w:color')
+    c.set(qn('w:val'), '0000FF')
+    rPr.append(c)
+    u = OxmlElement('w:u')
+    u.set(qn('w:val'), 'single')
+    rPr.append(u)
     new_run.append(rPr)
-    t = OxmlElement('w:t'); t.text = text; new_run.append(t)
+    t = OxmlElement('w:t')
+    t.text = text
+    new_run.append(t)
     hyperlink.append(new_run)
     paragraph._p.append(hyperlink)
     return hyperlink
@@ -99,94 +115,13 @@ def add_hyperlink(paragraph, url, text):
 # ── Data fetchers ─────────────────────────────────────────────────────────────
 
 def _fetch_member_header(member_id: int) -> dict:
-    """Name, party, role, photo, house. Cached 24h."""
-    cache_key = f'header_{member_id}'
-    cached = _cache_get(_profile_cache, cache_key, _TTL_24H)
-    if cached is not None:
-        return cached
-    try:
-        resp = requests.get(
-            f"https://members-api.parliament.uk/api/Members/{member_id}",
-            timeout=15
-        )
-        if resp.status_code == 200:
-            val = resp.json().get('value', {})
-            membership = val.get('latestHouseMembership') or {}
-            is_lord = membership.get('house') == 2
-            constituency = membership.get('membershipFrom', '')
-            result = {
-                'id': member_id,
-                'name': val.get('nameDisplayAs', ''),
-                'party': (val.get('latestParty') or {}).get('name', ''),
-                'role': 'Life Peer' if is_lord else f"MP for {constituency}",
-                'photo_url': val.get('thumbnailUrl', ''),
-                'is_lord': is_lord,
-                'house': 'Lords' if is_lord else 'Commons',
-                'constituency': constituency,
-            }
-            _cache_set(_profile_cache, cache_key, result)
-            return result
-    except Exception as e:
-        logger.warning('[mp_research] member header fetch failed: %s', e)
-    return {}
-
-
-def _fetch_parliament_bio(member_id: int) -> dict:
-    try:
-        resp = requests.get(
-            f"https://members-api.parliament.uk/api/Members/{member_id}/Biography",
-            timeout=15
-        )
-        if resp.status_code == 200:
-            return resp.json().get('value', {})
-    except Exception:
-        pass
-    return {}
-
-
-def _fetch_interests_structured(member_id: int) -> list:
-    try:
-        resp = requests.get(
-            f"https://members-api.parliament.uk/api/Members/{member_id}/RegisteredInterests",
-            timeout=15
-        )
-        if resp.status_code == 200:
-            result = []
-            for cat in (resp.json().get('value') or []):
-                cat_name = cat.get('name', '')
-                for interest in (cat.get('interests') or []):
-                    desc = (interest.get('interest') or '').strip()
-                    if desc:
-                        result.append({'category': cat_name, 'description': desc[:300]})
-            return result
-    except Exception:
-        pass
-    return []
+    """Name, party, role, photo, house — from member_profile / cached_member. No API call."""
+    return member_header(member_id)
 
 
 def _fetch_profile_data(member_id: int) -> dict | None:
-    """Career history + interests for Profile tab. Cached 24h."""
-    cache_key = f'profile_{member_id}'
-    cached = _cache_get(_profile_cache, cache_key, _TTL_24H)
-    if cached is not None:
-        return cached
-    try:
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            f_bio = ex.submit(_fetch_parliament_bio, member_id)
-            f_int = ex.submit(_fetch_interests_structured, member_id)
-            bio = f_bio.result(timeout=20)
-            interests = f_int.result(timeout=20)
-        result = {
-            'govt_posts': bio.get('governmentPosts') or [],
-            'opp_posts': bio.get('oppositionPosts') or [],
-            'committees': bio.get('committeeMemberships') or [],
-            'interests': interests,
-        }
-        _cache_set(_profile_cache, cache_key, result)
-        return result
-    except Exception as e:
-        logger.warning('[mp_research] profile fetch failed: %s', e)
-        return None
+    """Career history + interests for the Profile tab, from member_profile. None if not stored yet."""
+    return profile_tab_data(get_profile(member_id))
 
 
 def _fetch_speeches(member_id: int, is_lord: bool, topic: str = '') -> list:  # noqa: ARG001
@@ -366,6 +301,7 @@ def search_mp_pqs():
     member_header = {}
     profile_data = None
     profile_error = None
+    stored_bio = None
     pq_results = []
     pq_error = None
     speeches = []
@@ -390,25 +326,23 @@ def search_mp_pqs():
                 member_id = int(member_id_str)
                 member_header = _fetch_member_header(member_id)
                 if not member_header:
-                    pq_error = 'Could not load member details — please try again.'
+                    pq_error = ("We don't hold details for that member yet — "
+                                "they are added by the weekly refresh.")
                 else:
                     is_lord = member_header.get('is_lord', False)
+                    profile_data = _fetch_profile_data(member_id)
+                    if profile_data is None:
+                        profile_error = ('career history for this member has not been stored yet '
+                                         '(it is added by the weekly refresh)')
+                    stored_bio = get_biography(member_id)
 
-                    with ThreadPoolExecutor(max_workers=3) as ex:
-                        f_profile = ex.submit(
-                            copy_current_request_context(_fetch_profile_data), member_id)
+                    with ThreadPoolExecutor(max_workers=2) as ex:
                         f_pqs = ex.submit(
                             copy_current_request_context(_fetch_pqs),
                             member_id, selected_dept, start_date, end_date, contributions_topic)
                         f_speeches = ex.submit(
                             copy_current_request_context(_fetch_speeches),
                             member_id, is_lord, contributions_topic)
-
-                        try:
-                            profile_data = f_profile.result(timeout=25)
-                        except Exception as e:
-                            profile_error = 'Could not load profile data.'
-                            logger.warning('[mp_research] profile tab error: %s', e)
 
                         try:
                             pq_results = f_pqs.result(timeout=35)
@@ -429,6 +363,9 @@ def search_mp_pqs():
         'mp_search.html',
         member_header=member_header,
         profile_data=profile_data, profile_error=profile_error,
+        stored_bio=stored_bio,
+        stored_bio_html=render_bio_html(stored_bio.bio_text) if stored_bio else '',
+        ai_label=AI_LABEL,
         pq_results=pq_results, pq_error=pq_error,
         speeches=speeches, speeches_error=speeches_error,
         hansard_archive_start=_get_hansard_archive_start(),
@@ -526,7 +463,10 @@ def download_mp_word():
     profile = payload.get('profile_data')
     questions = payload.get('questions', [])
     speech_list = payload.get('speeches', [])
-    ai_profile = (payload.get('ai_profile') or '').strip()
+    try:
+        stored_bio = get_biography(int(header.get('id')))
+    except (TypeError, ValueError):
+        stored_bio = None
 
     name = header.get('name', 'Unknown Member')
     party = header.get('party', '')
@@ -562,14 +502,7 @@ def download_mp_word():
         compact(p, before=12, after=4)
 
     # ── 1. Header ─────────────────────────────────────────────────────────────
-    img_stream = None
-    if photo_url:
-        try:
-            img_resp = requests.get(photo_url, timeout=5)
-            if img_resp.status_code == 200:
-                img_stream = io.BytesIO(img_resp.content)
-        except Exception:
-            pass
+    img_stream = fetch_member_photo(photo_url)
 
     ht = doc.add_table(rows=1, cols=2)
     remove_borders(ht)
@@ -581,7 +514,8 @@ def download_mp_word():
 
     np_ = dc.paragraphs[0]
     r = np_.add_run(name)
-    r.bold = True; r.font.size = Pt(16)
+    r.bold = True
+    r.font.size = Pt(16)
     compact(np_, before=0, after=4)
 
     mp = dc.add_paragraph()
@@ -626,36 +560,45 @@ def download_mp_word():
             t = doc.add_table(rows=1, cols=2)
             t.style = 'Table Grid'
             hdr = t.rows[0].cells
-            hdr[0].text = 'Category'; hdr[0].paragraphs[0].runs[0].bold = True
-            hdr[1].text = 'Interest'; hdr[1].paragraphs[0].runs[0].bold = True
+            hdr[0].text = 'Category'
+            hdr[0].paragraphs[0].runs[0].bold = True
+            hdr[1].text = 'Interest'
+            hdr[1].paragraphs[0].runs[0].bold = True
             for interest in interests[:40]:
                 row = t.add_row().cells
                 row[0].text = interest.get('category', '')
                 row[1].text = interest.get('description', '')
 
-    # ── 3. AI Profile (only if generated) ────────────────────────────────────
-    if ai_profile:
+    # ── 3. AI Profile (stored, only if generated) ─────────────────────────────
+    if stored_bio is not None:
         section_heading('AI-Generated Profile')
-        heading_re = re.compile(r'^#{1,3}\s+(.+)$')
-        bullet_re = re.compile(r'^[-*]\s+(.+)$')
-        for line in ai_profile.split('\n'):
+        lp = doc.add_paragraph(f"{AI_LABEL}. Generated {stored_bio.generated_at:%d %B %Y} by "
+                               f"{stored_bio.model_used} from the sources listed.")
+        lp.runs[0].font.size = Pt(9)
+        lp.runs[0].font.color.rgb = RGBColor(110, 110, 110)
+        compact(lp, before=0, after=6)
+        for line in stored_bio.bio_text.splitlines():
             line = line.rstrip()
-            if not line:
+            if not line.strip():
                 continue
-            hm = heading_re.match(line)
+            hm = HEADING_RE.match(line)
             if hm:
                 p = doc.add_heading(hm.group(1).strip(), level=2)
                 compact(p, before=8, after=2)
                 continue
-            bm = bullet_re.match(line)
+            bm = BULLET_RE.match(line)
             if bm:
-                p = doc.add_paragraph(bm.group(1).strip(), style='List Bullet')
+                p = doc.add_paragraph(BOLD_RE.sub(r'\1', bm.group(1)).strip(), style='List Bullet')
                 compact(p, before=0, after=2)
                 continue
-            clean = re.sub(r'\*\*(.+?)\*\*', r'\1', line)
+            clean = BOLD_RE.sub(r'\1', line)
             if clean:
                 p = doc.add_paragraph(clean)
                 compact(p, before=0, after=3)
+        for src in stored_bio.sources or []:
+            p = doc.add_paragraph(style='List Bullet')
+            add_hyperlink(p, src['url'], src['label'])
+            compact(p, before=0, after=2)
 
     # ── 4. Written Questions section ──────────────────────────────────────────
     if questions:

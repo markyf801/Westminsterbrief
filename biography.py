@@ -1,55 +1,46 @@
-import os, requests, io, json, re, concurrent.futures, logging
-from flask import Blueprint, render_template, request, jsonify, send_file
-from datetime import datetime, timedelta
-from cache_models import CachedMember
-from extensions import limiter
+"""
+Member Profiles — /biography (finder), /members/<id>/<slug> (indexable profile
+page), the Word download, the member autocomplete and sitemap-members.xml.
 
-try:
-    import wikipedia
-except ImportError:
-    wikipedia = None
+Everything here reads from our own database (member_profile, member_biography,
+cached_member). Nothing calls Parliament or an AI model on page view: profiles
+and biographies are refreshed offline by scripts/refresh_members.py. The only
+outbound request left is the optional member photo in the Word download,
+limited to Parliament's own image host with a short timeout.
+"""
+
+import io
+import logging
+import re
+from datetime import datetime
+from xml.sax.saxutils import escape as xml_escape
+
+from flask import Blueprint, abort, jsonify, make_response, redirect, render_template, request, send_file
+
+from cache_models import MemberProfile
+from extensions import db, limiter
+from member_profiles import (
+    AI_LABEL, BASE_URL, BOLD_RE, BULLET_RE, HEADING_RE, fetch_member_photo, get_biography,
+    get_profile, member_header, official_links, profile_path, render_bio_html, search_members,
+)
 
 try:
     from docx import Document
-    from docx.shared import Pt, RGBColor, Inches
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
+    from docx.shared import Inches, Pt, RGBColor
 except ImportError:
     Document = None
 
+log = logging.getLogger(__name__)
+
 biography_bp = Blueprint('biography', __name__)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-_MODEL_CACHE = None
 
+# ── Rendering helpers ─────────────────────────────────────────────────────────
 
-def _gemini_model():
-    global _MODEL_CACHE
-    if _MODEL_CACHE:
-        return _MODEL_CACHE
-    if not GEMINI_API_KEY:
-        return None
-    try:
-        resp = requests.get(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}",
-            timeout=5
-        )
-        if resp.status_code == 200:
-            available = [m['name'] for m in resp.json().get('models', [])
-                         if 'generateContent' in m.get('supportedGenerationMethods', [])]
-            for pref in ['models/gemini-2.5-flash-lite', 'models/gemini-2.5-flash',
-                         'models/gemini-flash-latest']:
-                match = next((m for m in available if m.startswith(pref)), None)
-                if match:
-                    _MODEL_CACHE = match
-                    return _MODEL_CACHE
-            if available:
-                _MODEL_CACHE = available[0]
-                return _MODEL_CACHE
-    except Exception:
-        pass
-    _MODEL_CACHE = "models/gemini-2.5-flash-lite"
-    return _MODEL_CACHE
+def _fmt_date(dt) -> str:
+    return f"{dt.day} {dt.strftime('%B %Y')}" if dt else ''
 
 
 def _add_hyperlink(paragraph, url, text):
@@ -62,305 +53,24 @@ def _add_hyperlink(paragraph, url, text):
     hyperlink.set(qn('r:id'), r_id)
     new_run = OxmlElement('w:r')
     rPr = OxmlElement('w:rPr')
-    c = OxmlElement('w:color'); c.set(qn('w:val'), '0000FF'); rPr.append(c)
-    u = OxmlElement('w:u'); u.set(qn('w:val'), 'single'); rPr.append(u)
+    c = OxmlElement('w:color')
+    c.set(qn('w:val'), '0000FF')
+    rPr.append(c)
+    u = OxmlElement('w:u')
+    u.set(qn('w:val'), 'single')
+    rPr.append(u)
     new_run.append(rPr)
-    t = OxmlElement('w:t'); t.text = text; new_run.append(t)
+    t = OxmlElement('w:t')
+    t.text = text
+    new_run.append(t)
     hyperlink.append(new_run)
     paragraph._p.append(hyperlink)
 
 
-# ── Data fetchers ─────────────────────────────────────────────────────────────
-
-def _fetch_parliament_biography(member_id):
-    try:
-        resp = requests.get(
-            f"https://members-api.parliament.uk/api/Members/{member_id}/Biography",
-            timeout=8
-        )
-        if resp.status_code == 200:
-            return resp.json().get('value', {})
-    except Exception:
-        pass
-    return {}
-
-
-def _fetch_recent_pqs(member_id, limit=20):
-    try:
-        six_months_ago = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
-        resp = requests.get(
-            "https://questions-statements-api.parliament.uk/api/writtenquestions/questions",
-            params={'askingMemberId': member_id, 'tabledWhenFrom': six_months_ago, 'take': limit},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            results = []
-            for item in resp.json().get('results', []):
-                val = item.get('value', {})
-                text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', val.get('questionText') or '')).strip()
-                dept = val.get('answeringBodyName', '')
-                if text:
-                    results.append(f"[{dept}] {text[:200]}")
-            return results
-    except Exception:
-        pass
-    return []
-
-
-def _fetch_registered_interests(member_id):
-    try:
-        resp = requests.get(
-            f"https://members-api.parliament.uk/api/Members/{member_id}/RegisteredInterests",
-            timeout=8
-        )
-        if resp.status_code == 200:
-            categories = resp.json().get('value', []) or []
-            lines = []
-            for cat in categories:
-                cat_name = cat.get('name', '')
-                for interest in (cat.get('interests') or []):
-                    desc = (interest.get('interest') or '').strip()
-                    if desc:
-                        lines.append(f"  [{cat_name}] {desc[:200]}")
-            return lines
-    except Exception:
-        pass
-    return []
-
-
-_UK_PARLIAMENT_MARKERS = (
-    'member of parliament', 'house of commons', 'house of lords', 'constituency',
-    'parliament', 'labour party', 'conservative party', 'liberal democrat',
-    'privy council', 'secretary of state', 'shadow minister', 'baroness', 'lord ',
-    'mp for ', 'elected to', 'general election', 'parliament uk',
-)
-
-
-def _is_uk_parliament_page(content: str) -> bool:
-    lower = content[:3000].lower()
-    return sum(1 for m in _UK_PARLIAMENT_MARKERS if m in lower) >= 2
-
-
-def _fetch_wikipedia(mp_name):
-    if not wikipedia:
-        return ""
-    try:
-        for query in [f"{mp_name} British politician MP", f"{mp_name} politician"]:
-            search = wikipedia.search(query)
-            if not search:
-                continue
-            try:
-                page = wikipedia.page(search[0], auto_suggest=False)
-            except wikipedia.DisambiguationError as e:
-                options = [o for o in e.options
-                           if any(k in o.lower() for k in ('politician', ' mp', 'member of parliament', 'lord', 'baroness'))]
-                if not options:
-                    continue
-                page = wikipedia.page(options[0], auto_suggest=False)
-            if _is_uk_parliament_page(page.content):
-                return page.content[:4000]
-    except Exception:
-        pass
-    return ""
-
-
-def _format_posts(posts, label):
-    if not posts:
-        return ""
-    lines = [f"\n{label}:"]
-    for p in sorted(posts, key=lambda x: x.get('startDate') or '', reverse=True):
-        name = p.get('name', '')
-        start = (p.get('startDate') or '').split('T')[0][:7]
-        end = (p.get('endDate') or '').split('T')[0][:7]
-        date_str = f"{start}–{end}" if end else f"{start}–present"
-        if name:
-            lines.append(f"  - {name} ({date_str})")
-    return '\n'.join(lines)
-
-
-def _format_committees(committees):
-    if not committees:
-        return ""
-    lines = ["\nCommittee Memberships (current and historical):"]
-    for c in sorted(committees, key=lambda x: x.get('startDate') or '', reverse=True):
-        name = c.get('name', '')
-        start = (c.get('startDate') or '').split('T')[0][:7]
-        end = (c.get('endDate') or '').split('T')[0][:7]
-        date_str = f"{start}–{end}" if end else f"{start}–present"
-        if name:
-            lines.append(f"  - {name} ({date_str})")
-    return '\n'.join(lines)
-
-
-# ── Main biography generator ──────────────────────────────────────────────────
-
-def generate_mp_biography(mp_name, member_id):
-    # Parallel fetch: Parliament biography API + registered interests + recent PQs + Wikipedia
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        f_bio = ex.submit(_fetch_parliament_biography, member_id)
-        f_interests = ex.submit(_fetch_registered_interests, member_id)
-        f_pqs = ex.submit(_fetch_recent_pqs, member_id)
-        f_wiki = ex.submit(_fetch_wikipedia, mp_name)
-        parl_bio = f_bio.result()
-        interests = f_interests.result()
-        pqs = f_pqs.result()
-        wiki_text = f_wiki.result()
-
-    # Build Parliament context block
-    parl_context = ""
-    parl_context += _format_posts(parl_bio.get('governmentPosts', []), "Government Roles")
-    parl_context += _format_posts(parl_bio.get('oppositionPosts', []), "Opposition Roles")
-    parl_context += _format_committees(parl_bio.get('committeeMemberships', []))
-
-    interests_context = ""
-    if interests:
-        cap = 30
-        interests_context = "\nRegistered Interests:\n" + "\n".join(f"  • {i}" for i in interests[:cap])
-        if len(interests) > cap:
-            interests_context += f"\n  ... and {len(interests) - cap} further interests (see Parliament.uk for full register)"
-
-    pq_context = ""
-    if pqs:
-        pq_context = "\nRecent Written Questions (sample):\n" + "\n".join(f"  • {q}" for q in pqs[:12])
-
-    prompt = f"""You are a senior UK parliamentary researcher writing a professional briefing note.
-
-Write a structured profile for: {mp_name}
-
-Use ALL of the source data below. Clearly distinguish between their pre-parliamentary career
-(from Wikipedia) and their parliamentary record (from the Parliament API data).
-
---- WIKIPEDIA EXTRACT (use for background, education, pre-parliament career) ---
-{wiki_text[:3500] if wiki_text else "No Wikipedia data available."}
-
---- PARLIAMENT API DATA ---
-{parl_context if parl_context else "No parliamentary posts or committee data available."}
-{interests_context}
-{pq_context}
-
----
-
-Write the profile using these exact markdown headings:
-
-## Career Before Parliament
-Background, profession, education — draw on Wikipedia. If no data available, say so briefly.
-
-## Parliamentary Career
-When elected/appointed, party, constituency or peerage. Key milestones.
-
-## Government & Opposition Roles
-All ministerial or shadow ministerial roles held, with dates. Distinguish clearly between government and opposition roles. If none, say so.
-
-## Committee Memberships
-List all select committees and other parliamentary committees, with dates (include historical ones). If none on record, say so.
-
-## Registered Interests
-Summarise their declared financial and other interests by category. If none declared, say so.
-
-## Policy Interests & Focus Areas
-Based on their written questions and stated interests — be specific, not generic.
-
-## Key Context for Meetings
-2–3 sentences a civil servant would want to know before a ministerial meeting or correspondence.
-
-Keep each section concise and factual. Only include information present in the source data above — do not supplement from your training data or general knowledge. If a section has no source data, say so briefly rather than inferring."""
-
-    model = _gemini_model()
-    if not model or not GEMINI_API_KEY:
-        return "AI service unavailable — please check your GEMINI_API_KEY."
-
-    try:
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={GEMINI_API_KEY}",
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=45
-        )
-        resp.raise_for_status()
-        return resp.json()['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        logging.warning(f"[biography] AI generation failed for {mp_name} (model={model}): {type(e).__name__}: {e}")
-        return "AI summary unavailable — please try again."
-
-
-# ── Routes ────────────────────────────────────────────────────────────────────
-
-@biography_bp.route('/biography', methods=['GET', 'POST'])
-def biography_home():
-    mp_data, error = None, None
-    if request.method == 'POST':
-        member_id = request.form.get('member_id')
-        if member_id:
-            cached = CachedMember.get(member_id)
-            if cached:
-                mp_data = {
-                    'id': cached.member_id, 'name': cached.name,
-                    'party': cached.party, 'constituency': cached.constituency,
-                    'image_url': cached.image_url
-                }
-            else:
-                try:
-                    resp = requests.get(
-                        f"https://members-api.parliament.uk/api/Members/{member_id}",
-                        timeout=8
-                    ).json().get('value', {})
-                    name = resp.get('nameDisplayAs')
-                    party = (resp.get('latestParty') or {}).get('name')
-                    membership = resp.get('latestHouseMembership') or {}
-                    constituency = membership.get('membershipFrom')
-                    house = "Lords" if membership.get('house') == 2 else "Commons"
-                    image_url = resp.get('thumbnailUrl')
-                    CachedMember.store(member_id, name, party, constituency, house, image_url)
-                    mp_data = {
-                        'id': resp.get('id'), 'name': name, 'party': party,
-                        'constituency': constituency, 'image_url': image_url
-                    }
-                except Exception:
-                    error = "Could not load member details."
-    return render_template('biography.html', mp_data=mp_data, error_message=error)
-
-
-@biography_bp.route('/api/search_members')
-def api_search_members():
-    term = request.args.get('q', '')
-    if len(term) < 3:
-        return jsonify({"results": []})
-    try:
-        items = requests.get(
-            "https://members-api.parliament.uk/api/Members/Search",
-            params={'Name': term, 'IsCurrentMember': 'true', 'take': 15},
-            timeout=5
-        ).json().get('items') or []
-        return jsonify({
-            "results": [{"id": i['value']['id'], "text": i['value']['nameDisplayAs']} for i in items]
-        })
-    except Exception:
-        return jsonify({"results": []})
-
-
-@biography_bp.route("/api/biography", methods=["POST"])
-@limiter.limit("10 per minute; 100 per day")
-def api_biography():
-    data = request.get_json()
-    bio = generate_mp_biography(data.get("mp_name"), data.get("member_id"))
-    return jsonify({"biography": bio})
-
-
-@biography_bp.route('/export_biography_word', methods=['POST'])
-def export_biography_word():
-    if not Document:
-        return "Word library missing.", 500
-
-    from docx.shared import Inches, Pt
-    mp_name = request.form.get('mp_name', 'Unknown Member')
-    party = request.form.get('party', '')
-    constituency = request.form.get('constituency', '')
-    bio_text = request.form.get('bio_text', '')
-    image_url = request.form.get('image_url', '')
-    member_id = request.form.get('member_id', '')
-
+def build_profile_docx(header: dict, bio) -> io.BytesIO:
+    """Word profile from stored data: header, stored AI biography (labelled), sources, links."""
     doc = Document()
 
-    # Helper: set compact paragraph spacing (values in points)
     def compact(para, before=0, after=3):
         pPr = para._p.get_or_add_pPr()
         existing = pPr.find(qn('w:spacing'))
@@ -371,114 +81,246 @@ def export_biography_word():
         sp.set(qn('w:after'), str(after * 20))
         pPr.append(sp)
 
-    # Helper: remove all borders from a table
-    def remove_table_borders(table):
-        tblPr = table._tbl.find(qn('w:tblPr'))
-        if tblPr is None:
-            tblPr = OxmlElement('w:tblPr')
-            table._tbl.insert(0, tblPr)
-        borders = OxmlElement('w:tblBorders')
-        for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-            el = OxmlElement(f'w:{side}')
-            el.set(qn('w:val'), 'none')
-            borders.append(el)
-        tblPr.append(borders)
+    def small_grey(para):
+        for run in para.runs:
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(110, 110, 110)
 
-    # Try to download photo
-    img_stream = None
-    if image_url:
+    table = doc.add_table(rows=1, cols=2)
+    tblPr = table._tbl.find(qn('w:tblPr'))
+    borders = OxmlElement('w:tblBorders')
+    for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        el = OxmlElement(f'w:{side}')
+        el.set(qn('w:val'), 'none')
+        borders.append(el)
+    tblPr.append(borders)
+    photo_cell, detail_cell = table.cell(0, 0), table.cell(0, 1)
+    photo_cell.width, detail_cell.width = Inches(1.5), Inches(5.0)
+    img = fetch_member_photo(header.get('photo_url', ''))
+    if img:
         try:
-            img_resp = requests.get(image_url, timeout=5)
-            if img_resp.status_code == 200:
-                img_stream = io.BytesIO(img_resp.content)
-        except Exception:
-            pass
+            photo_cell.paragraphs[0].add_run().add_picture(img, width=Inches(1.3))
+        except Exception as exc:  # python-docx rejects some image formats
+            log.info('[biography] photo not embedded: %s', exc.__class__.__name__)
 
-    # ── Header: photo left, name/details right ───────────────────────────────
-    header_table = doc.add_table(rows=1, cols=2)
-    remove_table_borders(header_table)
-    photo_cell = header_table.cell(0, 0)
-    detail_cell = header_table.cell(0, 1)
-
-    # Set column widths
-    photo_cell.width = Inches(1.5)
-    detail_cell.width = Inches(5.0)
-
-    if img_stream:
-        photo_cell.paragraphs[0].add_run().add_picture(img_stream, width=Inches(1.3))
-    else:
-        photo_cell.paragraphs[0].add_run('')
-
-    # Name
     name_para = detail_cell.paragraphs[0]
-    name_run = name_para.add_run(mp_name)
+    name_run = name_para.add_run(header.get('name', 'Unknown Member'))
     name_run.bold = True
     name_run.font.size = Pt(16)
-    compact(name_para, before=0, after=4)
+    compact(name_para, after=4)
+    meta = detail_cell.add_paragraph('  ·  '.join(p for p in (header.get('party'), header.get('role')) if p))
+    compact(meta)
+    if header.get('current_role'):
+        compact(detail_cell.add_paragraph(header['current_role']))
+    updated = detail_cell.add_paragraph(f"Member details last updated {header.get('last_updated') or 'unknown'} · "
+                                        f"downloaded {datetime.now().strftime('%d %B %Y')}")
+    small_grey(updated)
+    compact(updated, after=0)
 
-    # Party · Constituency
-    meta_para = detail_cell.add_paragraph()
-    parts = [p for p in [party, constituency] if p]
-    meta_para.add_run('  ·  '.join(parts))
-    compact(meta_para, before=0, after=3)
+    if bio is not None:
+        h = doc.add_heading('Profile', level=1)
+        compact(h, before=12, after=2)
+        label = doc.add_paragraph(f"{AI_LABEL}. Generated {_fmt_date(bio.generated_at)} by "
+                                  f"{bio.model_used} from the sources listed below.")
+        small_grey(label)
+        compact(label, after=6)
+        for line in bio.bio_text.splitlines():
+            line = line.rstrip()
+            if not line.strip():
+                continue
+            hm = HEADING_RE.match(line)
+            if hm:
+                compact(doc.add_heading(hm.group(1).strip(), level=2), before=10, after=2)
+                continue
+            bm = BULLET_RE.match(line)
+            clean = BOLD_RE.sub(r'\1', bm.group(1) if bm else line).strip()
+            p = doc.add_paragraph(clean, style='List Bullet' if bm else None)
+            compact(p, after=2 if bm else 3)
+            for run in p.runs:
+                run.font.size = Pt(10)
+        if bio.sources:
+            compact(doc.add_heading('Sources', level=2), before=10, after=2)
+            for src in bio.sources:
+                p = doc.add_paragraph(style='List Bullet')
+                _add_hyperlink(p, src['url'], src['label'])
+                compact(p, after=2)
+    else:
+        p = doc.add_paragraph('No AI-generated profile is stored for this member yet. '
+                              'The official Parliament links below have the full record.')
+        compact(p, before=10)
 
-    # Generated date
-    date_para = detail_cell.add_paragraph()
-    date_run = date_para.add_run(f'Profile generated {datetime.now().strftime("%d %B %Y")}')
-    date_run.font.size = Pt(9)
-    date_run.font.color.rgb = RGBColor(128, 128, 128)
-    compact(date_para, before=0, after=0)
-
-    # Divider line after header
-    doc.add_paragraph('─' * 80)
-
-    # ── Biography content ─────────────────────────────────────────────────────
-    heading_re = re.compile(r'^#{1,3}\s+(.+)$')
-    bullet_re = re.compile(r'^[-*]\s+(.+)$')
-
-    for line in bio_text.split('\n'):
-        line = line.rstrip()
-        if not line:
-            continue  # skip blank lines — use spacing instead
-        hm = heading_re.match(line)
-        if hm:
-            level = min(line.count('#', 0, 4), 3)
-            p = doc.add_heading(hm.group(1).strip(), level=level)
-            compact(p, before=10, after=2)
-            continue
-        bm = bullet_re.match(line)
-        if bm:
-            p = doc.add_paragraph(bm.group(1).strip(), style='List Bullet')
-            compact(p, before=0, after=2)
-            if p.runs:
-                p.runs[0].font.size = Pt(10)
-            continue
-        clean = re.sub(r'\*\*(.+?)\*\*', r'\1', line)
-        if clean:
-            p = doc.add_paragraph(clean)
-            compact(p, before=0, after=3)
-            if p.runs:
-                p.runs[0].font.size = Pt(10)
-
-    # ── Activity links ────────────────────────────────────────────────────────
-    if member_id:
-        p = doc.add_heading('Parliamentary Activity Links', level=2)
-        compact(p, before=10, after=2)
-        lp = doc.add_paragraph()
-        lp.add_run('Hansard contributions: ').bold = True
-        _add_hyperlink(lp, f"https://hansard.parliament.uk/search/MemberContributions?memberId={member_id}", "View on Hansard")
-        compact(lp, before=0, after=2)
-        lp2 = doc.add_paragraph()
-        lp2.add_run('Written questions: ').bold = True
-        _add_hyperlink(lp2, f"https://members.parliament.uk/member/{member_id}/writtenquestions", "View on Parliament.uk")
-        compact(lp2, before=0, after=2)
+    compact(doc.add_heading('Official record', level=2), before=10, after=2)
+    for link in official_links(header['id']):
+        p = doc.add_paragraph(style='List Bullet')
+        _add_hyperlink(p, link['url'], link['label'])
+        compact(p, after=2)
+    p = doc.add_paragraph()
+    _add_hyperlink(p, f"{BASE_URL}{header['profile_url']}", 'Westminster Brief member profile')
+    compact(p, before=6)
 
     mem = io.BytesIO()
     doc.save(mem)
     mem.seek(0)
-    safe_name = re.sub(r'[^\w\s-]', '', mp_name)[:40].strip()
-    return send_file(
-        mem, as_attachment=True,
-        download_name=f"Profile - {safe_name}.docx",
+    return mem
+
+
+def _docx_response(member_id: int):
+    if not Document:
+        return "Word library missing.", 500
+    header = member_header(member_id)
+    if not header:
+        abort(404)
+    mem = build_profile_docx(header, get_biography(member_id))
+    safe_name = re.sub(r'[^\w\s-]', '', header['name'])[:40].strip() or 'Member'
+    resp = send_file(
+        mem, as_attachment=True, download_name=f"Profile - {safe_name}.docx",
         mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     )
+    resp.headers['X-Robots-Tag'] = 'noindex'
+    return resp
+
+
+def _member_id_arg(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@biography_bp.route('/biography', methods=['GET', 'POST'])
+def biography_home():
+    """Member finder. Selecting a member goes to their profile page."""
+    error = None
+    raw = request.form.get('member_id') if request.method == 'POST' else request.args.get('member_id')
+    if raw:
+        member_id = _member_id_arg(raw)
+        header = member_header(member_id) if member_id else {}
+        if header:
+            return redirect(header['profile_url'], code=303 if request.method == 'POST' else 301)
+        error = "We don't hold details for that member yet — they are added by the weekly refresh."
+    return render_template('biography.html', error_message=error)
+
+
+@biography_bp.route('/members/<int:member_id>')
+def member_profile_redirect(member_id):
+    header = member_header(member_id)
+    if not header:
+        abort(404)
+    return redirect(header['profile_url'], code=301)
+
+
+@biography_bp.route('/members/<int:member_id>/<slug>')
+def member_profile(member_id, slug):
+    header = member_header(member_id)
+    if not header:
+        abort(404)
+    if header['profile_url'] != f'/members/{member_id}/{slug}':
+        return redirect(header['profile_url'], code=301)
+
+    profile = get_profile(member_id)
+    bio = get_biography(member_id)
+    canonical = f"{BASE_URL}{header['profile_url']}"
+    house_name = 'House of Lords' if header['is_lord'] else 'House of Commons'
+    job_title = header['current_role'] or header['role']
+    same_as = [f"https://members.parliament.uk/member/{member_id}"]
+    if profile is not None and profile.wikipedia_url:
+        same_as.append(profile.wikipedia_url)
+    json_ld = {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": header['name'],
+        "url": canonical,
+        "jobTitle": job_title,
+        "memberOf": {"@type": "Organization", "name": house_name},
+        "sameAs": same_as,
+    }
+    if header['party']:
+        json_ld["affiliation"] = {"@type": "Organization", "name": header['party']}
+    if header['photo_url']:
+        json_ld["image"] = header['photo_url']
+
+    party_bit = f"{header['party']} " if header['party'] else ''
+    meta_desc = (f"{header['name']}, {party_bit}{header['role']}. "
+                 f"{'Current role: ' + header['current_role'] + '. ' if header['current_role'] else ''}"
+                 "Career, government and committee roles, registered interests and recent "
+                 "parliamentary activity, with links to the official record.")[:300]
+    indexable = header['stored'] and header['is_current'] and profile is not None \
+        and profile.details_refreshed_at is not None
+
+    return render_template(
+        'member_profile.html',
+        header=header,
+        profile=profile,
+        bio=bio,
+        bio_html=render_bio_html(bio.bio_text) if bio else '',
+        bio_generated=_fmt_date(bio.generated_at) if bio else '',
+        ai_label=AI_LABEL,
+        links=official_links(member_id),
+        canonical_url=canonical,
+        json_ld=json_ld,
+        meta_desc=meta_desc,
+        robots_meta='index, follow' if indexable else 'noindex, follow',
+    )
+
+
+@biography_bp.route('/members/<int:member_id>/profile.docx')
+def member_profile_docx(member_id):
+    return _docx_response(member_id)
+
+
+@biography_bp.route('/api/search_members')
+def api_search_members():
+    return jsonify({"results": search_members(request.args.get('q', ''))})
+
+
+@biography_bp.route("/api/biography", methods=["POST"])
+@limiter.limit("30 per minute")
+def api_biography():
+    """Stored biography for a member (no generation on request — see scripts/refresh_members.py)."""
+    data = request.get_json(silent=True) or {}
+    member_id = _member_id_arg(data.get("member_id"))
+    bio = get_biography(member_id) if member_id else None
+    if bio is None:
+        return jsonify({"biography": "", "available": False})
+    return jsonify({
+        "biography": bio.bio_text, "available": True, "label": AI_LABEL,
+        "generated_at": bio.generated_at.strftime('%Y-%m-%d') if bio.generated_at else '',
+        "model_used": bio.model_used, "sources": bio.sources or [],
+    })
+
+
+@biography_bp.route('/export_biography_word', methods=['POST'])
+def export_biography_word():
+    """Legacy form target — the document is now built from stored data, not posted text."""
+    member_id = _member_id_arg(request.form.get('member_id'))
+    if not member_id:
+        abort(400)
+    return _docx_response(member_id)
+
+
+@biography_bp.route('/sitemap-members.xml')
+def sitemap_members():
+    try:
+        rows = (db.session.query(MemberProfile.member_id, MemberProfile.slug,
+                                 MemberProfile.updated_at)
+                .filter(MemberProfile.is_current.is_(True),
+                        MemberProfile.details_refreshed_at.isnot(None))
+                .order_by(MemberProfile.member_id).all())
+    except Exception as exc:  # table missing before the migration: serve an empty urlset
+        db.session.rollback()
+        log.warning('[sitemap-members] %s', exc.__class__.__name__)
+        rows = []
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for member_id, slug, refreshed in rows:
+        lines.append('  <url>')
+        lines.append(f'    <loc>{xml_escape(BASE_URL + profile_path(member_id, slug))}</loc>')
+        if refreshed:
+            lines.append(f'    <lastmod>{refreshed.date().isoformat()}</lastmod>')
+        lines.append('  </url>')
+    lines.append('</urlset>')
+    resp = make_response('\n'.join(lines))
+    resp.headers['Content-Type'] = 'application/xml; charset=utf-8'
+    return resp
