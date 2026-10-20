@@ -1229,3 +1229,92 @@ def _stat_publication_before_update(mapper, connection, target):
             "by":     recorded_by,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Early Day Motions — ingested by scripts/ingest_edms.py, served at /edms
+# ---------------------------------------------------------------------------
+
+class HaEdm(db.Model):
+    """
+    A House of Commons Early Day Motion from Parliament's Oral Questions and
+    Motions API. id is Parliament's EDM id (stable across sessions; the UIN
+    restarts at 1 each session, so it is not unique).
+
+    signature_count = non-withdrawn signatures (primary sponsor included).
+    Postgres also has a generated search_tsv column + GIN index, added by
+    migrations/edm_tables.py — deliberately not declared here so SQLite
+    create_all() still works (search falls back to LIKE on SQLite).
+    """
+
+    __tablename__ = "ha_edm"
+    __table_args__ = (
+        db.Index("idx_ha_edm_date_tabled", "date_tabled"),
+        db.Index("idx_ha_edm_signature_count", "signature_count"),
+        db.Index("idx_ha_edm_status", "status"),
+        db.Index("idx_ha_edm_session", "session"),
+    )
+
+    id                           = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    uin                          = db.Column(db.String(20), nullable=False)
+    title                        = db.Column(db.Text, nullable=False)
+    motion_text                  = db.Column(db.Text, nullable=True)
+    status                       = db.Column(db.String(20), nullable=False, default="Published")
+    status_date                  = db.Column(db.DateTime, nullable=True)
+    date_tabled                  = db.Column(db.Date, nullable=True)
+    session                      = db.Column(db.String(20), nullable=True)   # e.g. 2026-27
+    primary_sponsor_member_id    = db.Column(db.Integer, nullable=True)
+    primary_sponsor_name         = db.Column(db.Text, nullable=True)
+    primary_sponsor_party        = db.Column(db.Text, nullable=True)
+    signature_count              = db.Column(db.Integer, nullable=False, default=0)
+    amendment_to_id              = db.Column(db.Integer, nullable=True)      # set when this EDM is an amendment
+    amendments                   = db.Column(db.JSON, nullable=True)         # list of amendment summaries
+    is_prayer                    = db.Column(db.Boolean, nullable=False, default=False)
+    related_topics               = db.Column(db.JSON, nullable=True)         # [{slug, label}] /brief pages
+    slug                         = db.Column(db.Text, nullable=True)
+    raw_data                     = db.Column(db.JSON, nullable=True)
+    ingested_at                  = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_refreshed               = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at                   = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                                             onupdate=datetime.utcnow)
+
+    sponsors = db.relationship(
+        "HaEdmSponsor",
+        backref="edm",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self):
+        return f"<HaEdm {self.id} EDM {self.uin} {self.title[:60]!r}>"
+
+
+class HaEdmSponsor(db.Model):
+    """
+    One signature on an EDM. sponsoring_order 1 = primary sponsor, 2-6 =
+    sponsors, later = supporters. Withdrawn signatures are kept with
+    is_withdrawn=True (the API keeps them too) but never counted.
+    member_id is the MNIS id (no FK: not every signatory is in cached_member).
+    """
+
+    __tablename__ = "ha_edm_sponsor"
+    __table_args__ = (
+        db.Index("idx_ha_edm_sponsor_edm", "edm_id"),
+        db.Index("idx_ha_edm_sponsor_member", "member_id"),
+    )
+
+    id               = db.Column(db.Integer, primary_key=True)
+    edm_id           = db.Column(db.Integer, db.ForeignKey("ha_edm.id", ondelete="CASCADE"), nullable=False)
+    member_id        = db.Column(db.Integer, nullable=True)
+    member_name      = db.Column(db.Text, nullable=False)
+    party            = db.Column(db.Text, nullable=True)
+    constituency     = db.Column(db.Text, nullable=True)
+    is_primary       = db.Column(db.Boolean, nullable=False, default=False)
+    is_sponsor       = db.Column(db.Boolean, nullable=False, default=False)
+    sponsoring_order = db.Column(db.Integer, nullable=True)
+    date_signed      = db.Column(db.DateTime, nullable=True)
+    is_withdrawn     = db.Column(db.Boolean, nullable=False, default=False)
+    withdrawn_date   = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<HaEdmSponsor edm={self.edm_id} {self.member_name!r} withdrawn={self.is_withdrawn}>"

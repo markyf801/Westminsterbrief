@@ -61,6 +61,7 @@ from debate_scanner import debate_scanner_bp
 from mp_search import mp_search_bp
 from stakeholder_directory.views import directory_bp
 from stats_catalogue import stats_catalogue_bp
+from edms import edms_bp
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -919,7 +920,6 @@ def home():
 
 @app.route('/health')
 def health():
-    import requests as _req
     from cache_models import CachedTWFYSearch
     checks = {}
 
@@ -936,19 +936,6 @@ def health():
         checks['cache_table'] = 'ok'
     except Exception as e:
         checks['cache_table'] = f'FAIL: {e}'
-
-    # TWFY API
-    twfy_key = os.environ.get('TWFY_API_KEY')
-    if not twfy_key:
-        checks['twfy_api'] = 'FAIL: key not configured'
-    else:
-        try:
-            r = _req.get('https://www.theyworkforyou.com/api/getDebates',
-                         params={'key': twfy_key, 'search': 'test', 'num': 1, 'output': 'json'},
-                         timeout=8)
-            checks['twfy_api'] = 'ok' if r.status_code == 200 else f'FAIL: HTTP {r.status_code}'
-        except Exception as e:
-            checks['twfy_api'] = f'FAIL: {e}'
 
     # Gemini API
     gemini_key = os.environ.get('GEMINI_API_KEY')
@@ -1003,6 +990,7 @@ _sitemap_pqs2_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_pqs3_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_pqs4_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_index_cache: dict = {'xml': None, 'ts': 0.0}
+_sitemap_edms_cache:  dict = {'xml': None, 'ts': 0.0}
 _SITEMAP_TTL    = 3600   # 1h — core + index
 _SITEMAP_PQ_TTL = 86400  # 24h — PQ chunks
 _PQ_CHUNK_SIZE  = 25_000  # 25k per chunk; 4 chunks covers ~100k PQs
@@ -1039,6 +1027,8 @@ def _build_sitemap_core_xml() -> str:
                  '/directory', '/about', '/terms', '/privacy', '/history-of-hansard',
                  '/about/legislation'):
         urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
+    if feature_enabled('FEATURE_EDMS'):
+        urls.append((f"{BASE}/edms", ""))
 
     # Date browse — one URL per distinct date with sessions
     for (d,) in (db.session.query(HansardSession.date)
@@ -1152,6 +1142,8 @@ def _build_sitemap_index_xml() -> str:
     chunks = ['sitemap-core.xml',
               'sitemap-pqs-1.xml', 'sitemap-pqs-2.xml',
               'sitemap-pqs-3.xml', 'sitemap-pqs-4.xml']
+    if feature_enabled('FEATURE_EDMS'):
+        chunks.append('sitemap-edms.xml')
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -1224,6 +1216,13 @@ def sitemap_pqs_4():
     return _serve_xml(_sitemap_pqs4_cache,
                       lambda: _build_sitemap_pqs_xml(3 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
                       _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
+
+@app.route('/sitemap-edms.xml')
+def sitemap_edms():
+    if not feature_enabled('FEATURE_EDMS'):
+        abort(404)
+    from edms import build_sitemap_xml
+    return _serve_xml(_sitemap_edms_cache, build_sitemap_xml, _SITEMAP_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/history-of-hansard')
 def history_of_hansard():
@@ -2545,6 +2544,7 @@ app.register_blueprint(brief_bp)
 app.register_blueprint(stats_catalogue_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(hansard_bp2)
+app.register_blueprint(edms_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────

@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}{% if member_name %}Early Day Motions signed by {{ member_name }}{% elif q %}Search: {{ q }} — Early Day Motions{% else %}Early Day Motions — who backs which cause{% endif %}{% if page > 1 %} (page {{ page }}){% endif %} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}Early Day Motions — Westminster Brief{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/edms">{% endblock %}
+
+{% block json_ld %}
+{% if not filtered %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  "name": "Early Day Motions",
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk/edms",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
+  "mainEntity": {
+    "@type": "ItemList",
+    "itemListElement": [
+      {% for item in items %}{"@type": "ListItem", "position": {{ loop.index + (page - 1) * per_page }}, "url": "https://westminsterbrief.co.uk{{ item.path }}", "name": {{ item.title|tojson }}}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  }
+}
+</script>
+{% endif %}
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.edm-intro { margin-bottom: 16px; }
+.edm-intro p { margin: 0 0 6px; }
+.edm-intro p:last-child { margin-bottom: 0; }
+.edm-sigs { font-size: 12px; font-weight: 600; color: #1a2332; margin-left: auto; white-space: nowrap; }
+.edm-sponsor { font-size: 12px; color: #5a6878; margin-top: 2px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        {% if member_id %}<a href="/edms">Early Day Motions</a><span class="ac-breadcrumb-sep">›</span><span>{{ member_name or 'Member' }}</span>
+        {% else %}<span>Early Day Motions</span>{% endif %}
+    </nav>
+
+    <div class="ac-header">
+        <h1 class="ac-title">{% if member_id %}Early Day Motions signed by {{ member_name or 'this MP' }}{% else %}Early Day Motions{% endif %}</h1>
+        <p class="ac-desc">House of Commons motions and the MPs who have signed them</p>
+    </div>
+
+    {% if not member_id %}
+    <div class="info-box edm-intro">
+        <p>Early Day Motions (EDMs) are motions that MPs table to draw attention to an issue, event or campaign. Other MPs sign an EDM to show their support.</p>
+        <p>Very few EDMs are ever debated, but the list of signatures is a public record of which MPs back a cause. By convention, government ministers do not sign them.</p>
+    </div>
+    {% endif %}
+
+    <form class="ah-form" method="get" action="/edms">
+        {% if member_id %}<input type="hidden" name="member" value="{{ member_id }}">{% endif %}
+        <div class="ah-search-row">
+            <label for="edm-q" class="ah-visually-hidden">Search Early Day Motions</label>
+            <input type="text" name="q" id="edm-q" value="{{ q }}" maxlength="100"
+                   placeholder="Search EDM titles and text…" class="ah-search-input" autocomplete="off">
+            <button type="submit" class="ah-search-btn">Search</button>
+            {% if filtered %}
+            <a href="/edms" class="ah-clear-link">Clear</a>
+            {% endif %}
+        </div>
+        <div class="ah-filter-row">
+            <label for="edm-sort" class="ah-filter-label">Sort by</label>
+            <select name="sort" id="edm-sort" class="ah-filter-select" onchange="this.form.submit()">
+                {% for key, label in sorts.items() %}
+                <option value="{{ key }}" {% if sort == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <div class="ah-results-bar">
+        <span class="ah-results-count">
+            <strong>{{ '{:,}'.format(total) }}</strong> {% if q %}EDM{{ 's' if total != 1 else '' }} matching “{{ q }}”{% else %}published EDM{{ 's' if total != 1 else '' }}{% endif %}
+        </span>
+        {% if total_pages > 1 %}
+        <span class="ah-results-range">page {{ page }} of {{ total_pages }}</span>
+        {% endif %}
+    </div>
+
+    {% if items %}
+    <div class="ah-results-list">
+        {% for item in items %}
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                <span class="archive-dtype-badge">EDM {{ item.uin }}</span>
+                {% if item.is_amendment %}<span class="archive-dtype-badge archive-dtype-other">Amendment</span>{% endif %}
+                {% if item.is_prayer %}<span class="archive-dtype-badge archive-dtype-other">Prayer against SI</span>{% endif %}
+                {% if item.human_date %}<span class="ah-card-date">Tabled {{ item.human_date }}</span>{% endif %}
+                <span class="edm-sigs">{{ item.signatures }} signature{{ 's' if item.signatures != 1 else '' }}</span>
+            </div>
+            <a class="ah-card-title" href="{{ item.path }}">{{ item.title }}</a>
+            <div class="edm-sponsor">{{ item.sponsor_name }}{% if item.sponsor_party %} · {{ item.sponsor_party }}{% endif %}</div>
+            {% if item.excerpt %}<p class="ah-card-snippet">{{ item.excerpt }}</p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state ac-empty">
+        <p>{% if q %}No Early Day Motions match “{{ q }}”. Try a shorter or different search.{% elif member_id %}No Early Day Motions signed by this MP in our records.{% else %}No Early Day Motions to show.{% endif %}</p>
+    </div>
+    {% endif %}
+
+    {% if total_pages > 1 %}
+    <nav class="ah-pagination" aria-label="Results pages">
+        {% if prev_url %}<a href="{{ prev_url }}" class="ah-page-btn">&#8249; Previous</a>
+        {% else %}<span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>{% endif %}
+        <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
+        {% if next_url %}<a href="{{ next_url }}" class="ah-page-btn">Next &#8250;</a>
+        {% else %}<span class="ah-page-btn ah-page-disabled">Next &#8250;</span>{% endif %}
+    </nav>
+    {% endif %}
+
+    <p class="ah-source-note">
+        Early Day Motion data from
+        <a href="https://edm.parliament.uk" target="_blank" rel="noopener">UK Parliament</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Updated daily, so the newest signatures may be up to a day behind Parliament’s site.
+    </p>
+
+</div>
+</div>
+{% endblock %}

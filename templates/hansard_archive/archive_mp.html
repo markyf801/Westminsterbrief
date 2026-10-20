@@ -42,6 +42,9 @@
         <p class="ac-desc" style="margin-top:4px;">
             {{ total }} parliamentary session{{ 's' if total != 1 else '' }} on record in this archive
         </p>
+        {% if feature_enabled('FEATURE_EDMS', current_user) %}
+        <p class="ac-desc" style="margin-top:4px;"><a href="/edms?member={{ member_id }}">Early Day Motions signed by {{ member_name }}</a></p>
+        {% endif %}
     </div>
 
     {# --- Results bar --- #}
