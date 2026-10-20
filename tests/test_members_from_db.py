@@ -721,3 +721,141 @@ def test_render_bio_html_escapes():
     assert "<script>" not in html and "&lt;script&gt;" in html
     assert "<h3>Head</h3>" in html and "<strong>b</strong>" in html and "<p>text</p>" in html
 
+
+
+# ── Photo fetch limits ────────────────────────────────────────────────────────
+
+class _FakePhotoResponse:
+    def __init__(self, status=200, ctype="image/jpeg", length=None, chunks=(b"x" * 10,)):
+        self.status_code = status
+        self.headers = {"Content-Type": ctype}
+        if length is not None:
+            self.headers["Content-Length"] = str(length)
+        self._chunks = chunks
+
+    def iter_content(self, chunk_size=1):
+        yield from self._chunks
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class TestPhotoFetch:
+    URL = "https://members-api.parliament.uk/api/Members/4046/Thumbnail"
+
+    def _patch(self, monkeypatch, response):
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append((url, kwargs))
+            return response
+        monkeypatch.setattr(member_profiles.requests, "get", fake_get)
+        return calls
+
+    def test_ok_without_redirects_and_streamed(self, monkeypatch):
+        calls = self._patch(monkeypatch, _FakePhotoResponse(length=10))
+        assert member_profiles.fetch_member_photo(self.URL).read() == b"x" * 10
+        assert calls[0][1]["allow_redirects"] is False and calls[0][1]["stream"] is True
+
+    def test_redirect_is_not_followed(self, monkeypatch):
+        self._patch(monkeypatch, _FakePhotoResponse(status=302))
+        assert member_profiles.fetch_member_photo(self.URL) is None
+
+    def test_declared_size_over_cap(self, monkeypatch):
+        self._patch(monkeypatch, _FakePhotoResponse(length=member_profiles.PHOTO_MAX_BYTES + 1))
+        assert member_profiles.fetch_member_photo(self.URL) is None
+
+    def test_streamed_size_over_cap_without_length(self, monkeypatch):
+        big = (b"x" * (1024 * 1024),) * 3
+        self._patch(monkeypatch, _FakePhotoResponse(chunks=big))
+        assert member_profiles.fetch_member_photo(self.URL) is None
+
+    def test_non_image_and_foreign_host(self, monkeypatch):
+        calls = self._patch(monkeypatch, _FakePhotoResponse(ctype="text/html"))
+        assert member_profiles.fetch_member_photo(self.URL) is None
+        assert member_profiles.fetch_member_photo("http://169.254.169.254/x") is None
+        assert len(calls) == 1
+
+
+# ── Wikimedia 429 back-off ────────────────────────────────────────────────────
+
+_REAL_FETCH_WIKIDATA = refresh_members.fetch_wikidata   # captured before fixtures patch it
+
+class _FakeHttpResponse:
+    def __init__(self, status, headers=None, body=None):
+        self.status_code = status
+        self.headers = headers or {}
+        self._body = body if body is not None else {"ok": True}
+
+    def json(self):
+        return self._body
+
+
+@pytest.fixture
+def http(monkeypatch):
+    """Scripted responses for refresh_members._http.get; records sleeps instead of sleeping."""
+    state = {"queue": [], "sleeps": [], "urls": []}
+
+    def fake_get(url, params=None, timeout=None):
+        state["urls"].append(url)
+        return state["queue"].pop(0) if state["queue"] else _FakeHttpResponse(429)
+
+    monkeypatch.setattr(refresh_members._http, "get", fake_get)
+    monkeypatch.setattr(refresh_members.time, "sleep", lambda s: state["sleeps"].append(s))
+    monkeypatch.setattr(refresh_members, "_rate_limited_in_a_row", 0)
+    return state
+
+
+class TestRateLimitBackoff:
+    def test_retry_after_honoured_then_success(self, http):
+        http["queue"] = [_FakeHttpResponse(429, {"Retry-After": "7"}), _FakeHttpResponse(200)]
+        assert refresh_members._get_json("https://query.wikidata.org/sparql", backoff_429=True) == {"ok": True}
+        assert 7 in http["sleeps"]
+
+    def test_exponential_without_retry_after_then_skip(self, http):
+        assert refresh_members._get_json("https://query.wikidata.org/sparql", backoff_429=True) is None
+        base = refresh_members.RATE_LIMIT_BASE
+        assert [s for s in http["sleeps"] if s >= base] == [base, base * 2, base * 4]
+        assert len(http["urls"]) == refresh_members.RATE_LIMIT_RETRIES + 1
+        assert refresh_members._rate_limited_in_a_row == 1
+
+    def test_success_resets_and_persistent_429_stops(self, http):
+        refresh_members._get_json("https://query.wikidata.org/sparql", backoff_429=True)
+        http["queue"] = [_FakeHttpResponse(200)]
+        refresh_members._get_json("https://query.wikidata.org/sparql", backoff_429=True)
+        assert refresh_members._rate_limited_in_a_row == 0
+        for _ in range(refresh_members.RATE_LIMIT_STOP_AFTER - 1):
+            assert refresh_members._get_json("https://en.wikipedia.org/w/api.php", backoff_429=True) is None
+        with pytest.raises(refresh_members.StopRun):
+            refresh_members._get_json("https://en.wikipedia.org/w/api.php", backoff_429=True)
+
+    def test_parliament_429_still_stops(self, http):
+        http["queue"] = [_FakeHttpResponse(429)]
+        with pytest.raises(refresh_members.StopRun):
+            refresh_members._get_json(f"{refresh_members.MEMBERS_API}/Search")
+
+    def test_rate_limited_wikidata_chunk_becomes_error(self, http):
+        out = refresh_members.fetch_wikidata([4046, 269])
+        assert out == {4046: {"status": "error"}, 269: {"status": "error"}}
+        text, ok = refresh_members.fetch_wikipedia_extract("https://en.wikipedia.org/wiki/Jacqui_Smith")
+        assert (text, ok) == ("", False)
+
+    def test_run_continues_when_wikimedia_rate_limited(self, app, fake, gemini, monkeypatch):
+        """Names fall back to Parliament, bios are skipped with wiki_status='error', the run finishes."""
+        from cache_models import MemberProfile
+        real_fetch = FakeParliament.__call__
+
+        def parliament_only(self, url, params=None, delay=0, timeout=None, backoff_429=False):
+            if backoff_429:
+                return None                       # what _get_json returns after giving up on a 429
+            return real_fetch(self, url, params, delay)
+        monkeypatch.setattr(FakeParliament, "__call__", parliament_only)
+        monkeypatch.setattr(refresh_members, "fetch_wikidata", _REAL_FETCH_WIKIDATA)
+        stats = _run(regenerate_bios=True)
+        assert stats["stopped"] is None and stats["inserted"] == 2
+        assert stats["bio_skipped"] == 2 and gemini == []
+        assert MemberProfile.query.get(269).wiki_status == "error"
+        assert _name(269).personal_name == "Jacqui Smith" and _name(269).source == "parliament"

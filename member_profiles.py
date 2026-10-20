@@ -368,14 +368,31 @@ def render_bio_html(text: str) -> Markup:
     return Markup('\n'.join(html))
 
 
+PHOTO_MAX_BYTES = 2 * 1024 * 1024
+
+
 def fetch_member_photo(url: str):
-    """Photo for the Word header — Parliament's image host only, 4s cap. None on any failure."""
+    """Photo for the Word header — Parliament's image host only, no redirects, 4s and 2 MB caps.
+
+    None on any failure (the document is built without the photo).
+    """
     if not is_parliament_image(url):
         return None
     try:
-        resp = requests.get(url, timeout=4)
-        if resp.status_code == 200 and resp.headers.get('Content-Type', '').startswith('image/'):
-            return io.BytesIO(resp.content)
+        with requests.get(url, timeout=4, allow_redirects=False, stream=True) as resp:
+            if resp.status_code != 200 or not resp.headers.get('Content-Type', '').startswith('image/'):
+                return None
+            declared = resp.headers.get('Content-Length')
+            if declared and (not declared.isdigit() or int(declared) > PHOTO_MAX_BYTES):
+                return None
+            buf = io.BytesIO()
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                buf.write(chunk)
+                if buf.tell() > PHOTO_MAX_BYTES:
+                    log.info('[members] photo fetch skipped: larger than %d bytes', PHOTO_MAX_BYTES)
+                    return None
+            buf.seek(0)
+            return buf
     except requests.RequestException as exc:
         log.info('[members] photo fetch skipped: %s', exc.__class__.__name__)
     return None

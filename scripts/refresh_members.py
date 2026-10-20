@@ -39,7 +39,10 @@ Railway (Dockerfile.cron, SKIP_MIGRATIONS=1, needs migrations/members_profile_ta
   member-bio-refresh       0 4 2 * *   python scripts/refresh_members.py --audit-names --regenerate-bios
 
 Exit code 1 if most members failed, the member listing could not be fetched,
-or an API returned 401/403/429 (stop and check — do not loop).
+or an API returned 401/403 (stop and check — do not loop). A 429 from Parliament
+also stops the run; a 429 from Wikidata/Wikipedia backs off (Retry-After, else
+exponential) and skips that chunk/member as wiki_status='error', stopping only if
+RATE_LIMIT_STOP_AFTER requests in a row stay rate-limited.
 
 Environment: DATABASE_URL, GEMINI_API_KEY (bios only).
 """
@@ -51,6 +54,7 @@ import os
 import sys
 import time
 from datetime import date, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from urllib.parse import unquote
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -93,18 +97,61 @@ _http = requests.Session()
 _http.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
 
 
+RATE_LIMIT_RETRIES = 3       # back-offs per request before giving up on it
+RATE_LIMIT_BASE = 5          # seconds; doubles each back-off when there is no Retry-After
+RATE_LIMIT_MAX_WAIT = 120    # cap on any single wait
+RATE_LIMIT_STOP_AFTER = 5    # requests in a row still rate-limited after back-off → stop the run
+_rate_limited_in_a_row = 0
+
+
+def _retry_after(resp) -> float | None:
+    value = (resp.headers.get("Retry-After") or "").strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+        return max(0.0, (when - datetime.now(when.tzinfo)).total_seconds())
+    except (TypeError, ValueError):
+        return None
+
+
 def _get_json(url: str, params: dict | None = None, delay: float = PARLIAMENT_DELAY,
-              timeout: float = TIMEOUT):
-    """GET JSON with one retry on timeout/5xx. Returns None on failure; raises StopRun on 401/403/429."""
-    for attempt in (1, 2):
+              timeout: float = TIMEOUT, backoff_429: bool = False):
+    """GET JSON with one retry on timeout/5xx. Returns None on failure.
+
+    401/403 always raise StopRun. 429 raises StopRun for Parliament (CLAUDE.md: stop, don't loop).
+    With backoff_429 (Wikimedia), a 429 waits Retry-After (else exponential) up to RATE_LIMIT_RETRIES
+    times, then returns None so the caller skips that member/chunk; only RATE_LIMIT_STOP_AFTER
+    such requests in a row stop the run.
+    """
+    global _rate_limited_in_a_row
+    attempt = backoffs = 0
+    while True:
         time.sleep(delay)
         try:
             resp = _http.get(url, params=params, timeout=timeout)
         except requests.RequestException as exc:
             reason = exc.__class__.__name__
         else:
+            if resp.status_code == 429 and backoff_429:
+                if backoffs < RATE_LIMIT_RETRIES:
+                    wait = _retry_after(resp)
+                    wait = min(wait if wait is not None else RATE_LIMIT_BASE * 2 ** backoffs, RATE_LIMIT_MAX_WAIT)
+                    backoffs += 1
+                    print(f"  [429]   {url}: rate limited, waiting {wait:.0f}s ({backoffs}/{RATE_LIMIT_RETRIES})",
+                          flush=True)
+                    time.sleep(wait)
+                    continue
+                _rate_limited_in_a_row += 1
+                if _rate_limited_in_a_row >= RATE_LIMIT_STOP_AFTER:
+                    raise StopRun(f"HTTP 429 from {url} on {_rate_limited_in_a_row} requests in a row")
+                print(f"  [fail]  {url}: still rate limited after {RATE_LIMIT_RETRIES} back-offs — skipping",
+                      flush=True)
+                return None
             if resp.status_code in (401, 403, 429):
                 raise StopRun(f"HTTP {resp.status_code} from {url}")
+            if backoff_429:
+                _rate_limited_in_a_row = 0
             if resp.status_code == 200:
                 try:
                     return resp.json()
@@ -114,11 +161,13 @@ def _get_json(url: str, params: dict | None = None, delay: float = PARLIAMENT_DE
                 return None
             else:
                 reason = f"HTTP {resp.status_code}"
+        attempt += 1
         if attempt == 1:
             print(f"  [retry] {url}: {reason}", flush=True)
             time.sleep(2)
-    print(f"  [fail]  {url}: {reason}", flush=True)
-    return None
+            continue
+        print(f"  [fail]  {url}: {reason}", flush=True)
+        return None
 
 
 # ── Parsing ───────────────────────────────────────────────────────────────────
@@ -298,7 +347,7 @@ def fetch_wikidata(member_ids: list[int]) -> dict[int, dict]:
         chunk = member_ids[start:start + WIKIDATA_CHUNK]
         query = _WIKIDATA_QUERY % (" ".join(f'"{int(m)}"' for m in chunk), WIKIDATA_PROPERTY)
         data = _get_json(WIKIDATA_SPARQL, {"query": query, "format": "json"},
-                         delay=WIKI_DELAY, timeout=WIKIDATA_TIMEOUT)
+                         delay=WIKI_DELAY, timeout=WIKIDATA_TIMEOUT, backoff_429=True)
         if data is None:
             out.update({m: {"status": "error"} for m in chunk})
             continue
@@ -311,7 +360,7 @@ def fetch_wikipedia_extract(article_url: str) -> tuple[str, bool]:
     title = unquote(article_url.rsplit("/wiki/", 1)[-1])
     page = _get_json(WIKIPEDIA_API, {"action": "query", "prop": "extracts", "explaintext": 1,
                                      "redirects": 1, "format": "json", "titles": title},
-                     delay=WIKI_DELAY)
+                     delay=WIKI_DELAY, backoff_429=True)
     if page is None:
         return "", False
     pages = (page.get("query") or {}).get("pages") or {}
@@ -659,6 +708,8 @@ def run(member_ids: list[int] | None = None, limit: int | None = None, dry_run: 
     from cache_models import MemberName, MemberProfile
     from extensions import db
 
+    global _rate_limited_in_a_row
+    _rate_limited_in_a_row = 0
     now = datetime.utcnow()
     today = today or now.date()
     stats = {"listed": 0, "inserted": 0, "updated": 0, "unchanged": 0, "detail_failed": 0,
