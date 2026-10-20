@@ -11,7 +11,7 @@
 <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
     <div class="result-card-header" style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
         <input type="checkbox" class="wq-select"
-               data-wq='{{ {"uin": r.uin, "dept": r.dept, "name": r.name, "party": r.party, "role": r.role, "date": r.date, "text": r.text, "heading": r.heading, "answered": r.answered, "is_holding": r.is_holding, "is_withdrawn": r.is_withdrawn, "answer_text": r.answer_text, "answering_minister": r.answering_minister, "answering_minister_role": r.answering_minister_role, "date_answered": r.date_answered, "url": r.url} | tojson }}'
+               data-wq='{{ {"uin": r.uin} | tojson }}'
                onchange="updateSelectionBar()"
                onclick="event.stopPropagation()"
                style="cursor:pointer; flex-shrink:0; width:15px; height:15px;">
@@ -30,10 +30,15 @@
             <span class="wq-party-label">({{ r.party }}, {{ r.role }})</span> asked:
         </p>
         <p class="result-card-quote">"{{ r.text }}"</p>
-        {% if r.answer_text %}
+        {% if r.answer_text or r.answer_truncated %}
         <details class="wq-answer-details">
             <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
+            {% if r.answer_truncated %}
+            <div class="wq-answer-text"><p>{{ r.answer_excerpt }}</p>
+                <p><a href="/archive/pq/{{ r.uin }}" target="_blank">Read full answer &rarr;</a></p></div>
+            {% else %}
             <div class="wq-answer-text">{{ r.answer_text | safe }}</div>
+            {% endif %}
         </details>
         {% elif r.answered %}
         <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
@@ -115,15 +120,27 @@
     {% endif %}
 </div>
 
-{% if pre_filter_count > 0 %}
+{# ── Pager — shown below the results ── #}
+{% macro wq_pager() %}
+{% if pager and pager.last_page > 1 %}
+<nav class="wq-pager" aria-label="Results pages" style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:16px; font-size:14px;">
+    {% if pager.prev_url %}<a href="{{ pager.prev_url }}" rel="prev" class="btn btn-muted" style="padding:4px 12px;">&larr; Previous</a>{% endif %}
+    {% for n, url in pager.numbers %}
+        {% if n is none %}<span style="color:#888;">&hellip;</span>
+        {% elif n == pager.page %}<strong aria-current="page" style="padding:4px 8px;">{{ n }}</strong>
+        {% else %}<a href="{{ url }}" style="padding:4px 8px; color:#1a4a6e;">{{ n }}</a>{% endif %}
+    {% endfor %}
+    {% if pager.next_url %}<a href="{{ pager.next_url }}" rel="next" class="btn btn-muted" style="padding:4px 12px;">Next &rarr;</a>{% endif %}
+</nav>
+{% endif %}
+{% endmacro %}
+
+{% if results %}
 <div class="info-box" style="margin-top: 20px;">
-    Showing <strong>{{ results|length }}</strong> question{{ 's' if results|length != 1 else '' }} matching your filters.
-    {% if total_available > results|length %}
-    <strong>{{ total_available }}</strong> total matches in the archive — showing first {{ results_cap }}.
-    Add a <strong>date range</strong> or <strong>department filter</strong> to narrow results.
-    {% endif %}
-    {% if results|length >= results_cap %}
-    Add a <strong>date range</strong> or <strong>department filter</strong> to see a more focused set.
+    Showing <strong>{{ page_start }}&ndash;{{ page_end }}</strong> of <strong>{{ "{:,}".format(total_available) }}</strong> question{{ 's' if total_available != 1 else '' }} matching your filters, newest first.
+    {% if total_available > results_cap %}
+    Pages and exports cover the newest {{ "{:,}".format(results_cap) }} &mdash;
+    add a <strong>date range</strong> or <strong>department filter</strong> to narrow results.
     {% endif %}
     {% if selected_dept %}
     <span style="margin-left: 6px;">|</span>
@@ -143,7 +160,7 @@
         </button>
         <button onclick="showView('grouped')" id="btn-grouped"
                 style="padding: 5px 14px; border-radius: 4px; border: 1px solid #1a4a6e; background: #1a4a6e; color: white; font-size: 12px; cursor: pointer; font-weight: 600;">
-            By topic ({{ grouped_results|length }} categories)
+            By topic ({{ grouped_results|length }} categories{% if pager and pager.last_page > 1 %} on this page{% endif %})
         </button>
     </div>
 
@@ -172,6 +189,8 @@
         </details>
         {% endfor %}
     </div>
+
+    {{ wq_pager() }}
 
 {% elif searched and not error_message %}
     <div class="box empty-state" style="margin-top: 20px;">
