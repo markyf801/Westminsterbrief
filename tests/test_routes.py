@@ -77,7 +77,7 @@ def app():
     import stakeholder_directory.models  # noqa: F401
     import stakeholder_directory.ingesters.staging  # noqa: F401
     from hansard_archive.models import (
-        HansardSession, HansardSessionTheme, HaPQ, HaPQTheme,
+        HansardContribution, HansardSession, HansardSessionTheme, HaPQ, HaPQTheme,
         THEME_TYPE_POLICY_AREA, THEME_TYPE_SPECIFIC,
     )
 
@@ -137,10 +137,24 @@ def app():
             house='Commons',
             debate_type='debate',
             slug='test-session',
+            hansard_url='https://hansard.parliament.uk/Commons/2026-01-01/debates/TEST-GUID/TestDebateSession',
             contributions_ingested=True,
             is_container=False,
         )
         _db.session.add(s)
+
+        # Second session sharing only the 'rail fares' specific tag with test-session
+        s2 = HansardSession(
+            ext_id='test-ext-002',
+            title='Rail Fares Consultation',
+            date=date(2026, 1, 8),
+            house='Lords',
+            debate_type='debate',
+            slug='rail-fares-consultation',
+            contributions_ingested=True,
+            is_container=False,
+        )
+        _db.session.add(s2)
 
         # Seed a HaPQ for /archive/pq/ route
         pq = HaPQ(
@@ -164,7 +178,26 @@ def app():
             for i in (2, 3, 4)
         ]
         _db.session.add_all(extra_pqs)
+
+        # Related-PQ panel on test-session: policy-area-only match inside the
+        # window, and one outside the ±180-day window.
+        transport_pqs = [
+            HaPQ(uin='TEST010', heading='Rail timetable changes',
+                 question_text='What assessment has been made of rail timetables?',
+                 tabled_date=date(2026, 3, 1), answering_body='Department for Transport',
+                 is_answered=True),
+            HaPQ(uin='TEST011', heading='Old transport question',
+                 question_text='An old question about transport.',
+                 tabled_date=date(2024, 1, 1), answering_body='Department for Transport',
+                 is_answered=True),
+        ]
+        _db.session.add_all(transport_pqs)
         _db.session.flush()
+
+        _db.session.add(HansardContribution(
+            session_id=s.id, member_name='Test Speaker (Lab)', member_id=12345,
+            speech_text='I beg to move.', speech_order=1,
+        ))
 
         # Topic tags:
         #   'Chagos Islands'      PQ-only, 3 PQs        -> 200, indexed
@@ -185,7 +218,13 @@ def app():
                                     theme_type=THEME_TYPE_SPECIFIC),
                 HansardSessionTheme(session_id=s.id, theme='Transport',
                                     theme_type=THEME_TYPE_POLICY_AREA),
+                HansardSessionTheme(session_id=s.id, theme='rail fares',
+                                    theme_type=THEME_TYPE_SPECIFIC),
+                HansardSessionTheme(session_id=s2.id, theme='rail fares',
+                                    theme_type=THEME_TYPE_SPECIFIC),
             ]
+            + [HaPQTheme(pq_id=p.id, theme='Transport', theme_type=THEME_TYPE_POLICY_AREA)
+               for p in transport_pqs]
         )
         _db.session.commit()
 
@@ -244,6 +283,63 @@ class TestArchiveRoutes:
         """Seeded session slug 'test-session' on 1 Jan 2026 must render without error."""
         r = client.get('/archive/debate/1-january-2026/test-session')
         assert r.status_code == 200
+
+    def test_debate_related_pqs_panel(self, client):
+        """Tag-matched PQs: specific-tag matches first (newest first), then
+        policy-area fill; headingless PQs fall back to question text."""
+        html = client.get('/archive/debate/1-january-2026/test-session').get_data(as_text=True)
+        assert 'Related written questions' in html
+        # TEST001 has no heading: question text is the title, never the bare UIN
+        assert ('<span class="rpa-title">What is the government doing about test issues?</span>'
+                in html)
+        assert '<span class="rpa-title">TEST001</span>' not in html
+        assert 'href="/archive/pq/TEST001"' in html
+        # Order: specific 'Bus services' (TEST002 Feb, TEST001 Jan), then policy-area TEST010
+        i2 = html.index('href="/archive/pq/TEST002"')
+        i1 = html.index('href="/archive/pq/TEST001"')
+        i10 = html.index('href="/archive/pq/TEST010"')
+        assert i2 < i1 < i10
+        assert 'Department for Transport' in html
+        # Outside the ±180-day window
+        assert 'href="/archive/pq/TEST011"' not in html
+
+    def test_pq_display_heading_fallback(self):
+        from hansard_archive.views import _pq_display_heading
+        assert _pq_display_heading('Bus services', 'x') == 'Bus services'
+        long_q = 'To ask the Secretary of State for Transport ' + 'what steps are being taken ' * 5
+        title = _pq_display_heading(None, long_q)
+        assert title.endswith('…') and len(title) <= 81
+        assert title.startswith('To ask the Secretary of State for Transport')
+        assert _pq_display_heading('  ', '') == 'Written question'
+
+    def test_debate_topic_related_sessions(self, client):
+        html = client.get('/archive/debate/1-january-2026/test-session').get_data(as_text=True)
+        assert 'Debates on the same topics' in html
+        assert 'href="/archive/debate/8-january-2026/rail-fares-consultation"' in html
+
+    def test_debate_cite_box(self, client):
+        html = client.get('/archive/debate/1-january-2026/test-session').get_data(as_text=True)
+        assert 'id="cite-this"' in html
+        assert 'id="sd-cite-copy"' in html
+        expected = (
+            "HC Deb 1 January 2026, &#39;Test Debate Session&#39;. Westminster Brief, "
+            "https://westminsterbrief.co.uk/archive/debate/1-january-2026/test-session. "
+            "Official record: https://hansard.parliament.uk/Commons/2026-01-01/debates/"
+            "TEST-GUID/TestDebateSession"
+        )
+        assert expected in html
+        lords = client.get('/archive/debate/8-january-2026/rail-fares-consultation').get_data(as_text=True)
+        assert "HL Deb 8 January 2026, &#39;Rail Fares Consultation&#39;." in lords
+        assert 'Official record:' not in lords  # no hansard_url stored
+
+    def test_debate_contribution_anchors(self, app, client):
+        from hansard_archive.models import HansardContribution
+        with app.app_context():
+            cid = HansardContribution.query.filter_by(member_name='Test Speaker (Lab)').one().id
+        html = client.get('/archive/debate/1-january-2026/test-session').get_data(as_text=True)
+        assert f'id="contrib-{cid}"' in html
+        assert f'href="#contrib-{cid}"' in html
+        assert 'class="sd-contrib-permalink"' in html
 
     def test_archive_pq_detail_missing_returns_404(self, client):
         r = client.get('/archive/pq/NOTEXIST')
