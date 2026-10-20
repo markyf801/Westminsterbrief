@@ -835,10 +835,10 @@ def archive_home():
 
     # Counts for the search affordance line — queried once, passed to all render paths
     try:
-        _sc = db.session.query(func.count(HansardSession.id)).filter(HansardSession.is_container == False).scalar() or 0
-        _pqc = db.session.query(func.count(HaPQ.id)).scalar() or 0
-        archive_session_count = f"{_sc:,}" if _sc else ""
-        archive_pq_count = f"{(_pqc // 10000) * 10000:,}+" if _pqc else ""
+        from hansard_archive.site_counts import site_counts
+        _counts = site_counts()
+        archive_session_count = _counts['sessions']
+        archive_pq_count = _counts['pqs']
     except Exception:
         archive_session_count = ""
         archive_pq_count = ""
@@ -2998,10 +2998,10 @@ def hansard_home():
         recent_sessions = _build_session_items(recent_rows, cc, pa, st)
 
     try:
-        _sc = db.session.query(func.count(HansardSession.id)).filter(HansardSession.is_container == False).scalar() or 0
-        _pqc = db.session.query(func.count(HaPQ.id)).scalar() or 0
-        archive_session_count = f"{_sc:,}" if _sc else ""
-        archive_pq_count = f"{(_pqc // 10000) * 10000:,}+" if _pqc else ""
+        from hansard_archive.site_counts import site_counts
+        _counts = site_counts()
+        archive_session_count = _counts['sessions']
+        archive_pq_count = _counts['pqs']
     except Exception:
         archive_session_count = ""
         archive_pq_count = ""
