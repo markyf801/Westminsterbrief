@@ -67,7 +67,15 @@ questions day (e.g. 901544–901549 Defence, tabled 13 Oct, due 19 Oct; 901598�
 901603 Health, tabled 14 Oct, due 20 Oct). That is consistent with oral
 questions that were unsuccessful in the shuffle being transferred for written
 answer (inferred from the API data; Parliament doesn't label them). They are
-real questions with their own api_ids, not bad data.
+real questions with their own api_ids, not bad data. A full walk of the public
+API for 13 May–20 Oct 2026 (2026-10-20) found 257 of them (900017–901603, all
+Commons, all named-day, 210 of the 249 answered on their named day) — but the
+archive holds 103. Check whether the other ~150 are missing from `ha_pq` (the
+`Commons 9xxxxx` row in the checks output); if so, the headings backfill
+(step 6) inserts them. The same walk put the highest ordinary Commons UIN at
+36,265 against the old session's lowest archived 50,047: about 13,800 to go at
+2,200–2,700 a week, i.e. first ordinary collision late November / early
+December.
 
 - Matching is unaffected (api_id, then (date, uin)).
 - Collision estimates must treat 9xxxxx as its own series: the checks file
