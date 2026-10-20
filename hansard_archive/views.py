@@ -1479,6 +1479,11 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     )
 
 
+@brief_bp.route("/<string:theme_slug>")
+def brief_theme(theme_slug: str):
+    return _brief_theme_response(theme_slug, canonical_prefix="/brief")
+
+
 # ---------------------------------------------------------------------------
 # Specific theme page — /archive/theme/<slug>  â†'  301 â†' /brief/<slug>
 # ---------------------------------------------------------------------------
