@@ -919,7 +919,6 @@ def home():
 
 @app.route('/health')
 def health():
-    import requests as _req
     from cache_models import CachedTWFYSearch
     checks = {}
 
@@ -936,19 +935,6 @@ def health():
         checks['cache_table'] = 'ok'
     except Exception as e:
         checks['cache_table'] = f'FAIL: {e}'
-
-    # TWFY API
-    twfy_key = os.environ.get('TWFY_API_KEY')
-    if not twfy_key:
-        checks['twfy_api'] = 'FAIL: key not configured'
-    else:
-        try:
-            r = _req.get('https://www.theyworkforyou.com/api/getDebates',
-                         params={'key': twfy_key, 'search': 'test', 'num': 1, 'output': 'json'},
-                         timeout=8)
-            checks['twfy_api'] = 'ok' if r.status_code == 200 else f'FAIL: HTTP {r.status_code}'
-        except Exception as e:
-            checks['twfy_api'] = f'FAIL: {e}'
 
     # Gemini API
     gemini_key = os.environ.get('GEMINI_API_KEY')

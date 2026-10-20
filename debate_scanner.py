@@ -2,7 +2,7 @@ import requests, os, json, re, io, concurrent.futures, time
 from flask import Blueprint, render_template, request, send_file, copy_current_request_context, jsonify
 from flask_login import current_user, login_required
 from datetime import datetime
-from cache_models import CachedTranscript, CachedTWFYSearch, StakeholderOrg
+from cache_models import CachedTWFYSearch, StakeholderOrg
 from extensions import limiter
 try:
     import feedparser
@@ -106,17 +106,6 @@ DEPARTMENTS_TWFY = [
     "Scotland Office",
     "Wales Office",
 ]
-
-DEPT_KEYWORDS = {
-    "Department for Education": '("Education" OR "Schools" OR "Skills" OR "Childcare" OR "Universities" OR "SEND")',
-    "Department of Health and Social Care": '("Health" OR "NHS" OR "Social Care")',
-    "HM Treasury": '("Treasury" OR "Tax" OR "Economy" OR "Spending")',
-    "Home Office": '("Home Office" OR "Police" OR "Immigration")',
-    "Ministry of Defence": '("Defence" OR "Military" OR "Armed Forces")',
-    "Ministry of Justice": '("Justice" OR "Prisons" OR "Courts")',
-    "Department for Science, Innovation and Technology": '("Science" OR "Technology" OR "Innovation")',
-    "Cabinet Office": '("Cabinet Office" OR "Civil Service")'
-}
 
 PARLIAMENT_WQ_API = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
 PARLIAMENT_WMS_API = "https://questions-statements-api.parliament.uk/api/writtenstatements/statements"
@@ -667,151 +656,6 @@ def expand_search_query(topic, api_key):
     return f'"{topic}"'
 
 
-_SOURCE_GID_PREFIX = {
-    'commons':        'uk.org.publicwhip/debate/',
-    'westminsterhall':'uk.org.publicwhip/westminhall/',
-    'lords':          'uk.org.publicwhip/lords/',
-    'wms':            'uk.org.publicwhip/wms/',
-}
-
-def _listurl_to_parent_gid(listurl, source):
-    """Convert a TWFY listurl to the full TWFY speech GID for use with gid= parameter.
-    Uses the actual speech position from the listurl — constructing a fake .0 parent
-    causes 404 because that position may not exist in TWFY's database.
-    Returns the full uk.org.publicwhip/PREFIX/DATE.SECTION.POSITION GID.
-    Deduplication in fetch_all_debate_sessions uses just the section portion as the key.
-    Returns None if listurl cannot be parsed, is a Hansard URL, or source is not expandable."""
-    if not listurl or source not in _SOURCE_GID_PREFIX:
-        return None
-    if listurl.startswith('http'):
-        return None  # Hansard API full URLs cannot expand via TWFY GID path
-    try:
-        m = re.search(r'\?id=([^&#]+)', listurl)
-        if not m:
-            return None
-        id_val = m.group(1)                   # e.g. "2026-01-15.123.4" (actual speech position)
-        if '.' not in id_val:
-            return None
-        return f"{_SOURCE_GID_PREFIX[source]}{id_val}"  # full GID with actual position
-    except Exception:
-        return None
-
-
-def fetch_full_debate_session(parent_gid, source):
-    """Fetch ALL speeches from a TWFY debate section via its parent GID.
-    Returns normalised speech list (same schema as fetch_twfy_topic). relevance=0.
-    Cached with 30-day TTL — published debate transcripts never change."""
-    if not TWFY_API_KEY:
-        return []
-    cached = CachedTWFYSearch.get(parent_gid, f'session_{source}', ttl_hours=720)
-    if cached is not None:
-        return cached
-    try:
-        import logging as _sl
-        api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
-        params = {'key': TWFY_API_KEY, 'gid': parent_gid, 'output': 'json'}
-        if source != 'wms':
-            params['type'] = source
-        resp = requests.get(api_url, params=params, timeout=10)
-        _sl.warning(f"[session_fetch] gid={parent_gid!r} type={params.get('type')!r} status={resp.status_code}")
-        if resp.status_code != 200:
-            return []
-        rjson = resp.json()
-        rows = rjson.get('rows', [])
-        _sl.warning(f"[session_fetch] gid={parent_gid!r} rows_returned={len(rows)} response_keys={list(rjson.keys())} error={rjson.get('error','')!r}")
-        if rows:
-            sample = rows[0]
-            _sl.warning(f"[session_fetch] sample_row keys={list(sample.keys())} speaker={sample.get('speaker')} hdate={sample.get('hdate')} listurl={sample.get('listurl','')[:80]!r}")
-        results = []
-        for r in rows:
-            body_raw = r.get('body', '')
-            body_text = clean_body_text(body_raw)
-            debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
-            results.append({
-                'listurl': r.get('listurl', ''),
-                'body_clean': body_text[:500],
-                'body_export': body_text[:3000],
-                'body_word_count': len(body_text.split()),
-                'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
-                'speaker_party': _normalise_party((r.get('speaker') or {}).get('party', '')),
-                'hdate': r.get('hdate', ''),
-                'debate_title': debate_title,
-                'source': source,
-                'source_label': get_source_label(source),
-                'relevance': 0,
-                'debate_type': get_debate_type(debate_title, source=source),
-                'from_session_fetch': True,
-            })
-        if results:
-            CachedTWFYSearch.store(parent_gid, f'session_{source}', results)
-        return results
-    except Exception as e:
-        import logging
-        logging.warning(f"[session_expand] {parent_gid} {source}: {type(e).__name__}: {e}")
-        return []
-
-
-def fetch_all_debate_sessions(matched_rows, max_debates=15):
-    """For each unique debate in matched_rows, fetch all speeches via TWFY GID lookup.
-    This guarantees ministers appear even when their responses don't contain search keywords.
-    Skips wrans (written answers have no multi-speaker session to expand).
-    Routes by data source: rows with debate_section_ext_id use Hansard API;
-    rows without (TWFY keyword search) fall back to TWFY GID expansion."""
-    seen_sections = set()
-    hansard_pairs = []   # (ext_id, source) — Hansard API expansion
-    gid_source_pairs = []  # (gid, source) — TWFY GID expansion (fallback)
-
-    for r in matched_rows:
-        source = r.get('source', '')
-        if source == 'wrans':
-            continue
-        title = r.get('debate_title', '').lower()
-        if 'written answers' in title or 'written answer' in title:
-            continue
-
-        ext_id = r.get('debate_section_ext_id', '')
-        if ext_id:
-            if ext_id not in seen_sections:
-                seen_sections.add(ext_id)
-                hansard_pairs.append((ext_id, source))
-        else:
-            gid = _listurl_to_parent_gid(r.get('listurl', ''), source)
-            if gid:
-                last_dot = gid.rfind('.')
-                section_key = gid[:last_dot] if last_dot != -1 else gid
-                if section_key not in seen_sections:
-                    seen_sections.add(section_key)
-                    gid_source_pairs.append((gid, source))
-
-        if len(hansard_pairs) + len(gid_source_pairs) >= max_debates:
-            break
-
-    import logging as _slog
-    _slog.warning(f"[session_expand] {len(matched_rows)} rows in → "
-                  f"{len(hansard_pairs)} hansard + {len(gid_source_pairs)} twfy sessions"
-                  f" | hansard_sample={hansard_pairs[:2]} | twfy_sample={gid_source_pairs[:2]}")
-
-    if not hansard_pairs and not gid_source_pairs:
-        return []
-
-    extra = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {}
-        for ext_id, src in hansard_pairs:
-            futs[ex.submit(copy_current_request_context(fetch_full_hansard_session), ext_id, src)] = ext_id
-        for gid, src in gid_source_pairs:
-            futs[ex.submit(copy_current_request_context(fetch_full_debate_session), gid, src)] = gid
-        for f in concurrent.futures.as_completed(futs):
-            try:
-                extra.extend(f.result())
-            except Exception:
-                pass
-
-    _slog.warning(f"[session_expand] {len(extra)} total speeches fetched from "
-                  f"{len(hansard_pairs) + len(gid_source_pairs)} sessions")
-    return extra
-
-
 def _group_by_debate(rows):
     """Group speeches by debate (date + title). Within each group, ministers first.
     Returns list of (debate_key_dict, [rows]) sorted: minister-debates first, then most recent."""
@@ -1313,82 +1157,6 @@ def lookup_twfy_person(name):
     return None, None, False
 
 
-def fetch_twfy_minister_topic(person_id, topic, date_range, sources, num=50, is_lord=False):
-    """Fetch speeches for a specific TWFY person_id, filtered by topic + date.
-    Returns rows in the same normalised schema as fetch_twfy_topic() so they
-    can be merged and deduped with keyword-search results.
-    Results cached for 6h to reduce TWFY API quota usage."""
-    # Lords ministers only speak in Lords (+ wms), not Commons/WestminsterHall.
-    # Filtering here saves ~2 API calls per Lords minister per search.
-    if is_lord:
-        sources = [s for s in sources if s in ('lords', 'wms')]
-
-    rows = []
-    for source in sources:
-        cache_key_query = f"minister:{person_id}:{topic} {date_range}".strip()
-        cached = CachedTWFYSearch.get(cache_key_query, source, ttl_hours=6)
-        if cached is not None:
-            rows.extend(cached)
-            continue
-        api_url = TWFY_WMS_URL if source == 'wms' else TWFY_API_URL
-        query = f"{topic} {date_range}".strip() if topic else date_range.strip()
-        params = {
-            'key': TWFY_API_KEY, 'person': str(person_id),
-            'order': 'd', 'num': num, 'output': 'json'
-        }
-        if query:
-            params['search'] = query
-        if source != 'wms':
-            params['type'] = source
-        try:
-            resp = requests.get(api_url, params=params, timeout=15)
-            if resp.status_code != 200:
-                continue
-            source_rows = []
-            for r in resp.json().get('rows', []):
-                body_raw = r.get('body', '')
-                body_text = clean_body_text(body_raw)
-                debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
-                if source == 'wms':
-                    parent_body = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
-                    debate_title = parent_body if parent_body else re.sub(r'<[^>]+>', '', body_raw)[:80]
-                elif source == 'wrans':
-                    debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
-                dtype = get_debate_type(debate_title, source=source)
-                source_rows.append({
-                    'listurl': r.get('listurl', ''),
-                    'body_clean': body_text[:500],
-                    'body_export': body_text[:3000],
-                    'body_word_count': len(body_text.split()),
-                    'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
-                    'speaker_party': _normalise_party((r.get('speaker') or {}).get('party', '')),
-                    'hdate': r.get('hdate', ''),
-                    'debate_title': debate_title,
-                    'source': source,
-                    'source_label': get_source_label(source),
-                    'relevance': r.get('relevance', 0),
-                    'debate_type': dtype,
-                })
-            # TWFY doesn't reliably filter by date when combined with person= param.
-            # Apply Python-level filter before caching to prevent stale speeches leaking in.
-            if date_range and '..' in date_range:
-                parts = date_range.split('..')
-                d_from = parts[0].strip()  # YYYYMMDD
-                d_to   = parts[1].strip()
-                # Convert YYYYMMDD → YYYY-MM-DD for comparison with hdate
-                def _fmt(d): return f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
-                d_from_iso = _fmt(d_from) if d_from else ''
-                d_to_iso   = _fmt(d_to)   if d_to   else ''
-                source_rows = [r for r in source_rows
-                               if (not d_from_iso or r.get('hdate', '') >= d_from_iso)
-                               and (not d_to_iso or r.get('hdate', '') <= d_to_iso)]
-            CachedTWFYSearch.store(cache_key_query, source, source_rows)
-            rows.extend(source_rows)
-        except Exception:
-            pass
-    return rows
-
-
 # --- Hansard API helpers (Phase 1: minister search) ---
 
 _HANSARD_PARTY_ABBREV = {
@@ -1410,31 +1178,6 @@ def _parse_hansard_party(attributed_to):
         abbrev = m.group(1).strip().lower()
         return _HANSARD_PARTY_ABBREV.get(abbrev, m.group(1).strip())
     return ''
-
-
-def _extract_attributed_name(attributed_to):
-    """Extract clean speaker name from AttributedTo string.
-
-    The name precedes the first '(' in almost all formats:
-      'Lord Leigh of Hurley (Con)'                           → 'Lord Leigh of Hurley'
-      'Helen Hayes (Hayes and Harlington) (Lab)'             → 'Helen Hayes'
-      'Josh MacAlister (Sevenoaks) (Lab)'                    → 'Josh MacAlister'
-
-    Exception: government whip/role format uses '/' in the role text and
-    the real name is in the first paren group:
-      'Baroness in Waiting/Government Whip (Baroness Blake of Leeds) (Lab)'
-                                                             → 'Baroness Blake of Leeds'
-    """
-    if not attributed_to:
-        return ''
-    before_paren = attributed_to.split('(')[0].strip()
-    if not before_paren:
-        return attributed_to.strip()
-    # '/' in the pre-paren text signals a role descriptor — real name is inside first '()'
-    if '/' in before_paren:
-        m = re.search(r'\(([^)]+)\)', attributed_to)
-        return m.group(1).strip() if m else before_paren
-    return before_paren
 
 
 def _hansard_section_to_source(house, section):
@@ -1545,93 +1288,6 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
     except Exception as e:
         import logging
         logging.warning(f"[minister_search] parliament_id={parliament_id} exception={type(e).__name__}: {e}")
-        return []
-
-
-def fetch_full_hansard_session(ext_id, source):
-    """Fetch ALL speeches from a Hansard debate section via DebateSectionExtId.
-    Used instead of fetch_full_debate_session() for rows that came via the Hansard API.
-    Returns normalised speech list with same schema as fetch_twfy_topic. relevance=0."""
-    if not ext_id:
-        return []
-    cache_key = f"hansard:session:{ext_id}"
-    cached = CachedTWFYSearch.get(cache_key, f'session_{source}', ttl_hours=720)
-    if cached is not None:
-        return cached
-    try:
-        import logging as _hl
-        resp = requests.get(f"{HANSARD_API_BASE}/debates/debate/{ext_id}.json", timeout=15)
-        _hl.warning(f"[hansard_session] ext_id={ext_id!r} status={resp.status_code}")
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-
-        # Flatten Items from top-level debate and all nested ChildDebates
-        items = []
-
-        def _collect(node):
-            for item in node.get('Items', []):
-                items.append(item)
-            for child in node.get('ChildDebates', []):
-                _collect(child)
-
-        _collect(data)
-        _hl.warning(f"[hansard_session] ext_id={ext_id!r} items={len(items)}")
-        if items:
-            s = items[0]
-            _hl.warning(f"[hansard_session] sample keys={list(s.keys())[:12]} attributed={s.get('AttributedTo','')!r}")
-
-        # Metadata lives in Overview, not at the root level
-        overview = data.get('Overview') or {}
-        debate_title = overview.get('Title', '') or ''
-        raw_date = overview.get('Date', '') or ''
-        hdate = raw_date[:10] if raw_date else ''
-        house = overview.get('House', 'Commons') or 'Commons'
-        house_path = 'Lords' if 'lord' in house.lower() else 'Commons'
-        slug = _make_hansard_slug(debate_title)
-        base_url = f"https://hansard.parliament.uk/{house_path}/{hdate}/debates/{ext_id}/{slug}"
-
-        results = []
-        for item in items:
-            # Skip procedural items (no speaker attached)
-            if not item.get('MemberId') and not item.get('AttributedTo'):
-                continue
-            body_raw = item.get('Value', '') or ''
-            if not body_raw:
-                continue
-            body_text = clean_body_text(body_raw)
-            if not body_text.strip():
-                continue
-
-            attributed_to = item.get('AttributedTo', '') or ''
-            # MemberName is a clean field when present; fall back to parsing AttributedTo
-            member_name = (item.get('MemberName') or '').strip() or _extract_attributed_name(attributed_to)
-            item_date = item.get('SittingDate', '') or raw_date
-            item_hdate = item_date[:10] if item_date else hdate
-
-            results.append({
-                'listurl': base_url,
-                'body_clean': body_text[:500],
-                'body_export': body_text[:3000],
-                'body_word_count': len(body_text.split()),
-                'speaker_name': member_name,
-                'speaker_party': _parse_hansard_party(attributed_to),
-                'hdate': item_hdate,
-                'debate_title': debate_title,
-                'source': source,
-                'source_label': get_source_label(source),
-                'relevance': 0,
-                'debate_type': get_debate_type(debate_title, source=source),
-                'from_session_fetch': True,
-                'debate_section_ext_id': ext_id,
-            })
-
-        if results:
-            CachedTWFYSearch.store(cache_key, f'session_{source}', results)
-        return results
-    except Exception as e:
-        import logging
-        logging.warning(f"[hansard_session] {ext_id} {source}: {type(e).__name__}: {e}")
         return []
 
 
@@ -2332,50 +1988,6 @@ def _debate_group_key(title: str) -> str:
     return title
 
 
-def fetch_minister_debates(person_id, topic, date_range, house_filter='all'):
-    """Fetch debates where a minister spoke, deduped by unique debate section."""
-    sources = []
-    if house_filter in ('all', 'commons'):
-        sources.extend(['commons', 'westminsterhall'])
-    if house_filter in ('all', 'lords'):
-        sources.append('lords')
-
-    all_rows = []
-    for source in sources:
-        try:
-            params = {
-                'key': TWFY_API_KEY, 'person': person_id,
-                'type': source, 'order': 'd', 'num': 100, 'output': 'json'
-            }
-            query = f"{topic} {date_range}".strip() if topic else date_range.strip()
-            if query:
-                params['search'] = query
-            resp = requests.get(TWFY_API_URL, params=params, timeout=15)
-            if resp.status_code == 200:
-                all_rows.extend(resp.json().get('rows', []))
-        except Exception:
-            pass
-
-    unique_debates = {}
-    for r in all_rows:
-        parent_body = re.sub(r'<[^>]+>', '', (r.get('parent') or {}).get('body', '') or '')
-        date_val = r.get('hdate', '')
-        key = f"{parent_body}_{date_val}"
-        url = 'https://www.theyworkforyou.com' + r.get('listurl', '')
-        if key not in unique_debates:
-            unique_debates[key] = {
-                'title': parent_body, 'date': date_val, 'url': url,
-                'type': get_debate_type(parent_body), 'contributions': 1,
-                'group_key': _debate_group_key(parent_body),
-            }
-        else:
-            unique_debates[key]['contributions'] += 1
-
-    result = list(unique_debates.values())
-    result.sort(key=lambda x: x['date'], reverse=True)
-    return result
-
-
 # ==========================================
 # LOCAL DB minister lookup (replaces TWFY for the Debate Contributions tab)
 # Keyed on member_id throughout — no name-search against TWFY. The only
@@ -2541,22 +2153,12 @@ def api_all_ministers():
 
 
 # ==========================================
-# ROUTE 1: SCAN AND GROUP BY THEME (STEP 1)
+# ROUTE 1: RESEARCH PAGE (GET only — searches post to the routes below)
 # ==========================================
-@debate_scanner_bp.route('/debates', methods=['GET', 'POST'])
-@limiter.limit("10 per minute; 100 per day", methods=["POST"])
+@debate_scanner_bp.route('/debates', methods=['GET'])
 def scan_debates():
-    grouped_debates = {}
-    error_message = None
-
-    start_date = ""
-    end_date = ""
-    selected_dept = "All Departments"
-    selected_house = "all"
-    content_type = "exclude_bills"
-
     # Handle stakeholder tab GET — show search form + org directory
-    if request.method == 'GET' and request.args.get('mode') == 'stakeholder':
+    if request.args.get('mode') == 'stakeholder':
         from flask_app import TrackedStakeholder as _TS
         _user_sh = (_TS.query.filter_by(user_id=current_user.id).all()
                     if current_user.is_authenticated else [])
@@ -2583,139 +2185,14 @@ def scan_debates():
                                departments=DEPARTMENTS_TWFY, selected_dept='All Departments',
                                selected_house='all', content_type='exclude_bills')
 
-    if request.method == 'POST':
-        action = request.form.get('action', 'search')
-        
-        start_date = request.form.get('start_date', '').strip()
-        end_date = request.form.get('end_date', '').strip()
-        selected_dept = request.form.get('department', 'All Departments').strip()
-        selected_house = request.form.get('house', 'all')
-        content_type = request.form.get('content_type', 'exclude_bills')
-
-        if action == 'search':
-            try:
-                date_query = get_twfy_date_range(start_date, end_date)
-                
-                search_term = DEPT_KEYWORDS.get(selected_dept, '("Oral questions" OR "Debate")')
-                if selected_house == 'all':
-                    houses_to_search = ['commons', 'westminsterhall', 'lords']
-                elif selected_house == 'commons':
-                    houses_to_search = ['commons', 'westminsterhall']
-                else:
-                    houses_to_search = [selected_house]
-                all_rows = []
-
-                for h in houses_to_search:
-                    query = f"{search_term} {date_query}".strip()
-
-                    params = {
-                        'key': TWFY_API_KEY,
-                        'search': query,
-                        'type': h,
-                        'output': 'json',
-                        'num': 1000 
-                    }
-                    
-                    resp = requests.get(TWFY_API_URL, params=params, timeout=15)
-                    if resp.status_code == 200:
-                        all_rows.extend(resp.json().get('rows', []))
-
-                if all_rows:
-                    unique_debates = {}
-                    
-                    for r in all_rows:
-                        raw_title = r.get('parent', {}).get('body', 'General Debate/Question')
-                        title = re.sub(r'<[^>]+>', '', raw_title)
-                        date_val = r.get('hdate', '')
-                        
-                        url = "https://www.theyworkforyou.com" + r.get('listurl', '')
-                        speaker = r.get('speaker', {}).get('name', 'Unknown')
-                        
-                        if start_date and date_val < start_date: continue
-                        if end_date and date_val > end_date: continue
-                        
-                        is_bill_or_amendment = bool(re.search(r'\b(bill|amendment)\b', title, re.IGNORECASE))
-                        if content_type == 'exclude_bills' and is_bill_or_amendment: continue
-                        if content_type == 'only_bills' and not is_bill_or_amendment: continue
-
-                        key = f"{title}_{date_val}"
-                        if key not in unique_debates:
-                            unique_debates[key] = {
-                                'id': key,
-                                'title': title,
-                                'date': date_val,
-                                'minister': speaker,
-                                'contributions': 1,
-                                'url': url,
-                                'type': get_debate_type(title)
-                            }
-                        else:
-                            unique_debates[key]['contributions'] += 1
-                            
-                    debate_list = list(unique_debates.values())
-                    debate_list.sort(key=lambda x: x['date'], reverse=True)
-                    
-                    if debate_list and GEMINI_API_KEY:
-                        try:
-                            MAX_AI_ITEMS = 120
-                            process_list = debate_list[:MAX_AI_ITEMS]
-                            leftover_list = debate_list[MAX_AI_ITEMS:]
-
-                            titles_only = [{"id": d['id'], "title": d['title'], "minister": d['minister']} for d in process_list]
-                            
-                            prompt = (
-                                f"You are an expert UK political analyst. The user only wants debates related to the '{selected_dept}'. "
-                                "1. Group the genuinely relevant debates into 3 to 5 clear policy themes. "
-                                "2. Group irrelevant/false positive debates into 'Irrelevant (Other Departments)'. "
-                                "Return ONLY a pure JSON object where the keys are the 'Theme Names' and the values are arrays of the 'id' strings."
-                            )
-                            
-                            model_path = get_working_model(GEMINI_API_KEY)
-                            ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={GEMINI_API_KEY}"
-                            payload = {
-                                "contents": [{"parts": [{"text": prompt + "\n\nData: " + json.dumps(titles_only)}]}],
-                                "generationConfig": {"responseMimeType": "application/json"}
-                            }
-                            ai_resp = requests.post(ai_url, json=payload, timeout=60)
-                            
-                            if ai_resp.status_code == 200:
-                                ai_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
-                                clean_text = ai_text.replace('```json', '').replace('```', '').strip()
-                                theme_mapping = json.loads(clean_text)
-
-                                mapped_ids = set()
-                                for theme, ids in theme_mapping.items():
-                                    if "Irrelevant" in theme: continue
-                                        
-                                    theme_debates = [d for d in process_list if d['id'] in ids]
-                                    if theme_debates:
-                                        grouped_debates[theme] = theme_debates
-                                        mapped_ids.update(ids)
-                                
-                                unmapped = [d for d in process_list if d['id'] not in mapped_ids]
-                                if unmapped: grouped_debates["General / Uncategorized"] = unmapped
-                                if leftover_list: grouped_debates[f"Older / Extra Sessions ({len(leftover_list)} Uncategorized)"] = leftover_list
-
-                            else:
-                                grouped_debates[f"All Debates (AI Error {ai_resp.status_code})"] = debate_list
-                        except Exception as e:
-                            grouped_debates[f"All Debates (Failsafe Triggered)"] = debate_list
-                    else:
-                        grouped_debates["All Debates"] = debate_list
-                else:
-                    error_message = "No debates found for this period/department."
-
-            except Exception as e:
-                error_message = f"Internal Error: {str(e)}"
-
     return render_template('debate_scanner.html',
                            mode='dept',
-                           grouped_debates=grouped_debates,
-                           error_message=error_message,
-                           start_date=start_date, end_date=end_date,
-                           departments=DEPARTMENTS_TWFY, selected_dept=selected_dept,
-                           selected_house=selected_house, content_type=content_type,
-                           is_post=(request.method == 'POST'),
+                           grouped_debates={},
+                           error_message=None,
+                           start_date='', end_date='',
+                           departments=DEPARTMENTS_TWFY, selected_dept='All Departments',
+                           selected_house='all', content_type='exclude_bills',
+                           is_post=False,
                            # Other tab defaults
                            topic='', topic_rows=[], topic_briefing=None,
                            topic_briefing_as_text='', house_filter='all',
@@ -3242,92 +2719,6 @@ def debates_topic():
 
 
 # ==========================================
-# ROUTE 3: FETCH TRANSCRIPTS AND ANALYSE (DEPT SCAN)
-# ==========================================
-@debate_scanner_bp.route('/debates_analyze', methods=['POST'])
-@limiter.limit("10 per minute; 100 per day")
-def analyze_selected():
-    selected = request.form.getlist('selected_debates')
-    if not selected:
-        return "Please go back and select at least one debate.", 400
-
-    full_transcript_text = ""
-    
-    try:
-        for item in selected:
-            parts = item.split('||')
-            url = parts[0]
-            title = parts[1] if len(parts) > 1 else "Unknown Title"
-            date_val = parts[2] if len(parts) > 2 else ""
-
-            if url and url.startswith('http'):
-                # Check cache first — transcripts never change once published
-                cached = CachedTranscript.get(url)
-                if cached:
-                    full_transcript_text += f"### DEBATE: {cached.title} ({cached.date})\n\n{cached.transcript_text}\n\n"
-                    continue
-
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                resp = requests.get(url, headers=headers, timeout=20)
-
-                if resp.status_code == 200:
-                    html = resp.text
-                    html = re.sub(r'<head.*?>.*?</head>', '', html, flags=re.DOTALL|re.IGNORECASE)
-                    html = re.sub(r'<script.*?>.*?</script>', '', html, flags=re.DOTALL|re.IGNORECASE)
-                    html = re.sub(r'<style.*?>.*?</style>', '', html, flags=re.DOTALL|re.IGNORECASE)
-                    html = re.sub(r'<nav.*?>.*?</nav>', '', html, flags=re.DOTALL|re.IGNORECASE)
-                    html = re.sub(r'<header.*?>.*?</header>', '', html, flags=re.DOTALL|re.IGNORECASE)
-                    html = re.sub(r'<footer.*?>.*?</footer>', '', html, flags=re.DOTALL|re.IGNORECASE)
-
-                    clean_text = re.sub(r'<[^>]+>', ' ', html)
-                    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-                    clean_text = clean_text[:60000]
-
-                    # Store in cache for next time
-                    try:
-                        CachedTranscript.store(url=url, title=title, date=date_val,
-                                               house='', transcript_text=clean_text)
-                    except Exception:
-                        pass
-
-                    session_text = f"### DEBATE: {title} ({date_val})\n\n{clean_text}\n\n"
-                    full_transcript_text += session_text
-            
-        if not full_transcript_text:
-            return "No content could be extracted from the URL. Please try another session.", 400
-
-        if GEMINI_API_KEY:
-            model_path = get_working_model(GEMINI_API_KEY)
-            # THE FIX: Added Section 6 for Active Stakeholders
-            prompt = (
-                "You are a senior UK Parliamentary Researcher. Analyze the following Hansard transcript "
-                "and provide a high-level parliamentary briefing.\n\n"
-                "Ignore any remaining website navigation text (like 'Home', 'Members', etc.) and focus only on the debate content.\n"
-                "Structure your response exactly as follows (use Markdown formatting):\n"
-                "## 1. EXECUTIVE SUMMARY\n(A 3-sentence overview of the main policy direction or debate focus)\n\n"
-                "## 2. MINISTERIAL COMMITMENTS\n(Bullet points of any concrete promises, funding, or deadlines mentioned by the government)\n\n"
-                "## 3. OPPOSITION CRITIQUE\n(Key challenges raised by Shadow Ministers or other parties)\n\n"
-                "## 4. MOOD OF THE HOUSE\n(Is the sentiment generally supportive, hostile, or concerned?)\n\n"
-                "## 5. KEY QUESTIONS & RESPONSES\n(Extract 3 to 5 of the most pressing questions asked by Members, paired with the Minister's direct response.)\n\n"
-                "## 6. ACTIVE STAKEHOLDERS (NON-MINISTERIAL)\n(Provide a bulleted list of the backbench MPs, Opposition leads, or Peers who spoke in these specific sessions. Exclude the responding Government Minister. Briefly summarize their stance or the specific angle they focused on.)\n\n"
-                f"TRANSCRIPTS:\n{full_transcript_text}"
-            )
-            
-            ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={GEMINI_API_KEY}"
-            ai_resp = requests.post(ai_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
-            
-            if ai_resp.status_code == 200:
-                briefing_content = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-            else:
-                briefing_content = f"AI Analysis failed. (Error {ai_resp.status_code})"
-
-            return render_template('debate_briefing.html', briefing=briefing_content, selected_count=len(selected))
-
-    except Exception as e:
-        return f"Error during analysis: {str(e)}", 500
-
-
-# ==========================================
 # ROUTE 4: MINISTERIAL RECORD — DEBATE LIST
 # ==========================================
 @debate_scanner_bp.route('/debates_minister', methods=['GET', 'POST'])
@@ -3491,132 +2882,6 @@ def download_debate_briefing():
     mem_doc.seek(0)
 
     return send_file(mem_doc, as_attachment=True, download_name=f"Briefing_{datetime.now().strftime('%Y%m%d')}.docx", mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-
-
-# ==========================================
-# ROUTE 7: CUSTOM EXPORT — PICK & CHOOSE WORD DOC
-# ==========================================
-@debate_scanner_bp.route('/export_custom_briefing', methods=['POST'])
-def export_custom_briefing():
-    if not Document:
-        return "Word library missing.", 500
-
-    topic = request.form.get('topic', 'Parliamentary Research').strip()
-    include_briefing = request.form.get('include_briefing', '') == 'true'
-    briefing_text = request.form.get('briefing_text', '')
-    items_json = request.form.get('items', '[]')
-    try:
-        items = json.loads(items_json)
-    except Exception:
-        items = []
-
-    contributions = [i for i in items if i.get('type') in ('contribution', 'speech')]
-    pq_items = [i for i in items if i.get('type') == 'pq']
-
-    doc = Document()
-
-    # ── Title block ─────────────────────────────────────────────
-    h = doc.add_heading('Parliamentary Research Brief', 0)
-    h.alignment = 1  # centre
-    sub = doc.add_paragraph(f'Topic: {topic}')
-    sub.alignment = 1
-    sub.runs[0].bold = True
-    date_p = doc.add_paragraph(f'Generated: {datetime.now().strftime("%d %B %Y")}')
-    date_p.alignment = 1
-    doc.add_paragraph()
-
-    # ── AI Briefing ─────────────────────────────────────────────
-    if include_briefing and briefing_text:
-        doc.add_heading('AI-Generated Briefing', 1)
-        for line in briefing_text.split('\n'):
-            line = line.strip()
-            if not line:
-                doc.add_paragraph()
-                continue
-            if line.startswith('## '):
-                doc.add_heading(line[3:].strip(), level=2)
-            elif line.startswith('# '):
-                doc.add_heading(line[2:].strip(), level=2)
-            elif line.startswith('* ') or line.startswith('- '):
-                doc.add_paragraph(line[2:].strip(), style='List Bullet')
-            else:
-                doc.add_paragraph(line.replace('**', ''))
-        doc.add_paragraph()
-
-    # ── Parliamentary Contributions ──────────────────────────────
-    if contributions:
-        doc.add_heading(f'Selected Parliamentary Contributions ({len(contributions)})', 1)
-        for item in contributions:
-            d = item.get('data', {})
-            # Header row
-            p = doc.add_paragraph()
-            p.add_run(f"{d.get('hdate', '')}").bold = True
-            p.add_run(f"  ·  {d.get('source_label', '')}  ·  {d.get('debate_type', '')}")
-            # Speaker
-            p2 = doc.add_paragraph()
-            p2.add_run(f"{d.get('speaker_name', '')}").bold = True
-            party = d.get('speaker_party', '')
-            if party:
-                p2.add_run(f"  ({party})")
-            if d.get('is_minister'):
-                p2.add_run("  ✓ Minister").font.color.rgb = None  # keep default
-            # Debate title
-            title = d.get('debate_title', '')
-            if title:
-                tp = doc.add_paragraph(title)
-                tp.runs[0].italic = True
-            # Body text
-            body = d.get('body_clean', '')
-            if body:
-                doc.add_paragraph(f'"{body[:600]}{"…" if len(body) > 600 else ""}"')
-            # Link
-            url = d.get('listurl', '')
-            if url:
-                if not url.startswith('http'):
-                    url = 'https://www.theyworkforyou.com' + url
-                lp = doc.add_paragraph()
-                lp.add_run('Source: ').bold = True
-                _add_hyperlink(lp, url, url)
-            doc.add_paragraph('─' * 60)
-
-    # ── Written Questions ────────────────────────────────────────
-    if pq_items:
-        # Group by speaker
-        by_speaker = {}
-        for item in pq_items:
-            spk = item.get('speaker', 'Unknown')
-            by_speaker.setdefault(spk, []).append(item.get('data', {}))
-
-        doc.add_heading(f'Written Questions ({len(pq_items)} questions across {len(by_speaker)} member(s))', 1)
-        for speaker, pqs in by_speaker.items():
-            doc.add_heading(f'{speaker}  ({len(pqs)} questions)', 2)
-            for pq in pqs:
-                # Status badge
-                status = pq.get('status', '')
-                dept = pq.get('dept', '')
-                date = pq.get('date', '')
-                p = doc.add_paragraph()
-                p.add_run(f"{date}  ·  {dept}  ·  ").bold = False
-                sr = p.add_run(status)
-                sr.bold = True
-                # Question text
-                doc.add_paragraph(f'"{pq.get("text", "")}"')
-                # Link
-                link = pq.get('link', '')
-                if link:
-                    lp = doc.add_paragraph()
-                    lp.add_run('Parliament link: ').bold = True
-                    _add_hyperlink(lp, link, link)
-                doc.add_paragraph()
-
-    mem_doc = io.BytesIO()
-    doc.save(mem_doc)
-    mem_doc.seek(0)
-
-    safe_topic = re.sub(r'[^\w\s-]', '', topic)[:40].strip()
-    filename = f"Brief - {safe_topic} - {datetime.now().strftime('%Y%m%d')}.docx"
-    return send_file(mem_doc, as_attachment=True, download_name=filename,
-                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
 
 
 # ==========================================
