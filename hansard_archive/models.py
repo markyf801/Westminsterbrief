@@ -173,13 +173,36 @@ class HaCronRun(db.Model):
         return f"<HaCronRun {self.service_name} {self.started_at} {self.status}>"
 
 
+def pq_display_heading(heading: str | None, question_text: str | None,
+                       max_len: int = 70) -> str:
+    """Parliament's heading if set; otherwise the start of the question text,
+    cut at a word boundary. Recent PQs have no heading until Parliament adds
+    one, and the UIN alone is meaningless as a title."""
+    if heading and heading.strip():
+        return heading.strip()
+    text = " ".join((question_text or "").split())
+    if not text:
+        return "Written Question"
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len + 1]
+    space = cut.rfind(" ")
+    cut = cut[:space] if space >= max_len // 2 else text[:max_len]
+    return cut.rstrip(" ,;:.-") + "…"
+
+
 class HaPQ(db.Model):
     """A Written Question ingested from the Parliament WQ API."""
 
     __tablename__ = "ha_pq"
 
     id = db.Column(db.Integer, primary_key=True)
-    uin = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    # NOT unique: Parliament reuses UINs every session (INC-008). Identity is
+    # api_id (Parliament's id), then (tabled_date, uin). The model change does
+    # not alter an existing database -- create_all() never touches existing
+    # tables; production's unique index is dropped by hand
+    # (docs/plans/pq-identity-phase3-sql.md).
+    uin = db.Column(db.String(50), nullable=False, index=True)
 
     heading = db.Column(db.String(500))
     question_text = db.Column(db.Text, nullable=False)
@@ -210,6 +233,11 @@ class HaPQ(db.Model):
         lazy="dynamic",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def display_heading(self) -> str:
+        """Heading for titles and lists; never the bare UIN (see pq_display_heading)."""
+        return pq_display_heading(self.heading, self.question_text)
 
     def __repr__(self):
         return f"<HaPQ {self.uin} {self.tabled_date} {(self.heading or '')[:60]!r}>"

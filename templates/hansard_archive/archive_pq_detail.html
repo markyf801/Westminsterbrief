@@ -3,7 +3,7 @@
 {# ---- SEO ---- #}
 {% block title %}{{ seo_title }}{% endblock %}
 {% block meta_description %}{{ meta_desc }}{% endblock %}
-{% block og_title %}{{ pq.heading or pq.uin }} — {{ pq.uin }}{% endblock %}
+{% block og_title %}{{ og_title }}{% endblock %}
 {% block og_description %}Written Question by {{ pq.asking_member or 'an MP' }} to {{ pq.answering_body or 'a department' }}{% if human_tabled %}, tabled {{ human_tabled }}{% endif %}{% endblock %}
 {% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
 
@@ -12,7 +12,7 @@
 {
   "@context": "https://schema.org",
   "@type": "Article",
-  "headline": {{ (pq.heading or pq.uin)|tojson }},
+  "headline": {{ page_heading|tojson }},
   "datePublished": "{{ pq.tabled_date.isoformat() if pq.tabled_date else '' }}",
   "description": {{ meta_desc|tojson }},
   "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
@@ -95,7 +95,7 @@ body { background: #f0f2f5; }
             <span>{{ pq.uin }}</span>
         </nav>
 
-        <h1 class="sd-title">{{ pq.heading or pq.uin }}</h1>
+        <h1 class="sd-title">{{ page_heading }}</h1>
 
         <div class="sd-meta">
             <span class="topic-source-badge topic-source-{{ (pq.chamber or 'commons')|lower }}">{{ pq.chamber or 'Commons' }}</span>

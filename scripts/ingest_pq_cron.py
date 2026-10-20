@@ -14,6 +14,13 @@ Usage:
   python scripts/ingest_pq_cron.py                            # defaults (7d, inline tag)
   python scripts/ingest_pq_cron.py --days 7 --service-name pq-morning
   python scripts/ingest_pq_cron.py --days 365 --service-name backfill --no-tag
+  python scripts/ingest_pq_cron.py --days 1 --answered-days 120 --no-tag   # answer catch-up
+
+Two passes: questions TABLED in the last --days, then questions ANSWERED in the
+last --answered-days (default: same as --days). Answers usually arrive 1-4 weeks
+after tabling, so the tabled window alone leaves answered PQs showing
+"Awaiting answer". The answered pass only re-fetches the full record for rows
+whose answer is new or changed.
 
 The --no-tag flag skips theme tagging. Use it for backfill runs — tagging
 ~70k rows inline would take 2-4 hours. Run tagging as a separate pass instead.
@@ -49,7 +56,7 @@ def _alert_email() -> str:
 def _send_failure_alert(service_name: str, subject: str, body: str) -> None:
     recipient = _alert_email()
     if not recipient:
-        print(f"[pq-cron] ALERT: no recipient configured (set ADMIN_EMAIL or CRON_ALERT_EMAIL)", flush=True)
+        print("[pq-cron] ALERT: no recipient configured (set ADMIN_EMAIL or CRON_ALERT_EMAIL)", flush=True)
         return
     try:
         from email_service import send_email
@@ -88,6 +95,9 @@ def main() -> None:
                         help="Service name for monitoring (pq-morning / pq-afternoon / pq-monday / backfill)")
     parser.add_argument("--no-tag", action="store_true",
                         help="Skip theme tagging (use for large backfill runs)")
+    parser.add_argument("--answered-days", type=int, default=None,
+                        help="Also refresh questions ANSWERED in the last N days "
+                             "(default: same as --days; 0 = off)")
     parser.add_argument("--skip-answer-fetch", action="store_true",
                         help="Skip per-row individual answer fetches (use for backfill — answer text already in DB)")
     args = parser.parse_args()
@@ -95,6 +105,7 @@ def main() -> None:
     run_start = datetime.utcnow()
     today = date.today()
     date_from = today - timedelta(days=args.days - 1)
+    answered_days = args.days if args.answered_days is None else args.answered_days
 
     print(
         f"[pq-cron] === START === service={args.service_name} "
@@ -148,9 +159,32 @@ def main() -> None:
             total_errors += result["errors"]
             print(
                 f"[pq-cron] Ingestion done — "
-                f"inserted={total_inserted} updated={total_updated} errors={result['errors']}",
+                f"inserted={total_inserted} updated={total_updated} "
+                f"unchanged={result['unchanged']} "
+                f"identity_mismatch={result['identity_mismatch']} "
+                f"failed={result['failed']} errors={result['errors']}",
                 flush=True,
             )
+
+            # --- Answers to older questions (tabled before the window) ---
+            if answered_days > 0:
+                answered_from = today - timedelta(days=answered_days - 1)
+                print(f"[pq-cron] Refreshing WQs answered {answered_from} → {today}…", flush=True)
+                ans = ingest_pq_date_range(answered_from, today, verbose=True,
+                                           skip_answer_fetch=args.skip_answer_fetch,
+                                           date_field="answered",
+                                           fetch_only_new_answers=True)
+                total_inserted += ans["inserted"]
+                total_updated += ans["updated"]
+                total_errors += ans["errors"]
+                print(
+                    f"[pq-cron] Answered pass done — "
+                    f"inserted={ans['inserted']} updated={ans['updated']} "
+                    f"unchanged={ans['unchanged']} "
+                    f"identity_mismatch={ans['identity_mismatch']} "
+                    f"failed={ans['failed']} errors={ans['errors']}",
+                    flush=True,
+                )
 
             # --- Theme tagging ---
             if not args.no_tag:

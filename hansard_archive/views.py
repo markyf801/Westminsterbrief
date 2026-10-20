@@ -1554,7 +1554,7 @@ def _build_pq_items(pqs: list) -> list:
     return [
         {
             "uin":            pq.uin,
-            "heading":        pq.heading or pq.uin,
+            "heading":        pq.display_heading,
             "asking_member":  pq.asking_member or "",
             "answering_body": pq.answering_body or "",
             "chamber":        pq.chamber or "Commons",
@@ -1632,6 +1632,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
             .options(load_only(
                 HaPQ.uin, HaPQ.heading, HaPQ.asking_member, HaPQ.answering_body,
                 HaPQ.chamber, HaPQ.is_answered, HaPQ.tabled_date,
+                HaPQ.question_text,   # display_heading fallback when heading is NULL
             ))
             .filter(HaPQ.id.in_(pq_sub))
             .order_by(HaPQ.tabled_date.desc(), HaPQ.id.desc())
@@ -2293,10 +2294,13 @@ def archive_search():
 
 @archive_bp.route("/pq/<string:uin>")
 def pq_detail(uin: str):
-    pq = HaPQ.query.filter_by(uin=uin.upper()).first()
+    # UINs repeat across sessions (INC-008). Until the Phase 4 (date, uin) URLs
+    # exist, a repeated UIN resolves to the earliest-ingested row, so existing
+    # URLs keep showing the question they always showed.
+    pq = HaPQ.query.filter_by(uin=uin.upper()).order_by(HaPQ.id).first()
     if pq is None:
         # Try as-is (some UIDs may not be uppercase)
-        pq = HaPQ.query.filter_by(uin=uin).first()
+        pq = HaPQ.query.filter_by(uin=uin).order_by(HaPQ.id).first()
     if pq is None:
         abort(404)
 
@@ -2325,7 +2329,12 @@ def pq_detail(uin: str):
             elif cached.constituency:
                 answering_role = f"MP for {cached.constituency}"
 
-    seo_title = f"{pq.heading or pq.uin} — {pq.uin} — Westminster Brief"
+    # Never the bare UIN: display_heading falls back to the question text.
+    page_heading = pq.display_heading
+    title_core = f"{page_heading} — Written Question {pq.uin}"
+    if pq.tabled_date:
+        title_core += f", {_human_date(pq.tabled_date)}"
+    seo_title = f"{title_core} — Westminster Brief"
 
     related = get_related_content(pq.heading or "", exclude_uin=pq.uin)
 
@@ -2343,8 +2352,10 @@ def pq_detail(uin: str):
         human_updated   = _human_date(pq.updated_at.date()) if pq.updated_at else "",
         related         = related,
         seo_title       = seo_title,
+        page_heading    = page_heading,
+        og_title        = title_core,
         meta_desc       = (
-            f"Written Question {pq.uin} — {pq.heading or 'Written Question'} "
+            f"Written Question {pq.uin} — {page_heading} "
             f"tabled by {pq.asking_member or 'an MP'} to {pq.answering_body or 'a department'}."
         ),
         canonical_path  = f"/archive/pq/{pq.uin}",
@@ -2830,7 +2841,7 @@ def _compute_party_data(slug: str) -> dict | None:
             recent_pqs = [
                 {
                     "uin":           pq.uin,
-                    "heading":       pq.heading or pq.uin,
+                    "heading":       pq.display_heading,
                     "asking_member": pq.asking_member or "",
                     "answering_body":pq.answering_body or "",
                     "human_date":    _human_date(pq.tabled_date) if pq.tabled_date else "",

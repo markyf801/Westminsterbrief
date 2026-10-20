@@ -97,6 +97,13 @@ def _get_full_answer(api_id: int) -> tuple[str | None, bool, bool]:
 # Stage A — populate api_id via bulk re-pass
 # ---------------------------------------------------------------------------
 
+def _parse_tabled(val):
+    try:
+        return date.fromisoformat(str(val)[:10]) if val else None
+    except ValueError:
+        return None
+
+
 def stage_a(db, HaPQ, months: int = 13):
     # Called from within app.app_context() in main() — do not create a nested context.
     _log.info("=== Stage A: populating api_id via bulk re-pass (%d months) ===", months)
@@ -132,9 +139,21 @@ def stage_a(db, HaPQ, months: int = 13):
                 v = item.get("value", item)
                 uin = (v.get("uin") or "").strip()
                 api_id = v.get("id")
-                if not uin or not api_id:
+                tabled = _parse_tabled(v.get("dateTabled"))
+                if not uin or not api_id or not tabled:
                     continue
-                row = db.session.query(HaPQ).filter_by(uin=uin).first()
+                # Key on (tabled_date, uin), never uin alone — UINs repeat
+                # across sessions (INC-008). Skip if this api_id is already
+                # stored on some row.
+                if db.session.query(HaPQ.id).filter(HaPQ.api_id == api_id).first():
+                    skipped += 1
+                    continue
+                row = (
+                    db.session.query(HaPQ)
+                    .filter(HaPQ.tabled_date == tabled,
+                            func.lower(HaPQ.uin) == uin.lower())
+                    .first()
+                )
                 if row and not row.api_id:
                     row.api_id = api_id
                     updated += 1

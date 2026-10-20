@@ -1667,13 +1667,12 @@ def fetch_wqs_from_db(topic, dept_names, date_from='', date_to='', limit=300):
         relevance_stems = [(w[:-1] if w.endswith('s') and len(w) > 4 else w) for w in raw_words]
 
         results = []
-        seen_uins = set()
+        seen_ids = set()   # by row id: UINs repeat across sessions (INC-008)
         for pq in pq_rows:
             uin = pq.uin or ''
-            if uin and uin in seen_uins:
+            if pq.id in seen_ids:
                 continue
-            if uin:
-                seen_uins.add(uin)
+            seen_ids.add(pq.id)
             # Client-side relevance filter — only when no dept filter already narrows results
             if relevance_stems and not dept_set:
                 combined = ((pq.question_text or '') + ' ' + (pq.heading or '')).lower()

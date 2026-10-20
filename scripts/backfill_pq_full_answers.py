@@ -5,6 +5,13 @@ The Parliament WQ list endpoint truncates answerText at ~258 chars. This script
 finds all answered PQs with short answer text, re-fetches each via the individual
 endpoint, and updates the stored text.
 
+Superseded by scripts/backfill_pq_answers.py (Stage B), which stores sanitised
+HTML like the ingestor; this script stores plain text. Prefer that one.
+
+Identity (INC-008): rows are fetched by their stored api_id. The old lookup by
+UIN took the newest question with that UIN — the wrong session's answer once
+UINs repeat — so rows without an api_id are skipped, not guessed.
+
 Usage:
     python scripts/backfill_pq_full_answers.py [--dry-run] [--limit N]
 
@@ -44,28 +51,16 @@ def _clean_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def fetch_full_answer(uin: str) -> str | None:
-    """Fetch full answer for a given UIN via list endpoint then individual endpoint."""
+def fetch_full_answer(api_id: int) -> str | None:
+    """Fetch the full answer from the individual endpoint by Parliament api_id."""
     try:
-        # Step 1: get internal API ID via UIN search
-        resp = requests.get(WQ_API_BASE, params={"uin": uin}, timeout=_REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        results = resp.json().get("results") or []
-        if not results:
-            return None
-        val = results[0].get("value") or results[0]
-        api_id = val.get("id")
-        if not api_id:
-            return None
-
-        # Step 2: fetch individual endpoint for full text
         resp2 = requests.get(f"{WQ_API_BASE}/{api_id}", timeout=_REQUEST_TIMEOUT)
         resp2.raise_for_status()
         val2 = resp2.json().get("value") or {}
         raw = val2.get("answerText") or ""
         return _clean_ws(_strip_html(raw)) or None
     except Exception as exc:
-        print(f"  [WARN] fetch failed for uin={uin}: {exc}")
+        print(f"  [WARN] fetch failed for api_id={api_id}: {exc}")
         return None
 
 
@@ -80,6 +75,7 @@ def main():
         query = (
             db.session.query(HaPQ)
             .filter(HaPQ.is_answered == True)
+            .filter(HaPQ.api_id.isnot(None))   # never look up by UIN alone
             .filter(db.func.length(HaPQ.answer_text) < _TRUNC_THRESHOLD)
             .order_by(HaPQ.id)
         )
@@ -97,7 +93,7 @@ def main():
         pending = 0
 
         for i, pq in enumerate(rows, 1):
-            full = fetch_full_answer(pq.uin)
+            full = fetch_full_answer(pq.api_id)
 
             if full and len(full) > len(pq.answer_text or ""):
                 print(f"  [{i}/{len(rows)}] {pq.uin}: {len(pq.answer_text or '')} → {len(full)} chars")
