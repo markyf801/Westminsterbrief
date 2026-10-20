@@ -11,7 +11,7 @@
 ## Project and web service
 
 - Entry point: `gunicorn flask_app:app` (see `Procfile` and `railway.toml`)
-- Railway project: `invigorating-joy` — web service name: `Westminsterbrief` (older docs call it `jubilant-intuition`; check the dashboard)
+- Railway project: `invigorating-joy` — web service name: `Westminsterbrief` (`jubilant-intuition` is the backup cron's private-network name, not the web service)
 - Railway auto-deploys the web service on push to `master`
 - Custom domain `westminsterbrief.co.uk`: registered at GoDaddy, nameservers point to Cloudflare — all DNS is managed in Cloudflare (`www` CNAME to the Railway hostname, `_railway-verify` TXT, root record). HTTPS is handled by Railway (Let's Encrypt) once DNS verifies.
 - Postgres is a Railway plugin; it sets `DATABASE_URL`. The web service uses `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a Variable Reference (resolves at deploy time).
@@ -45,8 +45,8 @@ each consumer service keeps the old password until redeployed.
 
 ## Cron services
 
-**Note:** `pq-cron-afternoon` builds from the **`beta`** branch (all others from
-`master`). A push to `beta` therefore redeploys a production-writing cron.
+**Note:** all cron services build from `master` (`pq-cron-afternoon` was switched
+from `beta` on 2026-10-20).
 
 ### Hansard debates, speeches, WMS (`scripts/archive_cron.py`)
 
@@ -65,7 +65,7 @@ tagging runs inline at the end of every Hansard cron run.
 |---|---|---|---|---|
 | `pq-cron-early` | `30 8 * * 1-5` | 09:30 Mon–Fri | 08:30 Mon–Fri | First capture after Parliament's 08:00–09:30 publication window |
 | `pq-cron-morning` | `30 9 * * 1-5` | 10:30 Mon–Fri | 09:30 Mon–Fri | Safety net for late-published questions |
-| `pq-cron-afternoon` | `0 14 * * 1-5` | 15:00 Mon–Fri | 14:00 Mon–Fri | Captures answers published mid-afternoon (builds from `beta`) |
+| `pq-cron-afternoon` | `0 14 * * 1-5` | 15:00 Mon–Fri | 14:00 Mon–Fri | Captures answers published mid-afternoon |
 | `pq-cron-monday` | `0 9 * * 1` | 10:00 Monday | 09:00 Monday | Post-weekend backlog catch-up |
 
 **Timing rationale:** `/questions` queries `ha_pq` (local DB), not Parliament's

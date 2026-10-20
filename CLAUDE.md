@@ -60,7 +60,7 @@ feature/xxx  →  beta  →  master
 - **`master` is production.** Railway auto-deploys the web service on every push to `master`.
 - **`beta` is the default working branch** and must always be a superset of `master`. Feature branches merge into `beta`; once validated, merge `beta` → `master`.
 - **There is no beta deployment** (the beta Railway service and `beta.westminsterbrief.co.uk` were deleted 2026-10-20). Preview new features on production behind a feature flag in `beta` state (see "Feature flags").
-- **Exception:** `pq-cron-afternoon` still builds from the `beta` branch — a push to `beta` redeploys a production-writing cron. Treat beta pushes accordingly.
+- **All Railway services build from `master`**, including every cron (`pq-cron-afternoon` was switched from `beta` on 2026-10-20). A push to `beta` deploys nothing.
 - **Return to beta after operational master work.** If you must commit on `master` directly (e.g. a Railway one-shot tracks `master`), finish that reason, then switch back to `beta`. Don't keep committing on `master` by momentum — including doc commits. The `master → beta` reconciliation merge is an occasional fix, not a routine direction.
 - **Exploratory work:** for a substantial new feature/direction, suggest a feature branch (e.g. `experiment/inquiry-tracking`), build a v1 sketch there, review, then merge, iterate or shelve.
 - **Plan mode for anything touching >3 files or >1 system** — ask before building, not after.
@@ -241,6 +241,7 @@ provisions credentials. Claude Code uses them as documented. No improvisation.
 - Avoid insider workflow framing: "internal deadline", "your department", departmental jargon ("Parliamentary Branch", "Q&A team", "submission deadline"), or assuming users are drafting answers (most are tracking).
 - Prefer parliamentary-side facts (what was tabled, what's due, who engaged with whom) and neutral language ("Question", "Answer due", "Department for Education").
 - Where audiences genuinely conflict, flag it to Mark — don't silently optimise for one.
+- **About page** states "Westminster Brief is run by Mark Forde" (added 2026-10-20).
 - **Marketing language must be evidence-based.** "Built for" is fine; "trusted by" requires actual trust. No "thousands of users", "industry-leading", "loved by professionals". Honest framing is a positioning asset with this audience.
 - **Cautious language** — nothing should sound definitive. "May help with briefing" not "saves hours". AI outputs are aids, not answers.
 
@@ -272,7 +273,7 @@ quotes) is consistent with this rule.
 5. **Neutral framing advice, not advocacy guidance** — describe patterns ("contributions have emphasised academic evidence"); never direct lobbying ("lobby this MP via the academic angle").
 6. **No official voice** — outputs read as a research deliverable, not a government submission, briefing or line-to-take. No "the recommended approach is", "it is suggested that", "officials may wish to".
 
-**Paid features run on Claude Opus only** (best available Anthropic model). Sonnet for development testing only, never production.
+**Model by product type:** premium per-request paid briefings use the top Anthropic model (Claude Opus); Sonnet for development testing only, never production. **Exception — the weekly digest** (first paid product) is a bulk output and uses a cheaper model (Gemini Flash / Flash-Lite class or similar), not Opus, with human review: Mark checks each issue by hand for the first couple of months. The six safeguards above still apply to it.
 
 **Hard cost ringfence:** Claude is invoked ONLY for paid product runs — never for
 a free feature, regardless of user tier. The `tier` column on users
@@ -310,7 +311,7 @@ table: `docs/history/decisions.md`.)
 ### Stack
 - **Backend:** Flask 3.0 with blueprints, gunicorn on Railway (Linux/Docker, Python 3.12)
 - **Database:** SQLite locally → PostgreSQL (PG17) on Railway, switched via `DATABASE_URL`. SQLAlchemy **pinned to 2.0.49** (see Known issues).
-- **AI:** Google Gemini (`google-genai`; mostly `gemini-2.5-flash-lite`, embeddings `gemini-embedding-001` — check code for current IDs) for free features. Anthropic Claude Opus for paid products only.
+- **AI:** Google Gemini (`google-genai`; mostly `gemini-2.5-flash-lite`, embeddings `gemini-embedding-001` — check code for current IDs) for free features. Anthropic Claude Opus for premium paid briefings only; the weekly digest uses a cheaper model (see "Output rules").
 - **Frontend:** Jinja2 templates + vanilla JS, CSS in `static/style.css`
 - **Auth:** Flask-Login with werkzeug password hashing. **Exports:** python-docx.
 - **Email:** Postmark. **Backups:** daily encrypted pg_dump to Cloudflare R2.
@@ -371,7 +372,7 @@ non-empty value enables `/stats`; read at import, so needs a redeploy) and
 
 ### Railway (summary)
 
-- Web service auto-deploys from `master`. Crons: Hansard archive (3), Written Questions (4), member cache, stats re-discovery, R2 backup. Schedules, password-rotation redeploy list, one-shot procedure: `docs/ops/railway-services.md`. Per-service setup: `docs/railway-cron-setup.md`.
+- Web service (named `Westminsterbrief` on Railway) auto-deploys from `master`; `jubilant-intuition` is the backup cron's private-network name, not the web service. Crons: Hansard archive (3), Written Questions (4), member cache, stats re-discovery, R2 backup. Schedules, password-rotation redeploy list, one-shot procedure: `docs/ops/railway-services.md`. Per-service setup: `docs/railway-cron-setup.md`.
 - Production connection details: Railway dashboard → Postgres → Connect. Never write the hostname/port into the repo.
 - Variable References resolve at deploy time — after a Postgres password rotation, redeploy **every** consumer service, then check `/health`.
 - DNS is in Cloudflare (domain registered at GoDaddy).
@@ -473,7 +474,7 @@ After a Railway failover, sequences can desync (`duplicate key ... "ha_session_p
 - **Lord slugs:** `firstname-lastname-of-place` per official title; fallback `firstname-lastname-baron`.
 - **Constituency normalisation:** lowercase, hyphens for spaces, keep "and", `st` lowercase, strip apostrophes and commas.
 - **Theme / policy area / department slugs:** `hansard_archive/slugs.py:slugify_theme()` is the single source of truth (used by `views.py`, the sitemap and the Jinja `slugify` filter). Lowercase → strip chars not in `[a-z0-9\s-]` → whitespace to hyphen → collapse hyphens. So apostrophes are stripped (`childrens-services`), `&` is stripped (`health-social-care`), accents are stripped not transliterated, existing hyphens kept.
-- Topic briefs live at `/brief/<slug>` (canonical); `/archive/theme/<slug>` 301s there.
+- Topic briefs live at `/brief/<slug>` (canonical); `/archive/theme/<slug>` 301s there. They include debates and written questions; a topic with no items returns 404 + `noindex`, and thin topics (<3 items) render with `noindex`.
 - The site is indexed (`index, follow`; `static/robots.txt` blocks admin/auth routes, `/archive/search` and SEO-tool crawlers). Before changing robots/noindex policy or enabling auth/accounts publicly, work through `docs/pre-launch-checklist.md` and `docs/launch-readiness.md`.
 
 ---

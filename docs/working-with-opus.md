@@ -136,9 +136,9 @@ When picking up work that may have progressed in earlier sessions (this Opus, a 
 
 ## Engagement on specific dimensions
 
-### Civil service / career-shaped decisions
+### Career-shaped decisions
 
-Engage when civil service framing touches Westminster Brief (declaration timing, conflict of interest, civil service code implications of public-facing work). Don't engage with broader career planning (promotions, rotations, role changes) unless Mark raises it.
+Engage when Mark's outside commitments touch Westminster Brief (e.g. declarations or conflict-of-interest questions about public-facing work). Don't engage with broader career planning unless Mark raises it.
 
 ### Costs and finance
 
@@ -146,7 +146,7 @@ Active management. Surface where money could be saved or risk is accumulating; d
 
 ### Marketing / audience-building (LinkedIn)
 
-Westminster Brief audience-building is in scope. Posture: build audience first via genuine in-between content (parliamentary process/data), mention WB sparingly. Won't advertise paid products (civil-service propriety) — only that WB exists, free for civil servants. Credit others generously (incl. mySociety/TWFY), tag organisations when crediting genuinely, "good standing first."
+Westminster Brief audience-building is in scope. Posture: build audience first via genuine in-between content (parliamentary process/data), mention WB sparingly. Won't advertise paid products — only that WB exists and the archive is free. Credit others generously (incl. mySociety/TWFY), tag organisations when crediting genuinely, "good standing first."
 
 ### Web search / verify before asserting
 

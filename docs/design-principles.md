@@ -79,7 +79,7 @@ Common attributes across these audiences: high reading literacy, document-heavy 
 - **Serious, factual, confident without being boastful.** Treat the visitor as an intelligent professional.
 - **Specific over vague.** "Search every parliamentary debate from 2010 onwards" is better than "comprehensive parliamentary search."
 - **Honest about scope.** Westminster Brief does specific things; doesn't claim to be everything.
-- **Honest about origin.** "Built by a civil servant" is a credibility anchor — keep it.
+- **Honest about origin.** The About page says who runs it ("Westminster Brief is run by Mark Forde"). Don't state the owner's employer or civil-service status anywhere on the site.
 - **No exclamation marks. No emoji. No "level up your..." or "supercharge your..." language.**
 
 ---
@@ -91,7 +91,7 @@ This is a starting point for the public beta landing page, not a fixed template.
 1. **Brief, specific headline.** One sentence. What this is.
 2. **Short paragraph (2–3 sentences).** What data it covers, what you can do with it.
 3. **Three concrete capabilities** with one-line descriptions each (search Hansard, track parliamentary questions, research stakeholders). Could be a small grid or a vertical list.
-4. **A "built by a civil servant" credibility line.** Brief, factual.
+4. **A brief, factual "who runs this" line** (link to the About page).
 5. **"Beta — free during launch period"** signal. Sets expectations honestly.
 6. **A clean call-to-action.** "Start using Westminster Brief" or similar. No popups, no signup wall, no email capture.
 7. **Footer**: privacy policy, terms, contact, GitHub link if you ever open-source any of it.
@@ -109,7 +109,6 @@ Per the existing positioning principles in `CLAUDE.md`:
 
 Honest framing options that work:
 
-- "Built by a civil servant — free during beta"
 - "Search Hansard, track Written Questions, research stakeholders — all in one place"
 - "Parliamentary research and stakeholder intelligence for UK policy professionals"
 

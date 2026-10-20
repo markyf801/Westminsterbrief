@@ -278,7 +278,7 @@ The production site (westminsterbrief.co.uk) became unavailable from approximate
 
 Cloudflare reported 524 errors (origin timeout). Gunicorn workers were being cycled every 120 seconds — each worker started, attempted to run startup migration blocks, hung for exactly 120s, was SIGKILL'd, and the next worker repeated.
 
-**Root cause:** External scanner bots hammering Railway's public Postgres proxy (hopper.proxy.rlwy.net:50798) with hundreds of FATAL authentication failures per second saturated Postgres connection slots. Flask startup ALTER TABLE migration blocks hung indefinitely waiting for a connection slot.
+**Root cause:** External scanner bots hammering Railway's public Postgres proxy (the Postgres public URL — Railway dashboard → Postgres → Connect) with hundreds of FATAL authentication failures per second saturated Postgres connection slots. Flask startup ALTER TABLE migration blocks hung indefinitely waiting for a connection slot.
 
 **Resolution:** Set `SKIP_MIGRATIONS=1` env var on Westminsterbrief Railway service. Bypassed startup DB inspection blocks. Site recovered at ~07:58 UTC.
 

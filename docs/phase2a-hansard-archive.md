@@ -13,9 +13,8 @@ features are added as they're built rather than gated to a launch day.
 
 Implications:
 
-1. **Civil service share is still a one-shot moment.** The 32-day approval
-   window remains time-fixed; the DD demo and 300-colleague Teams share
-   happen when approval lands, regardless of feature state. "Soft launch"
+1. **The first launch share is still a one-shot moment.** It happens
+   when the launch window arrives, regardless of feature state. "Soft launch"
    doesn't mean "share when ready" — it means "iterate after sharing."
 
 2. **Must-haves for share are narrower than feature-complete.** What needs
@@ -39,7 +38,7 @@ Revised priority order:
 2. Bill page polish (sort fix + explanatory line)
 3. Theme tagging quality validation
 4. Sitemap submission to Search Console
-5. DD demo + civil service share when approval lands
+5. Early-feedback demo + launch share
 6. Phase 2A.5 starts post-share with Bill Journey via Bills API as first build
 
 ---
@@ -72,7 +71,7 @@ timeline (Commons First Reading → ... → Royal Assent).
 - **Bill Journey display** — Commons First Reading → Commons Second Reading →
   ... → Royal Assent timeline on bill-type session detail pages. Sourced from
   Bills API (`billId`). Factual per Phase 2A architectural rule; appropriate
-  Phase 2A.5 scope. First build after civil service share lands.
+  Phase 2A.5 scope. First build after the launch share.
 
 - **Recent additions feed** — see soft-launch framing above (item 4).
 

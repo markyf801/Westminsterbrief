@@ -139,7 +139,7 @@ ha_contribution 0.873 ms.
 accidentally set). Table created manually via DBeaver. SKIP_MIGRATIONS=1 retained
 on production service going forward — all future schema changes go via DBeaver.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798)
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect)
 
 ```sql
 CREATE TABLE ha_stat_publication_theme (
@@ -162,7 +162,7 @@ CREATE INDEX idx_stat_pub_theme_type ON ha_stat_publication_theme(theme_type);
 
 **Context:** HESA / Jisc (producer id 25, slug `hesa-jisc`) de-registered as an active producer. Site blocks all automated access (403 across all paths — root, `/data-and-analysis`, `/api` — confirmed 27 May 2026). No GOV.UK organisation registration exists for HESA. HESA data surfaces correctly via DfE GOV.UK publications (file URLs on DfE landing pages link directly to hesa.ac.uk). Discovery had previously run on 2026-05-23 and completed cleanly with zero candidates — the 403 was caught and swallowed by `DirectPageParserStrategy` (logged as a warning; not surfaced as a failure to the state machine). Producer was `authorisation_status = 'authorised'`, `discovery_status = 'completed'` before this update. Zero `ha_stat_publication` rows attributed to HESA.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 27 May 2026 ~21:22–21:25 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 27 May 2026 ~21:22–21:25 BST
 
 ```sql
 UPDATE ha_stat_producer
@@ -191,7 +191,7 @@ VALUES
 
 **Context:** Phase 1.8 data_url piece 1 — schema changes to support per-publication data file extraction. All statements run individually via DBeaver Console (cursor-position execution), one at a time.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-28 ~09:37–09:39 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-05-28 ~09:37–09:39 BST
 
 ```sql
 -- Step 1: Add three columns to ha_stat_publication
@@ -256,7 +256,7 @@ CREATE INDEX IF NOT EXISTS idx_pub_data_file_pub
 
 **Context:** Phase 1.8 data_url piece 3, step 1 — 20 ha_stat_publication rows stored api.beta.ons.gov.uk API endpoint URLs rather than human-facing ONS dataset landing page URLs. Dataset ID is deterministically extractable from the path. Updated to canonical www.ons.gov.uk/datasets/{id} form.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-28 ~14:10 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-05-28 ~14:10 BST
 
 ```sql
 UPDATE ha_stat_publication
@@ -275,7 +275,7 @@ WHERE url LIKE 'https://api.beta.ons.gov.uk/%';
 **Context:** Phase 1.9 publication date work (A1) — add source publication date column.
 Discovery worker and backfill script will populate it going forward.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-29 ~18:20 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-05-29 ~18:20 BST
 
 ```sql
 ALTER TABLE ha_stat_publication
@@ -318,7 +318,7 @@ re-scanned for new publications. Production-first (SKIP_MIGRATIONS=1 means the
 startup ALTER does not run on production), applied BEFORE pushing the code that
 SELECTs this column.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-05.
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-06-05.
 
 ```sql
 ALTER TABLE ha_stat_producer
@@ -343,7 +343,7 @@ doesn't un-stamp the existing false stamp. Cleared so the first post-fix cron ru
 re-attempts DSIT (where its 422 will now fail loud rather than silently skip for a
 day). Single-row scoped; `updated_at` set per the raw-SQL-on-ORM-table rule.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-05 14:09 BST.
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-06-05 14:09 BST.
 
 ```sql
 UPDATE ha_stat_producer
@@ -371,7 +371,7 @@ up the ~2-week GOV.UK backlog (rather than waiting out the 24h cadence). Scoped 
 ONS is not `central_department` and legitimately stamped → untouched). `updated_at`
 set per the raw-SQL-on-ORM-table rule.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-06 11:25 BST.
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-06-06 11:25 BST.
 
 ```sql
 UPDATE ha_stat_producer
