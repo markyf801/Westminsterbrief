@@ -76,7 +76,10 @@ def app():
     import hansard_archive.models  # noqa: F401
     import stakeholder_directory.models  # noqa: F401
     import stakeholder_directory.ingesters.staging  # noqa: F401
-    from hansard_archive.models import HansardSession, HaPQ
+    from hansard_archive.models import (
+        HansardSession, HansardSessionTheme, HaPQ, HaPQTheme,
+        THEME_TYPE_POLICY_AREA, THEME_TYPE_SPECIFIC,
+    )
 
     # Import blueprints
     from hansard import hansard_bp
@@ -85,7 +88,7 @@ def app():
     from debate_scanner import debate_scanner_bp
     from mp_search import mp_search_bp
     from stakeholder_directory.views import directory_bp
-    from hansard_archive.views import archive_bp
+    from hansard_archive.views import archive_bp, brief_bp
     from hansard_archive.slugs import slugify_theme
 
     test_app = Flask(__name__, template_folder=str(PROJECT_ROOT / 'templates'))
@@ -120,7 +123,7 @@ def app():
     test_app.jinja_env.globals['feature_enabled'] = feature_enabled
 
     for bp in (hansard_bp, biography_bp, tracker_bp, debate_scanner_bp,
-               mp_search_bp, directory_bp, archive_bp):
+               mp_search_bp, directory_bp, archive_bp, brief_bp):
         test_app.register_blueprint(bp)
 
     with test_app.app_context():
@@ -151,6 +154,39 @@ def app():
             is_answered=False,
         )
         _db.session.add(pq)
+
+        # Extra PQs for /brief/<slug> topic tests
+        extra_pqs = [
+            HaPQ(uin=f'TEST00{i}', heading=f'Chagos Islands question {i}',
+                 question_text='What is the government doing about the Chagos Islands?',
+                 tabled_date=date(2026, 2, i), asking_member='Test MP',
+                 answering_body='Foreign Office', is_answered=True)
+            for i in (2, 3, 4)
+        ]
+        _db.session.add_all(extra_pqs)
+        _db.session.flush()
+
+        # Topic tags:
+        #   'Chagos Islands'      PQ-only, 3 PQs        -> 200, indexed
+        #   'Workplace violence'  PQ-only, 1 PQ         -> 200, noindex (thin)
+        #   "Women's pensions"    PQ-only, punctuation  -> slug womens-pensions
+        #   'Bus services'        1 session + 2 PQs     -> both lists shown
+        #   'Transport'           policy area (bridge slug /brief/transport)
+        _db.session.add_all(
+            [HaPQTheme(pq_id=p.id, theme='Chagos Islands', theme_type=THEME_TYPE_SPECIFIC)
+             for p in extra_pqs]
+            + [
+                HaPQTheme(pq_id=pq.id, theme='Workplace violence', theme_type=THEME_TYPE_SPECIFIC),
+                HaPQTheme(pq_id=pq.id, theme="Women's pensions", theme_type=THEME_TYPE_SPECIFIC),
+                HaPQTheme(pq_id=pq.id, theme='Bus services', theme_type=THEME_TYPE_SPECIFIC),
+                HaPQTheme(pq_id=extra_pqs[0].id, theme='Bus services', theme_type=THEME_TYPE_SPECIFIC),
+                HaPQTheme(pq_id=pq.id, theme='Transport', theme_type=THEME_TYPE_POLICY_AREA),
+                HansardSessionTheme(session_id=s.id, theme='Bus services',
+                                    theme_type=THEME_TYPE_SPECIFIC),
+                HansardSessionTheme(session_id=s.id, theme='Transport',
+                                    theme_type=THEME_TYPE_POLICY_AREA),
+            ]
+        )
         _db.session.commit()
 
     yield test_app
@@ -216,6 +252,72 @@ class TestArchiveRoutes:
     def test_archive_debate_detail_missing_returns_404(self, client):
         r = client.get('/archive/debate/1-january-2026/no-such-session')
         assert r.status_code == 404
+
+
+# ── Topic brief pages — /brief/<slug> ────────────────────────────────────────
+
+_INDEX = '<meta name="robots" content="index, follow">'
+_NOINDEX = '<meta name="robots" content="noindex, follow">'
+
+
+class TestBriefRoutes:
+    def test_archive_theme_redirects_to_brief(self, client):
+        r = client.get('/archive/theme/chagos-islands?page=1')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith('/brief/chagos-islands?page=1')
+
+    def test_pq_only_topic_lists_written_questions(self, client):
+        r = client.get('/brief/chagos-islands')
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert 'Chagos Islands question 2' in html
+        assert 'href="/archive/pq/TEST004"' in html
+        assert '3 written questions on this topic' in html
+        assert _INDEX in html
+
+    def test_topic_with_debates_and_pqs_shows_both(self, client):
+        html = client.get('/brief/bus-services').get_data(as_text=True)
+        assert 'href="/archive/debate/1-january-2026/test-session"' in html
+        assert 'href="/archive/pq/TEST001"' in html
+        assert '1 session and 2 written questions on this topic' in html
+        assert _INDEX in html
+
+    def test_policy_area_bridge_slug_finds_sessions(self, client):
+        """Bridge slugs must filter on policy_area tags, not specific topics."""
+        r = client.get('/brief/transport')
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert 'test-session' in html
+        assert 'href="/archive/pq/TEST001"' in html
+
+    def test_slug_with_punctuation_resolves(self, client):
+        r = client.get('/brief/womens-pensions')
+        assert r.status_code == 200
+        assert "Women&#39;s pensions" in r.get_data(as_text=True)
+
+    def test_thin_topic_is_noindex(self, client):
+        r = client.get('/brief/workplace-violence')
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert _NOINDEX in html
+        assert _INDEX not in html
+
+    def test_unknown_topic_is_404_with_friendly_page(self, client):
+        r = client.get('/brief/no-such-topic-anywhere')
+        html = r.get_data(as_text=True)
+        assert r.status_code == 404
+        assert 'No debates or written questions' in html
+        assert _NOINDEX in html
+
+    def test_page_past_last_is_404(self, client):
+        assert client.get('/brief/chagos-islands?page=2').status_code == 404
+        assert client.get('/brief/chagos-islands?page=999999').status_code == 404
+
+    def test_bad_page_param_falls_back_to_first_page(self, client):
+        assert client.get('/brief/chagos-islands?page=abc').status_code == 200
+
+    def test_other_pages_default_to_index(self, client):
+        assert _INDEX in client.get('/archive').get_data(as_text=True)
 
 
 # ── get_related_content optimisation ─────────────────────────────────────────
