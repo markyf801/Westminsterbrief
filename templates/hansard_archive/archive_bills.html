@@ -123,7 +123,7 @@ body { background: #f0f2f5; }
 
     <div class="bl-header">
         <h1>Bills before Parliament</h1>
-        <p class="bl-header-sub">Government Bills and Private Members' Bills in the 2024–25 and 2025–26 sessions</p>
+        <p class="bl-header-sub">Government Bills and Private Members' Bills from the {{ valid_sessions[0] }} session to the current {{ current_session }} session</p>
     </div>
 
     <form method="GET" action="/bills">
@@ -202,7 +202,7 @@ body { background: #f0f2f5; }
             <span class="bl-badge bl-badge-defeated">Defeated</span>
             {% elif bill.bill_withdrawn_date %}
             <span class="bl-badge bl-badge-lapsed">Withdrawn</span>
-            {% elif bill.session == '2024-25' and not bill.is_carried_over %}
+            {% elif bill.session != current_session and not bill.is_carried_over %}
             <span class="bl-badge bl-badge-lapsed">Lapsed</span>
             {% elif bill.current_stage %}
             <span class="bl-badge bl-badge-progress">{{ bill.current_stage }}</span>

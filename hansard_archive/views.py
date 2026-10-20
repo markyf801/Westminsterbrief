@@ -1847,7 +1847,7 @@ def _bill_fts_search(q_raw: str, limit: int = 5) -> list:
             status_label, status_class = "Act ✓", "act"
         elif withdrawn:
             status_label, status_class = "Withdrawn", "lapsed"
-        elif session == "2024-25" and not carried_over:
+        elif session != CURRENT_BILL_SESSION and not carried_over:
             status_label, status_class = "Lapsed", "lapsed"
         else:
             status_label, status_class = stage or "", "progress"
@@ -2773,6 +2773,10 @@ def hansard_home():
 
 _BILLS_PER_PAGE = 50
 
+# Sessions shown on /bills; the last one is the current session.
+BILL_SESSIONS = ("2024-25", "2025-26", "2026-27")
+CURRENT_BILL_SESSION = BILL_SESSIONS[-1]
+
 
 _BILL_TYPE_MAP = {
     "government":  "Government Bill",
@@ -2832,7 +2836,7 @@ def bills_index():
     type_f         = request.args.get("type", "").strip()
     status_f       = request.args.get("status", "").strip()
     q              = request.args.get("q", "").strip()
-    valid_sessions = ("2024-25", "2025-26")
+    valid_sessions = BILL_SESSIONS
 
     query = HaBill.query.order_by(
         HaBill.introduced_date.desc().nulls_last(), HaBill.id.desc()
@@ -2854,19 +2858,19 @@ def bills_index():
             HaBill.is_act == False,
             HaBill.is_defeated == False,
             HaBill.bill_withdrawn_date.is_(None),
-            db.or_(HaBill.session == "2025-26", HaBill.is_carried_over == True),
+            db.or_(HaBill.session == CURRENT_BILL_SESSION, HaBill.is_carried_over == True),
         )
     elif status_f == "act":
         query = query.filter(HaBill.is_act == True)
     elif status_f == "lapsed":
-        # Lapsed = 2024-25 session ended without completion and not carried over
+        # Lapsed = an earlier session ended without completion and not carried over
         # Withdrawn = explicit billWithdrawn date from the API
         from sqlalchemy import or_
         query = query.filter(
             or_(
                 HaBill.bill_withdrawn_date.isnot(None),
                 db.and_(
-                    HaBill.session == "2024-25",
+                    HaBill.session != CURRENT_BILL_SESSION,
                     HaBill.is_act == False,
                     HaBill.is_defeated == False,
                     HaBill.bill_withdrawn_date.is_(None),
@@ -2904,11 +2908,12 @@ def bills_index():
         status_f          = status_f,
         q                 = q,
         valid_sessions    = valid_sessions,
+        current_session   = CURRENT_BILL_SESSION,
         bill_type_options = _BILL_TYPE_OPTIONS,
         canonical_path    = "/bills",
         og_title          = "Bills before Parliament — Westminster Brief",
         meta_desc         = (
-            "UK Parliament bills in the 2024-25 and 2025-26 sessions. "
+            f"UK Parliament bills in the {BILL_SESSIONS[0]} to {CURRENT_BILL_SESSION} sessions. "
             "Government Bills, Private Members' Bills and Lords Bills "
             "with full stage history."
         ),
