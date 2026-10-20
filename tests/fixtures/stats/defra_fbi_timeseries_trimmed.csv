@@ -1,0 +1,6 @@
+"survey_year","typology","prices","fbs_variable","farm_type","measure","sample_size","value","lower_ci","upper_ci"
+"2022/23","2017SO","Current","farm.business.income","All Types","FBI","1,344","95,200","87,300","103,000"
+"2023/24","2017SO","Current","farm.business.income","All Types","FBI","1,373","47,900","41,400","54,400"
+"2024/25","2017SO","Current","farm.business.income","All Types","FBI","1,426","71,200","64,300","78,100"
+"2024/25","2017SO","Current","farm.business.income","Cereals","FBI","273","49,700","34,400","65,100"
+"2024/25","2017SO","Real","farm.business.income","All Types","FBI","1,426","71,200","64,300","78,100"
