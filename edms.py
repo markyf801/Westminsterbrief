@@ -1,242 +1,84 @@
 """
 edms.py — Early Day Motions (EDMs).
 
-/edms        list of recent EDMs (search, sort, pagination)
-/edms/<id>   one EDM: full text, every signatory, amendments
+/edms                    list (search ?q=, sort, ?member=<MNIS id>, pagination)
+/edms/<id>               301 -> /edms/<id>/<slug>
+/edms/<id>/<slug>        one EDM: full text, every signatory, amendments
+/sitemap-edms.xml        built here, routed in flask_app.py
 
-Live data from Parliament's Oral Questions and Motions API. Nothing is stored
-in the database: responses are cached in-process (list pages 15 minutes,
-detail pages 1 hour) and each request makes at most one API call.
+Reads only from ha_edm / ha_edm_sponsor, filled by scripts/ingest_edms.py.
+No Parliament API calls on page view.
+
+Behind FEATURE_EDMS (hidden / beta / live, see feature_flags.py) so the code
+can ship before migrations/edm_tables.py and the first backfill have run.
 """
-import logging
 import re
-import time
-from collections import Counter
-from datetime import datetime
+from datetime import date
 from urllib.parse import urlencode
 
-import requests
-from flask import Blueprint, abort, render_template, request
+from flask import Blueprint, abort, redirect, render_template, request
+from flask_login import current_user
+from sqlalchemy import or_, select, text
+from sqlalchemy.orm import load_only
 
-from extensions import limiter
+from extensions import db, limiter
+from feature_flags import feature_enabled
 from hansard_archive import policy_areas as _pa
-
-logger = logging.getLogger(__name__)
+from hansard_archive.models import HaEdm, HaEdmSponsor
 
 edms_bp = Blueprint("edms", __name__)
 
-EDM_API_BASE = "https://oralquestionsandmotions-api.parliament.uk"
+FLAG = "FEATURE_EDMS"
+BASE_URL = "https://westminsterbrief.co.uk"
 EDM_PUBLIC_URL = "https://edm.parliament.uk/early-day-motion/{id}"
 MEMBER_CONTACT_URL = "https://members.parliament.uk/member/{id}/contact"
 
-_TIMEOUT = 8               # seconds per API call
 _PER_PAGE = 20
-_MAX_PAGES = 50            # 1,000 most recent / most signed; nobody pages further
+_MAX_PAGES = 50
 _MAX_Q_LEN = 100
-_LIST_TTL = 15 * 60
-_DETAIL_TTL = 60 * 60
-_CACHE_MAX_ENTRIES = 500   # bounds memory when people search lots of terms
 _EXCERPT_CHARS = 240
-_SPONSOR_SLOTS = 6         # an EDM has up to six sponsors; later names are supporters
 
 SORTS = {
-    "newest": ("Newest", "DateTabledDesc"),
-    "signatures": ("Most signatures", "SignatureCountDesc"),
+    "newest": "Newest",
+    "signatures": "Most signatures",
 }
 
-_NOT_FOUND = object()      # cached marker for EDM ids the API does not know
-_cache: dict[tuple, tuple[float, object]] = {}
 
-_HEX_COLOUR_RE = re.compile(r"[0-9a-fA-F]{6}")
-
-
-class EdmApiError(Exception):
-    """Parliament's API could not be reached or returned something unusable."""
-
-    def __init__(self, message: str, slow: bool = False):
-        super().__init__(message)
-        self.slow = slow
+def edms_enabled() -> bool:
+    return feature_enabled(FLAG, current_user)
 
 
-# ── Cache ─────────────────────────────────────────────────────────────────────
-
-def _cache_get(key: tuple, ttl: int):
-    hit = _cache.get(key)
-    if hit and time.time() - hit[0] < ttl:
-        return hit[1]
-    return None
+def edm_path(edm) -> str:
+    return f"/edms/{edm.id}/{edm.slug}" if edm.slug else f"/edms/{edm.id}"
 
 
-def _cache_set(key: tuple, value) -> None:
-    if key not in _cache and len(_cache) >= _CACHE_MAX_ENTRIES:
-        oldest = min(_cache, key=lambda k: _cache[k][0])
-        del _cache[oldest]
-    _cache[key] = (time.time(), value)
-
-
-# ── API ───────────────────────────────────────────────────────────────────────
-
-def _api_get(path: str, params: dict | None = None) -> dict:
-    try:
-        resp = requests.get(f"{EDM_API_BASE}{path}", params=params, timeout=_TIMEOUT)
-        resp.raise_for_status()
-        body = resp.json()
-    except requests.Timeout as exc:
-        logger.warning("EDM API timed out: %s", path)
-        raise EdmApiError(str(exc), slow=True) from exc
-    except (requests.RequestException, ValueError) as exc:
-        logger.warning("EDM API call failed: %s %s", path, exc)
-        raise EdmApiError(str(exc)) from exc
-    if not isinstance(body, dict):
-        raise EdmApiError("unexpected response shape")
-    return body
-
-
-def _parse_date(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value[:19])
-    except ValueError:
-        return None
-
-
-def _human_date(d: datetime | None) -> str:
+def _human_date(d) -> str:
     return f"{d.day} {d.strftime('%B %Y')}" if d else ""
 
 
-def _excerpt(text: str, limit: int = _EXCERPT_CHARS) -> str:
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    return text[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+def _human_date_iso(value: str | None) -> str:
+    try:
+        return _human_date(date.fromisoformat(value)) if value else ""
+    except (TypeError, ValueError):
+        return ""
 
 
-def _member(raw: dict | None) -> dict:
-    raw = raw or {}
-    colour = raw.get("PartyColour") or ""
-    mnis_id = raw.get("MnisId")
-    return {
-        "name": raw.get("Name") or "Unknown member",
-        "party": raw.get("Party") or "",
-        "constituency": raw.get("Constituency") or "",
-        "colour": colour if _HEX_COLOUR_RE.fullmatch(colour) else "",
-        "contact_url": MEMBER_CONTACT_URL.format(id=mnis_id) if isinstance(mnis_id, int) else "",
-    }
+def _excerpt(text_: str, limit: int = _EXCERPT_CHARS) -> str:
+    text_ = " ".join((text_ or "").split())
+    if len(text_) <= limit:
+        return text_
+    return text_[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "…"
 
 
-def _summary(raw: dict) -> dict:
-    tabled = _parse_date(raw.get("DateTabled"))
-    text = (raw.get("MotionText") or "").strip()
-    uin = raw.get("UINWithAmendmentSuffix") or str(raw.get("UIN") or "")
-    return {
-        "id": raw.get("Id"),
-        "uin": uin,
-        "title": raw.get("Title") or f"Early Day Motion {uin}",
-        "sponsor": _member(raw.get("PrimarySponsor")),
-        "date_tabled": tabled,
-        "human_date": _human_date(tabled),
-        "signatures": raw.get("SponsorsCount") or 0,
-        "text": text,
-        "excerpt": _excerpt(text),
-        "is_amendment": bool(raw.get("AmendmentToMotionId")),
-        "amends_id": raw.get("AmendmentToMotionId"),
-        "si_title": raw.get("StatutoryInstrumentTitle") or "",
-        "is_withdrawn": raw.get("Status") in (1, "Withdrawn"),
-        "official_url": EDM_PUBLIC_URL.format(id=raw.get("Id")),
-    }
-
-
-def _signatories(sponsors: list | None) -> tuple[list[dict], int]:
-    """Active signatories in signing order, plus how many names were withdrawn."""
-    active, withdrawn = [], 0
-    for s in sponsors or []:
-        if s.get("IsWithdrawn"):
-            withdrawn += 1
-            continue
-        order = s.get("SponsoringOrder")
-        signed = _parse_date(s.get("CreatedWhen"))
-        if order == 1:
-            role = "Primary sponsor"
-        elif isinstance(order, int) and order <= _SPONSOR_SLOTS:
-            role = "Sponsor"
-        else:
-            role = "Supporter"
-        active.append({
-            **_member(s.get("Member")),
-            "role": role,
-            "order": order if isinstance(order, int) else 10_000,
-            "date_signed": signed,
-            "human_signed": _human_date(signed),
-        })
-    active.sort(key=lambda s: (s["order"], s["date_signed"] or datetime.max))
-    return active, withdrawn
-
-
-def fetch_edm_list(q: str, sort: str, page: int) -> dict:
-    """One page of published EDMs: {'items': [...], 'total': int}. Cached 15 minutes."""
-    key = ("list", q.lower(), sort, page)
-    cached = _cache_get(key, _LIST_TTL)
-    if cached is not None:
-        return cached
-
-    params = {
-        "parameters.statuses": "Published",
-        "parameters.orderBy": SORTS[sort][1],
-        "parameters.take": _PER_PAGE,
-        "parameters.skip": (page - 1) * _PER_PAGE,
-    }
-    if q:
-        params["parameters.searchTerm"] = q
-    body = _api_get("/EarlyDayMotions/list", params)
-    rows = body.get("Response")
-    if not isinstance(rows, list):
-        raise EdmApiError("list response missing")
-    paging = body.get("PagingInfo") or {}
-    result = {
-        "items": [_summary(r) for r in rows if isinstance(r, dict) and r.get("Id")],
-        "total": int(paging.get("Total") or 0),
-    }
-    _cache_set(key, result)
-    return result
-
-
-def fetch_edm(edm_id: int) -> dict | None:
-    """One EDM with signatories and amendments, or None if it does not exist. Cached 1 hour."""
-    key = ("detail", edm_id)
-    cached = _cache_get(key, _DETAIL_TTL)
-    if cached is not None:
-        return None if cached is _NOT_FOUND else cached
-
-    body = _api_get(f"/EarlyDayMotion/{edm_id}")
-    raw = body.get("Response")
-    if body.get("StatusCode") == 404 or not raw:
-        _cache_set(key, _NOT_FOUND)
-        return None
-    if not isinstance(raw, dict):
-        raise EdmApiError("detail response missing")
-
-    edm = _summary(raw)
-    edm["signatories"], edm["withdrawn_count"] = _signatories(raw.get("Sponsors"))
-    edm["signatures"] = len(edm["signatories"])
-    edm["party_counts"] = Counter(
-        s["party"] or "Unknown" for s in edm["signatories"]
-    ).most_common()
-    edm["amendments"] = []
-    for a in raw.get("Amendments") or []:
-        if not isinstance(a, dict):
-            continue
-        amendment = _summary(a)
-        amendment["signatures"] = len(_signatories(a.get("Sponsors"))[0])
-        edm["amendments"].append(amendment)
-    _cache_set(key, edm)
-    return edm
+def _is_postgres() -> bool:
+    return db.engine.dialect.name == "postgresql"
 
 
 # ── Related Westminster Brief topics ──────────────────────────────────────────
 
 # Whole-word keywords for the /brief/<slug> policy areas. Deliberately short
-# and specific: a missed link is better than a misleading one.
+# and specific: a missed link is better than a misleading one. Specific-topic
+# matches are computed at ingest time (ha_edm.related_topics).
 _TOPIC_KEYWORDS = {
     "education": ("school", "schools", "pupils", "teachers", "university",
                   "universities", "students", "education", "childcare"),
@@ -265,19 +107,57 @@ _TOPIC_PATTERNS = {
 }
 
 
-def related_topics(title: str, text: str, limit: int = 3) -> list[dict]:
-    """Up to `limit` /brief/<slug> policy areas whose keywords appear in the EDM."""
+def related_topics(title: str, text_: str, specific: list | None = None, limit: int = 4) -> list[dict]:
+    """
+    /brief/<slug> links: specific topics matched at ingest time first, then
+    policy areas whose keywords appear in the EDM. De-duplicated by slug.
+    """
+    out = [t for t in (specific or []) if isinstance(t, dict) and t.get("slug") and t.get("label")]
     scored = []
     for slug, pattern in _TOPIC_PATTERNS.items():
-        score = 2 * len(pattern.findall(title)) + len(pattern.findall(text))
+        score = 2 * len(pattern.findall(title or "")) + len(pattern.findall(text_ or ""))
         area = _pa.by_slug(slug)
         if score >= 2 and area is not None:
             scored.append((score, area.label, slug))
     scored.sort(key=lambda t: (-t[0], t[1]))
-    return [{"slug": slug, "label": label} for _, label, slug in scored[:limit]]
+    out += [{"slug": slug, "label": label} for _, label, slug in scored]
+    seen, unique = set(), []
+    for t in out:
+        if t["slug"] not in seen:
+            seen.add(t["slug"])
+            unique.append(t)
+    return unique[:limit]
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Queries ───────────────────────────────────────────────────────────────────
+
+def _search_filter(query, q: str):
+    if _is_postgres():
+        # search_tsv: generated column + GIN index from migrations/edm_tables.py.
+        # websearch_to_tsquery never raises on user input (quotes, OR, -word).
+        return query.filter(
+            text("ha_edm.search_tsv @@ websearch_to_tsquery('english', :edm_q)")
+        ).params(edm_q=q)
+    like = "%" + q.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_") + "%"
+    return query.filter(or_(HaEdm.title.ilike(like, escape="\\"),
+                            HaEdm.motion_text.ilike(like, escape="\\")))
+
+
+def _list_item(edm: HaEdm) -> dict:
+    return {
+        "id": edm.id,
+        "uin": edm.uin,
+        "title": edm.title,
+        "path": edm_path(edm),
+        "sponsor_name": edm.primary_sponsor_name or "Unknown member",
+        "sponsor_party": edm.primary_sponsor_party or "",
+        "human_date": _human_date(edm.date_tabled),
+        "signatures": edm.signature_count,
+        "excerpt": _excerpt(edm.motion_text),
+        "is_amendment": bool(edm.amendment_to_id),
+        "is_prayer": edm.is_prayer,
+    }
+
 
 def _page_arg() -> int:
     try:
@@ -286,55 +166,59 @@ def _page_arg() -> int:
         return 1
 
 
-_AUTO_RETRIES = 2   # meta-refreshes after a timeout before we stop and just show the message
-
-
-def _unavailable(heading: str, exc: EdmApiError):
-    """
-    Friendly 503 page. Parliament's API often needs 5-20s for an uncached search
-    or sort, but it finishes the query after we give up and caches it briefly,
-    so after a timeout the page refreshes itself (at most _AUTO_RETRIES times,
-    10s apart) and the repeat request is usually fast.
-    """
-    args = request.args.to_dict()
-    try:
-        tries = int(args.pop("retry", 0) or 0)
-    except (ValueError, TypeError):
-        tries = _AUTO_RETRIES
-    again_url = request.path + ("?" + urlencode(args) if args else "")
-    retry_url = ""
-    if exc.slow and tries < _AUTO_RETRIES:
-        retry_url = request.path + "?" + urlencode({**args, "retry": tries + 1})
-    return render_template("edms/edm_unavailable.html", heading=heading, slow=exc.slow,
-                           again_url=again_url, retry_url=retry_url,
-                           robots_meta="noindex, follow"), 503
-
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @edms_bp.route("/edms")
-@limiter.limit("60 per minute")
+@limiter.limit("120 per minute")
 def edm_list():
+    if not edms_enabled():
+        abort(404)
     q = " ".join((request.args.get("q") or "").split())[:_MAX_Q_LEN]
     sort = request.args.get("sort", "newest")
     if sort not in SORTS:
         sort = "newest"
+    member_id = request.args.get("member", type=int)
     page = _page_arg()
     if page > _MAX_PAGES:
         abort(404)
 
-    try:
-        data = fetch_edm_list(q, sort, page)
-    except EdmApiError as exc:
-        return _unavailable("Early Day Motions", exc)
+    query = HaEdm.query.filter(HaEdm.status == "Published")
+    member_name = ""
+    if member_id:
+        signer = (HaEdmSponsor.query
+                  .filter(HaEdmSponsor.member_id == member_id)
+                  .order_by(HaEdmSponsor.date_signed.desc()).first())
+        member_name = signer.member_name if signer else ""
+        query = query.filter(HaEdm.id.in_(
+            select(HaEdmSponsor.edm_id).where(
+                HaEdmSponsor.member_id == member_id,
+                HaEdmSponsor.is_withdrawn.is_(False),
+            )
+        ))
+    if q:
+        query = _search_filter(query, q)
 
-    total = data["total"]
+    total = query.count()
     total_pages = min(_MAX_PAGES, max(1, (total + _PER_PAGE - 1) // _PER_PAGE))
     if page > total_pages:
         abort(404)
+
+    if sort == "signatures":
+        query = query.order_by(HaEdm.signature_count.desc(), HaEdm.date_tabled.desc(), HaEdm.id.desc())
+    else:
+        query = query.order_by(HaEdm.date_tabled.desc(), HaEdm.id.desc())
+    rows = (query.options(load_only(
+                HaEdm.id, HaEdm.uin, HaEdm.title, HaEdm.motion_text, HaEdm.date_tabled,
+                HaEdm.primary_sponsor_name, HaEdm.primary_sponsor_party, HaEdm.signature_count,
+                HaEdm.amendment_to_id, HaEdm.is_prayer, HaEdm.slug))
+            .offset((page - 1) * _PER_PAGE).limit(_PER_PAGE).all())
 
     def page_url(n: int) -> str:
         args = {}
         if q:
             args["q"] = q
+        if member_id:
+            args["member"] = member_id
         if sort != "newest":
             args["sort"] = sort
         if n > 1:
@@ -345,48 +229,121 @@ def edm_list():
         "Browse and search Early Day Motions tabled in the House of Commons: "
         "who sponsored each one, how many MPs have signed, and the full list of supporters."
     )
+    filtered = bool(q or member_id or sort != "newest")
     return render_template(
         "edms/edm_list.html",
-        items=data["items"],
+        items=[_list_item(e) for e in rows],
         total=total,
         q=q,
         sort=sort,
         sorts=SORTS,
+        member_id=member_id,
+        member_name=member_name,
         page=page,
         total_pages=total_pages,
         per_page=_PER_PAGE,
         prev_url=page_url(page - 1) if page > 1 else "",
         next_url=page_url(page + 1) if page < total_pages else "",
         meta_desc=meta_desc,
-        robots_meta="noindex, follow" if (q or sort != "newest") else "index, follow",
+        filtered=filtered,
+        robots_meta="noindex, follow" if filtered else "index, follow",
     )
 
 
 @edms_bp.route("/edms/<int:edm_id>")
-@limiter.limit("60 per minute")
-def edm_detail(edm_id: int):
-    try:
-        edm = fetch_edm(edm_id)
-    except EdmApiError as exc:
-        return _unavailable("Early Day Motion", exc)
+def edm_short(edm_id: int):
+    if not edms_enabled():
+        abort(404)
+    edm = db.session.get(HaEdm, edm_id)
     if edm is None:
         abort(404)
+    return redirect(edm_path(edm), code=301)
 
-    who = edm["sponsor"]["name"]
-    if edm["sponsor"]["party"]:
-        who += f" ({edm['sponsor']['party']})"
-    n = edm["signatures"]
+
+@edms_bp.route("/edms/<int:edm_id>/<string:slug>")
+@limiter.limit("120 per minute")
+def edm_detail(edm_id: int, slug: str):
+    if not edms_enabled():
+        abort(404)
+    edm = db.session.get(HaEdm, edm_id)
+    if edm is None:
+        abort(404)
+    if edm.slug and slug != edm.slug:
+        return redirect(edm_path(edm), code=301)
+
+    rows = HaEdmSponsor.query.filter(HaEdmSponsor.edm_id == edm.id).all()
+    active = sorted(
+        (s for s in rows if not s.is_withdrawn),
+        key=lambda s: (s.sponsoring_order if s.sponsoring_order is not None else 10_000,
+                       s.date_signed.isoformat() if s.date_signed else "9999"),
+    )
+    signatories = [{
+        "name": s.member_name,
+        "party": s.party or "",
+        "constituency": s.constituency or "",
+        "role": "Primary sponsor" if s.is_primary else ("Sponsor" if s.is_sponsor else "Supporter"),
+        "human_signed": _human_date(s.date_signed),
+        "member_id": s.member_id,
+        "contact_url": MEMBER_CONTACT_URL.format(id=s.member_id) if s.member_id else "",
+    } for s in active]
+    party_counts: dict[str, int] = {}
+    for s in signatories:
+        party_counts[s["party"] or "Unknown"] = party_counts.get(s["party"] or "Unknown", 0) + 1
+
+    amendments = [
+        {**a, "human_date": _human_date_iso(a.get("date_tabled"))}
+        for a in (edm.amendments or []) if isinstance(a, dict)
+    ]
+    parent = db.session.get(HaEdm, edm.amendment_to_id) if edm.amendment_to_id else None
+
+    who = edm.primary_sponsor_name or "an MP"
+    if edm.primary_sponsor_party:
+        who += f" ({edm.primary_sponsor_party})"
+    n = len(signatories)
+    human_date = _human_date(edm.date_tabled)
     meta_desc = _excerpt(
-        f"Early Day Motion {edm['uin']} tabled by {who}"
-        f"{' on ' + edm['human_date'] if edm['human_date'] else ''}. "
-        f"Signed by {n} MP{'s' if n != 1 else ''}. {edm['text']}",
+        f"Early Day Motion {edm.uin} tabled by {who}"
+        f"{' on ' + human_date if human_date else ''}. "
+        f"Signed by {n} MP{'s' if n != 1 else ''}. {edm.motion_text or ''}",
         155,
     )
+    withdrawn = edm.status == "Withdrawn"
     return render_template(
         "edms/edm_detail.html",
         edm=edm,
+        human_date=human_date,
+        checked_date=_human_date(edm.last_refreshed),
+        signatories=signatories,
+        withdrawn_count=len(rows) - len(active),
+        party_counts=sorted(party_counts.items(), key=lambda kv: (-kv[1], kv[0])),
+        amendments=amendments,
+        parent=parent,
+        parent_path=edm_path(parent) if parent else "",
+        official_url=EDM_PUBLIC_URL.format(id=edm.id),
         meta_desc=meta_desc,
-        canonical_path=f"/edms/{edm_id}",
-        related=related_topics(edm["title"], edm["text"]),
-        robots_meta="index, follow",
+        canonical_path=edm_path(edm),
+        related=related_topics(edm.title, edm.motion_text or "", edm.related_topics),
+        robots_meta="noindex, follow" if withdrawn else "index, follow",
     )
+
+
+# ── Sitemap ───────────────────────────────────────────────────────────────────
+
+def build_sitemap_xml() -> str:
+    """Every published EDM, by id, lastmod = last change in our copy."""
+    rows = (db.session.query(HaEdm.id, HaEdm.slug, HaEdm.updated_at)
+            .filter(HaEdm.status == "Published")
+            .order_by(HaEdm.id).all())
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for edm_id, slug, updated in rows:
+        path = f"/edms/{edm_id}/{slug}" if slug else f"/edms/{edm_id}"
+        lines.append('  <url>')
+        lines.append(f'    <loc>{BASE_URL}{path}</loc>')
+        if updated:
+            lines.append(f'    <lastmod>{updated.date().isoformat()}</lastmod>')
+        lines.append('  </url>')
+    lines.append('</urlset>')
+    return '\n'.join(lines)

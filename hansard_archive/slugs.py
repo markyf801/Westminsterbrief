@@ -108,6 +108,18 @@ def slugify_bill(title: str) -> str:
     return s
 
 
+def slugify_edm(title: str, max_len: int = 80) -> str:
+    """
+    URL slug for /edms/<id>/<slug>. The id is the real key, so the slug is
+    cosmetic and need not be unique. slugify_bill rules, trimmed to max_len at
+    a word boundary.
+    """
+    s = slugify_bill(title or "")
+    if len(s) > max_len:
+        s = s[:max_len].rsplit("-", 1)[0]
+    return s.strip("-") or "early-day-motion"
+
+
 def slugify_theme(s: str) -> str:
     """
     Convert a theme, policy area, or department label to a URL slug.
