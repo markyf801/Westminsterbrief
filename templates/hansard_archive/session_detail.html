@@ -21,7 +21,53 @@
 </script>
 {% endblock %}
 
-{% block extra_head %}<style>body { background: #f0f2f5; }</style>{% endblock %}
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+
+/* Related activity cards — same look as the PQ page's rpa-* panel */
+.rpa-panel { max-width: 720px; margin-top: 32px; padding: 0 30px; }
+.rpa-heading {
+    font-size: 15px; font-weight: 700; color: #1a2332;
+    margin: 0 0 16px; padding-bottom: 8px;
+    border-bottom: 2px solid #dde3ed;
+}
+.rpa-section { margin-bottom: 20px; }
+.rpa-subheading {
+    font-size: 11px; font-weight: 700; color: #888;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin: 0 0 8px;
+}
+.rpa-list { display: flex; flex-direction: column; gap: 6px; }
+.rpa-card {
+    display: block; background: #fff;
+    border: 1px solid #dde3ed; border-radius: 5px;
+    padding: 10px 14px; text-decoration: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.rpa-card:hover { border-color: #b0bbcc; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+.rpa-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-bottom: 4px; }
+.rpa-date { font-size: 11px; color: #888; }
+.rpa-title { display: block; font-size: 13px; font-weight: 600; color: #1a2332; line-height: 1.4; }
+.rpa-note { font-size: 11px; color: #8a96a4; margin: 0; }
+
+/* Cite this */
+.sd-cite-jump { font-size: 12px; color: #4a7fa5; text-decoration: none; margin-left: 12px; }
+.sd-cite-jump:hover { text-decoration: underline; }
+.sd-cite { max-width: 720px; margin-top: 28px; padding: 0 30px; }
+.sd-cite-text {
+    background: #fff; border: 1px solid #dde3ed; border-radius: 5px;
+    padding: 10px 14px; margin: 0 0 8px;
+    font-size: 13px; line-height: 1.5; color: #1a2332;
+    overflow-wrap: anywhere; user-select: all;
+}
+.sd-cite-copy {
+    padding: 4px 12px; background: #1a4a6e; color: #fff;
+    border: none; border-radius: 3px; font-size: 12px; cursor: pointer;
+}
+.sd-cite-copy:hover { background: #133a57; }
+.sd-cite-status { font-size: 12px; color: #5a6878; margin-left: 8px; }
+.sd-contrib-permalink svg { vertical-align: middle; }
+</style>{% endblock %}
 
 {% block content %}
 <div class="sd-page">
@@ -70,6 +116,7 @@
         <div class="sd-actions">
             <a href="/archive/debate/{{ url_date }}/{{ session.slug }}/word" class="btn-export">↓ Download transcript (Word)</a>
             <span class="sd-contrib-count">{{ contributions|length }} contribution{{ 's' if contributions|length != 1 else '' }}{% if unique_speakers %} · {{ unique_speakers }} speaker{{ 's' if unique_speakers != 1 else '' }}{% endif %}</span>
+            <a class="sd-cite-jump" href="#cite-this">Cite this debate ↓</a>
         </div>
     </div>
 
@@ -101,7 +148,7 @@
     <div class="sd-transcript">
         {% for item in contributions %}
         <div class="sd-contrib" id="contrib-{{ item.id }}" data-member-id="{{ item.member_id or '' }}">
-            <a class="sd-contrib-permalink" href="#contrib-{{ item.id }}" title="Link to this contribution">#</a>
+            <a class="sd-contrib-permalink" href="#contrib-{{ item.id }}" title="Link to this contribution" aria-label="Link to this contribution"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/></svg></a>
             <div class="sd-contrib-speaker" style="border-left-color: {{ item.party_colour }}">
                 {% if item.member_id %}
                 <a class="sd-speaker-name" href="/archive/mp/{{ item.member_id }}">{{ item.name }}</a>
@@ -125,6 +172,61 @@
         <p>No transcript available for this session.</p>
     </div>
     {% endif %}
+
+    {# --- Tag-based related activity (shares the PQ page's rpa-* card style) --- #}
+    {% if related_pqs or topic_sessions %}
+    <div class="rpa-panel">
+        <h2 class="rpa-heading">Related parliamentary activity</h2>
+
+        {% if related_pqs %}
+        <div class="rpa-section" id="related-written-questions">
+            <h3 class="rpa-subheading">Related written questions</h3>
+            <div class="rpa-list">
+                {% for r in related_pqs %}
+                <a class="rpa-card" href="{{ r.url }}">
+                    <div class="rpa-card-meta">
+                        <span class="wq-status-badge wq-status-{% if r.is_answered %}answered{% else %}unanswered{% endif %}">
+                            {% if r.is_answered %}ANSWERED{% else %}UNANSWERED{% endif %}
+                        </span>
+                        {% if r.department %}<span class="archive-dept-badge">{{ r.department }}</span>{% endif %}
+                        <span class="rpa-date">{{ r.human_date }}</span>
+                    </div>
+                    <span class="rpa-title">{{ r.title }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if topic_sessions %}
+        <div class="rpa-section" id="debates-on-same-topics">
+            <h3 class="rpa-subheading">Debates on the same topics</h3>
+            <div class="rpa-list">
+                {% for r in topic_sessions %}
+                <a class="rpa-card" href="{{ r.url }}">
+                    <div class="rpa-card-meta">
+                        <span class="topic-source-badge topic-source-{{ r.house|lower }}">{{ r.house }}</span>
+                        <span class="archive-dtype-badge archive-dtype-{{ r.debate_type }}">{{ r.debate_type_label }}</span>
+                        <span class="rpa-date">{{ r.human_date }}</span>
+                    </div>
+                    <span class="rpa-title">{{ r.title }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <p class="rpa-note">Matched on shared topic tags, which are AI-generated.</p>
+    </div>
+    {% endif %}
+
+    {# --- Cite this --- #}
+    <div class="sd-cite" id="cite-this">
+        <h2 class="rpa-heading">Cite this debate</h2>
+        <p class="sd-cite-text" id="sd-cite-text">{{ citation.text }}</p>
+        <button type="button" class="sd-cite-copy" id="sd-cite-copy">Copy citation</button>
+        <span class="sd-cite-status" id="sd-cite-status" aria-live="polite"></span>
+    </div>
 
     {# --- Day navigation --- #}
     {% if day_nav.prev or day_nav.next %}
@@ -200,9 +302,50 @@
 </style>
 <script>
 (function () {
+    var btn = document.getElementById('sd-cite-copy');
+    var src = document.getElementById('sd-cite-text');
+    var status = document.getElementById('sd-cite-status');
+    if (!btn || !src) return;
+    function done(msg) {
+        status.textContent = msg;
+        setTimeout(function () { status.textContent = ''; }, 2500);
+    }
+    function fallback() {
+        var range = document.createRange();
+        range.selectNodeContents(src);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        try {
+            done(document.execCommand('copy') ? 'Copied' : 'Press Ctrl+C to copy');
+        } catch (e) {
+            done('Press Ctrl+C to copy');
+        }
+    }
+    btn.addEventListener('click', function () {
+        var text = src.textContent.trim();
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(function () { done('Copied'); }, fallback);
+        } else {
+            fallback();
+        }
+    });
+}());
+
+(function () {
     var params = new URLSearchParams(window.location.search);
     var mpId = params.get('mp');
     var hash = window.location.hash;
+
+    // Accept #contribution-<id> as an alias for the canonical #contrib-<id>.
+    if (hash && hash.startsWith('#contribution-')) {
+        hash = '#contrib-' + hash.slice('#contribution-'.length);
+        var aliased = document.getElementById(hash.slice(1));
+        if (aliased) {
+            history.replaceState(null, '', hash);
+            aliased.scrollIntoView({ block: 'start' });
+        }
+    }
 
     if (hash && hash.startsWith('#contrib-')) {
         var target = document.getElementById(hash.slice(1));

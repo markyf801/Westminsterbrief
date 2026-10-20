@@ -408,6 +408,156 @@ def _related_sessions(session: HansardSession) -> dict:
     return {"items": items, "total": total}
 
 
+# ---------------------------------------------------------------------------
+# Tag-based related content (debate page)
+# ---------------------------------------------------------------------------
+
+_TAG_RELATED_MAX = 6
+# Bounds the scan: candidates are walked newest-first via the indexed date
+# column, and each is checked against the theme table by its PK prefix.
+_TAG_RELATED_WINDOW_DAYS = 180
+
+
+def _pq_display_heading(heading: str | None, question_text: str | None) -> str:
+    """PQ title for cards. Some PQ rows have no heading — never show a bare UIN."""
+    if heading and heading.strip():
+        return heading.strip()
+    text = " ".join((question_text or "").split())
+    if not text:
+        return "Written question"
+    if len(text) <= 80:
+        return text
+    cut = text[:80].rsplit(" ", 1)[0] or text[:80]
+    return cut.rstrip(",;:") + "…"
+
+
+def _pqs_sharing_tags(theme_type: str, themes: list[str], date_min, date_max,
+                      exclude_ids: list[int], limit: int) -> list:
+    shares_tag = (
+        select(HaPQTheme.pq_id)
+        .where(
+            HaPQTheme.pq_id == HaPQ.id,
+            HaPQTheme.theme_type == theme_type,
+            HaPQTheme.theme.in_(themes),
+        )
+        .exists()
+    )
+    q = (
+        db.session.query(
+            HaPQ.id,
+            HaPQ.uin,
+            HaPQ.heading,
+            func.substr(HaPQ.question_text, 1, 200).label("question_start"),
+            HaPQ.tabled_date,
+            HaPQ.answering_body,
+            HaPQ.is_answered,
+        )
+        .filter(
+            HaPQ.tabled_date >= date_min,
+            HaPQ.tabled_date <= date_max,
+            HaPQ.is_withdrawn.isnot(True),  # tolerate NULL on older rows
+            shares_tag,
+        )
+    )
+    if exclude_ids:
+        q = q.filter(HaPQ.id.notin_(exclude_ids))
+    return q.order_by(HaPQ.tabled_date.desc(), HaPQ.id.desc()).limit(limit).all()
+
+
+def _related_pqs(session: HansardSession, policy_areas: list[str],
+                 specific_topics: list[str]) -> list[dict]:
+    """
+    Written questions sharing this debate's topic tags, within
+    ±_TAG_RELATED_WINDOW_DAYS of the debate. Specific-topic matches come first
+    (they are far more precise); policy-area matches only fill remaining slots.
+    Most recent first within each group.
+    """
+    date_min = session.date - timedelta(days=_TAG_RELATED_WINDOW_DAYS)
+    date_max = session.date + timedelta(days=_TAG_RELATED_WINDOW_DAYS)
+    rows: list = []
+    for theme_type, themes in (
+        (THEME_TYPE_SPECIFIC, specific_topics),
+        (THEME_TYPE_POLICY_AREA, policy_areas),
+    ):
+        remaining = _TAG_RELATED_MAX - len(rows)
+        if not themes or remaining <= 0:
+            continue
+        rows += _pqs_sharing_tags(theme_type, themes, date_min, date_max,
+                                  [r.id for r in rows], remaining)
+    return [
+        {
+            "uin":           r.uin,
+            "title":         _pq_display_heading(r.heading, r.question_start),
+            "human_date":    _human_date(r.tabled_date),
+            "department":    r.answering_body or "",
+            "is_answered":   bool(r.is_answered),
+            "url":           f"/archive/pq/{r.uin}",
+        }
+        for r in rows
+    ]
+
+
+def _topic_related_sessions(session: HansardSession, specific_topics: list[str],
+                            exclude_ids: list[int]) -> list[dict]:
+    """
+    Debates sharing at least one specific-topic tag (policy areas are too broad
+    to signal relatedness on their own). Complements the exact-title
+    "other stages" panel; sessions already shown there are excluded.
+    """
+    if not specific_topics:
+        return []
+    shares_tag = (
+        select(HansardSessionTheme.id)
+        .where(
+            HansardSessionTheme.session_id == HansardSession.id,
+            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
+            HansardSessionTheme.theme.in_(specific_topics),
+        )
+        .exists()
+    )
+    q = (
+        HansardSession.query
+        .filter(
+            HansardSession.is_container.is_(False),
+            HansardSession.id != session.id,
+            HansardSession.date >= session.date - timedelta(days=_TAG_RELATED_WINDOW_DAYS),
+            HansardSession.date <= session.date + timedelta(days=_TAG_RELATED_WINDOW_DAYS),
+            HansardSession.title.notin_(_PROCEDURAL_TITLE_NOISE),
+            shares_tag,
+        )
+    )
+    if exclude_ids:
+        q = q.filter(HansardSession.id.notin_(exclude_ids))
+    sessions = q.order_by(HansardSession.date.desc(), HansardSession.id.desc()).limit(_TAG_RELATED_MAX).all()
+    return [
+        {
+            "title":             s.title,
+            "url":               f"/archive/debate/{_url_date(s.date)}/{s.slug}",
+            "house":             s.house,
+            "human_date":        _human_date(s.date),
+            "debate_type":       s.debate_type,
+            "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+        }
+        for s in sessions
+    ]
+
+
+def _citation(session: HansardSession, url_date: str) -> dict:
+    """
+    Plain-text citation for the "Cite this" box. Volume and column numbers are
+    not stored, so they are omitted rather than guessed.
+    """
+    prefix = "HL Deb" if session.house == "Lords" else "HC Deb"
+    page_url = f"https://westminsterbrief.co.uk/archive/debate/{url_date}/{session.slug}"
+    venue = ""
+    if session.location and "chamber" not in session.location.lower():
+        venue = f" ({session.location})"
+    text = f"{prefix} {_human_date(session.date)}, '{session.title}'{venue}. Westminster Brief, {page_url}."
+    if session.hansard_url:
+        text += f" Official record: {session.hansard_url}"
+    return {"text": text, "page_url": page_url}
+
+
 def _day_navigation(session: HansardSession) -> dict:
     """
     Return the previous and next non-container session on the same date and
@@ -479,6 +629,8 @@ def _session_context(session: HansardSession) -> dict:
         })
 
     unique_speakers = len({c.member_id for c in raw_contribs if c.member_id is not None})
+    related_sessions = _related_sessions(session)
+    url_date = _url_date(session.date)
 
     return {
         "session":           session,
@@ -487,10 +639,10 @@ def _session_context(session: HansardSession) -> dict:
         "policy_areas":      policy_areas,
         "specific_topics":   specific_topics,
         "human_date":        _human_date(session.date),
-        "url_date":          _url_date(session.date),
+        "url_date":          url_date,
         "debate_type_label": _DEBATE_TYPE_LABELS.get(session.debate_type, "Proceedings"),
         "department":        session.department or "",
-        "related_sessions":  _related_sessions(session),
+        "related_sessions":  related_sessions,
         "day_nav":           _day_navigation(session),
         "related_bill":      _find_bill_for_session(session.title),
     }
@@ -992,6 +1144,13 @@ def session_detail(date_str: str, slug: str):
     if _url_date(session.date) != date_str:
         abort(404)
     ctx = _session_context(session)
+    # Page-only panels (not needed by the Word export, which shares the context).
+    ctx["topic_sessions"] = _topic_related_sessions(
+        session, ctx["specific_topics"],
+        [r["session"].id for r in ctx["related_sessions"]["items"]],
+    )
+    ctx["related_pqs"] = _related_pqs(session, ctx["policy_areas"], ctx["specific_topics"])
+    ctx["citation"] = _citation(session, ctx["url_date"])
     return render_template("hansard_archive/session_detail.html", **ctx)
 
 
