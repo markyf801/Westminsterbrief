@@ -192,6 +192,31 @@ def app():
                  is_answered=True),
         ]
         _db.session.add_all(transport_pqs)
+        # Search-fix PQs: 24 match "school funding". SCH001 is the only heading
+        # match (oldest); SCH002 is the newest. BEIS001 is a defunct department.
+        _db.session.add_all(
+            [HaPQ(uin='SCH001', heading='School funding',
+                  question_text='What is the school funding settlement for rural areas?',
+                  tabled_date=date(2025, 6, 1), asking_member='Test MP',
+                  answering_body='Department for Education', answering_body_id=60,
+                  is_answered=True),
+             HaPQ(uin='SCH002', heading='Teachers',
+                  question_text='What assessment has been made of the school funding formula?',
+                  tabled_date=date(2026, 2, 10), asking_member='Test MP',
+                  answering_body='Department for Education', answering_body_id=60,
+                  is_answered=False),
+             HaPQ(uin='BEIS001', heading='Energy prices',
+                  question_text='What steps are being taken on energy prices?',
+                  tabled_date=date(2025, 5, 1), asking_member='Test MP',
+                  answering_body='Department for Business, Energy and Industrial Strategy',
+                  answering_body_id=7, is_answered=True)]
+            + [HaPQ(uin=f'SCHB{i:02d}', heading=f'Education budget {i}',
+                    question_text='What is the school funding allocation for next year?',
+                    tabled_date=date(2025, 7, 1 + i), asking_member='Test MP',
+                    answering_body='Department for Education', answering_body_id=60,
+                    is_answered=True)
+               for i in range(22)]
+        )
         _db.session.flush()
 
         _db.session.add(HansardContribution(
@@ -473,3 +498,140 @@ class TestGetRelatedContentParams:
                     "_pq_fts_search must use limit=8, not the old hardcoded 50 "
                     "— 50 ts_headline calls for a sidebar showing 8 results"
                 )
+
+
+# ── Search fixes: GET WQ search, sort, true WQ count, page caps ───────────────
+
+def _pq_uins(html):
+    return re.findall(r'href="/archive/pq/([A-Z0-9]+)"', html)
+
+
+class TestWrittenQuestionsSearch:
+    def test_get_search_returns_results(self, client):
+        r = client.get('/questions?q=school+funding')
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert 'SCH001' in html and 'SCH002' in html
+        assert 'value="school funding"' in html
+        assert _NOINDEX in html
+
+    def test_old_subject_param_still_works(self, client):
+        assert 'SCH002' in client.get('/questions?subject=school+funding').get_data(as_text=True)
+
+    def test_get_filters_apply(self, client):
+        html = client.get('/questions?q=school+funding&status_filter=unanswered').get_data(as_text=True)
+        assert 'SCH002' in html
+        assert 'SCH001' not in html
+
+    def test_blank_form_is_indexable_and_runs_no_search(self, client):
+        html = client.get('/questions').get_data(as_text=True)
+        assert _INDEX in html
+        assert 'SCH001' not in html
+        assert 'No questions found' not in html
+
+    def test_post_search_redirects_to_get(self, client):
+        r = client.post('/questions', data={
+            'subject': 'school funding', 'department': '60', 'house_filter': 'All',
+            'status_filter': 'all', 'start_date': '', 'end_date': '', 'action': 'search',
+        })
+        assert r.status_code == 303
+        assert r.headers['Location'].endswith(
+            '/written-questions?q=school+funding&department=60')
+
+    def test_post_export_still_downloads(self, client):
+        r = client.post('/questions', data={'q': 'school funding', 'action': 'csv'})
+        assert r.status_code == 200
+        assert 'attachment' in r.headers['Content-Disposition']
+        assert 'SCH001' in r.get_data(as_text=True)
+
+    def test_page_param_is_ignored(self, client):
+        assert client.get('/questions?q=school&page=99999999999999999999').status_code == 200
+
+    def test_department_list_drops_defunct_departments(self, app):
+        import hansard
+        hansard._dept_list_cache = None
+        with app.app_context():
+            depts = hansard._get_department_list()
+        hansard._dept_list_cache = None
+        assert depts['Department for Education'] == '60'
+        assert 'Department for Business, Energy and Industrial Strategy' not in depts
+
+
+class TestArchiveSearchFixes:
+    def test_relevance_is_default(self, client):
+        html = client.get('/archive/search?q=school+funding').get_data(as_text=True)
+        assert _pq_uins(html)[0] == 'SCH001'   # only heading match wins on SQLite
+        assert '<strong aria-current="true">Relevance</strong>' in html
+        assert 'href="/archive/search?q=school+funding&sort=newest"' in html
+
+    def test_sort_newest_orders_by_date_desc(self, client):
+        from hansard_archive.models import HaPQ
+        html = client.get('/archive/search?q=school+funding&sort=newest').get_data(as_text=True)
+        uins = _pq_uins(html)
+        assert uins[0] == 'SCH002'
+        with client.application.app_context():
+            dates = {p.uin: p.tabled_date for p in HaPQ.query.filter(HaPQ.uin.in_(uins))}
+        shown = [dates[u] for u in uins]
+        assert shown == sorted(shown, reverse=True)
+        assert '<strong aria-current="true">Newest</strong>' in html
+        assert 'name="sort" value="newest"' in html
+
+    def test_unknown_sort_falls_back_to_relevance(self, client):
+        html = client.get('/archive/search?q=school+funding&sort=bogus').get_data(as_text=True)
+        assert _pq_uins(html)[0] == 'SCH001'
+
+    def test_wq_count_shows_true_total(self, client):
+        html = client.get('/archive/search?q=school+funding').get_data(as_text=True)
+        assert len(_pq_uins(html)) == 20
+        assert '<span class="as-tab-count">24</span>' in html
+        assert 'href="/written-questions?q=school+funding">See all 24 written questions' in html
+
+    def test_wq_count_is_capped_on_postgres(self, client):
+        from unittest.mock import patch
+        pq = {'uin': 'X1', 'heading': 'h', 'asking_member': '', 'answering_body': '',
+              'is_answered': True, 'url': '/archive/pq/X1', 'human_date': '',
+              'snippet': None, 'question_text': ''}
+        with (
+            patch('hansard_archive.views._is_postgres', return_value=True),
+            patch('hansard_archive.views._fts_search', return_value=([], 0)) as mock_fts,
+            patch('hansard_archive.views._pq_fts_search', return_value=[pq] * 20) as mock_pq,
+            patch('hansard_archive.views._pq_fts_count', return_value=10001),
+            patch('hansard_archive.views._all_policy_areas', return_value=[]),
+        ):
+            html = client.get('/archive/search?q=school&sort=newest').get_data(as_text=True)
+        assert mock_fts.call_args.kwargs['sort'] == 'newest'
+        assert mock_pq.call_args.kwargs['sort'] == 'newest'
+        assert 'See all 10,000+ written questions' in html
+
+    def test_huge_page_is_404_not_500(self, client):
+        r = client.get('/archive/search?q=school+funding&page=99999999999999999999')
+        assert r.status_code == 404
+
+    def test_page_past_last_is_404(self, client):
+        assert client.get('/archive/search?q=school+funding&page=2').status_code == 404
+        assert client.get('/archive/search?q=school+funding&page=1').status_code == 200
+
+    def test_postgres_sql_sort_and_recency(self, app):
+        """The Postgres SQL orders by date for newest and decays rank by age for relevance."""
+        from unittest.mock import MagicMock, patch
+        from hansard_archive import views
+
+        def run(fn, **kw):
+            with patch.object(views.db.session, 'execute') as ex:
+                ex.return_value = MagicMock(scalar=lambda: 0, fetchall=lambda: [])
+                fn('school funding', **kw)
+                return [str(c.args[0]) for c in ex.call_args_list]
+
+        with app.app_context():
+            rel = run(views._fts_search, page=1)[-1]
+            new = run(views._fts_search, page=1, sort='newest')[-1]
+            pq_rel = run(views._pq_fts_search)[0]
+            pq_new = run(views._pq_fts_search, sort='newest')[0]
+            count = run(views._pq_fts_count)[0]
+        assert 'CURRENT_DATE - s.date' in rel
+        assert 'ORDER BY final_rank DESC, s.date DESC' in rel
+        assert 'ORDER BY s.date DESC, final_rank DESC' in new
+        assert 'CURRENT_DATE - p.tabled_date' in pq_rel
+        assert 'ORDER BY rank DESC' in pq_rel
+        assert 'ORDER BY p.tabled_date DESC' in pq_new
+        assert 'LIMIT :cap' in count

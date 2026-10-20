@@ -1761,6 +1761,20 @@ _FTS_PQ_HEADLINE_OPTS = (
     "MaxFragments=1,StartSel=<mark>,StopSel=</mark>,MaxWords=200,MinWords=40"
 )
 
+# Relevance sort multiplies ts_rank by 1 / (1 + age_days / _RECENCY_DAYS):
+# a match from today keeps full weight, one 6 months old half, 12 months a third.
+_RECENCY_DAYS = 180
+_SEARCH_SORTS = ("relevance", "newest")
+# Highest page number /archive/search will serve (10,000 debate results).
+_SEARCH_MAX_PAGE = 400
+# The Written Questions count stops counting here and shows "10,000+".
+_PQ_COUNT_CAP = 10000
+
+
+def _recency_weight(date_col: str) -> str:
+    """SQL expression (Postgres) that decays from 1.0 as date_col gets older."""
+    return f"(1.0 / (1.0 + GREATEST(CURRENT_DATE - {date_col}, 0) / {_RECENCY_DAYS}.0))"
+
 
 def _fts_search(
     q_raw: str,
@@ -1774,6 +1788,7 @@ def _fts_search(
     title_only: bool = False,
     skip_count: bool = False,
     lim: int | None = None,
+    sort: str = "relevance",
 ) -> tuple[list, int]:
     """
     Full-text search using Postgres tsvectors. Returns (results, total_count).
@@ -1784,6 +1799,7 @@ def _fts_search(
 
     skip_count=True skips the COUNT query (callers that discard the total should use this).
     lim overrides the default _PER_PAGE fetch size.
+    sort="relevance" ranks by ts_rank with a recency boost; sort="newest" by date.
     """
     # Detect phrase query (user wrapped in double quotes)
     if q_raw.startswith('"') and q_raw.endswith('"') and len(q_raw) > 2:
@@ -1862,8 +1878,9 @@ def _fts_search(
         )
         SELECT
             s.id, s.title, s.date, s.house, s.debate_type, s.slug, s.department,
-            COALESCE(tm.title_rank, 0.0) * 3
-                + COALESCE(bc.body_rank, 0.0)                       AS final_rank,
+            (COALESCE(tm.title_rank, 0.0) * 3
+                + COALESCE(bc.body_rank, 0.0))
+                * {_recency_weight("s.date")}                       AS final_rank,
             ts_headline('english', bc.match_text,
                         {ts_func}('english', :q),
                         :hl_opts)                                   AS snippet
@@ -1874,7 +1891,7 @@ def _fts_search(
         WHERE s.is_container = false
           AND ({f"tm.session_id IS NOT NULL" if title_only else "bc.session_id IS NOT NULL OR tm.session_id IS NOT NULL"})
           {extra_where_sql}
-        ORDER BY final_rank DESC, s.date DESC
+        ORDER BY {"s.date DESC, final_rank DESC" if sort == "newest" else "final_rank DESC, s.date DESC"}
         LIMIT :lim OFFSET :off
     """)
 
@@ -1912,9 +1929,12 @@ def _fts_search(
     return results, total
 
 
-def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list:
+def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "",
+                   sort: str = "relevance") -> list:
     """
     Full-text search over ha_pq using question_tsv. Returns up to `limit` results.
+
+    sort="relevance" ranks by ts_rank with a recency boost; sort="newest" by tabled date.
 
     Each result dict:
       result_type, uin, heading, asking_member, answering_body,
@@ -1937,7 +1957,8 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
         SELECT
             p.id, p.uin, p.heading, p.asking_member, p.answering_body,
             p.tabled_date, p.is_answered,
-            ts_rank(p.question_tsv, {ts_func}('english', :q)) AS rank,
+            ts_rank(p.question_tsv, {ts_func}('english', :q))
+                * {_recency_weight("p.tabled_date")} AS rank,
             ts_headline('english',
                 coalesce(p.question_text, ''),
                 {ts_func}('english', :q),
@@ -1946,7 +1967,7 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
         FROM ha_pq p
         {policy_join}
         WHERE p.question_tsv @@ {ts_func}('english', :q)
-        ORDER BY rank DESC
+        ORDER BY {"p.tabled_date DESC, rank DESC" if sort == "newest" else "rank DESC, p.tabled_date DESC"}
         LIMIT :lim
     """)
 
@@ -1973,6 +1994,60 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "") -> list
             "question_text": question_text or "",
         })
     return results
+
+
+def _pq_fts_count(q_raw: str, cap: int = _PQ_COUNT_CAP) -> int:
+    """
+    Number of ha_pq rows matching q_raw (same matching as _pq_fts_search).
+
+    Stops counting at cap + 1 so a very broad query stays cheap; callers show
+    anything above cap as "cap+".
+    """
+    if q_raw.startswith('"') and q_raw.endswith('"') and len(q_raw) > 2:
+        ts_func = "phraseto_tsquery"
+        q_clean = q_raw[1:-1]
+    else:
+        ts_func = "plainto_tsquery"
+        q_clean = q_raw
+    sql = sqla_text(f"""
+        SELECT COUNT(*) FROM (
+            SELECT 1 FROM ha_pq p
+            WHERE p.question_tsv @@ {ts_func}('english', :q)
+            LIMIT :cap
+        ) matched
+    """)
+    return db.session.execute(sql, {"q": q_clean, "cap": cap + 1}).scalar() or 0
+
+
+def _pq_ilike_search(q_raw: str, limit: int = 20, sort: str = "relevance") -> tuple[list, int]:
+    """ilike fallback for SQLite local development. Returns (results, total)."""
+    like = f"%{q_raw.strip(chr(34))}%"
+    stmt = HaPQ.query.filter(
+        HaPQ.heading.ilike(like) | HaPQ.question_text.ilike(like)
+    )
+    total = stmt.count()
+    if sort == "newest":
+        stmt = stmt.order_by(HaPQ.tabled_date.desc())
+    else:
+        # No ts_rank on SQLite: heading matches first, then newest.
+        stmt = stmt.order_by(HaPQ.heading.ilike(like).desc(), HaPQ.tabled_date.desc())
+    results = [
+        {
+            "result_type":   "pq",
+            "uin":           p.uin,
+            "heading":       p.heading or p.uin,
+            "asking_member": p.asking_member or "",
+            "answering_body":p.answering_body or "",
+            "tabled_date":   p.tabled_date,
+            "is_answered":   p.is_answered,
+            "url":           f"/archive/pq/{p.uin}",
+            "human_date":    _human_date(p.tabled_date) if p.tabled_date else "",
+            "snippet":       None,
+            "question_text": p.question_text or "",
+        }
+        for p in stmt.limit(limit).all()
+    ]
+    return results, total
 
 
 def _bill_fts_search(q_raw: str, limit: int = 5) -> list:
@@ -2092,13 +2167,19 @@ def archive_search():
     date_to       = request.args.get("to", "").strip()
     title_only    = request.args.get("title_only") == "1"
     tab_param     = request.args.get("tab", "").strip()
+    sort          = request.args.get("sort", "").strip()
+    if sort not in _SEARCH_SORTS:
+        sort = "relevance"
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
         page = 1
+    if page > _SEARCH_MAX_PAGE:
+        abort(404)
 
     results, total, total_pages = [], 0, 1
     pq_results = []
+    pq_total = 0
     error_msg = ""
 
     if q:
@@ -2112,16 +2193,26 @@ def archive_search():
                     date_from=date_from,
                     date_to=date_to,
                     title_only=title_only,
+                    sort=sort,
                 )
-                pq_results = _pq_fts_search(q, limit=20)
+                pq_results = _pq_fts_search(q, limit=20, sort=sort)
+                pq_total = (_pq_fts_count(q) if len(pq_results) >= 20
+                            else len(pq_results))
             else:
                 results, total = _ilike_search(q, page)
+                pq_results, pq_total = _pq_ilike_search(q, limit=20, sort=sort)
             total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
         except Exception as exc:
             error_msg = "Search is temporarily unavailable."
             print(f"[archive_search] error: {exc}", flush=True)
 
+    # Past the last page of debate results: 404 rather than an empty page.
+    if page > total_pages and not error_msg:
+        abort(404)
+
     pq_count = len(pq_results)
+    pq_total_label = (f"{_PQ_COUNT_CAP:,}+" if pq_total > _PQ_COUNT_CAP
+                      else f"{pq_total:,}")
 
     # Active tab: explicit URL param wins; otherwise auto-switch when debates
     # are empty but PQs have results, so the user lands on content not emptiness.
@@ -2142,6 +2233,11 @@ def archive_search():
             qs_parts[k] = v
     if title_only:
         qs_parts["title_only"] = "1"
+    # Sort links keep the query, filters and tab but restart at page 1
+    sort_qs = urlencode({**qs_parts, **(
+        {"tab": tab_param} if tab_param in ("hansard", "pq") else {})})
+    if sort == "newest":
+        qs_parts["sort"] = sort
     if page > 1:
         qs_parts["page"] = page
     # Preserve explicit tab choice across pagination
@@ -2171,6 +2267,11 @@ def archive_search():
         results             = results,
         pq_results          = pq_results,
         pq_count            = pq_count,
+        pq_total            = pq_total,
+        pq_total_label      = pq_total_label,
+        wq_search_qs        = urlencode({"q": q}),
+        sort                = sort,
+        sort_qs             = sort_qs,
         total               = total,
         total_pages         = total_pages,
         per_page            = _PER_PAGE,
