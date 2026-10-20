@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/B8A15EF8-2780-4797-A8FC-2BCA92195A9C.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "B8A15EF8-2780-4797-A8FC-2BCA92195A9C",
+  "Title": "Support for Family Businesses",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-15T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Question for Short Debate"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "15:07:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Asked by"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": 3705,
+   "AttributedTo": "Lord Cameron of Dillington",
+   "Value": "To ask His Majesty’s Government what plans they have to support family businesses in the UK."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 5419,
+   "AttributedTo": "Baroness in Waiting/Government Whip (Baroness Dacres of Lewisham) (Lab)",
+   "Value": "My Lords, this debate should take one hour. I remind your Lordships to keep to time, as that is very precious today."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 3705,
+   "AttributedTo": "Lord Cameron of Dillington (CB)",
+   "Value": "My Lords, I must first declare that I am a member of a Somerset farming family, albeit now retired and living in Cornwall. I have also in my time started various small businesses, some of which failed but some did not.\r\n\r\nThere are those who view entrepreneurial capitalism in a very bad light. They "
+  }
+ ],
+ "ChildDebates": []
+}

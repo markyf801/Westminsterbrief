@@ -1624,6 +1624,7 @@ body.page-home .tool-card-badge-beta {
 .archive-dtype-statutory_instrument  { background: #374151; }
 .archive-dtype-committee_stage   { background: #7c3aed; }
 .archive-dtype-petition          { background: #047857; }
+.archive-dtype-urgent_question   { background: #b91c1c; }
 .archive-dtype-other             { background: #6b7280; }
 
 /* Department badge — oral questions attribution, links back to dept filter */

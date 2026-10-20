@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/3F57FDEF-F6B4-4BBA-B058-C360D5A9EA21.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "3F57FDEF-F6B4-4BBA-B058-C360D5A9EA21",
+  "Title": "Digital ID: Public Consultation",
+  "HRSTag": "hs_2cStatement",
+  "Date": "2026-03-10T00:00:00",
+  "Location": "Commons Chamber",
+  "House": "Commons"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"181\" class=\"column-number column-only\" data-column-number=\"181\"></span>"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "12:44:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4621,
+   "AttributedTo": "The Chief Secretary to the Prime Minister (Darren Jones)",
+   "Value": "Today the Government are launching a national conversation on how we will build and use digital ID as the means to access public services digitally on a mobile phone or computer.\r\n\r\nPublic services are meant to be there at the most important moments of your life: free childcare hours to help your ch"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "12:54:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4384,
+   "AttributedTo": "Mike Wood (Kingswinford and South Staffordshire) (Con)",
+   "Value": "I thank the Minister for advance sight of his statement and for the briefing a short time ago.\r\n\r\nIt is said that in 1720, gullible investors were invited to put their money into\r\n\r\n“a company for carrying out an undertaking of great advantage, but nobody to know what it is”.\r\n\r\nToday, the Chief Sec"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4621,
+   "AttributedTo": "Darren Jones",
+   "Value": "I enjoyed the hon. Member’s response to the statement, and I thank him for lifting our spirit with it. Let me say two things to him gently. First, I am very confident that, because the public do their banking and shopping online in a quick and convenient way, the fact that the Government are saying,"
+  }
+ ],
+ "ChildDebates": []
+}

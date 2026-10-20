@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/2506CA95-7C7B-4862-AF6F-E19C02D8A276.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "2506CA95-7C7B-4862-AF6F-E19C02D8A276",
+  "Title": "Drumcree",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Statement"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "16:04:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Procedure",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "The following Statement was made in the House of Commons on Monday 12 October."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "“With permission, Madam Deputy Speaker, I would like to make a Statement on Drumcree."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "I should first alert Members to the fact that the decision that I will lay out in this Statement is subject to legal challenge. I respect the court’s role and will not anticipate its conclusions. I wanted to update the House as soon as possible, but I hope that honourable Members will understand tha"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "The repeated stand-offs at Drumcree in the 1990s saw disorder, violence and horrific deaths, and they represent a particularly painful chapter in Northern Ireland’s history. At the heart of the matter is the return route of the Orange Order Portadown district’s parade from Drumcree church. Members o"
+  }
+ ],
+ "ChildDebates": []
+}

@@ -155,6 +155,7 @@ _DEBATE_TYPE_LABELS = {
     "statutory_instrument": "Statutory Instrument",
     "committee_stage":      "Committee Stage",
     "petition":             "Petition",
+    "urgent_question":      "Urgent Question",
     "other":                "Proceedings",
 }
 

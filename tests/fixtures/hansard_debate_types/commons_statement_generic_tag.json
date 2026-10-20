@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/971754D8-183E-459F-8404-390D4E0A0C0E.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "971754D8-183E-459F-8404-390D4E0A0C0E",
+  "Title": "National Care Service",
+  "HRSTag": "hs_2DebBill",
+  "Date": "2026-10-15T00:00:00",
+  "Location": "Commons Chamber",
+  "House": "Commons"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"575\" class=\"column-number column-only\" data-column-number=\"575\"></span>"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "13:01:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4083,
+   "AttributedTo": "The Minister for Social Care and Mental Health (Alison McGovern)",
+   "Value": "With your permission, Madam Deputy Speaker, before I make a statement on the creation of the national care service, I want to pay my own tribute to Sir David Amess and his family. We are all thinking of them today, and I am reflecting in particular on how much Sir David gave to this House.\r\n\r\nIt is "
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4048,
+   "AttributedTo": "Madam Deputy Speaker (Caroline Nokes)",
+   "Value": "I call the shadow Secretary of State."
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "13:11:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 3969,
+   "AttributedTo": "Damian Hinds (East Hampshire) (Con)",
+   "Value": "I thank the Minister for advance sight of her statement. I join in what she said about Sir David Amess. Today, again, we remember his service and remarkable contribution to Parliament and public life, including through today’s Children’s Parliament.\r\n\r\nIn my lifetime, life expectancy has risen by al"
+  }
+ ],
+ "ChildDebates": []
+}

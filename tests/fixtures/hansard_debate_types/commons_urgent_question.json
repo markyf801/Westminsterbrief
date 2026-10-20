@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/817ADB43-3731-4699-B1D8-FF6ACB7E9D70.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "817ADB43-3731-4699-B1D8-FF6ACB7E9D70",
+  "Title": "Sustainable Farming Incentive",
+  "HRSTag": "hs_2cUrgentQuestion",
+  "Date": "2026-10-15T00:00:00",
+  "Location": "Commons Chamber",
+  "House": "Commons"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"533\" class=\"column-number column-only\" data-column-number=\"533\"></span>"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "10:46:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4861,
+   "AttributedTo": "Robbie Moore (Keighley and Ilkley) (Con)",
+   "Value": "<em>(</em><em>Urgent Question):</em> To ask the Secretary of State for Environment, Food and Rural Affairs if she will make a statement on the sustainable farming incentive."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4653,
+   "AttributedTo": "The Parliamentary Under-Secretary of State for Environment, Food and Rural Affairs (Stephen Morgan)",
+   "Value": "In summer 2024, we inherited a sustainable farming incentive scheme from the previous Conservative Government that had no budget control and no proper alignment of SFI actions to environmental sustainability targets. The farming schemes were underspent, meaning that millions of pounds were not going"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4861,
+   "AttributedTo": "Robbie Moore",
+   "Value": "I cannot stress enough just how badly mishandled the sustainable farming incentive has been under this Labour Government. It has been a complete and utter mess, and our hard-working farmers and nature have once again lost out under this Labour Government. However, it was not without this Government "
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4653,
+   "AttributedTo": "Stephen Morgan",
+   "Value": "I am not going to claim that this scheme is perfect or working as we want it to work, but we inherited this scheme from the previous Government, and we are fixing it. Under them, just a quarter of the funding went to 4% of farms, often large ones, with no targeting. We have already made changes to a"
+  }
+ ],
+ "ChildDebates": []
+}

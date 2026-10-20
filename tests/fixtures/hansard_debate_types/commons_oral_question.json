@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/BF76AFB3-8E7E-4A3B-AC93-D1CAD44E8508.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "BF76AFB3-8E7E-4A3B-AC93-D1CAD44E8508",
+  "Title": "Whistleblowing",
+  "HRSTag": "hs_8Question",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Commons Chamber",
+  "House": "Commons"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"350\" class=\"column-number column-only\" data-column-number=\"350\"></span>"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "Question",
+   "MemberId": 5087,
+   "AttributedTo": "Tom Collins (Worcester) (Lab)",
+   "Value": "<Question HRSContentId=\"{D656C06B-A874-4AE6-9A32-0E1DF2FBAAE9}\">2.  <QuestionText HRSContentId=\"{28992629-B5A1-4B17-9F5A-25C9E17B6930}\">What steps she has taken with Cabinet colleagues to enhance the whistleblowing framework.</QuestionText> </Question>"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 1516,
+   "AttributedTo": "The Solicitor General (Andy Slaughter)",
+   "Value": "Whistleblowers can reveal criminal activity that would otherwise go undiscovered, help unravel complex cases, speed up investigations and deliver justice for victims more quickly, but we believe that more can be done. On Monday, the Government launched a consultation on the whistleblowing framework,"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 5087,
+   "AttributedTo": "Tom Collins",
+   "Value": "I am working with a constituent who has been subject to bullying and prejudice in high-level amateur sport. Current whistleblowing protections apply only to employees of an organisation, but sports people often have just as much, if not more, to lose if a sporting organisation turns against them. Do"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 1516,
+   "AttributedTo": "The Solicitor General",
+   "Value": "Yes, and I am sorry to hear of the experience of my hon. Friend’s constituent. I encourage him and his constituent to share that experience in the whistleblowing consultation that I mentioned. Whistleblowers can dramatically cut the time and resource that it takes to get to the heart of a case by pr"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4005,
+   "AttributedTo": "Bob Blackman (Harrow East) (Con)",
+   "Value": "Far too often, whistleblowers are protected when they initially blow the whistle on fraud, economic crime and the like, but are eased out of organisations unfairly later. What further protection can the Solicitor General offer people who do the right thing and blow the whistle on crime?"
+  }
+ ],
+ "ChildDebates": []
+}

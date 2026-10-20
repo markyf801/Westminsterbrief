@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/885B7855-DF47-4993-82D1-ED6C0183B9EC.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "885B7855-DF47-4993-82D1-ED6C0183B9EC",
+  "Title": "Sovereign Grant Bill",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Second Reading (and remaining stages)"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "16:44:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Moved by"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": 5430,
+   "AttributedTo": "Lord Pitt-Watson",
+   "Value": "That the Bill be now read a second time."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 5430,
+   "AttributedTo": "The Parliamentary Secretary, HM Treasury (Lord Pitt-Watson) (Lab)",
+   "Value": "My Lords, this Bill relates to the sovereign grant, which Parliament has provided to support the official duties of the monarch and the work of the Royal Household.\r\n\r\nThe Bill implements the conclusions of a recent royal trustees’ review of the sovereign grant. It does three things. First, it will "
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "16:50:00"
+  }
+ ],
+ "ChildDebates": []
+}

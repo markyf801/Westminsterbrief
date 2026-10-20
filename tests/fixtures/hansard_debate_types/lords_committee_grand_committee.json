@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/20D8862D-044B-4CF7-8EE0-3CD6E8D24103.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "20D8862D-044B-4CF7-8EE0-3CD6E8D24103",
+  "Title": "Railways Bill",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-19T00:00:00",
+  "Location": "Grand Committee",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Committee (5th Day)"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Question",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<em>Scottish and Welsh </em><em>l</em><em>egislative </em><em>c</em><em>onsent sought</em><em>. </em><em>Relevant document: 4th Report from the Delegated Powers Committee</em><em>.</em>"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "15:45:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ClauseHeading",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Clause 25: Designation of services by Secretary of State"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_AmendmentHeading",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Amendment 148"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Moved by"
+  }
+ ],
+ "ChildDebates": []
+}

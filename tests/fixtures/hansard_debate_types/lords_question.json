@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/EA56959B-99BC-480F-B21E-29AA20CA6906.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "EA56959B-99BC-480F-B21E-29AA20CA6906",
+  "Title": "Havant Thicket Reservoir: Pollutants",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Question"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "15:17:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Asked by"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": 4297,
+   "AttributedTo": "Baroness Jones of Moulsecoomb",
+   "Value": "To ask His Majesty’s Government what independent safeguards they intend to put in place at the Havant Thicket Reservoir to ensure contaminants such as per- and polyfluoroalkyl substances, nano plastics and other emerging pollutants do not present an unacceptable risk."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 4153,
+   "AttributedTo": "Captain of the Honourable Corps of Gentlemen-at-Arms and Chief Whip (Lord Kennedy of Southwark) (Lab Co-op)",
+   "Value": "My Lords, before the noble Baroness asks her Question, I remind the House that the first supplementary question should take no more than 45 seconds, remaining questions should each take no more than 30 seconds and responses should be of similar length."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 4297,
+   "AttributedTo": "Baroness Jones of Moulsecoomb (GP)",
+   "Value": "I beg leave to ask the Question standing in my name on the Order Paper and deeply resent that. I am one of the shortest speakers in the House."
+  }
+ ],
+ "ChildDebates": []
+}
