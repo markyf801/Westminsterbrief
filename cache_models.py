@@ -1,6 +1,8 @@
 import hashlib
 import json
 from datetime import datetime, timedelta
+from sqlalchemy.orm import deferred
+
 from extensions import db
 
 
@@ -363,6 +365,10 @@ class MemberBiography(db.Model):
     generated_at    = db.Column(db.DateTime)
     last_attempt_at = db.Column(db.DateTime)
     last_error      = db.Column(db.String(500))
+    # {method, verify_model, checked_claims, verified_claims, dropped_claims, dropped: [...]}.
+    # Deferred: page reads never SELECT it, so pages keep working if the code is deployed before
+    # migrations/members_profile_tables.py --execute adds the column.
+    verification    = deferred(db.Column(db.JSON))
 
 
 class MemberName(db.Model):

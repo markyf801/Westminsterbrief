@@ -98,6 +98,13 @@ Needs `migrations/members_profile_tables.py --execute` run once first (one-off,
 | `member-profile-refresh` | `0 3 * * 0` | `python scripts/refresh_members.py` | Weekly — identity, posts, committees, contact, interests, archive activity counts (~4,400 polite requests, ~30–40 min) |
 | `member-bio-refresh` | `0 4 2 * *` | `python scripts/refresh_members.py --audit-names --regenerate-bios` | Monthly — same refresh, re-checks every personal name (Wikidata P10428, Parliament fallback) with an audit report in `member_name_audit`, then Gemini Flash-Lite bios only where inputs changed |
 
+Bios: generated with `MEMBER_BIO_MODEL` (default `gemini-2.5-flash`), then verified — filler and any
+sentence naming an institution or year not in that section's source are dropped, plus a
+`MEMBER_BIO_VERIFY_MODEL` check (default `gemini-2.5-flash-lite`; `off` disables it). The report is in
+`member_biography.verification` (added by re-running the migration with `--execute`). Background comes
+from Wikipedia; Wikidata education/occupation only when there is no article. Before a backfill, run
+`python scripts/refresh_members.py --sample 12` and read the printed bios + dropped claims.
+
 Names: `member_name` holds personal names (e.g. Baroness Smith of Malvern → Jacqui Smith); set
 `source='manual'` on a row to lock an owner correction. Peer slugs follow
 `firstname-lastname-of-place` once a name is known; old slugs 301.
