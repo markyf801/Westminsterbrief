@@ -752,11 +752,45 @@ input:focus, select:focus, textarea:focus {
 
 .empty-state p { font-size: 16px; margin: 0; }
 
+.nav-links {
+    display: flex;
+    gap: 2px;
+    align-items: stretch;
+    flex: 1;
+}
+
+.nav-toggle {
+    display: none;
+}
+
 /* --- RESPONSIVE --- */
 @media (max-width: 768px) {
-    .navbar { padding: 0 16px; gap: 0; overflow-x: auto; }
-    .navbar a { font-size: 12px; padding: 0 9px; }
+    .navbar { padding: 0 16px; gap: 0; justify-content: space-between; align-items: center; }
     .navbar .brand { font-size: 15px; }
+    .nav-toggle {
+        display: block;
+        background: none;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 6px;
+        color: #fff;
+        font-size: 14px;
+        padding: 8px 12px;
+        cursor: pointer;
+    }
+    .nav-links {
+        display: none;
+        position: absolute;
+        top: 58px;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        background: #0d1117;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.25);
+    }
+    .nav-links.nav-open { display: flex; }
+    .nav-links a { font-size: 15px; padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .nav-links .nav-divider { display: none; }
     .container { padding: 0 14px; }
     .box { padding: 20px 16px; }
     .tool-grid { grid-template-columns: 1fr; }
