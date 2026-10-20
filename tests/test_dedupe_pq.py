@@ -7,13 +7,15 @@ SQLite in-memory; no network.
 import importlib.util
 import sys
 import types
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 
 PROJECT_ROOT = Path(__file__).parents[1]
 _CUT = "<p>" + "x" * 252 + "..."      # 258 chars: the bulk endpoint's cut-off copy
+_FULL_ANSWER = "<p>" + "x" * 252 + " and the rest of the answer.</p>"
+_STAMP = datetime(2026, 6, 5, 9, 0)   # same updated_at unless a test says otherwise
 
 
 @pytest.fixture
@@ -57,7 +59,8 @@ def _run(mod, db, argv):
 def _pq(db, **kw):
     from hansard_archive.models import HaPQ
     base = dict(uin="6978", question_text="To ask the Secretary of State, what steps.",
-                tabled_date=date(2026, 6, 4), chamber="Commons", is_answered=False)
+                tabled_date=date(2026, 6, 4), chamber="Commons", is_answered=False,
+                updated_at=_STAMP)
     base.update(kw)
     row = HaPQ(**base)
     db.session.add(row)
@@ -87,7 +90,7 @@ def test_api_id_pair_keeps_most_complete_merges_themes_and_references(env):
     mod, db = env
     sparse = _pq(db, api_id=1912500, heading=None, answer_text=_CUT, is_answered=True)
     full = _pq(db, api_id=1912500, heading="Vaccination", asking_member="A Member",
-               answer_text="<p>The full answer.</p>", is_answered=True,
+               answer_text=_FULL_ANSWER, is_answered=True,
                answer_date=date(2026, 6, 9))
     _add_themes(db, sparse.id, "vaccines", "heart failure")
     _add_themes(db, full.id, "vaccines")
@@ -99,11 +102,11 @@ def test_api_id_pair_keeps_most_complete_merges_themes_and_references(env):
     assert _run(mod, db, ["--apply"]) == 0
 
     rows = HaPQ.query.all()
-    assert [r.id for r in rows] == [full_id]          # the more complete row, though later
+    assert [r.id for r in rows] == [full_id]          # has the answer date, though later
     assert _themes(db, full_id) == {"vaccines", "heart failure"}   # no duplicate theme
     assert _themes(db, sparse_id) == set()
     assert _notes(db) == {1: full_id}
-    assert rows[0].answer_text == "<p>The full answer.</p>"
+    assert rows[0].answer_text == _FULL_ANSWER
 
 
 def test_dry_run_is_the_default_and_writes_nothing(env):
@@ -227,3 +230,90 @@ def test_other_fk_refs_found_from_schema(env):
     mod, db = env
     assert ("pq_note", "pq_id") in mod.other_fk_refs(db.engine)
     assert ("ha_pq_theme", "pq_id") not in mod.other_fk_refs(db.engine)
+
+
+# ── re-review: newest row wins; differing versions go to review ───────────────
+
+def test_holding_vs_substantive_answer_left_for_review(env, caplog):
+    from hansard_archive.models import HaPQ
+    mod, db = env
+    _pq(db, api_id=31, is_answered=True, is_holding=True, answer_date=date(2026, 9, 10),
+        answer_text="<p>I will reply to the hon. Member as soon as possible.</p>")
+    _pq(db, api_id=31, is_answered=True, is_holding=False, answer_date=date(2026, 9, 20),
+        answer_text="<p>The Department has allocated funding.</p>")
+    db.session.commit()
+    assert _run(mod, db, ["--apply"]) == 3
+    assert HaPQ.query.count() == 2
+    assert "answer text differs" in caplog.text
+
+
+def test_truncated_vs_full_answer_merged_full_kept(env):
+    from hansard_archive.models import HaPQ
+    mod, db = env
+    newer = _pq(db, api_id=32, is_answered=True, answer_text=_CUT, answer_date=date(2026, 9, 1),
+                updated_at=datetime(2026, 9, 2, 8, 0))
+    older = _pq(db, api_id=32, is_answered=True, answer_text=_FULL_ANSWER,
+                answer_date=date(2026, 9, 1), updated_at=datetime(2026, 9, 1, 8, 0))
+    db.session.commit()
+    newer_id = newer.id
+    assert older.id != newer_id
+    assert _run(mod, db, ["--apply"]) == 0
+    row = HaPQ.query.one()
+    assert row.id == newer_id                       # latest updated_at wins …
+    assert row.answer_text == _FULL_ANSWER          # … but takes the full answer
+
+
+def test_answered_row_preferred_over_newer_unanswered_row(env):
+    from hansard_archive.models import HaPQ
+    mod, db = env
+    answered = _pq(db, api_id=33, is_answered=True, answer_text=_FULL_ANSWER,
+                   answer_date=date(2026, 9, 1), updated_at=datetime(2026, 9, 1))
+    _pq(db, api_id=33, heading="Schools", updated_at=datetime(2026, 10, 1))
+    db.session.commit()
+    answered_id = answered.id
+    assert _run(mod, db, ["--apply"]) == 0
+    row = HaPQ.query.one()
+    assert row.id == answered_id and row.heading == "Schools"
+
+
+def test_newer_updated_at_wins_when_answer_dates_agree(env):
+    from hansard_archive.models import HaPQ
+    mod, db = env
+    _pq(db, api_id=34, heading="Old heading", answering_body="Dept A")
+    newer = _pq(db, api_id=34, heading="New heading", updated_at=datetime(2026, 10, 1))
+    db.session.commit()
+    newer_id = newer.id
+    _run(mod, db, ["--apply"])
+    row = HaPQ.query.one()
+    assert row.id == newer_id and row.heading == "New heading"
+    assert row.answering_body == "Dept A"          # empty field filled
+
+
+def test_longer_question_text_kept_when_prefix(env):
+    from hansard_archive.models import HaPQ
+    mod, db = env
+    _pq(db, api_id=35, question_text="To ask the Secretary of State for Education, what...",
+        updated_at=datetime(2026, 10, 1))
+    _pq(db, api_id=35, question_text="To ask the Secretary of State for Education, what "
+                                     "steps she is taking on school funding.")
+    db.session.commit()
+    assert _run(mod, db, ["--apply"]) == 0
+    assert HaPQ.query.one().question_text.endswith("school funding.")
+
+
+@pytest.mark.parametrize("a, b", [
+    (dict(question_text="To ask about fish quotas."), dict(question_text="To ask about rail.")),
+    (dict(is_withdrawn=True), dict(is_withdrawn=False)),
+    (dict(is_answered=True, answer_text="<p>Yes.</p>", answer_date=date(2026, 9, 1)),
+     dict(is_answered=True, answer_text="<p>Yes.</p>", answer_date=date(2026, 9, 8))),
+    (dict(is_answered=True, answer_text="<p>Yes.</p>", is_holding=True),
+     dict(is_answered=True, answer_text="<p>Yes.</p>", is_holding=False)),
+])
+def test_rows_with_different_versions_left_for_review(env, a, b):
+    from hansard_archive.models import HaPQ
+    mod, db = env
+    _pq(db, api_id=36, **a)
+    _pq(db, api_id=36, **b)
+    db.session.commit()
+    assert _run(mod, db, ["--apply"]) == 3
+    assert HaPQ.query.count() == 2
