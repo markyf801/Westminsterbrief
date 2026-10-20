@@ -126,7 +126,6 @@ Talisman(
             "'unsafe-inline'",
             "https://cdn.jsdelivr.net",
             "https://code.jquery.com",
-            "https://plausible.io",
             "https://static.cloudflareinsights.com",
         ],
         'style-src': [
@@ -146,7 +145,6 @@ Talisman(
         ],
         'connect-src': [
             "'self'",
-            "https://plausible.io",
             "https://static.cloudflareinsights.com",
             "https://cloudflareinsights.com",
         ],
@@ -284,7 +282,10 @@ def _run_startup_migrations():
         try:
             with db.engine.connect() as conn:
                 conn.execute(text("ALTER TABLE \"user\" ADD COLUMN access_tier VARCHAR(20) NOT NULL DEFAULT 'standard'"))
-                conn.execute(text("UPDATE \"user\" SET access_tier = 'public_sector' WHERE email LIKE '%.gov.uk' OR email = 'markjforde@gmail.com'"))
+                conn.execute(
+                    text("UPDATE \"user\" SET access_tier = 'public_sector' WHERE email LIKE '%.gov.uk' OR email = :admin"),
+                    {"admin": os.environ.get("ADMIN_EMAIL", "")},
+                )
                 conn.commit()
         except Exception as _e:
             app.logger.warning('user access_tier migration failed: %s', _e)
