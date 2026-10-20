@@ -19,12 +19,16 @@ Phases
                 members, plus an audit report (log + member_name_audit row).
                 Peer slugs move from the title fallback to firstname-lastname-of-place
                 once a personal name is known (old slugs 301).
-  5. Bios     — only with --regenerate-bios. Wikipedia article from the same
-                Wikidata match (wiki_status found/not_found/ambiguous/error is
-                recorded); Wikidata education/occupation statements and Parliament's
-                house/constituency history are the fallback when there is no article.
-                Hashes all prompt inputs and calls Gemini Flash-Lite only for
-                members whose hash changed or who have no bio yet.
+  5. Bios     — only with --regenerate-bios. Background comes from the Wikipedia
+                article (same Wikidata match; wiki_status found/not_found/ambiguous/error
+                is recorded). Only when there is no article: Wikidata education
+                (minus anything that is also an employer/interest) and occupations.
+                Generated with MEMBER_BIO_MODEL (default gemini-2.5-flash), then verified:
+                deterministic checks (filler; every named institution/year must appear
+                in that section's source) plus a MEMBER_BIO_VERIFY_MODEL check (default
+                gemini-2.5-flash-lite). Unsupported sentences are dropped and the report
+                stored in member_biography.verification. Only members whose input hash
+                changed (or with no bio) are regenerated.
 
 Usage
   python scripts/refresh_members.py                       # phases 1-4 (names for new members only)
@@ -33,6 +37,7 @@ Usage
   python scripts/refresh_members.py --member-id 4046 --member-id 269
   python scripts/refresh_members.py --audit-names         # re-check every member's name + audit report
   python scripts/refresh_members.py --regenerate-bios     # phases 1-5
+  python scripts/refresh_members.py --sample 12           # spot-check: 12 diverse members, bios + verification printed
 
 Railway (Dockerfile.cron, SKIP_MIGRATIONS=1, needs migrations/members_profile_tables.py applied first)
   member-profile-refresh   0 3 * * 0   python scripts/refresh_members.py
@@ -44,13 +49,15 @@ also stops the run; a 429 from Wikidata/Wikipedia backs off (Retry-After, else
 exponential) and skips that chunk/member as wiki_status='error', stopping only if
 RATE_LIMIT_STOP_AFTER requests in a row stay rate-limited.
 
-Environment: DATABASE_URL, GEMINI_API_KEY (bios only).
+Environment: DATABASE_URL, GEMINI_API_KEY (bios only), optional MEMBER_BIO_MODEL /
+MEMBER_BIO_VERIFY_MODEL ("off" disables the model check; deterministic checks always run).
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import random
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -294,6 +301,7 @@ _WIKIDATA_QUERY = """SELECT ?mnis ?item ?label ?article
  (GROUP_CONCAT(DISTINCT ?family; separator="|") AS ?families)
  (GROUP_CONCAT(DISTINCT ?edu; separator="|") AS ?education)
  (GROUP_CONCAT(DISTINCT ?occ; separator="|") AS ?occupations)
+ (GROUP_CONCAT(DISTINCT ?emp; separator="|") AS ?employers)
 WHERE {
  VALUES ?mnis { %s }
  ?item wdt:%s ?mnis .
@@ -302,6 +310,7 @@ WHERE {
  OPTIONAL { ?item wdt:P734 ?f . ?f rdfs:label ?family FILTER(lang(?family) = "en") }
  OPTIONAL { ?item wdt:P69 ?e . ?e rdfs:label ?edu FILTER(lang(?edu) = "en") }
  OPTIONAL { ?item wdt:P106 ?o . ?o rdfs:label ?occ FILTER(lang(?occ) = "en") }
+ OPTIONAL { ?item wdt:P108 ?w . ?w rdfs:label ?emp FILTER(lang(?emp) = "en") }
  OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> }
 } GROUP BY ?mnis ?item ?label ?article"""
 
@@ -336,6 +345,7 @@ def parse_wikidata(bindings: list, member_ids: list[int]) -> dict[int, dict]:
             "status": "matched", "qid": r["item"].rsplit("/", 1)[-1], "name": name,
             "given": given, "family": family, "article": r.get("article"),
             "education": _split(r.get("education")), "occupations": _split(r.get("occupations")),
+            "employers": _split(r.get("employers")),
         }
     return out
 
@@ -439,7 +449,8 @@ def store_wiki_status(profile, entry: dict | None, status: str, now: datetime) -
     if entry and entry.get("status") == "matched":
         profile.wikidata_id = entry["qid"]
         profile.wikidata_facts = {"education": entry.get("education") or [],
-                                  "occupations": entry.get("occupations") or []}
+                                  "occupations": entry.get("occupations") or [],
+                                  "employers": entry.get("employers") or []}
         profile.wikipedia_url = entry.get("article")
     elif status in ("not_found", "ambiguous"):
         profile.wikidata_id = None
@@ -630,7 +641,8 @@ def refresh_bio(profile, entry: dict | None, api_key: str | None, now: datetime,
     from cache_models import MemberBiography, MemberName
     from extensions import db
     from member_profiles import (BIO_MODEL, PROMPT_VERSION, GeminiPermanentError, bio_inputs,
-                                 bio_prompt, bio_source_hash, bio_sources, generate_bio_text)
+                                 bio_prompt, bio_source_hash, bio_sources, generate_bio_text,
+                                 verify_bio)
 
     status = wiki_status_for(entry)
     if status == "error":
@@ -648,11 +660,9 @@ def refresh_bio(profile, entry: dict | None, api_key: str | None, now: datetime,
         store_wiki_status(profile, entry, status, now)
 
     name_row = db.session.get(MemberName, profile.member_id)
-    inputs = bio_inputs(profile, wiki_text, wiki_url, name_row.personal_name if name_row else None)
-    matched = (entry or {}).get("status") == "matched"
-    inputs.update(wikidata_id=entry["qid"] if matched else None,
-                  wikidata_education=sorted(entry.get("education") or [])[:8] if matched else [],
-                  wikidata_occupations=sorted(entry.get("occupations") or [])[:8] if matched else [])
+    # Background: Wikipedia text when there is an article; filtered Wikidata statements only when not.
+    inputs = bio_inputs(profile, wiki_text, wiki_url, name_row.personal_name if name_row else None,
+                        wikidata_entry=entry)
     source_hash = bio_source_hash(inputs)
     existing = db.session.get(MemberBiography, profile.member_id)
     if existing is not None and existing.bio_text and existing.source_hash == source_hash:
@@ -668,7 +678,9 @@ def refresh_bio(profile, entry: dict | None, api_key: str | None, now: datetime,
     existing.last_attempt_at = now
     try:
         time.sleep(GEMINI_DELAY)
-        text = generate_bio_text(bio_prompt(inputs), api_key)
+        draft = generate_bio_text(bio_prompt(inputs), api_key)
+        # Unverified text is never published: a failed verification keeps the previous bio.
+        text, report = verify_bio(draft, inputs, api_key)
     except GeminiPermanentError as exc:
         existing.last_error = str(exc)[:500]
         db.session.commit()
@@ -682,10 +694,84 @@ def refresh_bio(profile, entry: dict | None, api_key: str | None, now: datetime,
     existing.prompt_version = PROMPT_VERSION
     existing.source_hash = source_hash
     existing.sources = bio_sources(profile.member_id, inputs)
+    existing.verification = report
     existing.generated_at = now
     existing.last_error = None
     db.session.commit()
     return "generated"
+
+
+# ── Spot-check sample ─────────────────────────────────────────────────────────
+
+def _has_current(posts) -> bool:
+    return any(not p.get("end") for p in posts or [])
+
+
+SAMPLE_CATEGORIES = (
+    ("MP: government", lambda p: p.house == "Commons" and _has_current(p.government_posts)),
+    ("MP: opposition", lambda p: p.house == "Commons" and _has_current(p.opposition_posts)),
+    ("MP: backbench", lambda p: p.house == "Commons" and not _has_current(p.government_posts)
+                                and not _has_current(p.opposition_posts)),
+    ("Peer: life", lambda p: p.house == "Lords" and (p.membership_from or "").lower() == "life peer"),
+    ("Peer: hereditary", lambda p: p.house == "Lords" and "hereditary" in (p.membership_from or "").lower()),
+    ("Peer: bishop", lambda p: p.house == "Lords" and "bishop" in (p.membership_from or "").lower()),
+    ("Peer: judicial", lambda p: p.house == "Lords" and "judicial" in (p.membership_from or "").lower()),
+    ("No Wikipedia article", lambda p: p.wiki_status == "not_found"),
+)
+
+
+def pick_sample(n: int, seed: int = 0) -> list[tuple[int, str]]:
+    """A diverse sample of stored current members, round-robin across SAMPLE_CATEGORIES."""
+    from cache_models import MemberProfile
+
+    profiles = (MemberProfile.query
+                .filter(MemberProfile.is_current.is_(True), MemberProfile.details_refreshed_at.isnot(None))
+                .order_by(MemberProfile.member_id).all())
+    rng = random.Random(seed)
+    pools = []
+    for label, test in SAMPLE_CATEGORIES:
+        ids = [p.member_id for p in profiles if test(p)]
+        rng.shuffle(ids)
+        pools.append((label, ids))
+    picked: list[tuple[int, str]] = []
+    used: set[int] = set()
+    while len(picked) < n and any(ids for _, ids in pools):
+        for label, ids in pools:
+            while ids and ids[0] in used:
+                ids.pop(0)
+            if ids and len(picked) < n:
+                mid = ids.pop(0)
+                used.add(mid)
+                picked.append((mid, label))
+    return picked
+
+
+def print_sample_report(picks: list[tuple[int, str]]) -> None:
+    """Bios + verification for human review, printed to the log."""
+    from cache_models import MemberBiography, MemberName, MemberProfile
+    from extensions import db
+    from member_profiles import display_name
+
+    for mid, label in picks:
+        p = db.session.get(MemberProfile, mid)
+        n = db.session.get(MemberName, mid)
+        b = db.session.get(MemberBiography, mid)
+        print("=" * 100, flush=True)
+        print(f"[sample] {mid} {display_name(p.name, p.house, n.personal_name if n else None)} — {label}; "
+              f"wiki_status={p.wiki_status}; name source={n.source if n else None}/"
+              f"{n.confidence if n else None}", flush=True)
+        if b is None or not b.bio_text:
+            print(f"[sample] NO BIO. last_error={b.last_error if b else None}", flush=True)
+            continue
+        print(f"[sample] model={b.model_used} generated={b.generated_at} prompt={b.prompt_version}", flush=True)
+        print("[sample] sources: " + "; ".join(f"{x['label']} <{x['url']}>" for x in b.sources or []), flush=True)
+        print(b.bio_text, flush=True)
+        v = b.verification or {}
+        print(f"[sample] verification: method={v.get('method')} checked={v.get('checked_claims')} "
+              f"verified={v.get('verified_claims')} dropped={v.get('dropped_claims')}", flush=True)
+        for d in v.get("dropped") or []:
+            print(f"  [dropped] ({d.get('section')}) {d.get('sentence')} — {d.get('reason')}", flush=True)
+    print("=" * 100, flush=True)
 
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
@@ -796,7 +882,7 @@ def run(member_ids: list[int] | None = None, limit: int | None = None, dry_run: 
     return stats
 
 
-def main(argv=None) -> int:
+def main(argv=None, app=None) -> int:
     parser = argparse.ArgumentParser(description="Refresh stored member profiles and AI biographies.")
     parser.add_argument("--dry-run", action="store_true",
                         help="fetch and compare, write nothing, call no AI")
@@ -807,14 +893,29 @@ def main(argv=None) -> int:
                         help="regenerate biographies whose inputs changed")
     parser.add_argument("--audit-names", action="store_true",
                         help="re-check every member's personal name and write an audit report")
+    parser.add_argument("--sample", type=int, metavar="N",
+                        help="spot-check: pick N diverse stored members, refresh + regenerate their bios "
+                             "where inputs changed, and print bios + verification for review")
+    parser.add_argument("--seed", type=int, default=0, help="sample selection seed (default 0)")
     args = parser.parse_args(argv)
 
-    from flask_app import app
+    if app is None:
+        from flask_app import app
     with app.app_context():
         t0 = time.monotonic()
-        stats = run(member_ids=args.member_ids, limit=args.limit, dry_run=args.dry_run,
-                    regenerate_bios=args.regenerate_bios, audit_names=args.audit_names,
+        picks = []
+        if args.sample:
+            picks = pick_sample(args.sample, args.seed)
+            if not picks:
+                print("[members] No stored profiles to sample — run a profile refresh first.", flush=True)
+                return 1
+            print("[members] sample: " + ", ".join(f"{m} ({lbl})" for m, lbl in picks), flush=True)
+        stats = run(member_ids=[m for m, _ in picks] or args.member_ids, limit=args.limit,
+                    dry_run=args.dry_run, regenerate_bios=args.regenerate_bios or bool(picks),
+                    audit_names=args.audit_names or bool(picks),
                     api_key=os.environ.get("GEMINI_API_KEY"))
+        if picks:
+            print_sample_report(picks)
     mode = "DRY RUN — nothing written. " if args.dry_run else ""
     print(f"[members] {mode}Done in {time.monotonic() - t0:.0f}s: "
           + " ".join(f"{k}={v}" for k, v in stats.items() if k not in ("exit_code", "names")), flush=True)

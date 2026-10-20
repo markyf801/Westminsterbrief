@@ -210,6 +210,8 @@ def gemini(monkeypatch):
         return f"## Background\nGenerated text #{len(calls)}\n## Summary\n- A **fact**."
 
     monkeypatch.setattr(member_profiles, "generate_bio_text", fake_generate)
+    # Verification model: no objections unless a test says otherwise.
+    monkeypatch.setattr(member_profiles, "model_unsupported_claims", lambda bio, texts, key: [])
     return calls
 
 
@@ -473,7 +475,7 @@ class TestNames:
         fake.wikidata[269]["article"] = None
         _run(regenerate_bios=True)
         prompt = next(p for p in gemini if "Jacqui Smith" in p)
-        assert "No Wikipedia article was matched" in prompt
+        assert "no Wikipedia article was matched" in prompt
         assert "Hertford College" in prompt and "teacher" in prompt
         labels = [s["label"] for s in MemberBiography.query.get(269).sources]
         assert any(lbl.startswith("Wikidata") for lbl in labels)
@@ -859,3 +861,182 @@ class TestRateLimitBackoff:
         assert stats["bio_skipped"] == 2 and gemini == []
         assert MemberProfile.query.get(269).wiki_status == "error"
         assert _name(269).personal_name == "Jacqui Smith" and _name(269).source == "parliament"
+
+
+# ── Accuracy: source priority, Wikidata filter, verification, sample ─────────
+
+def _profile_ns(**kw):
+    from types import SimpleNamespace
+    base = dict(name="Baroness Smith of Malvern", house="Lords", party="Labour", membership_from="Life peer",
+                membership_start=None, government_posts=[], opposition_posts=[], committees=[], interests=[],
+                other_posts=[], top_policy_areas=[], wq_departments=[], representations=[],
+                house_memberships=[], wikidata_id=None, wikidata_facts=None)
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+SMITH_ENTRY = {
+    "status": "matched", "qid": "Q237217", "name": "Jacqui Smith", "article": None,
+    "education": ["Dyson Perrins CofE Academy", "Hertford College", "RSA Academy Arrow Vale",
+                  "University of Worcester"],
+    "employers": ["RSA Academy Arrow Vale"],
+    "occupations": ["politician", "teacher"],
+}
+
+
+class TestWikidataBackground:
+    def test_employer_values_dropped_from_education(self):
+        education, occupations = member_profiles.wikidata_background(SMITH_ENTRY)
+        assert "RSA Academy Arrow Vale" not in education
+        assert "Hertford College" in education and occupations == ["teacher"]   # generic 'politician' gone
+
+    def test_interest_or_post_workplace_dropped(self):
+        profile = _profile_ns(interests=[{"category": "Employment",
+                                          "description": "Visiting Professor, University of Worcester"}])
+        education, _ = member_profiles.wikidata_background(SMITH_ENTRY, profile)
+        assert education == ["Dyson Perrins CofE Academy", "Hertford College"]
+
+    def test_wikipedia_article_wins_and_lists_are_never_mixed(self):
+        profile = _profile_ns()
+        with_article = member_profiles.bio_inputs(profile, "She studied at Hertford College.",
+                                                  "https://en.wikipedia.org/wiki/Jacqui_Smith",
+                                                  "Jacqui Smith", dict(SMITH_ENTRY))
+        assert with_article["wikidata_education"] == [] and with_article["wikidata_id"] is None
+        prompt = member_profiles.bio_prompt(with_article)
+        assert "WIKIDATA STATEMENTS" not in prompt and "Dyson Perrins" not in prompt
+        labels = [x["label"] for x in member_profiles.bio_sources(269, with_article)]
+        assert any(lbl.startswith("Wikipedia") for lbl in labels)
+        assert not any(lbl.startswith("Wikidata") for lbl in labels)
+
+        without = member_profiles.bio_inputs(profile, "", None, "Jacqui Smith", dict(SMITH_ENTRY))
+        assert without["wikidata_education"] == ["Dyson Perrins CofE Academy", "Hertford College",
+                                                 "University of Worcester"]
+        assert "WIKIDATA STATEMENTS" in member_profiles.bio_prompt(without)
+
+
+BACKGROUND_SRC = ("WIKIPEDIA ARTICLE EXTRACT:\nJacqui Smith studied at Hertford College, Oxford. "
+                  "She taught economics at Arrow Vale High School from 1986.")
+RECORD_SRC = "Government roles:\n  - Minister of State (Department for Work and Pensions) (2025-09–present)"
+
+
+class TestVerification:
+    def test_deterministic_drops_unsupported_and_filler(self):
+        bio = ("## Background\n"
+               "She was educated at Hertford College and RSA Academy Arrow Vale.\n"
+               "She taught at Arrow Vale High School from 1986.\n"
+               "## Parliamentary career\n"
+               "She is a politician. She was elected in 1997.\n"
+               "## Government and opposition roles\n"
+               "- Minister of State (Department for Work and Pensions) since 2025.\n")
+        clean, dropped, kept = member_profiles.deterministic_check(
+            bio, {"background": BACKGROUND_SRC, "record": RECORD_SRC})
+        reasons = {d["sentence"]: d["reason"] for d in dropped}
+        assert "RSA Academy" in reasons["She was educated at Hertford College and RSA Academy Arrow Vale."]
+        assert reasons["She is a politician."] == "filler"
+        assert "1997" in reasons["She was elected in 1997."]
+        assert "She taught at Arrow Vale High School from 1986." in clean
+        assert "Minister of State (Department for Work and Pensions) since 2025." in clean
+        # a section left empty says so rather than disappearing
+        assert "## Parliamentary career\n" + member_profiles.NO_INFO in clean
+        assert kept == 2
+
+    @pytest.mark.parametrize("sentence,expected", [
+        ("She is a politician.", True),
+        ("Baroness Smith of Malvern is a politician and teacher.", True),
+        ("He is a British politician.", True),
+        ("- She is a member of the House of Lords.", True),
+        ("She is a former teacher who taught economics.", False),
+        ("She was Home Secretary from 2007 to 2009.", False),
+    ])
+    def test_filler(self, sentence, expected):
+        assert member_profiles.is_filler(sentence) is expected
+
+    def test_model_check_drops_sentences_and_reports(self, monkeypatch):
+        monkeypatch.setattr(member_profiles, "VERIFY_MODEL", "gemini-2.5-flash-lite")
+        monkeypatch.setattr(member_profiles, "model_unsupported_claims", lambda bio, texts, key: [
+            {"text": "She taught at Arrow Vale High School from 1986.", "reason": "date not in source"}])
+        inputs = {"wikipedia_text": BACKGROUND_SRC, "house": "Lords", "name": "X"}
+        bio = "## Background\nShe studied at Hertford College.\nShe taught at Arrow Vale High School from 1986."
+        clean, report = member_profiles.verify_bio(bio, inputs, "key")
+        assert "Arrow Vale" not in clean and "Hertford College" in clean
+        assert report["dropped_claims"] == 1 and report["verified_claims"] == 1
+        assert report["dropped"][0]["reason"].startswith("verification model")
+
+    def test_refresh_stores_verified_text_and_report(self, app, fake, gemini, monkeypatch):
+        from cache_models import MemberBiography
+
+        def draft(prompt, key):
+            gemini.append(prompt)
+            return ("## Background\nShe studied at Hertford College.\nShe is a politician.\n"
+                    "She attended Imaginary Academy.\n## Summary\n- A fact.")
+        monkeypatch.setattr(member_profiles, "generate_bio_text", draft)
+        fake.wiki_text = "Jacqui Smith studied at Hertford College."
+        _run(regenerate_bios=True)
+        bio = MemberBiography.query.get(269)
+        assert "Hertford College" in bio.bio_text
+        assert "politician" not in bio.bio_text and "Imaginary Academy" not in bio.bio_text
+        assert bio.verification["dropped_claims"] == 2 and bio.verification["method"]
+
+    def test_failed_verification_keeps_previous_bio(self, app, fake, gemini, monkeypatch):
+        from cache_models import MemberBiography
+        _run(regenerate_bios=True)
+        before = MemberBiography.query.get(4046).bio_text
+        fake.interests[4046] = []
+
+        def broken(bio, texts, key):
+            raise RuntimeError("Gemini call failed: timeout")
+        monkeypatch.setattr(member_profiles, "VERIFY_MODEL", "gemini-2.5-flash-lite")
+        monkeypatch.setattr(member_profiles, "model_unsupported_claims", broken)
+        stats = _run(regenerate_bios=True)
+        assert stats["bio_failed"] == 1
+        bio = MemberBiography.query.get(4046)
+        assert bio.bio_text == before and "timeout" in bio.last_error
+
+    def test_models_configurable_and_in_hash(self, monkeypatch):
+        inputs = {"name": "X"}
+        h1 = member_profiles.bio_source_hash(inputs)
+        monkeypatch.setattr(member_profiles, "BIO_MODEL", "gemini-2.5-pro")
+        assert member_profiles.bio_source_hash(inputs) != h1
+
+
+class TestSample:
+    def test_pick_sample_is_diverse(self, app, fake):
+        _run()
+        picks = refresh_members.pick_sample(5)
+        assert dict(picks) == {4046: "MP: government", 269: "Peer: life"}
+
+    def test_sample_mode_prints_bios_and_verification(self, app, fake, gemini, monkeypatch, capsys):
+        _run()
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        code = refresh_members.main(["--sample", "2"], app=app)
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "[sample] 4046" in out and "[sample] 269" in out and "verification:" in out
+        assert "Generated text" in out
+
+
+class TestMigrationAddsColumn:
+    def test_old_biography_table_gains_verification(self, tmp_path):
+        from sqlalchemy import create_engine, inspect, text
+        sys.path.insert(0, str(PROJECT_ROOT / "migrations"))
+        import members_profile_tables as mig
+        engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+        mig.upgrade(engine)
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE member_biography DROP COLUMN verification"))
+        assert mig.missing(engine) == ["member_biography.verification"]
+        assert mig.upgrade(engine) == ["member_biography.verification"]
+        assert "verification" in {c["name"] for c in inspect(engine).get_columns("member_biography")}
+        assert mig.upgrade(engine) == []
+
+    def test_pages_work_before_column_exists(self, seeded, no_network):
+        from sqlalchemy import text
+        from extensions import db
+        db.session.commit()
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE member_biography DROP COLUMN verification"))
+        db.session.expire_all()
+        html = seeded.test_client().get("/members/269/jacqui-smith-of-malvern").get_data(as_text=True)
+        assert "Generated text" in html
+        assert seeded.test_client().post("/mp_search", data={"member_id": "4046"}).status_code == 200
+
