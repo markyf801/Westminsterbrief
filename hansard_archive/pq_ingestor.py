@@ -46,7 +46,6 @@ _log = logging.getLogger(__name__)
 WQ_API_BASE = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
 _REQUEST_TIMEOUT = 60        # Parliament API is slow; 30s was too tight
 _PAGE_SIZE = 500
-_COMMIT_BATCH = 200
 _INTER_REQUEST_DELAY = 0.3   # seconds between paginated requests
 _PAGE_RETRIES = 3            # retries on transient errors before skipping a page
 
@@ -81,6 +80,9 @@ _REFRESH_IF_PRESENT = (
     "answering_body", "answering_body_id",
     "is_holding", "is_withdrawn",
 )
+# Belong with the stored answer text; only a complete record may change them
+# once an answer is stored (see _planned_changes).
+_ANSWER_META = ("answer_date", "is_holding")
 
 
 class PQIngestAborted(RuntimeError):
@@ -238,7 +240,15 @@ def _planned_changes(existing: HaPQ, fields: dict, matched_by: str,
     if matched_by == "date_uin" and fields.get("api_id") and not existing.api_id:
         consider("api_id", fields["api_id"])
 
+    # Without the full record, leave the answer's date and holding flag alone
+    # while an answer is stored: they must change together with its text. A
+    # holding answer later replaced by the real one keeps its old answer_date,
+    # so the date difference stays visible and the next full-fetch pass
+    # (_answer_already_stored, Stage B) re-fetches it.
+    keep_answer_meta = not text_complete and bool(existing.answer_text)
     for name in _REFRESH_IF_PRESENT:
+        if keep_answer_meta and name in _ANSWER_META:
+            continue
         new = fields.get(name)
         if new is not None:
             consider(name, new)
@@ -247,8 +257,8 @@ def _planned_changes(existing: HaPQ, fields: dict, matched_by: str,
     # complete record (individual endpoint) may replace stored text. A
     # bulk-only pass fills missing question text but NEVER writes answer text:
     # a truncated answer would look complete and never be re-fetched. It still
-    # sets is_answered/answer_date, which makes the answered pass (and
-    # _answer_already_stored) fetch the full answer.
+    # sets is_answered (and answer_date while no answer is stored), which makes
+    # the answered pass (and _answer_already_stored) fetch the full answer.
     q_new, a_new = fields["question_text"], fields["answer_text"] or None
     if text_complete:
         consider("question_text", q_new)
@@ -577,8 +587,10 @@ def ingest_pq_date_range(
                     _log.error(msg)
                     raise PQIdentityMismatchError(msg, result())
 
-            if not dry_run and sum(uncommitted.values()) >= _COMMIT_BATCH:
-                _commit()
+        # Commit every page: keeps the window in which an overlapping run could
+        # insert the same question small (until uq_ha_pq_api_id exists).
+        if not dry_run and any(uncommitted.values()):
+            _commit()
 
         page += 1
         if verbose:
