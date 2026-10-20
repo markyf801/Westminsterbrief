@@ -1,0 +1,19 @@
+{
+ "uri": "/peoplepopulationandcommunity/crimeandjustice/bulletins/crimeinenglandandwales/yearendingmarch2026",
+ "type": "bulletin",
+ "description": {
+  "title": "Crime in England and Wales",
+  "edition": "year ending March 2026",
+  "releaseDate": "2026-07-22T23:00:00.000Z",
+  "nextRelease": "22 October 2026",
+  "latestRelease": true,
+  "headline1": "9.6 million incidents of CSEW headline crime; no statistically significant change compared with the YE March 2025 survey (around 9.4 million incidents); CSEW headline crime includes theft, robbery, criminal damage, fraud, computer misuse, and violence with or without injury",
+  "headline2": "2.6 million theft incidents, no statistically significant change compared with last year's survey (2.8 million incidents); however, there was a 21% increase in other household theft (to around 791,000 incidents) because of increases in theft from outside a dwelling"
+ },
+ "sections": [
+  {
+   "title": "Main points",
+   "markdown": "Crime against individuals and households has generally decreased over the last 10 years with some notable exceptions, such as fraud. The latest figures from the Crime Survey for England and Wales (CSEW) year ending (YE) March 2026 showed that in the last year there were an estimated:\n\n- 9.6 million incidents of CSEW headline crime; no statistically significant change compared with the YE March 2025 survey (around 9.4 million incidents); CSEW headline crime includes theft, robbery, criminal damage, fraud, computer misuse, and violence with or without injury\n\n- 2.6 million theft incidents, no statistically significant change compared with last year's survey (2.8 million incidents); however, there was a 21% increase in other household theft (to around 791,000 incidents) because of increases in theft from outside a dwelling\n\n- 4.5 million fraud incidents, no statistically significant change compared with last year's survey (4.2 million incidents); however, there was a 10% increase in the number of fraud victims (to 3.8 million victims) compared with the previous year's survey (3.4 million victims)"
+  }
+ ]
+}

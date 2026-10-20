@@ -1,0 +1,55 @@
+{
+ "collection": {
+  "base_path": "/government/collections/net-supply-of-housing",
+  "title": "Housing supply: net additional dwellings",
+  "links": {
+   "documents": [
+    {
+     "base_path": "/government/statistics/housing-supply-net-additional-dwellings-england-2024-to-2025",
+     "title": "Housing supply: net additional dwellings, England: 2024 to 2025",
+     "public_updated_at": "2025-11-20T09:30:07Z"
+    },
+    {
+     "base_path": "/government/statistics/housing-supply-net-additional-dwellings-england-2023-to-2024",
+     "title": "Housing supply: net additional dwellings, England: 2023 to 2024",
+     "public_updated_at": "2024-11-28T09:30:21Z"
+    }
+   ]
+  }
+ },
+ "edition": {
+  "base_path": "/government/statistics/housing-supply-net-additional-dwellings-england-2024-to-2025",
+  "title": "Housing supply: net additional dwellings, England: 2024 to 2025",
+  "document_type": "national_statistics",
+  "first_published_at": "2025-11-20T09:30:07+00:00",
+  "public_updated_at": "2025-11-20T09:30:07+00:00",
+  "details": {
+   "attachments": [
+    {
+     "title": "Housing supply: net additional dwellings, England: 2024 to 2025",
+     "url": "/government/statistics/housing-supply-net-additional-dwellings-england-2024-to-2025/housing-supply-net-additional-dwellings-england-2024-to-2025",
+     "content_type": null
+    },
+    {
+     "title": "Housing supply: net additional dwellings, England: 2024-25 data for figures in release document",
+     "url": "https://assets.publishing.service.gov.uk/media/691b37255a253e2c40d70611/net_additional_dwellings_figure_data_tables.ods",
+     "content_type": "application/vnd.oasis.opendocument.spreadsheet"
+    },
+    {
+     "title": "Housing supply: net additional dwellings, England: 2024 to 2025 technical notes",
+     "url": "/government/statistics/housing-supply-net-additional-dwellings-england-2024-to-2025/housing-supply-net-additional-dwellings-england-2024-to-2025-technical-notes",
+     "content_type": null
+    }
+   ]
+  }
+ },
+ "html_publication": {
+  "base_path": "/government/statistics/housing-supply-net-additional-dwellings-england-2024-to-2025/housing-supply-net-additional-dwellings-england-2024-to-2025",
+  "title": "Housing supply: net additional dwellings, England: 2024 to 2025",
+  "document_type": "html_publication",
+  "first_published_at": "2025-11-20T09:30:07+00:00",
+  "details": {
+   "body": "<h2 id=\"key-statistics\">1. Key statistics</h2>\n\n<p>Annual housing supply in England amounted to <strong>208,600</strong> net additional dwellings in 2024-25, a <strong>6% decrease</strong> on 2023-24.</p>\n\n<p>This resulted from <strong>190,600</strong> new build homes, <strong>17,710</strong> gains from change of use between non-domestic and residential, <strong>3,850</strong> from conversions between houses and flats and <strong>1,080</strong> other gains (caravans, house boats, etc), offset by <strong>4,630</strong> demolitions.</p>\n\n<p><strong>304</strong> of the net additions from new build homes were through ‘permitted development rights’ (full planning permission not required).</p>\n\n<p><strong>7,681</strong> of the net additions from change of use were through ‘permitted development rights’ (full planning permission not required). These comprised <strong>5,154</strong> additional dwellings from former offices, <strong>462</strong> from agricultural buildings, <strong>94</strong> from light industrial buildings, <strong>1,048</strong> from commercial, business and service use buildings and <strong>923</strong> from other non-domestic buildings.</p>\n\n<p>The loss of <strong>349</strong> dwellings from demolitions were through ‘permitted development rights’ (full planning permission not required).</p>\n\n"
+  }
+ }
+}

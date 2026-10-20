@@ -55,10 +55,17 @@ def db(test_app):
     return _db
 
 
+# Per-stat validation config (unit + sanity bounds). Since Oct 2026 a stat with
+# no config cannot be validated and is reported NEEDS-REVIEW, so test rows carry
+# one in HeadlineStat.extraction_config.
+_TEST_CONFIG = json.dumps({'unit': '%', 'min': -100, 'max': 100, 'unit_aliases': '%|per ?cent'})
+
+
 def _make_stat(db, source_id: str, source_type: str = 'ons_timeseries',
                theme_slug: str = 'economy', source_url: str = 'https://www.ons.gov.uk/test'):
     from hansard_archive.models import HeadlineStat
     stat = HeadlineStat(
+        extraction_config=_TEST_CONFIG,
         theme_slug=theme_slug,
         source_type=source_type,
         source_id=source_id,
@@ -89,15 +96,14 @@ def _ons_api_response(value='3.2', label='2024 Q3', freq='quarters',
     }
 
 
-def _gemini_extraction(figure='3.2', unit='%', period_label='Q3 2024',
-                       release_date='2025-01-15', verbatim='GDP grew by 3.2% in Q3 2024.'):
-    """Build a minimal Gemini extraction response."""
+def _gemini_extraction(value='3.2', unit='%', period_label='Q3 2024',
+                       evidence='GDP grew by 3.2% in Q3 2024.'):
+    """Build a minimal Gemini extraction response (Oct 2026 keys)."""
     extracted = {
-        'figure': figure,
+        'value': value,
         'unit': unit,
         'period_label': period_label,
-        'release_date': release_date,
-        'verbatim': verbatim,
+        'evidence': evidence,
     }
     return {
         'candidates': [{
@@ -430,7 +436,7 @@ class TestOnsIngestion:
             assert result == 'skipped'
             assert StatObservation.query.filter_by(headline_stat_id=stat.id).count() == 0
 
-    def test_unparseable_ons_period_skips_observation_but_updates_legacy(self, test_app, db):
+    def test_unparseable_ons_period_needs_review_and_keeps_value(self, test_app, db):
         from hansard_archive.models import HeadlineStat, StatObservation
         from stats_refresh import _refresh_stat
         with test_app.app_context():
@@ -445,12 +451,11 @@ class TestOnsIngestion:
             with patch('requests.get', return_value=mock_resp):
                 result = _refresh_stat(stat, gemini_key='fake-key', dry_run=False)
 
-            assert result == 'ok'
-            # No StatObservation because period couldn't be parsed
+            # Oct 2026: a value that can't be anchored in time is not published
+            assert result == 'needs_review'
             assert StatObservation.query.filter_by(headline_stat_id=stat.id).count() == 0
-            # But legacy fields still updated
             reloaded = db.session.get(HeadlineStat, stat.id)
-            assert reloaded.latest_value == '99'
+            assert reloaded.latest_value is None
 
 
 # ---------------------------------------------------------------------------
@@ -465,15 +470,18 @@ class TestGovukBulletinIngestion:
         with test_app.app_context():
             stat = _make_stat(db, 'govuk-new-obs', source_type='govuk_bulletin',
                               source_url='https://www.gov.uk/some-bulletin')
+            # The evidence sentence must really be on the page (Oct 2026).
             page_resp = MagicMock()
-            page_resp.text = '<html>Some bulletin content</html>'
+            page_resp.text = ('<html><body><main><h1>Graduate outcomes</h1>'
+                              '<p>89.2% of graduates were in employment in Q3 2024.</p>'
+                              '</main></body></html>')
+            page_resp.content = page_resp.text.encode()
             page_resp.raise_for_status = MagicMock()
 
             gemini_resp = MagicMock()
             gemini_resp.json.return_value = _gemini_extraction(
-                figure='89.2', unit='%', period_label='Q3 2024',
-                release_date='2025-03-01',
-                verbatim='89.2% of graduates were in employment in Q3 2024.',
+                value='89.2', unit='%', period_label='Q3 2024',
+                evidence='89.2% of graduates were in employment in Q3 2024.',
             )
             gemini_resp.raise_for_status = MagicMock()
 
@@ -497,7 +505,8 @@ class TestGovukBulletinIngestion:
             stat = _make_stat(db, 'govuk-no-period', source_type='govuk_bulletin',
                               source_url='https://www.gov.uk/some-bulletin')
             page_resp = MagicMock()
-            page_resp.text = '<html>content</html>'
+            page_resp.text = '<html><body><p>GDP grew by 3.2% in Q3 2024.</p></body></html>'
+            page_resp.content = page_resp.text.encode()
             page_resp.raise_for_status = MagicMock()
 
             gemini_resp = MagicMock()
@@ -510,12 +519,11 @@ class TestGovukBulletinIngestion:
                  patch('requests.post', return_value=gemini_resp):
                 result = _refresh_stat(stat, gemini_key='fake-key', dry_run=False)
 
-            assert result == 'ok'
-            # No obs — period parsing failed
+            # Oct 2026: unparseable period → held for review, stored value kept
+            assert result == 'needs_review'
             assert StatObservation.query.filter_by(headline_stat_id=stat.id).count() == 0
-            # Legacy fields still updated
             reloaded = db.session.get(HeadlineStat, stat.id)
-            assert reloaded.latest_value == '3.2'
+            assert reloaded.latest_value is None
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +618,7 @@ class TestGetLatestObservationForStat:
 
     def test_disambiguate_by_source_id(self, test_app, db):
         """When theme_slug matches multiple stats, source_id selects the right one."""
-        from hansard_archive.models import HeadlineStat, StatObservation
+        from hansard_archive.models import StatObservation
         from hansard_archive.stats_queries import get_latest_observation_for_stat
         with test_app.app_context():
             shared_slug = 'q-shared-slug'
