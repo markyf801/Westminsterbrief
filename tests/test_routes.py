@@ -295,6 +295,16 @@ class TestArchiveRoutes:
         r = client.get('/archive')
         assert r.status_code == 200
 
+    @pytest.mark.parametrize('dtype', ['oral_questions', 'pmqs', 'committee_stage', 'urgent_question'])
+    def test_archive_home_type_filters(self, client, dtype):
+        # The grouped Oral Questions / PMQs view raised UnboundLocalError (500)
+        # because a local `from collections import defaultdict` shadowed the
+        # module import for the whole function.
+        r = client.get(f'/archive?dtype={dtype}')
+        assert r.status_code == 200
+        r = client.get(f'/archive?dtype={dtype}&house=Lords')
+        assert r.status_code == 200
+
     def test_archive_search_empty(self, client):
         r = client.get('/archive/search?q=test')
         assert r.status_code == 200

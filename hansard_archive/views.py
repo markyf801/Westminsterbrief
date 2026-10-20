@@ -38,6 +38,7 @@ from sqlalchemy.orm import load_only
 from cache_models import CachedMember
 from extensions import db
 from hansard_archive.models import (
+    DEBATE_TYPE_MINISTERIAL_STATEMENT,
     HaBill,
     HaBillPublication,
     HaBillSponsor,
@@ -1007,8 +1008,9 @@ def archive_home():
             .all()
         )
 
-        # Group by normalised title
-        from collections import defaultdict
+        # Group by normalised title. (No local "from collections import defaultdict"
+        # here: a local import makes the name local to all of archive_home, so the
+        # grouped Oral Questions / PMQs branch above raised UnboundLocalError.)
         groups_dict: dict = defaultdict(list)
         for row in all_sessions:
             norm = _normalise_title(row.title) or row.title
@@ -2593,7 +2595,7 @@ def _compute_party_policy_positions(
                 wms_rows = (
                     HansardSession.query
                     .filter(
-                        HansardSession.debate_type == "wms",
+                        HansardSession.debate_type == DEBATE_TYPE_MINISTERIAL_STATEMENT,
                         HansardSession.id.in_(wms_tagged),
                     )
                     .order_by(HansardSession.date.desc())
