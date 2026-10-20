@@ -148,6 +148,7 @@ Talisman(
             "'self'",
             "https://plausible.io",
             "https://static.cloudflareinsights.com",
+            "https://cloudflareinsights.com",
         ],
     },
     referrer_policy='strict-origin-when-cross-origin',
@@ -1034,7 +1035,7 @@ def _build_sitemap_core_xml() -> str:
     # Static tool pages (content changes via deployments, not DB; omit lastmod)
     for path in ('/', '/hansard', '/bills', '/written-questions', '/written-questions/today',
                  '/mp_search', '/biography', '/debates',
-                 '/directory', '/terms', '/privacy', '/history-of-hansard',
+                 '/directory', '/about', '/terms', '/privacy', '/history-of-hansard',
                  '/about/legislation'):
         urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
 
@@ -1227,6 +1228,10 @@ def sitemap_pqs_4():
 def history_of_hansard():
     return render_template('history_of_hansard.html')
 
+@app.route('/about')
+def about():
+    return render_template('about.html')
+
 @app.route('/terms')
 def terms():
     return render_template('terms.html')
@@ -1322,6 +1327,13 @@ def _log_response(response):
     elapsed = _rt.monotonic() - getattr(g, '_req_start', _rt.monotonic())
     print(f'[RES] {request.method} {request.path} -> {response.status_code} ({elapsed:.2f}s)', flush=True)
     return response
+
+@app.errorhandler(404)
+def not_found_handler(e):
+    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html:
+        return jsonify(error="Not found."), 404
+    return render_template('404.html'), 404
+
 
 @app.errorhandler(429)
 def ratelimit_handler(e):

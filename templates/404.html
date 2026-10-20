@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Page not found — Westminster Brief{% endblock %}
+{% block meta_description %}This page could not be found on Westminster Brief.{% endblock %}
+{% block content %}
+<div style="max-width:560px; margin:60px auto; padding:0 20px; text-align:center;">
+  <h1 style="font-size:1.5rem; margin-bottom:8px;">Page not found</h1>
+  <p style="color:#5a6878; font-size:0.95rem; line-height:1.6;">
+    The page you were looking for doesn't exist or has moved. Try searching the archive instead.
+  </p>
+  <form action="/archive/search" method="get" style="display:flex; gap:8px; margin:24px 0;">
+    <input type="search" name="q" placeholder="Search debates and Written Questions" aria-label="Search the archive" required
+           style="flex:1; padding:10px 12px; font-size:15px; border:1px solid #cfd6de; border-radius:6px;">
+    <button type="submit" class="btn">Search</button>
+  </form>
+  <p style="font-size:0.95rem; line-height:2;">
+    <a href="/home">Home</a> &nbsp;·&nbsp;
+    <a href="/hansard">Hansard</a> &nbsp;·&nbsp;
+    <a href="/written-questions">Written Questions</a> &nbsp;·&nbsp;
+    <a href="/bills">Bills</a> &nbsp;·&nbsp;
+    <a href="/about">About</a>
+  </p>
+</div>
+{% endblock %}
