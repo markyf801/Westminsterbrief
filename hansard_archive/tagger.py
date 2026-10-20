@@ -111,7 +111,7 @@ For each question return:
 3. themes — 1 to 5 specific topic phrases (2-5 words, lowercase, e.g. \
 "student loan repayments", "nhs waiting times"). Do not repeat policy_area names.
 
-All {n} questions must appear in the response, identified by their UIN.
+All {n} questions must appear in the response, in the order given, identified by their UIN.
 
 {questions_block}"""
 
@@ -627,11 +627,29 @@ def tag_pq_all_untagged(
         processed = batch_num * _PQ_BATCH_SIZE
 
         if batch_result is not None:
-            # Index by UIN — strip whitespace in case model adds spaces
-            result_by_uin = {r.get("uin", "").strip(): r for r in batch_result}
+            # Map results back by POSITION, and accept one only when the UIN the
+            # model echoes agrees. Keying on the echoed UIN alone put tags on the
+            # wrong question (and UINs repeat across sessions). Anything that
+            # doesn't line up is retried individually.
+            positional = len(batch_result) == len(batch)
+            if not positional:
+                logger.warning(
+                    "Tagger batch %d: %d results for %d questions — retrying individually",
+                    batch_num + 1, len(batch_result), len(batch),
+                )
 
-            for pq in batch:
-                result = result_by_uin.get(pq.uin)
+            for j, pq in enumerate(batch):
+                result = None
+                if positional:
+                    candidate = batch_result[j] if isinstance(batch_result[j], dict) else {}
+                    echoed = str(candidate.get("uin") or "").strip()
+                    if echoed.lower() == (pq.uin or "").strip().lower():
+                        result = candidate
+                    else:
+                        logger.warning(
+                            "Tagger batch: position %d echoed UIN %r, expected %r (PQ %d)",
+                            j + 1, echoed, pq.uin, pq.id,
+                        )
                 if result:
                     try:
                         count = _write_pq_tags(pq, result, model_name, now)
@@ -639,7 +657,7 @@ def tag_pq_all_untagged(
                             tagged += 1
                             if verbose:
                                 print(
-                                    f"[pq-tagger] [{processed + batch.index(pq) + 1}/{total_eligible}]"
+                                    f"[pq-tagger] [{processed + j + 1}/{total_eligible}]"
                                     f" + {pq.uin} {(pq.heading or '')[:50]!r} — {count} tags",
                                     flush=True,
                                 )
@@ -649,8 +667,8 @@ def tag_pq_all_untagged(
                         errors += 1
                         logger.error("Tagger: write error on PQ %d: %s", pq.id, e)
                 else:
-                    # UIN missing from batch response — retry individually
-                    logger.warning("Tagger batch: UIN %s missing from response, retrying individually", pq.uin)
+                    # No trustworthy batch result for this PQ — retry individually
+                    logger.warning("Tagger batch: no usable result for PQ %d (UIN %s), retrying individually", pq.id, pq.uin)
                     retried += 1
                     try:
                         time.sleep(_INTER_REQUEST_DELAY)
