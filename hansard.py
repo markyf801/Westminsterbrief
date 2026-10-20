@@ -1,11 +1,13 @@
 import re
 import json
 import html as _html_mod
+import time
 import requests, io, csv
-from flask import Blueprint, render_template, request, make_response
+from urllib.parse import urlencode
+from flask import Blueprint, render_template, request, make_response, redirect
 from docx import Document
 from docx.oxml.shared import OxmlElement, qn
-from datetime import datetime, date as date_type
+from datetime import datetime, date as date_type, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cache_models import CachedMember
 from extensions import db
@@ -20,12 +22,35 @@ _DEPARTMENTS_FALLBACK = {
 }
 
 
+# Only departments that answered questions recently are offered in the filter,
+# so bodies abolished in a machinery-of-government change drop out by themselves.
+_DEPT_ACTIVE_DAYS = 183
+_DEPT_CACHE_TTL = 3600  # 1 hour
+_dept_list_cache: tuple | None = None  # (depts, monotonic timestamp)
+
+
 def _get_department_list():
-    """Return {dept_name: dept_id_str} from ha_pq, alphabetically sorted."""
+    """
+    Return {dept_name: dept_id_str} for departments with questions tabled in the
+    6 months before the newest question in ha_pq, alphabetically sorted.
+
+    Measured from the newest question rather than today so a stale archive still
+    lists departments. Cached for an hour.
+    """
+    global _dept_list_cache
+    now = time.monotonic()
+    if _dept_list_cache and now - _dept_list_cache[1] < _DEPT_CACHE_TTL:
+        return _dept_list_cache[0]
+
     from hansard_archive.models import HaPQ
+    from sqlalchemy import func
     try:
+        newest = db.session.query(func.max(HaPQ.tabled_date)).scalar()
+        if newest is None:
+            return _DEPARTMENTS_FALLBACK
         rows = (db.session.query(HaPQ.answering_body, HaPQ.answering_body_id)
-                .filter(HaPQ.answering_body.isnot(None), HaPQ.answering_body_id.isnot(None))
+                .filter(HaPQ.answering_body.isnot(None), HaPQ.answering_body_id.isnot(None),
+                        HaPQ.tabled_date >= newest - timedelta(days=_DEPT_ACTIVE_DAYS))
                 .distinct()
                 .order_by(HaPQ.answering_body)
                 .all())
@@ -33,7 +58,10 @@ def _get_department_list():
         for name, body_id in rows:
             if name and body_id is not None:
                 depts[name] = str(body_id)
-        return depts if len(depts) > 1 else _DEPARTMENTS_FALLBACK
+        if len(depts) == 1:
+            return _DEPARTMENTS_FALLBACK
+        _dept_list_cache = (depts, now)
+        return depts
     except Exception:
         return _DEPARTMENTS_FALLBACK
 
@@ -282,6 +310,25 @@ def _search_pq_db(subjects, start_date, end_date, dept_id, house_filter, status_
     return rows, total
 
 
+# GET parameters for a Written Questions search. The keyword is ?q= (the old
+# POST form field was "subject", still accepted); the rest keep the form names.
+_WQ_FILTER_PARAMS = ('department', 'house_filter', 'status_filter', 'start_date', 'end_date')
+_WQ_DEFAULTS = {'house_filter': 'All', 'status_filter': 'all'}
+
+
+def _wq_search_qs(source) -> str:
+    """Query string for a WQ search from a form/args MultiDict, dropping empty and default values."""
+    params = {}
+    q = (source.get('q') or source.get('subject') or '').strip()
+    if q:
+        params['q'] = q
+    for key in _WQ_FILTER_PARAMS:
+        val = (source.get(key) or '').strip()
+        if val and val != _WQ_DEFAULTS.get(key):
+            params[key] = val
+    return urlencode(params)
+
+
 @hansard_bp.route('/questions', methods=['GET', 'POST'])
 def index():
     results, error_message = [], None
@@ -294,14 +341,28 @@ def index():
     grouped_results = []
     departments = _get_department_list()
 
+    # Searches run on GET so results can be bookmarked and shared. POST is kept
+    # for the Export buttons; a POSTed plain search redirects to the GET URL.
     if request.method == 'POST':
-        subject = request.form.get('subject', '').strip()
-        start_date = request.form.get('start_date', '').strip()
-        end_date = request.form.get('end_date', '').strip()
-        selected_dept_id = request.form.get('department', '').strip()
-        selected_house = request.form.get('house_filter', 'All')
-        status_filter = request.form.get('status_filter', 'all')
+        params = request.form
         action = request.form.get('action', 'search')
+        if action not in ('word', 'csv'):
+            qs = _wq_search_qs(params)
+            # An empty search lists every question, as the POST form always did
+            return redirect(f"/written-questions?{qs or 'q='}", 303)
+    else:
+        params = request.args
+        action = 'search'
+    searched = request.method == 'POST' or any(
+        k in request.args for k in ('q', 'subject') + _WQ_FILTER_PARAMS)
+
+    if searched:
+        subject = (params.get('q') or params.get('subject') or '').strip()
+        start_date = params.get('start_date', '').strip()
+        end_date = params.get('end_date', '').strip()
+        selected_dept_id = params.get('department', '').strip()
+        selected_house = params.get('house_filter', 'All')
+        status_filter = params.get('status_filter', 'all')
 
         subjects = [s.strip() for s in subject.split(',') if s.strip()] or ['']
 
@@ -470,6 +531,8 @@ def index():
                            total_available=total_available,
                            pre_filter_count=pre_filter_count,
                            results_cap=WQ_MAX_RESULTS,
+                           searched=searched,
+                           robots_meta='noindex, follow' if searched else 'index, follow',
                            last_pq_update=_last_pq_update(),
                            oldest_pq_date=_oldest_pq_date())
 

@@ -71,6 +71,7 @@
                 Title only
             </label>
         </div>
+        {% if sort == 'newest' %}<input type="hidden" name="sort" value="newest">{% endif %}
         <p class="as-hint">Tip: wrap a phrase in "quotes" for an exact phrase search.</p>
     </form>
 
@@ -87,15 +88,23 @@
         </button>
         <button class="as-tab {% if active_tab == 'pq' %}as-tab-active{% endif %}" data-tab="pq">
             Written Questions
-            {% if pq_count > 0 %}<span class="as-tab-count">{{ pq_count }}</span>{% endif %}
+            {% if pq_total > 0 %}<span class="as-tab-count">{{ pq_total_label }}</span>{% endif %}
         </button>
+    </div>
+
+    {# --- Sort toggle (applies to both tabs) --- #}
+    <div class="as-sort" style="margin:8px 0 12px; font-size:13px; color:#5a6876;">
+        Sort:
+        {% if sort == 'relevance' %}<strong aria-current="true">Relevance</strong>{% else %}<a href="/archive/search?{{ sort_qs }}">Relevance</a>{% endif %}
+        |
+        {% if sort == 'newest' %}<strong aria-current="true">Newest</strong>{% else %}<a href="/archive/search?{{ sort_qs }}&sort=newest">Newest</a>{% endif %}
     </div>
 
     {# --- Auto-switch notice --- #}
     {% if auto_switched %}
     <div class="as-auto-switch-notice">
         <a href="/archive/search?{{ notice_qs }}&tab=hansard">No debates match this query.</a>
-        Showing {{ pq_count }} Written Question{{ 's' if pq_count != 1 else '' }} instead.
+        Showing {{ pq_total_label }} Written Question{{ 's' if pq_total != 1 else '' }} instead.
     </div>
     {% endif %}
     {% endif %}
@@ -179,6 +188,12 @@
         </div>
         {% endfor %}
     </div>
+    {% if pq_total > pq_count %}
+    <p class="as-pq-more" style="margin-top:12px; font-size:14px;">
+        Showing the top {{ pq_count }} of {{ pq_total_label }} written questions.
+        <a href="/written-questions?{{ wq_search_qs }}">See all {{ pq_total_label }} written questions &rarr;</a>
+    </p>
+    {% endif %}
     {% endif %}
 
     {% if q and not pq_results %}

@@ -57,11 +57,11 @@
         For older questions visit <a href="https://questions-statements.parliament.uk/written-questions" target="_blank" style="color:#1a4a6e;">parliament.uk/written-questions</a>.{% endif %}
     </p>
 
-    <form method="POST" action="/questions">
+    <form method="GET" action="/written-questions" id="wq-search-form">
         <div class="form-group">
             <label class="form-label">Search Topic:</label>
-            <input type="text" name="subject" placeholder="e.g. access and participation in higher education"
-                   value="{{ request.form.get('subject', '') }}">
+            <input type="text" name="q" placeholder="e.g. access and participation in higher education"
+                   value="{{ subject }}">
             <p class="form-hint">Broad single-word searches return more results — narrow with a phrase for better precision.</p>
         </div>
 
@@ -95,17 +95,17 @@
         <div class="form-row" style="align-items: flex-end;">
             <div class="form-group" style="flex: 0 0 auto;">
                 <label class="form-label">From Date:</label>
-                <input type="date" name="start_date" value="{{ request.form.get('start_date', '') }}" style="width: 160px;">
+                <input type="date" name="start_date" value="{{ start_date }}" style="width: 160px;">
             </div>
             <div class="form-group" style="flex: 0 0 auto;">
                 <label class="form-label">To Date:</label>
-                <input type="date" name="end_date" value="{{ request.form.get('end_date', '') }}" style="width: 160px;">
+                <input type="date" name="end_date" value="{{ end_date }}" style="width: 160px;">
             </div>
             <div style="flex: 0 0 auto; display: flex; gap: 8px;">
-                <button type="submit" name="action" value="search" class="btn btn-primary">Search</button>
-                <button type="submit" name="action" value="csv"    class="btn btn-success">Export CSV</button>
-                <button type="submit" name="action" value="word"   class="btn btn-purple">Export Word</button>
-                <a href="/questions" class="btn btn-muted">Clear</a>
+                <button type="submit" class="btn btn-primary">Search</button>
+                <button type="submit" name="action" value="csv"  formmethod="post" class="btn btn-success">Export CSV</button>
+                <button type="submit" name="action" value="word" formmethod="post" class="btn btn-purple">Export Word</button>
+                <a href="/written-questions" class="btn btn-muted">Clear</a>
             </div>
         </div>
     </form>
@@ -173,7 +173,7 @@
         {% endfor %}
     </div>
 
-{% elif request.method == 'POST' and not error_message %}
+{% elif searched and not error_message %}
     <div class="box empty-state" style="margin-top: 20px;">
         <p>No questions found matching those filters.</p>
         <p style="font-size: 13px; color: #888; margin-top: 6px;">If you expected results, the Parliament API may be temporarily slow — please try your search again.</p>
@@ -227,7 +227,7 @@ function clearSelection() {
 
 function searchAllDepts() {
     document.querySelector('select[name="department"]').value = '';
-    document.querySelector('form[action="/questions"]').submit();
+    document.getElementById('wq-search-form').submit();
 }
 
 function downloadSelected(format) {
