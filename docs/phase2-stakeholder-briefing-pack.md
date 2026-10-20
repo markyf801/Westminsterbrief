@@ -7,14 +7,14 @@ The pivot in one paragraph
 Phase 2A is now a free public Hansard intelligence archive (Hansard data ingestion + AI theme tagging + searchable, indexable public pages). Phase 2B is the £49 briefing pack as previously scoped, built on top of the data infrastructure created in Phase 2A. Phase 2C remains the subscription intelligence tier, deferred until after the briefing pack launches.
 Why the pivot
 Five reasons, in rough order of weight:
-1. Mark has a known launch audience for a free product. A 300-colleague Teams group of HE policy civil servants exists. Mark has shared an earlier iteration before (Python Anywhere version) with his DD's encouragement. The 300-colleague launch is a real thing he can do, not a hypothetical. This is a meaningful competitive advantage most solo developers lack.
-2. Civil service system approval is in progress and time-fixed. westminsterbrief.co.uk is going through the standard 32-day approval to be accessible from civil service systems. It will land in approximately 4 weeks. This creates a hard launch window that the free archive can hit; the briefing pack cannot.
-3. The propriety landscape is genuinely cleaner for free first. "I built a useful free tool" is unproblematic and consistent with how Mark has shared things previously. Sharing a paid product with civil service colleagues is much more sensitive even if technically permissible. Building the free product first establishes Mark as someone who builds useful things, not someone monetising public data; the paid product later sits on top of established trust.
+1. A free product has a reachable launch audience. Mark has existing professional networks in the policy space where a free tool can be shared, and an earlier iteration (Python Anywhere version) was shared before. This is a meaningful advantage most solo developers lack.
+2. A near-term launch window exists (approximately 4 weeks). The free archive can hit it; the briefing pack cannot.
+3. Free first builds trust. "I built a useful free tool" is an easy first share. Building the free product first establishes Westminster Brief as something useful, not a product monetising public data; the paid product later sits on top of established trust.
 4. SEO compounds during the time the paid product is being built. If Phase 2A launches as a free archive in 4 weeks, by the time Phase 2B (the briefing pack) launches another 4-5 weeks later, the site has potentially had 8-9 weeks of SEO compounding. Search engines index parliamentary intelligence pages well — TheyWorkForYou pages routinely rank in top results. The free archive becomes top-of-funnel for the eventually-launched paid product.
-5. Audience validation precedes monetisation validation, in this order. Mark has explicitly said audience matters more than first paying customer at this stage. Knowing colleagues use the tool is more valuable than knowing one stranger paid £49 once. The free launch validates audience; the paid product later validates willingness-to-pay among that audience.
+5. Audience validation precedes monetisation validation, in this order. Mark has explicitly said audience matters more than first paying customer at this stage. Knowing people use the tool is more valuable than knowing one stranger paid £49 once. The free launch validates audience; the paid product later validates willingness-to-pay among that audience.
 Phasing under the pivot
 Phase 2A — Free public Hansard archive (next ~4 weeks)
-Goal: launch a free, useful, SEO-indexable Hansard intelligence layer in time for civil service system approval and the 300-colleague share.
+Goal: launch a free, useful, SEO-indexable Hansard intelligence layer in time for the first launch share.
 Scope locked at: Hansard data ingestion + AI theme tagging at launch. Conservative deliberately — better to launch a polished smaller thing than a sprawling unfinished thing.
 Out of Phase 2A scope (deferred to Phase 2A.5 post-launch): "did the minister answer" classification on debates, AI-generated weekly digests, email alerts, advanced filtering, the briefing pack itself.
 Detailed scope and build sequence in the "Phase 2A: Free archive build plan" section below.
@@ -27,25 +27,21 @@ Same as previously decided. Triggers for bringing this forward, decision criteri
 Launch sequence for Phase 2A
 A specific operational sequence to manage relationships well:
 
-Build progresses while civil service approval clock runs in parallel — these are simultaneous, not sequential
-Civil service approval lands (~4 weeks from 29 April 2026)
-Casual demo with DD before wider sharing — courtesy of letting her see it before her colleagues do
-HE Teams group share (~300 civil servants) once DD has seen it
-Parly colleagues share alongside or shortly after
-Wider organic spread — civil service Twitter, adjacent networks, search engines indexing the archive
-
-Important: do NOT share with the HE Teams group before the DD has seen it. Sequencing matters; she should be a prepared advocate, not a surprised observer.
+Build progresses toward the launch window (~4 weeks from 29 April 2026)
+Small early-feedback demo before wider sharing
+Share with existing professional networks
+Wider organic spread — social media, adjacent networks, search engines indexing the archive
 What this means for the rest of this document
 The bulk of this document (everything below this section) describes the £49 briefing pack product in detail. All of that content remains accurate and locked for Phase 2B. The pivot doesn't change what the briefing pack is; it changes when it launches and what comes before it.
 So when reading this document going forward:
 
 Sections describing the briefing pack apply to Phase 2B
-Sections describing data sources, propriety exclusions, structural principles, position evolution, data accuracy safeguards, media analysis, etc. all apply to Phase 2B
+Sections describing data sources, explicit exclusions, structural principles, position evolution, data accuracy safeguards, media analysis, etc. all apply to Phase 2B
 The Phase 2A build plan is captured in its own section below
 The Hansard intelligence strategy section (originally framing a parallel product) is now even more closely related — Phase 2A is essentially the first concrete step toward what that strategy described
 
 Phase 2A: Free archive build plan
-Detailed plan for the next ~4 weeks of focused build, ending with civil service launch.
+Detailed plan for the next ~4 weeks of focused build, ending with the first launch share.
 
 ## Soft-launch framing (locked 1 May 2026 evening)
 
@@ -55,9 +51,8 @@ features are added as they're built rather than gated to a launch day.
 
 Implications:
 
-1. Civil service share is still a one-shot moment. The 32-day approval
-   window remains time-fixed; the DD demo and 300-colleague Teams share
-   happen when approval lands, regardless of feature state. "Soft launch"
+1. The first launch share is still a one-shot moment. It happens when
+   the launch window arrives, regardless of feature state. "Soft launch"
    doesn't mean "share when ready" — it means "iterate after sharing."
 
 2. Must-haves for share are narrower than feature-complete. What needs
@@ -82,7 +77,7 @@ Revised priority order:
 3. Theme tagging quality validation
 4. Recent additions feed on archive home
 5. Sitemap submission to Search Console
-6. DD demo + civil service share when approval lands
+6. Early-feedback demo + launch share
 7. Phase 2A.5 starts post-share with Bill Journey via Bills API as first build
 
 ### Bill Journey display — Phase 2A.5 candidate (deferred from Phase 2A)
@@ -132,8 +127,8 @@ Backfill of last 3-6 months of debates (deeper backfill running in background af
 AI theme tagging using Gemini Flash-Lite (per the 27 April strategy economics — under £1 for full backfill)
 Public-facing browsing pages: search, by MP, by department, by theme
 SEO basics: proper title tags, structured data (JSON-LD), sitemap.xml, robots.txt, semantic HTML
-Performance — pages must load fast enough for civil service systems
-Browser compatibility — Edge and Chrome at minimum (likely civil service browsers)
+Performance — pages must load fast enough on locked-down corporate systems
+Browser compatibility — Edge and Chrome at minimum (likely corporate browsers)
 Existing six tools continue to work (no regression)
 Bills API factual context — map sessions to bills they discuss (title matching), display current bill status on session detail pages (introduced / current stage / concluded / withdrawn), link to Parliament's official bill page. States facts only; no amendment tracking, vote analysis, or analytical synthesis (those are Phase 2B).
 
@@ -225,10 +220,10 @@ SEO basics applied across all templates
 Week 4: Polish and launch prep — UPCOMING
 
 Performance optimisation (page load speed, database queries)
-Civil service system browser testing
+Locked-down corporate browser testing
 Bug fixes from real-data trials
 Verify existing six tools haven't regressed
-DD demo prep
+Early-feedback demo prep
 
 Decision points already made for Phase 2A
 
@@ -272,8 +267,8 @@ Search backend: Postgres full-text search (simple, no new dependencies) vs dedic
 Success metrics for Phase 2A
 Not revenue. The Phase 2A success criteria:
 
-Adoption signal: are HE colleagues actually using it after the share? (server logs)
-Spread signal: does it get shared beyond the original 300? (referrer logs)
+Adoption signal: are people actually using it after the share? (server logs)
+Spread signal: does it get shared beyond the original audience? (referrer logs)
 SEO signal: is Google indexing the pages? Are any of them ranking? (Search Console)
 Quality signal: are users coming back? (return visits)
 Validation signal: any unsolicited feedback ("this is useful", "could it also do X")
@@ -283,11 +278,9 @@ Risks for Phase 2A
 Risk 1: 4 weeks isn't enough to do this well. Hansard ingestion done properly is genuinely complex. Backfilling 3 months of debates, running AI tagging on each, building public-facing pages, getting SEO right — that's a lot for 4 weeks of solo work alongside a day job.
 Mitigation: ruthless scope discipline. The "out of scope" list above is non-negotiable for Phase 2A. If something is taking longer than expected, defer not stretch.
 Risk 2: Theme tagging quality is variable. Gemini Flash-Lite is cheap but not infallible. Bad tags would undermine trust in the archive on first use.
-Mitigation: validate by hand on a sample of 50-100 questions before launch. If tagging quality is poor, spend prompt-engineering time before exposing to colleagues.
-Risk 3: Civil service systems may have unexpected restrictions. A site that works perfectly on consumer browsers might have issues on locked-down civil service systems (browser version, security policies, etc.).
-Mitigation: test from a civil service-equivalent environment before approval lands. Mark may be able to test from a colleague's machine, or use a virtual machine simulating the constraints.
-Risk 4: DD reaction differs from expectation. Mark has assessed she'll be supportive based on past behaviour. Most likely true, but worth not banking on completely.
-Mitigation: have a simpler "internal-only / quiet" fallback share if the conversation goes unexpectedly. Keep the launch flexible until after the DD demo.
+Mitigation: validate by hand on a sample of 50-100 questions before launch. If tagging quality is poor, spend prompt-engineering time before wider sharing.
+Risk 3: Corporate systems may have unexpected restrictions. A site that works perfectly on consumer browsers might have issues on locked-down organisational systems (browser version, security policies, etc.).
+Mitigation: test in a locked-down-equivalent environment (e.g. a virtual machine simulating the constraints) before launch.
 Strategic position
 Mark has explicitly chosen breadth and substance over speed-to-launch. The product should be genuinely comprehensive at v1 rather than a thin MVP. Reasoning:
 
@@ -379,7 +372,7 @@ Polished email template
 
 Excluded from v1 (and the reasoning)
 
-MP/staff direct contact details — propriety-driven (Mark's civil service position). Tool surfaces who to engage with, users find contacts on parliament.uk themselves
+MP/staff direct contact details — a deliberate product choice. Tool surfaces who to engage with, users find contacts on parliament.uk themselves
 Devolved administration policy — scope discipline; v2 candidate
 Social media monitoring — too unreliable, deletion risk, attribution complexity
 Paywalled news content — unbalanced paywall geography would skew political balance; ToS/copyright concerns
@@ -494,10 +487,10 @@ POSTnotes / POSTbriefs where relevant
 Lords Library briefings where relevant
 
 Explicit exclusions
-MP and parliamentary staff direct contact details are NOT included in the briefing pack. This is a propriety-driven decision, not data-availability driven.
-Rationale: although technically public, including curated contact lists in a paid product crosses a line Mark prefers not to cross given his civil service position. The pack identifies who to engage with and what they've said; users find direct contact details on parliament.uk themselves.
+MP and parliamentary staff direct contact details are NOT included in the briefing pack. This is a deliberate product decision, not data-availability driven.
+Rationale: although technically public, curated contact lists in a paid product are a line Westminster Brief does not cross. The pack identifies who to engage with and what they've said; users find direct contact details on parliament.uk themselves.
 This decision should be retained even if other features are added later. Marketing language to use: "Westminster Brief identifies the right MPs and committees to engage with, based on their parliamentary activity. Direct contact details are available on parliament.uk."
-This positions Westminster Brief as an intelligence tool, not a contact directory — clearer category, fewer propriety questions, arguably more honest about the actual value (synthesis, not directory).
+This positions Westminster Brief as an intelligence tool, not a contact directory — clearer category, fewer sensitivity questions, arguably more honest about the actual value (synthesis, not directory).
 Structural principles for the pack
 1. Conditional sections — appear only when signal warrants
 If there are no open consultations, no relevant bills, no recent EDMs, etc., the corresponding section is omitted entirely. Do not include "we found nothing" placeholders. Absence of a section is itself information (e.g. "no EDMs section" implies "this isn't a backbench priority right now").
@@ -534,8 +527,8 @@ Define a sensible time window (current Parliament, or last 2-3 years, whichever 
 Distinguish "official position changed" from "different person said something different" (changes of minister vs changes of position)
 Honest treatment of ambiguity: if positions haven't changed, say so. Don't manufacture a narrative of evolution where the source shows continuity.
 
-The lexical drift insight (Mark's contribution from inside Whitehall)
-Civil Service writing has stock phrases that encode meaning beyond their surface text:
+The lexical drift insight
+Government writing has stock phrases that encode meaning beyond their surface text:
 
 "Shortly" vs "in due course" — confidence in timeline
 "Considering" vs "actively considering" vs "keeping under review" — degrees of seriousness
@@ -543,9 +536,9 @@ Civil Service writing has stock phrases that encode meaning beyond their surface
 "Welcome the contribution" vs "note the contribution" — degree of agreement
 
 The post-16 skills white paper is the archetypal example: government statements drifted from "publishing shortly" → "publishing in due course" → "publishing shortly" again. Each statement looks fine on its own; the sequence tells the actual story (internal blocker emerged, then resolved).
-The position-evolution analysis should be specifically instructed to watch for stock-phrase drift, not just substantive policy changes. This is the kind of analytical lens that comes from years inside Whitehall and is genuinely hard to specify well from outside. It's part of what differentiates a Westminster Brief pack from a generic AI summary.
+The position-evolution analysis should be specifically instructed to watch for stock-phrase drift, not just substantive policy changes. This is the kind of analytical lens that comes from close reading of government text and is genuinely hard to specify well. It's part of what differentiates a Westminster Brief pack from a generic AI summary.
 Tradecraft to capture as a separate doc
-Mark should keep a separate docs/analytical-tradecraft.md document accumulating Whitehall-aware patterns as they occur to him. Eventually this becomes source material for the Claude Opus prompt design. Examples to start with:
+Mark should keep a separate docs/analytical-tradecraft.md document accumulating government-language patterns as they occur to him. Eventually this becomes source material for the Claude Opus prompt design. Examples to start with:
 
 Stock-phrase drift — see post-16 skills white paper as archetype
 Manifesto pledges that disappear from departmental priorities lists are usually about to be quietly dropped
@@ -614,7 +607,7 @@ Generate useful reframings rather than generic "make it more specific"
 Respect that broad topics are sometimes legitimate
 Not be paternalistic in tone
 
-This is a few hours of prompt iteration with worked examples, ideally tested against real likely user inputs (which we don't have yet — could be informed by Mark's DfE knowledge of how policy areas typically get framed).
+This is a few hours of prompt iteration with worked examples, ideally tested against real likely user inputs (which we don't have yet — could be informed by knowledge of how policy areas typically get framed).
 Data accuracy and statistical safeguards
 A briefing pack that contains hallucinated, stale, or methodologically misrepresented statistics is reputation-damaging — possibly worse, if used to inform a charity's submission to a consultation or a think tank's published response. This is a critical concern given Phase 2's price tier and target users.
 The three failure modes to guard against
@@ -715,8 +708,8 @@ Operating principles
 2. Source diversity required. The prompt explicitly instructs Claude not to draw only from one political tendency. If both ConservativeHome and LabourList have written on a topic, both are surfaced. If only one tendency has commented, that fact is itself flagged ("commentary on this topic has come predominantly from [tendency]; we found no significant counterposing arguments in [tendency] sources during the period reviewed").
 3. Recency window: 30-60 days. Older commentary becomes stale. Longer arcs are handled by the parliamentary intelligence sections, not by this one.
 4. Attribution and linking required for every claim. Same principle as the data accuracy safeguards: the pack surfaces and links, doesn't replace.
-Propriety consistency
-This approach is consistent with the propriety stance taken on MP contact details. Westminster Brief aggregates publicly available commentary, with attribution, for users to inform their own analysis. The tool does not endorse, recommend, or rank sources. The synthesis presents what others are arguing, not the tool's own opinion.
+Consistency with other exclusions
+This approach is consistent with the stance taken on MP contact details. Westminster Brief aggregates publicly available commentary, with attribution, for users to inform their own analysis. The tool does not endorse, recommend, or rank sources. The synthesis presents what others are arguing, not the tool's own opinion.
 The methodology page should include a line:
 
 "Westminster Brief surfaces commentary from a range of free sources to capture the shape of public debate. We do not endorse, recommend, or rank these sources. Source diversity and attribution are prioritised; the synthesis presents arguments, not the tool's own opinion."
@@ -772,8 +765,7 @@ policy area taxonomy AND can add free-text specific keywords. Maps
 directly onto the two-level theme tagging already built in Phase 2A
 (policy_area + specific_themes).
 
-Audience: civil service colleagues + public affairs / charity / think
-tank professionals (both, in roughly equal weighting).
+Audience: public affairs / charity / think tank / policy professionals.
 
 Goal: build recurring relationships with subscribers — not just test
 willingness to pay or cover costs.
@@ -817,14 +809,14 @@ The two tiers create:
 Reasoning for £15 main tier (not £3-5 flat):
 - Comparable substack-style policy commentary at £5-15/month —
   Westminster Brief delivers more substantive value
-- Civil service hourly rates make £15/month equivalent to <30 mins
+- Professional hourly rates make £15/month equivalent to <30 mins
   of monitoring time saved per month
 - Anchoring at £15 keeps positioning as a serious product, not a
   hobby priced as charity
 - Starvation pricing (£3-5 flat) creates a margin trap and selects
   for price-sensitive customers
 - Higher anchor preserves room to add discount tiers later
-  (charity rate, civil service rate) without the reverse problem
+  (e.g. charity rate) without the reverse problem
   of trying to raise from £3 to £15
 
 Pricing remains open to revision based on real-use feedback. The
@@ -838,7 +830,7 @@ tiered subscription is grounded in:
 
 - Lower commitment threshold: £5/month sits below most users'
   approval friction; £49 requires deliberate decision
-- Audience fit: civil service colleagues and small charities can
+- Audience fit: individual professionals and small charities can
   sustain £5 as a personal/expense line item; £49 is a procurement
   conversation
 - Recurring relationship over one-off transaction (matches the
@@ -854,7 +846,6 @@ Concrete details to be worked out post-trip:
 - Definition of "material" (which events trigger an alert)
 - Throttling rules (max emails per day/week per subscriber)
 - Email template design
-- Civil service propriety framing for paid subscription
 - Stripe subscription integration
 - Subscription management UX (signup, cancel, pause, change topics)
 - Whether to keep £49 pack as Phase 2C or drop entirely
@@ -990,7 +981,7 @@ data is harder to replicate.
 ### Important: don't act before Phase 2A real use
 
 This pivot is captured but not yet building. Phase 2A goes live with
-civil service share first. Real subscriber demand from civil service
+the free launch share first. Real subscriber demand from free archive
 users (who'd want alerts? on what topics? at what frequency?)
 informs Phase 2B design.
 

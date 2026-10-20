@@ -1,4 +1,4 @@
-﻿# Production Deploy Log
+# Production Deploy Log
 
 Append-only ledger of production-touching operations.
 
@@ -83,12 +83,6 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-05 | `a2d5b23` | Fix: discovery strategies raise StrategyFetchError on fetch failure (Issue B) — failed fetch no longer swallowed to [] / silently stamped; surfaces as failed/errors instead | Claude Code |
 | 2026-06-06 | `59d31ff` | Docs: record rediscovery-cron in CLAUDE.md (password-rotation list + cron schedule); correct Issue B push-row SHA | Claude Code |
 | 2026-06-06 | `3cc992f` | Fix: restore `ManifestoChunk` import in `hansard_archive/views.py` — every `/archive/party/<slug>` page was 500ing (NameError; usage present, import dropped by the fb21bcd revert + partial re-merge). Verified on beta: Labour renders 775 manifesto excerpts across 24 policy areas. | Claude Code |
-| 2026-06-06 | `b4212af` | Fix: GOV.UK discovery `order=newest` → `-public_timestamp` (Issue A). `newest` 422s for ALL GOV.UK producers (not just DSIT); silently broke GOV.UK discovery 24 May–6 Jun (hidden by the swallow bug, surfaced by Issue B). Cherry-picked from beta `998b7b9` via worktree. | Claude Code |
-| 2026-06-09 | `22c652d` | Stats Catalogue launch (file-scoped promotion from beta via worktree): per-producer pages `/stats/producer/<slug>`, catalogue Producer-column + "Browse by producer" cross-links, source/licence disclaimer, sitemap producer URLs. Ships DARK — `STATS_CATALOGUE_ENABLED` still off on production; flag flipped on after live verify. `views.py` untouched; no Manifesto/beta work promoted. | Claude Code |
-| 2026-06-09 | `5f7ebff` | Stats Catalogue: landing card (7th tool, last position, peer styling) + nav link "Statistical Publications", both gated on `STATS_CATALOGUE_ENABLED` so they appear only with the flip. Ships DARK. File-scoped promotion of `base.html` + `home.html` only (both identical master==beta otherwise; no Manifesto work). | Claude Code |
-| 2026-06-09 | `d2e8949` | Stats Catalogue: landing card spans both columns on the final grid row (`.tool-card-wide`, no orphan). Ships DARK. File-scoped promotion of `home.html` + `static/style.css` only (CSS change is the single `.tool-card-wide` rule; no Manifesto CSS). | Claude Code |
-| 2026-06-09 | `a171844` | Hotfix: add missing `templates/hansard_archive/stats_theme.html` (b57a14a, template-only). It was deleted by fb21bcd but the `stats_theme` route/handler remained → every `/stats/<theme_slug>` policy page = TemplateNotFound 500, exposed live at the catalogue flip via detail-page policy badges. Live verify caught it. Single-file promotion from beta; `views.py` and the 3 other diverging `hansard_archive/*.html` (Manifesto party-page work) untouched. | Claude Code |
-| 2026-06-11 | `388d8e0` | Add Bing (msvalidate.01) site verification meta tag to base head (template-only, single static `<meta>`; no Jinja/Python) | Claude Code |
 
 ---
 
@@ -145,7 +139,7 @@ ha_contribution 0.873 ms.
 accidentally set). Table created manually via DBeaver. SKIP_MIGRATIONS=1 retained
 on production service going forward — all future schema changes go via DBeaver.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798)
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect)
 
 ```sql
 CREATE TABLE ha_stat_publication_theme (
@@ -168,7 +162,7 @@ CREATE INDEX idx_stat_pub_theme_type ON ha_stat_publication_theme(theme_type);
 
 **Context:** HESA / Jisc (producer id 25, slug `hesa-jisc`) de-registered as an active producer. Site blocks all automated access (403 across all paths — root, `/data-and-analysis`, `/api` — confirmed 27 May 2026). No GOV.UK organisation registration exists for HESA. HESA data surfaces correctly via DfE GOV.UK publications (file URLs on DfE landing pages link directly to hesa.ac.uk). Discovery had previously run on 2026-05-23 and completed cleanly with zero candidates — the 403 was caught and swallowed by `DirectPageParserStrategy` (logged as a warning; not surfaced as a failure to the state machine). Producer was `authorisation_status = 'authorised'`, `discovery_status = 'completed'` before this update. Zero `ha_stat_publication` rows attributed to HESA.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 27 May 2026 ~21:22–21:25 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 27 May 2026 ~21:22–21:25 BST
 
 ```sql
 UPDATE ha_stat_producer
@@ -197,7 +191,7 @@ VALUES
 
 **Context:** Phase 1.8 data_url piece 1 — schema changes to support per-publication data file extraction. All statements run individually via DBeaver Console (cursor-position execution), one at a time.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-28 ~09:37–09:39 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-05-28 ~09:37–09:39 BST
 
 ```sql
 -- Step 1: Add three columns to ha_stat_publication
@@ -262,7 +256,7 @@ CREATE INDEX IF NOT EXISTS idx_pub_data_file_pub
 
 **Context:** Phase 1.8 data_url piece 3, step 1 — 20 ha_stat_publication rows stored api.beta.ons.gov.uk API endpoint URLs rather than human-facing ONS dataset landing page URLs. Dataset ID is deterministically extractable from the path. Updated to canonical www.ons.gov.uk/datasets/{id} form.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-28 ~14:10 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-05-28 ~14:10 BST
 
 ```sql
 UPDATE ha_stat_publication
@@ -281,7 +275,7 @@ WHERE url LIKE 'https://api.beta.ons.gov.uk/%';
 **Context:** Phase 1.9 publication date work (A1) — add source publication date column.
 Discovery worker and backfill script will populate it going forward.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-05-29 ~18:20 BST
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-05-29 ~18:20 BST
 
 ```sql
 ALTER TABLE ha_stat_publication
@@ -324,7 +318,7 @@ re-scanned for new publications. Production-first (SKIP_MIGRATIONS=1 means the
 startup ALTER does not run on production), applied BEFORE pushing the code that
 SELECTs this column.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-05.
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-06-05.
 
 ```sql
 ALTER TABLE ha_stat_producer
@@ -349,7 +343,7 @@ doesn't un-stamp the existing false stamp. Cleared so the first post-fix cron ru
 re-attempts DSIT (where its 422 will now fail loud rather than silently skip for a
 day). Single-row scoped; `updated_at` set per the raw-SQL-on-ORM-table rule.
 
-**Run via:** DBeaver (hopper.proxy.rlwy.net:50798), 2026-06-05 14:09 BST.
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-06-05 14:09 BST.
 
 ```sql
 UPDATE ha_stat_producer
@@ -361,6 +355,161 @@ WHERE slug = 'department-for-science-innovation-and-technology';
 **Result:** `Updated Rows: 1`. **Verified:** DSIT `last_rediscovered_at` = NULL,
 `updated_at` = 2026-06-05 14:09:16, `discovery_status` unchanged (`completed`).
 The other 7 producers' stamps left intact (they fetched candidates legitimately).
+
+---
+
+### 2026-06-06 — Clear remaining 6 central-department false re-discovery stamps
+
+**Context:** Root-causing the DSIT 422 (Issue A) revealed it was `order=newest`
+(invalid GOV.UK Search sort value, HTTP 422) affecting **every** GOV.UK producer,
+not just DSIT. So the 5 June execute run (pre-Issue-B, `errors=0`) silently 422'd
+and false-stamped **all 7 central departments**, not just DSIT — the "20 fetched"
+were entirely ONS. Only DSIT was cleared on 5 June. With the order fix now on
+production (`14f0099`), clearing the other 6 so they re-run immediately and pick
+up the ~2-week GOV.UK backlog (rather than waiting out the 24h cadence). Scoped to
+`central_department` with a non-null stamp (DSIT already NULL → not re-touched;
+ONS is not `central_department` and legitimately stamped → untouched). `updated_at`
+set per the raw-SQL-on-ORM-table rule.
+
+**Run via:** DBeaver (the Postgres public URL — Railway dashboard → Postgres → Connect), 2026-06-06 11:25 BST.
+
+```sql
+UPDATE ha_stat_producer
+SET last_rediscovered_at = NULL,
+    updated_at = NOW()
+WHERE producer_type = 'central_department'
+  AND last_rediscovered_at IS NOT NULL;
+```
+
+**Result:** `Updated Rows: 6` (DfE, DWP, DBT, DESNZ, DfT, DEFRA). Next cron run
+will re-attempt them with the fixed `order` param — expect `new > 0` (legitimate
+catch-up, not a dedup failure).
+
+---
+
+### 2026-06-08 — Decline 3 devolved producers + enrich NISRA reason
+
+**Context:** Stats-catalogue launch prep, step 1 (scope check before producer
+authorisation). Scottish Government, Welsh Government, and NISRA are devolved
+(`devolved_administration` / `devolved_body`) — outside Westminster Brief's
+UK-central-government scope ("no devolved coverage yet"). Declined per the HESA
+precedent so they don't surface in the candidate finder or get authorised.
+
+**Declines** — via `/admin` decline route (not raw SQL; `reviewed_by='admin'`,
+audit-log written), 2026-06-08 ~12:50 BST: `scottish-government`,
+`welsh-government`, `nisra` → `authorisation_status='declined'`, reason
+"currently out of scope".
+
+**Reason enrich (raw SQL)** — NISRA only, to record the ONS-vs-NISRA distinction
+so a future review doesn't re-surface it as "but it's a statistics agency".
+Run via DBeaver, 2026-06-08 14:59 BST:
+
+```sql
+UPDATE ha_stat_producer
+SET authorisation_reason = 'Devolved statistics body (Northern Ireland) — outside scope. NISRA is the devolved equivalent of ONS, producing NI official statistics FOR the devolved administration; the ONS-in/NISRA-out split is consistent (ONS UK-wide, NISRA NI-only). Excluded despite being a "statistics agency". No devolved coverage yet; deferred, revisitable.',
+    updated_at = NOW()
+WHERE slug = 'nisra';
+```
+
+**Result:** `Updated Rows: 1`. All three remain declined; gating holds.
+
+---
+
+### 2026-06-08 — Licence batch: OfS + Ofcom cleared, UCAS declined-in-error + pubs removed
+
+**Context:** Wave 2 licence triage (surfacing-rights check on non-OGL producers
+before authorising). Run via DBeaver, 2026-06-08 ~15:25–15:43 BST.
+
+**OfS** — licence verified OGL ("all OfS-owned content re-usable under OGL").
+`UPDATE … SET licence='OGL_v3', licence_evidence_raw_url='https://www.officeforstudents.org.uk/copyright/', updated_at=NOW()` + a matching `ha_stat_licence_audit_log` row (raw SQL bypasses the ORM licence-audit listener).
+
+**Ofcom** — licence verified permissive re-use ("may be reproduced free of charge in
+any format, accurately, with acknowledgement"); metadata-listing + linking well
+within terms. `licence='Custom_Open', licence_evidence_raw_url='https://www.ofcom.org.uk/about-ofcom/our-website/copyright'` + audit row.
+
+**UCAS — caught: authorised in error.** UCAS (custom non-OGL restrictive licence)
+had been `authorised` (auth-log: `candidate→authorised` 12:28) and discovered — **8
+publications** present. Restrictive-licence content that would have surfaced on
+`STATS_CATALOGUE_ENABLED` flip. Fixed pre-launch:
+```sql
+UPDATE ha_stat_producer SET authorisation_status='declined',
+  authorisation_reason='Custom non-OGL licence (restrictive) — does not clear surfacing rights (list+link). Declined; authorised in error 8 Jun 2026, 8 publications removed.',
+  updated_at=NOW() WHERE slug='ucas';
+INSERT INTO ha_stat_producer_auth_log (producer_id, changed_at, old_status, new_status, change_reason, recorded_by)
+  VALUES ((SELECT id FROM ha_stat_producer WHERE slug='ucas'), NOW(), 'authorised', 'declined', '…', 'Mark Forde (DBeaver, correcting erroneous authorisation)');
+-- then delete the 8 pubs + child rows (scoped producer_id=ucas):
+DELETE FROM ha_stat_publication_theme     WHERE publication_id IN (SELECT id FROM ha_stat_publication WHERE producer_id=(SELECT id FROM ha_stat_producer WHERE slug='ucas'));
+DELETE FROM ha_stat_publication_data_file  WHERE publication_id IN (…);
+DELETE FROM ha_stat_publication_audit_log  WHERE publication_id IN (…);
+DELETE FROM ha_stat_publication            WHERE producer_id=(SELECT id FROM ha_stat_producer WHERE slug='ucas');
+```
+**Result:** UCAS `declined`; `DELETE` removed 8 pubs; post-check `pubs=0, theme=0,
+data_file=0, audit=0`. Exposure closed, no orphaned rows.
+
+**Lesson:** verify `authorisation_status` against DB state before launch — a producer
+can be authorised-and-discovered while assumed declined. The licence gate must run
+*before* authorisation, not after.
+
+---
+
+### 2026-06-08 — UCAS decline (applied) + DCMS/MHCLG GOV.UK org-slug fix
+
+**Context:** Closing out producer population. Run via DBeaver, 2026-06-08 ~17:30 BST.
+
+**UCAS decline finally applied.** The earlier decline `UPDATE` had silently not run
+(DBeaver multi-statement gotcha — only the auth-log INSERT executed). Re-run as a
+single standalone statement and verified against DB state:
+```sql
+UPDATE ha_stat_producer SET authorisation_status='declined', updated_at=NOW() WHERE slug='ucas';
+-- verified: SELECT … → 'declined'
+```
+
+**DCMS + MHCLG org-slug fix.** Both returned 0 candidates because the seed
+`web_root_url` slug didn't match GOV.UK's actual org slug (the GovUkSearch org
+filter derives from `web_root_url`). Tested the live GOV.UK Search API to find the
+correct slugs: DCMS needs "and" *added* (`department-for-culture-media-and-sport`,
+80 pubs); MHCLG needs "and" *removed* (`ministry-of-housing-communities-local-government`,
+100 pubs). Fixed `web_root_url` + cleared `last_rediscovered_at` to re-trigger:
+```sql
+UPDATE ha_stat_producer SET web_root_url='…/department-for-culture-media-and-sport', last_rediscovered_at=NULL, updated_at=NOW() WHERE slug='department-for-culture-media-and-sport';
+UPDATE ha_stat_producer SET web_root_url='…/ministry-of-housing-communities-local-government', last_rediscovered_at=NULL, updated_at=NOW() WHERE slug='ministry-of-housing-communities-and-local-government';
+```
+**Result:** re-discovery run (16:45) populated both — MHCLG `new=71`, DCMS `new=35`,
+`errors=0`. Seed script `build_seed_data()` updated to the correct slugs for
+permanence. (Own-domain regulators Ofcom/OBR/OfS/Ofgem remain 0 via GovUkSearch —
+known coverage limit, separate DirectPageParser follow-up.)
+
+---
+
+### 2026-06-08 — Pause 4 own-domain regulators (Ofcom, OBR, OfS, Ofgem) — empty discovery
+
+**Context:** Pre-launch cleanup of the stats-catalogue producer set. Strategic call:
+**no producer expansion** pre-launch (transitive coverage via the 17 departments =
+correct scope; the "Wave 1 authorise" brief assumed a candidate pool that was never
+seeded — the table holds only the original 30 from `build_seed_data()`). The 4
+own-domain regulators were `authorised` but discovery returned 0 publications — routed
+to `GovUkSearchStrategy` via `producer_type` regulator/ndpb, which queries GOV.UK
+statistics document types (0 for these; their stats live on their own domains).
+De-registered so the launch set is all-populated. **Paused, not declined** — they are
+mis-routed live bodies, to revisit post-launch (DirectPageParser fix or
+transitive-coverage assessment). Root cause + per-body decision captured in
+`docs/ideas-backlog.md`. Run via DBeaver, 2026-06-08 ~21:03 BST.
+
+First attempt no-op'd (DBeaver multi-statement gotcha — only `COMMIT` ran under the
+cursor; caught by verifying against DB state, not the success message). Re-run the
+`UPDATE` as a standalone statement:
+```sql
+UPDATE ha_stat_producer
+SET authorisation_status='paused',
+    authorisation_reason='Discovery returned 0 publications: stats on own domain, not GOV.UK statistics doc types. Paused pre-launch; revisit post-launch (parser or transitive-coverage assessment).',
+    updated_at=NOW()
+WHERE slug IN ('ofcom','office-for-budget-responsibility','office-for-students','ofgem')
+  AND authorisation_status='authorised';
+```
+**Result:** `Updated Rows: 4`; all 4 verified → `paused`. Authorised producers with
+zero publications = **0**. Launch set = **21 authorised producers, all populated**
+(lowest NHS England=1, FCDO=7, DSIT=20). NB: the `ha_stat_producer_auth_log` parity
+INSERT was not run in the same pass (audit recorded here instead).
 
 ---
 
@@ -429,3 +578,34 @@ tags returned.
 **Phase 1.8 policy_area tagging complete.** Steady-state tagging now handled
 inline by `run_discovery()` for new publications. Backfill service left dormant
 (restart policy: Never) in case re-run is needed for future producer additions.
+
+---
+
+### 2026-06-13 — INC-008: pre-window PQ backfill UIN-collision corruption + repair
+
+**Context:** Gated `--test` of `scripts/backfill_pq_pre_window.py` (re-ingest 2024-07-09..17
+via `ingest_pq_date_range`, production `DATABASE_URL`) collided on non-unique cross-session
+WQ UINs and overwrote 690 May-2026 `ha_pq` rows with July-2024 content. Full write-up:
+incident-log INC-008. No full backfill run was made; script now blocked pending identity-key
+decision.
+
+**Production writes (all 2026-06-13):**
+
+1. `--test` chunk (script) — introduced the corruption: `inserted=9, updated=690`.
+2. Repair re-ingest (script): `ingest_pq_date_range(2026-05-13, 2026-05-14)` →
+   `inserted=12, updated=1815, errors=0` (fixed 689/690).
+3. UIN 444 restore from the `daily/2026-06-13` backup (DBeaver, manual SQL):
+   ```sql
+   UPDATE ha_pq SET question_text='…Home Office: Greenpeace…', answer_text=NULL,
+     answer_date=NULL, is_answered=false, is_holding=false, is_withdrawn=true,
+     answering_member=NULL, answering_mnis_id=NULL, answering_body='Home Office',
+     answering_body_id=1, asking_member=NULL, asking_mnis_id=4872, api_id=1904612,
+     updated_at=NOW() WHERE uin='444' AND tabled_date='2026-05-13';   -- 1 row
+   ```
+4. Stray-row cleanup (DBeaver, manual SQL):
+   ```sql
+   DELETE FROM ha_pq WHERE tabled_date < '2025-05-06';   -- 9 rows (UINs 900027–900039)
+   ```
+
+**Verified:** corruption fingerprints 0/0/0, strays 0, `MIN(tabled_date)`=2025-05-06,
+total 100,527. Operator: Mark (DBeaver writes) + Claude Code (scripts, on Mark's instruction).

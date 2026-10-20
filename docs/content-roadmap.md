@@ -41,7 +41,7 @@ if usage is high
 **Estimated build effort**: 1-2 hours
 **Priority**: Medium — Phase 2A.5+ enhancement
 
-**Audience**: Civil service colleagues, journalists, researchers, engaged 
+**Audience**: Civil servants, journalists, researchers, engaged 
 citizens. Treats reader as informed but not necessarily expert in 
 parliamentary history.
 
@@ -227,7 +227,7 @@ elements of UK Parliament. Builds Westminster Brief's character as a
 site that genuinely understands Parliament rather than just scraping its 
 data.
 
-**Target audience**: Civil service colleagues, public affairs 
+**Target audience**: Civil servants, public affairs 
 professionals, journalists, engaged citizens. Same audience as the main 
 product but with a slightly broader curiosity radius.
 
@@ -324,13 +324,13 @@ colleagues ask "what's the catch?" — better to have a clear answer
 published than be surprised.
 
 **Topics to cover**:
-- Who built this and why (Mark, civil service, personal capacity)
+- Who built this and why ("Westminster Brief is run by Mark Forde")
 - Free during beta, future paid features may exist but core archive 
   remains free
 - Data sources used (Hansard, Parliament APIs, etc.)
 - Limitations clearly stated (12-month archive window, current scope)
 - AI usage and verification approach
-- Privacy and propriety stance (no contact details, no devolved coverage 
+- Privacy stance (no contact details, no devolved coverage 
   yet, etc.)
 
 **Estimated build effort**: 0.5 day
@@ -393,6 +393,6 @@ When drafting content for this doc, three principles:
 2. **Preserve neutral tone.** No partisan content. Westminster Brief is 
    politically neutral as a tool; its editorial content should reflect that.
 
-3. **Audience-aware.** Civil service colleagues won't tolerate fluff. 
+3. **Audience-aware.** Policy professionals won't tolerate fluff. 
    Write to the level of someone informed but maybe new to the specific 
    topic. Slightly dry is better than slightly twee.

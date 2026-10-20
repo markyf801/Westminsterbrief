@@ -6,7 +6,7 @@ Three Cron Job services keep the archive current. Each is a separate Railway ser
 
 ## railway.toml and start commands
 
-`railway.toml` in the repo does **not** set a `startCommand` — it was removed deliberately so each service can set its own command in the Railway UI (Settings → Custom Start Command). The Flask service (`jubilant-intuition`) uses its Procfile as a fallback; cron services set theirs in the UI.
+`railway.toml` in the repo does **not** set a `startCommand` — it was removed deliberately so each service can set its own command in the Railway UI (Settings → Custom Start Command). The Flask web service (`Westminsterbrief` on Railway; `jubilant-intuition` is the backup cron's private-network name) uses its Procfile as a fallback; cron services set theirs in the UI.
 
 If you see "The value is set in /railway.toml" blocking the Settings field, check that `railway.toml` does not contain `startCommand` under `[deploy]`.
 
@@ -68,7 +68,7 @@ Add these as Variable References or copies on **each cron service** in Railway:
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | Variable Reference — picks up password rotations automatically |
 | `GEMINI_API_KEY` | *(same as Flask service)* | Copy from Flask service or use shared variable |
 | `POSTMARK_SERVER_TOKEN` | *(same as Flask service)* | Copy from Flask service |
-| `ADMIN_EMAIL` | `markjforde@gmail.com` | Alert recipient — copy from Flask service |
+| `ADMIN_EMAIL` | the owner's email | Alert recipient — copy the value from the Flask service |
 | `CRON_ALERT_EMAIL` | *(optional)* | Override alert recipient if different from ADMIN_EMAIL |
 | `EMAIL_FROM_ADDRESS` | `hello@westminsterbrief.co.uk` | Copy from Flask service (has default, only needed to override) |
 | `EMAIL_FROM_NAME` | `Westminster Brief` | Copy from Flask service (has default, only needed to override) |

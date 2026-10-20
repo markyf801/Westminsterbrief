@@ -2,9 +2,9 @@
 
 Last updated: 2026-04-29
 
-This document records confirmed working parameters, response schemas, and known gotchas for every external API the app calls. Its purpose is to prevent re-investigating the same questions across sessions — the WQ API section in CLAUDE.md shows the cost of not having this.
+This document records confirmed working parameters, response schemas, and known gotchas for every external API the app calls. Its purpose is to prevent re-investigating the same questions across sessions — the WQ API constraints doc (`docs/wq-api-constraints.md`) shows the cost of not having this.
 
-**For the Parliament Written Questions API**, see the comprehensive section in `CLAUDE.md` — it is not duplicated here.
+**For the Parliament Written Questions API**, see `docs/wq-api-constraints.md` — it is not duplicated here.
 
 ---
 
@@ -230,7 +230,7 @@ Where `TitleSlug` is PascalCase with no spaces or special characters (e.g. `Stud
 **Base URL:** `https://www.theyworkforyou.com/api/`  
 **Auth:** `key=TWFY_API_KEY` — required on every call  
 **Last verified:** 2026-04-27  
-**Additional reference:** CLAUDE.md "TWFY API — known quirks" section
+**Additional reference:** CLAUDE.md "Conventions and gotchas → External APIs" (one-line summary; this section is the detail)
 
 ### Endpoints
 
@@ -323,7 +323,7 @@ for row in data.get("rows", []):
 
 ## 3. Parliament Written Questions API
 
-See the comprehensive **"WQ API constraints"** section in `CLAUDE.md`. Not duplicated here.
+See the comprehensive **WQ API constraints** in `docs/wq-api-constraints.md`. Not duplicated here.
 
 **Short summary:** Use `tabledWhenFrom` / `tabledWhenTo` (not `tabledStartDate`). Use `answeringBodies` (integer dept ID) with a date anchor. Use `answered` (not `isAnswered`). Paginate with `take` / `skip`.
 

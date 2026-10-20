@@ -7,7 +7,7 @@ Most recent session first.
 
 ## Session: 5 May 2026 — Phase 2A completion + post-deploy polish
 
-**Status at close:** Phase 2A complete and share-ready. Civil service approval pending (~2 weeks out).
+**Status at close:** Phase 2A complete and share-ready. Launch share pending (~2 weeks out).
 
 ### What was built
 
@@ -18,7 +18,7 @@ Most recent session first.
 - **Form layout fixes** — `/questions` and `/tracker` form rows compacted to match Hansard Archive style (`align-items: flex-end` + plain `<div>` for button containers).
 - **Select2 font fix** — biography and mp_search dropdowns now inherit Inter font.
 - **Theme page 404 fix** — removed HAVING COUNT threshold from archive theme lookup; thin-tag pages now render friendly empty-state instead of 404.
-- **Homepage grid update** — added Hansard Archive [BETA] card; renamed "Hansard Search" to "Live Hansard Search"; removed "Free during beta" tag and civil servant credibility line.
+- **Homepage grid update** — added Hansard Archive [BETA] card; renamed "Hansard Search" to "Live Hansard Search"; removed "Free during beta" tag and the "built by" credibility line.
 - **"Unknown" name fix** — `/questions` results now correctly fall back to Members API name when `asking_member` is null in DB.
 - **is_holding / is_withdrawn** — bulk WQ API endpoint omits these fields; confirmed via verification SQL (both 0 after full backfill). Filters hidden from `/questions` UI pending full historical backfill via individual endpoint. Incremental cron now calls individual endpoint for all answered rows in the 7-day window. Full historical backfill deferred to Phase 2A.5+ (needs `parliament_id` column, ~12h individual-endpoint run).
 - **`--skip-answer-fetch` flag** — added to `ingest_pq_cron.py` to bypass per-row individual endpoint calls; cut backfill from ~25 hours to ~92 minutes.
@@ -29,7 +29,7 @@ Most recent session first.
 
 - **is_holding / is_withdrawn hidden until data is correct.** Parliament's bulk WQ API endpoint doesn't return these fields. Showing 0/0 would mislead users. Option B: hide the UI filters, fix the data path incrementally, restore when data is verified non-zero.
 - **History of Hansard** — footer-linked, not header nav. Reference content, not a primary nav item. Route `/history-of-hansard` (not `/about/history-of-hansard`).
-- **Civil servant credibility line removed from homepage.** Site serves a broader audience; the line was too narrowly civil-service-framed.
+- **"Built by" credibility line removed from homepage.** Site serves a broader audience; the line was too narrowly framed.
 - **"Free during beta" removed from hero.** No longer accurate framing for a soft-launched tool.
 
 ### Phase 2A.5+ backlog (18 candidates)
@@ -88,7 +88,7 @@ post-share.
 
 **Key decisions:**
 - Soft launch framing locked: iterate publicly after sharing rather than gating to a launch day.
-- Civil service share is still time-fixed to the 32-day approval window — "soft launch" doesn't change the one-shot share moment.
+- The first launch share is still time-fixed — "soft launch" doesn't change the one-shot share moment.
 - Cron schedule: hourly during sittings (not daily-overnight as spec originally said).
 - Must-haves for share: search, theme tagging quality, cron services, SEO foundation, no obvious UX issues.
 - Bill Journey, advanced filters, AI summaries deferred to Phase 2A.5+.
