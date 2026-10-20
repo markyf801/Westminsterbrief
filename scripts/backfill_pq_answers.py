@@ -5,8 +5,10 @@ stored truncated text (Parliament bulk endpoint truncates answerText at 258 char
 Two-stage process:
   Stage A — populate api_id on all rows that are missing it by re-fetching
              the bulk endpoint for the full archive window. Fast (~30 min).
-  Stage B — fetch the individual endpoint for each answered row where
-             answer_text is exactly 258 chars, and update with full text.
+  Stage B — fetch the individual endpoint (by api_id) for each answered row
+             whose answer_text is exactly 258 chars (the bulk cut-off) or
+             missing — bulk-only ingest passes never write answer text — and
+             store the full answer as sanitised HTML, like the ingestor.
              Also sets is_holding and is_withdrawn from the individual record.
 
 Usage:
@@ -16,8 +18,9 @@ Usage:
   python scripts/backfill_pq_answers.py --test    # Stage B on first 100 rows
 
 The script is naturally resumable: Stage B's query targets rows WHERE
-length(answer_text) = 258. Once a row is updated to full text it falls out
-of the query automatically, so restarting after interruption is safe.
+length(answer_text) = 258 or answer_text is missing. Once a row is updated to
+full text it falls out of the query automatically, so restarting after
+interruption is safe.
 
 Required env vars (same as flask_app):
   DATABASE_URL (or local SQLite used automatically if unset)
@@ -37,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
 from dotenv import load_dotenv
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 load_dotenv()
 
@@ -60,18 +63,10 @@ _BACKFILL_DELAY = 0.5
 _BULK_DELAY = 0.3         # bulk endpoint pagination — same as normal ingest
 
 
-def _strip_html(html: str) -> str:
-    import re
-    return re.sub(r"<[^>]+>", " ", html or "").strip()
-
-
-def _clean(text: str) -> str:
-    import re
-    return re.sub(r"\s+", " ", text).strip()
-
-
 def _get_full_answer(api_id: int) -> tuple[str | None, bool, bool]:
-    """Fetch individual endpoint. Returns (full_text, is_holding, is_withdrawn)."""
+    """Fetch individual endpoint. Returns (full_answer_html, is_holding, is_withdrawn).
+
+    The answer is sanitised HTML, the same form the ingestor stores."""
     for attempt in range(3):
         try:
             resp = requests.get(f"{WQ_API_BASE}/{api_id}", timeout=_REQUEST_TIMEOUT)
@@ -84,7 +79,8 @@ def _get_full_answer(api_id: int) -> tuple[str | None, bool, bool]:
                 _log.warning("Individual fetch id=%s returned %s", api_id, resp.status_code)
                 return None, False, False
             v = resp.json().get("value") or {}
-            text = _clean(_strip_html(v.get("answerText") or "")) or None
+            from hansard_archive.html_sanitizer import sanitize_answer_html
+            text = sanitize_answer_html(v.get("answerText") or "")
             return text, bool(v.get("answerIsHolding")), bool(v.get("isWithdrawn"))
         except Exception as exc:
             _log.warning("Individual fetch id=%s error (attempt %d): %s", api_id, attempt + 1, exc)
@@ -171,8 +167,8 @@ def stage_a(db, HaPQ, months: int = 13):
                   chunk_end, updated, skipped, errors)
 
     db.session.commit()
-    total_with_id = db.session.query(HaPQ).filter(HaPQ.api_id != None).count()
-    total_without = db.session.query(HaPQ).filter(HaPQ.api_id == None).count()
+    total_with_id = db.session.query(HaPQ).filter(HaPQ.api_id.isnot(None)).count()
+    total_without = db.session.query(HaPQ).filter(HaPQ.api_id.is_(None)).count()
     _log.info("Stage A complete. api_id populated=%d, still null=%d", total_with_id, total_without)
 
 
@@ -196,9 +192,11 @@ def stage_b(db, HaPQ, test_mode: bool = False):
         _log.info("TEST MODE: processing first 100 rows only.")
 
     _BASE_FILTER = (
-        HaPQ.is_answered == True,
-        HaPQ.api_id != None,
-        func.length(HaPQ.answer_text) == 258,
+        HaPQ.is_answered.is_(True),
+        HaPQ.api_id.isnot(None),
+        or_(func.length(HaPQ.answer_text) == 258,
+            HaPQ.answer_text.is_(None),
+            HaPQ.answer_text == ""),
     )
 
     total = db.session.query(func.count(HaPQ.id)).filter(*_BASE_FILTER).scalar()
@@ -283,7 +281,7 @@ def stage_b(db, HaPQ, test_mode: bool = False):
 
     if test_mode:
         samples = (db.session.query(HaPQ.uin, HaPQ.answer_text)
-                   .filter(HaPQ.api_id != None, func.length(HaPQ.answer_text) > 258)
+                   .filter(HaPQ.api_id.isnot(None), func.length(HaPQ.answer_text) > 258)
                    .limit(3).all())
         _log.info("Sample updated rows:")
         for uin, ans in samples:

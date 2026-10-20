@@ -4,11 +4,11 @@ tagger result mapping, and the PQ page title fallback.
 
 SQLite in-memory only; the Parliament API and Gemini are mocked.
 
-Note: the old model had UNIQUE on ha_pq.uin, which would make the "same UIN in
-two sessions" test impossible. The model now declares uin non-unique; that
-changes only freshly created databases (create_all never alters an existing
-table). Production's unique index must be dropped by hand after this code is
-deployed — docs/plans/pq-identity-phase3-sql.md, section 4.
+Note: the old model declared ha_pq.uin UNIQUE; the model now declares it
+non-unique. Production never had that unique index (its idx_ha_pq_uin is a
+plain btree, audit A, 2026-10-20), so these tests run without one — as
+production does: a new question that reuses an old UIN is INSERTED by this
+code (the old code overwrote the old row).
 """
 
 import re
@@ -489,3 +489,307 @@ def test_pq_page_title_never_bare_uin(db, app):
     assert h1 != "6978" and h1.startswith("To ask the Secretary")
     assert not og.startswith("6978")
     assert '"headline": "6978"' not in html
+
+
+# ── paging: failed pages, malformed payloads (review finding 1) ───────────────
+
+class _Runaway(BaseException):
+    """Not an Exception, so the ingestor's retry handler can't swallow it."""
+
+
+@pytest.fixture
+def paged_api(monkeypatch):
+    """Bulk endpoint with 2-row pages. `state["behaviour"](skip, attempt)` may
+    return a payload dict, raise, or return None for the normal page."""
+    import hansard_archive.pq_ingestor as ing
+
+    monkeypatch.setattr(ing, "_PAGE_SIZE", 2)
+    monkeypatch.setattr(ing.time, "sleep", lambda s: None)
+    state = {"rows": [], "skips": [], "attempts": {}, "behaviour": lambda skip, n: None,
+             "status": 200, "total": None}
+
+    def fake_get(url, params=None, timeout=None):
+        if len(state["skips"]) > 200:
+            raise _Runaway("ingestor kept paging")
+        assert url == ing.WQ_API_BASE
+        skip = params["skip"]
+        state["skips"].append(skip)
+        n = state["attempts"].get(skip, 0)
+        state["attempts"][skip] = n + 1
+        payload = state["behaviour"](skip, n)
+        if payload is None:
+            total = len(state["rows"]) if state["total"] is None else state["total"]
+            payload = {"totalResults": total,
+                       "results": state["rows"][skip:skip + params["take"]]}
+        resp = _Resp(payload)
+        resp.status_code = state["status"]
+        return resp
+
+    monkeypatch.setattr(ing.requests, "get", fake_get)
+    return state
+
+
+def _rows(n, start=5000):
+    return [_value(start + i, str(start + i), "2026-06-04") for i in range(n)]
+
+
+def test_every_page_failing_aborts_instead_of_looping(db, paged_api):
+    import requests as _rq
+    from hansard_archive.pq_ingestor import PQPageFailureError
+
+    def down(skip, n):
+        raise _rq.ConnectionError("API down")
+    paged_api["behaviour"] = down
+
+    with pytest.raises(PQPageFailureError) as exc:
+        _ingest()
+
+    assert exc.value.counts["page_errors"] == 3          # DEFAULT_MAX_FAILED_PAGES
+    assert exc.value.counts["errors"] >= 3
+    assert len(paged_api["skips"]) == 3 * 3               # 3 pages x 3 attempts
+
+
+def test_one_failed_page_then_recovery_is_reported(db, paged_api):
+    import requests as _rq
+    from hansard_archive.models import HaPQ
+    paged_api["rows"] = _rows(5)                          # pages at skip 0, 2, 4
+
+    def middle_fails(skip, n):
+        if skip == 2:
+            raise _rq.Timeout("slow")
+    paged_api["behaviour"] = middle_fails
+
+    res = _ingest()
+
+    assert res["inserted"] == 3 and res["page_errors"] == 1 and res["errors"] >= 1
+    assert HaPQ.query.count() == 3
+    assert sorted(set(paged_api["skips"])) == [0, 2, 4]
+
+
+def test_failed_last_page_stops_at_total_results(db, paged_api):
+    import requests as _rq
+    paged_api["rows"] = _rows(4)                          # pages at skip 0, 2
+
+    def last_fails(skip, n):
+        if skip >= 2:
+            raise _rq.Timeout("slow")
+    paged_api["behaviour"] = last_fails
+
+    res = _ingest()
+
+    assert res["inserted"] == 2 and res["page_errors"] == 1
+    assert 4 not in paged_api["skips"]                     # never walked past totalResults
+
+
+def test_empty_page_before_total_results_is_an_error(db, paged_api):
+    paged_api["rows"] = _rows(2)
+    paged_api["total"] = 6                                 # API claims more than it serves
+    res = _ingest()
+    assert res["inserted"] == 2 and res["page_errors"] == 1
+
+
+def test_error_body_without_results_is_retried(db, paged_api):
+    paged_api["rows"] = _rows(1)
+    paged_api["behaviour"] = lambda skip, n: ({"status": 500, "title": "Server error"}
+                                              if n == 0 else None)
+    res = _ingest()
+    assert res["inserted"] == 1 and res["page_errors"] == 0
+    assert paged_api["attempts"][0] == 2
+
+
+def test_permanent_api_error_aborts(db, paged_api):
+    from hansard_archive.pq_ingestor import PQPageFailureError
+    paged_api["status"] = 403
+    with pytest.raises(PQPageFailureError) as exc:
+        _ingest()
+    assert exc.value.counts["page_errors"] == 1
+    assert paged_api["skips"] == [0]
+
+
+def test_mismatch_abort_does_not_count_rolled_back_writes(db, fake_api):
+    from hansard_archive.pq_ingestor import PQIdentityMismatchError
+    db.session.add(_pq(api_id=910, uin="910", heading=None, tabled_date=date(2026, 5, 13)))
+    db.session.add(_pq(api_id=911, uin="911", tabled_date=date(2026, 5, 13)))
+    db.session.commit()
+    fake_api["bulk"] = [_value(910, "910", "2026-05-13", heading="Rolled back"),
+                        _value(912, "912", "2026-05-13"),
+                        _value(911, "999", "2026-05-13")]          # mismatch
+    with pytest.raises(PQIdentityMismatchError) as exc:
+        _ingest(max_identity_mismatches=0)
+    c = exc.value.counts
+    assert c["updated"] == 0 and c["inserted"] == 0 and c["rolled_back"] == 2
+
+
+# ── answers: never lock in the truncated bulk copy (review finding 2) ─────────
+
+_CUT = "<p>" + "x" * 252 + "..."      # 258 chars, like the bulk endpoint's copy
+
+
+def test_bulk_only_insert_stores_no_answer_text(db, fake_api):
+    from hansard_archive.models import HaPQ
+    fake_api["bulk"] = [_value(1001, "1001", "2026-06-04", answer=_CUT, answered="2026-06-10")]
+    _ingest(skip_answer_fetch=True)
+    row = HaPQ.query.filter_by(api_id=1001).one()
+    assert row.is_answered is True and row.answer_date == date(2026, 6, 10)
+    assert row.answer_text is None
+
+
+def test_bulk_only_update_marks_answered_but_writes_no_answer(db, fake_api):
+    from hansard_archive.models import HaPQ
+    db.session.add(_pq(api_id=1002, uin="1002", is_answered=False))
+    db.session.commit()
+    fake_api["bulk"] = [_value(1002, "1002", "2026-06-04", answer=_CUT, answered="2026-06-10")]
+    _ingest(skip_answer_fetch=True)
+    row = HaPQ.query.filter_by(api_id=1002).one()
+    assert row.is_answered is True and row.answer_text is None
+
+
+@pytest.mark.parametrize("stored", [None, "", _CUT, "<p>" + "y" * 250 + "..."])
+def test_answered_pass_refetches_missing_or_truncated_answer(db, fake_api, stored):
+    from hansard_archive.models import HaPQ
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    db.session.add(_pq(api_id=1003, uin="1003", is_answered=True, answer_text=stored,
+                       answer_date=date(2026, 10, 15)))
+    db.session.commit()
+    fake_api["bulk"] = [_value(1003, "1003", "2026-06-04", answer=_CUT, answered="2026-10-15")]
+    fake_api["individual"] = {1003: {
+        "questionText": "To ask the Secretary of State, what steps are being taken.",
+        "answerText": "<p>The complete answer.</p>", "answerIsHolding": False,
+        "isWithdrawn": False}}
+
+    ingest_pq_date_range(date(2026, 10, 14), date(2026, 10, 20), verbose=False,
+                         date_field="answered", fetch_only_new_answers=True)
+
+    assert fake_api["individual_calls"] == [1003]
+    assert HaPQ.query.filter_by(api_id=1003).one().answer_text == "<p>The complete answer.</p>"
+
+
+def test_failed_individual_fetch_leaves_answer_for_next_run(db, fake_api):
+    from hansard_archive.models import HaPQ
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    fake_api["bulk"] = [_value(1004, "1004", "2026-10-10", answer=_CUT, answered="2026-10-15")]
+    fake_api["individual"] = {}          # individual endpoint returns nothing
+    ingest_pq_date_range(date(2026, 10, 14), date(2026, 10, 20), verbose=False,
+                         date_field="answered", fetch_only_new_answers=True)
+    row = HaPQ.query.filter_by(api_id=1004).one()
+    assert row.is_answered is True and row.answer_text is None   # not the cut-off copy
+
+    fake_api["individual_calls"] = []
+    ingest_pq_date_range(date(2026, 10, 14), date(2026, 10, 20), verbose=False,
+                         date_field="answered", fetch_only_new_answers=True)
+    assert fake_api["individual_calls"] == [1004]                 # tried again
+
+
+def test_looks_truncated():
+    from hansard_archive.pq_ingestor import _looks_truncated
+    assert _looks_truncated(_CUT)
+    assert _looks_truncated("z" * 258)
+    assert _looks_truncated("<p>" + "y" * 250 + "...")            # 256 chars
+    assert not _looks_truncated(None) and not _looks_truncated("")
+    assert not _looks_truncated("<p>A full answer.</p>")
+    assert not _looks_truncated("w" * 400 + "...")
+
+
+def _load_script(name):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, PROJECT_ROOT / "scripts" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_headings_backfill_apply_never_writes_answer_text(db, fake_api, monkeypatch, app):
+    import sys
+    import types
+    from hansard_archive.models import HaPQ
+    db.session.add(_pq(api_id=1005, uin="1005", heading=None, is_answered=False))
+    db.session.commit()
+    fake_api["bulk"] = [
+        _value(1005, "1005", "2026-06-04", heading="Fish", answer=_CUT, answered="2026-06-09"),
+        _value(1006, "1006", "2026-06-04", heading="New", answer=_CUT, answered="2026-06-09"),
+    ]
+    monkeypatch.setitem(sys.modules, "flask_app", types.SimpleNamespace(app=app))
+    mod = _load_script("backfill_pq_headings")
+
+    rc = mod.main(["--since", "2026-06-01", "--until", "2026-06-10", "--apply"])
+
+    assert rc == 0
+    rows = {r.api_id: r for r in HaPQ.query.all()}
+    assert rows[1005].heading == "Fish" and rows[1005].is_answered is True
+    assert rows[1005].answer_text is None and rows[1006].answer_text is None
+    assert fake_api.get("individual_calls", []) == []
+
+
+# ── cron alerting (review finding 3) ──────────────────────────────────────────
+
+@pytest.fixture
+def cron(monkeypatch, app, db):
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "flask_app", types.SimpleNamespace(app=app))
+    mod = _load_script("ingest_pq_cron")
+    sent = []
+    monkeypatch.setattr(mod, "_send_failure_alert",
+                        lambda service, subject, body: sent.append((subject, body)))
+    monkeypatch.setattr(sys, "argv", ["ingest_pq_cron.py", "--no-tag", "--service-name", "pq-test"])
+    return mod, sent
+
+
+def _counts(**kw):
+    base = {"inserted": 0, "updated": 0, "unchanged": 5, "identity_mismatch": 0,
+            "failed": 0, "page_errors": 0, "rolled_back": 0}
+    base.update(kw)
+    base["errors"] = base["failed"] + base["page_errors"] + base["identity_mismatch"]
+    return base
+
+
+def test_cron_clean_run_sends_no_alert(cron, monkeypatch):
+    mod, sent = cron
+    monkeypatch.setattr(mod, "ingest_pq_date_range", lambda *a, **k: _counts(inserted=2))
+    mod.main()
+    assert sent == []
+
+
+@pytest.mark.parametrize("key", ["identity_mismatch", "failed", "page_errors"])
+def test_cron_alerts_once_on_a_single_problem(cron, monkeypatch, key):
+    mod, sent = cron
+    monkeypatch.setattr(mod, "ingest_pq_date_range", lambda *a, **k: _counts(**{key: 1}))
+    with pytest.raises(SystemExit):
+        mod.main()
+    assert len(sent) == 1                       # both passes had a problem: still one email
+    assert f"{key}=1" in sent[0][1]
+
+
+def test_cron_alert_uses_counts_from_an_aborted_pass(cron, monkeypatch):
+    from hansard_archive.pq_ingestor import PQIdentityMismatchError
+    mod, sent = cron
+    calls = []
+
+    def aborting(*a, **k):
+        calls.append(k.get("date_field", "tabled"))
+        raise PQIdentityMismatchError("too many mismatches",
+                                      _counts(inserted=4, identity_mismatch=6, rolled_back=3))
+    monkeypatch.setattr(mod, "ingest_pq_date_range", aborting)
+
+    with pytest.raises(SystemExit):
+        mod.main()
+
+    assert calls == ["tabled"]                  # answered pass skipped after an abort
+    assert len(sent) == 1
+    body = sent[0][1]
+    assert "identity_mismatch=6" in body and "rolled_back=3" in body and "inserted=4" in body
+    assert "PQIdentityMismatchError" in body
+
+
+def test_invalid_env_values_do_not_break_import():
+    import os
+    import subprocess
+    import sys
+    env = dict(os.environ, PQ_MAX_FAILED_PAGES="three", PQ_MAX_IDENTITY_MISMATCHES="-1")
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import hansard_archive.pq_ingestor as m;"
+         "print(m.DEFAULT_MAX_FAILED_PAGES, m.DEFAULT_MAX_IDENTITY_MISMATCHES)"],
+        cwd=PROJECT_ROOT, env=env, capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ["3", "5"]
