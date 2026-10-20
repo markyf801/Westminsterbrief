@@ -125,7 +125,7 @@
         <img src="{{ member_header.photo_url }}" alt="{{ member_header.name }}" class="mp-header-photo">
         {% endif %}
         <div class="mp-header-meta">
-            <div class="mp-header-name">{{ member_header.name }}</div>
+            <div class="mp-header-name">{{ member_header.display_name or member_header.name }}</div>
             <div class="mp-header-sub">
                 <strong>{{ member_header.party }}</strong>
                 &nbsp;·&nbsp;
@@ -432,7 +432,7 @@ $(document).ready(function() {
 
     // Pre-populate select2 if returning after POST
     {% if is_post and member_header %}
-    var opt = new Option({{ member_header.name | tojson }}, {{ member_id | tojson }}, true, true);
+    var opt = new Option({{ (member_header.display_name or member_header.name) | tojson }}, {{ member_id | tojson }}, true, true);
     $('#member-search').append(opt).trigger('change');
     {% endif %}
 });

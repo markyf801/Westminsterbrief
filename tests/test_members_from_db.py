@@ -62,8 +62,31 @@ class FakeParliament:
         }
         self.interests = {4046: [{"name": "Category 1", "interests": [{"interest": "Author royalties"}]}],
                           269: []}
+        self.synopsis = {
+            4046: "The Rt Hon Bridget Phillipson is the Labour MP for Houghton and Sunderland South.",
+            269: "Baroness Smith of Malvern's full title is The Rt Hon. the Baroness Smith of Malvern. "
+                 "Her name is Jacqui Smith, and she is a current member of the House of Lords.",
+        }
+        self.wikidata = {
+            4046: {"status": "matched", "qid": "Q575337", "name": "Bridget Phillipson", "given": "Bridget",
+                   "family": "Phillipson", "article": "https://en.wikipedia.org/wiki/Bridget_Phillipson",
+                   "education": ["Hertford College"], "occupations": ["politician"]},
+            269: {"status": "matched", "qid": "Q237217", "name": "Jacqui Smith", "given": "Jacqui",
+                  "family": "Smith", "article": "https://en.wikipedia.org/wiki/Jacqui_Smith",
+                  "education": ["Hertford College"], "occupations": ["politician", "teacher"]},
+        }
+        self.wiki_text = "Wikipedia text."
         self.fail_bio_for = set()
+        self.fail_synopsis = False
         self.calls = []
+        self.wikidata_calls = []
+
+    def fetch_wikidata(self, member_ids):
+        self.wikidata_calls.append(list(member_ids))
+        return {m: dict(self.wikidata.get(m) or {"status": "not_found"}) for m in member_ids}
+
+    def fetch_extract(self, url):
+        return f"{self.wiki_text} ({url})", True
 
     def __call__(self, url, params=None, delay=0):
         self.calls.append(url)
@@ -81,6 +104,8 @@ class FakeParliament:
                                "email": f"m{mid}@parliament.uk"}]}
         if url.endswith("/RegisteredInterests"):
             return {"value": self.interests[mid]}
+        if url.endswith("/Synopsis"):
+            return None if self.fail_synopsis else {"value": self.synopsis[mid]}
         return {"value": self.members[mid]}
 
 
@@ -171,8 +196,8 @@ def fake(monkeypatch):
     f = FakeParliament()
     monkeypatch.setattr(refresh_members, "_get_json", f)
     monkeypatch.setattr(refresh_members, "GEMINI_DELAY", 0)
-    monkeypatch.setattr(refresh_members, "fetch_wikipedia",
-                        lambda mid: (f"Wikipedia text for {mid}.", f"https://en.wikipedia.org/wiki/M{mid}", True))
+    monkeypatch.setattr(refresh_members, "fetch_wikidata", f.fetch_wikidata)
+    monkeypatch.setattr(refresh_members, "fetch_wikipedia_extract", f.fetch_extract)
     return f
 
 
@@ -212,7 +237,7 @@ class TestRefreshUpsert:
         assert (p.wq_total, p.wq_12m, p.sessions_12m, p.contributions_12m) == (2, 1, 1, 2)
         assert p.top_policy_areas == [{"theme": "Education", "sessions": 1}]
         assert p.wq_departments == [{"department": "Department for Education", "questions": 1}]
-        assert MemberProfile.query.get(269).slug == "baroness-smith-of-malvern"
+        assert MemberProfile.query.get(269).slug == "jacqui-smith-of-malvern"
 
         stats2 = _run()
         assert (stats2["inserted"], stats2["updated"], stats2["unchanged"]) == (0, 0, 2)
@@ -280,17 +305,16 @@ class TestBioRegeneration:
         stats = _run(regenerate_bios=True)
         assert (stats["bio_generated"], stats["bio_unchanged"]) == (1, 1) and len(gemini) == 3
 
-    def test_wikipedia_change_regenerates(self, app, fake, gemini, monkeypatch):
+    def test_wikipedia_change_regenerates(self, app, fake, gemini):
         _run(regenerate_bios=True)
-        monkeypatch.setattr(refresh_members, "fetch_wikipedia",
-                            lambda mid: ("Edited article.", "https://en.wikipedia.org/wiki/X", True))
+        fake.wiki_text = "Edited article."
         assert _run(regenerate_bios=True)["bio_generated"] == 2
 
     def test_wikipedia_fetch_error_keeps_bio(self, app, fake, gemini, monkeypatch):
         from cache_models import MemberBiography
         _run(regenerate_bios=True)
         before = MemberBiography.query.get(4046).bio_text
-        monkeypatch.setattr(refresh_members, "fetch_wikipedia", lambda mid: ("", None, False))
+        monkeypatch.setattr(refresh_members, "fetch_wikipedia_extract", lambda url: ("", False))
         stats = _run(regenerate_bios=True)
         assert stats["bio_skipped"] == 2 and len(gemini) == 2
         assert MemberBiography.query.get(4046).bio_text == before
@@ -324,11 +348,186 @@ class TestBioRegeneration:
         from types import SimpleNamespace
         profile = SimpleNamespace(name="X", house="Commons", party="Lab", membership_from="Y",
                                   membership_start=None, government_posts=[], opposition_posts=[],
-                                  committees=[], interests=[], top_policy_areas=[], wq_departments=[])
+                                  committees=[], interests=[], top_policy_areas=[], wq_departments=[],
+                                  representations=[], house_memberships=[], wikidata_id=None,
+                                  wikidata_facts=None)
         prompt = member_profiles.bio_prompt(member_profiles.bio_inputs(profile, "", None))
         assert "civil servant" not in prompt.lower()
         assert "policy professionals" in prompt
         assert "likely future behaviour" in prompt
+
+
+# ── Names, slugs and Wikipedia status ─────────────────────────────────────────
+
+def _name(mid):
+    from cache_models import MemberName
+    return MemberName.query.get(mid)
+
+
+class TestNames:
+    def test_wikidata_hit(self, app, fake):
+        _run()
+        n = _name(269)
+        assert (n.personal_name, n.source, n.confidence) == ("Jacqui Smith", "wikidata", "high")
+        assert (n.given_name, n.family_name) == ("Jacqui", "Smith")
+        assert n.peerage_title == "Baroness Smith of Malvern" and n.wikidata_id == "Q237217"
+        assert n.parliament_name == "Jacqui Smith" and n.source_url.endswith("Q237217")
+        mp = _name(4046)
+        assert (mp.personal_name, mp.peerage_title, mp.confidence) == ("Bridget Phillipson", None, "high")
+
+    def test_wikidata_miss_falls_back_to_parliament(self, app, fake):
+        fake.wikidata = {}
+        _run()
+        peer, mp = _name(269), _name(4046)
+        assert (peer.personal_name, peer.source, peer.confidence) == ("Jacqui Smith", "parliament", "medium")
+        assert peer.given_name is None and peer.family_name is None   # not split: that would be a guess
+        assert (mp.personal_name, mp.source, mp.confidence) == ("Bridget Phillipson", "parliament", "high")
+
+    def test_conflict_recorded_and_parliament_used(self, app, fake):
+        fake.wikidata[269]["name"] = "Jacqueline Jones"
+        stats = _run(audit_names=True)
+        n = _name(269)
+        assert (n.personal_name, n.source, n.confidence) == ("Jacqui Smith", "parliament", "low")
+        assert "conflict" in n.audit_notes and "Jacqueline Jones" in n.audit_notes
+        assert stats["names"]["conflicts"] == 1
+
+    def test_no_name_anywhere_keeps_title_slug(self, app, fake):
+        from cache_models import MemberProfile
+        fake.wikidata = {}
+        fake.synopsis[269] = "Baroness Smith of Malvern is a member of the House of Lords."
+        stats = _run(audit_names=True)
+        assert _name(269).personal_name is None and stats["names"]["missing"] == 1
+        p = MemberProfile.query.get(269)
+        assert (p.slug, p.slug_source) == ("baroness-smith-of-malvern", "title")
+
+    def test_slug_upgrades_and_old_slug_301s(self, app, fake):
+        from cache_models import MemberProfile
+        fake.wikidata = {}
+        fake.synopsis[269] = "No name sentence here."
+        _run()
+        assert MemberProfile.query.get(269).slug == "baroness-smith-of-malvern"
+        fake.wikidata = FakeParliament().wikidata
+        fake.synopsis[269] = FakeParliament().synopsis[269]
+        stats = _run(audit_names=True)
+        assert stats["names"]["slugs_changed"] == 1
+        assert MemberProfile.query.get(269).slug == "jacqui-smith-of-malvern"
+        r = app.test_client().get("/members/269/baroness-smith-of-malvern")
+        assert r.status_code == 301 and r.headers["Location"].endswith("/members/269/jacqui-smith-of-malvern")
+        # stable-first: a later name change does not move a personal-name slug
+        fake.wikidata[269]["name"] = "Jacqueline Smith"
+        _run(audit_names=True)
+        assert MemberProfile.query.get(269).slug == "jacqui-smith-of-malvern"
+
+    def test_weekly_run_only_checks_new_members(self, app, fake):
+        _run()
+        assert fake.wikidata_calls == [[269, 4046]]
+        _run()
+        assert fake.wikidata_calls == [[269, 4046]]          # nothing new: no Wikidata call
+        _run(audit_names=True)
+        assert len(fake.wikidata_calls) == 2
+
+    def test_audit_report_counts_changes_and_wiki_gaps(self, app, fake):
+        from cache_models import MemberNameAudit
+        _run()
+        fake.wikidata[4046]["name"] = "Bridget M. Phillipson"
+        fake.wikidata[269]["article"] = None
+        stats = _run(audit_names=True)
+        counts = stats["names"]
+        assert counts["changed"] == 1 and counts["wiki_not_found"] == 1 and counts["wiki_found"] == 1
+        row = MemberNameAudit.query.one()
+        assert row.counts["changed"] == 1
+        issues = {(g["member_id"], g["issue"]) for g in row.gaps}
+        assert {(4046, "changed"), (269, "wikipedia_not_found")} <= issues
+        _run(dry_run=True, audit_names=True)
+        assert MemberNameAudit.query.count() == 1             # dry run writes no audit row
+
+    def test_manual_name_not_overwritten(self, app, fake):
+        from extensions import db
+        _run()
+        n = _name(269)
+        n.source, n.personal_name = "manual", "Jacqui Smith (corrected)"
+        db.session.commit()
+        stats = _run(audit_names=True)
+        assert _name(269).personal_name == "Jacqui Smith (corrected)" and stats["names"]["manual"] == 1
+
+    def test_lookup_error_keeps_existing_name(self, app, fake, monkeypatch):
+        _run()
+        monkeypatch.setattr(refresh_members, "fetch_wikidata",
+                            lambda ids: {m: {"status": "error"} for m in ids})
+        fake.fail_synopsis = True
+        stats = _run(audit_names=True)
+        assert _name(269).personal_name == "Jacqui Smith" and stats["names"]["lookup_errors"] == 2
+        assert stats["exit_code"] == 1                        # Wikidata down for everyone: mostly failing
+
+    def test_wiki_status_recorded(self, app, fake):
+        from cache_models import MemberProfile
+        fake.wikidata[269]["article"] = None
+        fake.wikidata[4046] = {"status": "ambiguous", "qids": ["Q1", "Q2"]}
+        _run(audit_names=True)
+        assert MemberProfile.query.get(269).wiki_status == "not_found"
+        p = MemberProfile.query.get(4046)
+        assert p.wiki_status == "ambiguous" and p.wikipedia_url is None and p.wiki_checked_at
+
+    def test_fallback_sources_when_no_wikipedia(self, app, fake, gemini):
+        from cache_models import MemberBiography, MemberProfile
+        fake.wikidata[269]["article"] = None
+        _run(regenerate_bios=True)
+        prompt = next(p for p in gemini if "Jacqui Smith" in p)
+        assert "No Wikipedia article was matched" in prompt
+        assert "Hertford College" in prompt and "teacher" in prompt
+        labels = [s["label"] for s in MemberBiography.query.get(269).sources]
+        assert any(lbl.startswith("Wikidata") for lbl in labels)
+        assert not any(lbl.startswith("Wikipedia") for lbl in labels)
+        assert MemberProfile.query.get(269).wiki_status == "not_found"
+        labels_mp = [s["label"] for s in MemberBiography.query.get(4046).sources]
+        assert any(lbl.startswith("Wikipedia") for lbl in labels_mp)
+
+    def test_wikidata_error_skips_bio(self, app, fake, gemini, monkeypatch):
+        _run()
+        monkeypatch.setattr(refresh_members, "fetch_wikidata",
+                            lambda ids: {m: {"status": "error"} for m in ids})
+        stats = _run(regenerate_bios=True)
+        assert stats["bio_skipped"] == 2 and gemini == []
+
+
+def _binding(**kw):
+    return {k: {"value": v} for k, v in kw.items()}
+
+
+def test_parse_wikidata():
+    rows = [
+        _binding(mnis="3652", item="http://www.wikidata.org/entity/Q908568",
+                 label="Brenda Hale, Baroness Hale of Richmond", givens="Brenda", families="Hale",
+                 education="Girton College|Richmond School", occupations="judge"),
+        _binding(mnis="1", item="http://www.wikidata.org/entity/Q1", label="A B"),
+        _binding(mnis="1", item="http://www.wikidata.org/entity/Q2", label="A B"),
+    ]
+    out = refresh_members.parse_wikidata(rows, [3652, 1, 5486])
+    assert out[3652]["name"] == "Brenda Hale" and out[3652]["family"] == "Hale"
+    assert out[3652]["education"] == ["Girton College", "Richmond School"] and out[3652]["article"] is None
+    assert out[1]["status"] == "ambiguous" and out[5486]["status"] == "not_found"
+
+
+@pytest.mark.parametrize("synopsis,expected", [
+    ("Lord Addington's full title is The Lord Addington. His name is Dominic Bryce Hubbard, and he is",
+     "Dominic Bryce Hubbard"),
+    ("Her name is Jacqui Smith, and she is a current member", "Jacqui Smith"),
+    ("The Rt Hon Bridget Phillipson is the Labour MP for X.", None),
+])
+def test_synopsis_name(synopsis, expected):
+    assert member_profiles.synopsis_name(synopsis) == expected
+
+
+@pytest.mark.parametrize("title,personal,expected", [
+    ("Baroness Smith of Malvern", "Jacqui Smith", "jacqui-smith-of-malvern"),
+    ("Baroness Hale of Richmond", "Brenda Hale", "brenda-hale-of-richmond"),
+    ("Lord Addington", "Dominic Hubbard", "dominic-hubbard-baron"),
+    ("Baroness Kennedy", "Jane Kennedy", "jane-kennedy-baroness"),
+    ("The Lord Bishop of Blackburn", "Philip North", "philip-north-bishop-of-blackburn"),
+    ("The Lord Bishop of Blackburn", None, "the-lord-bishop-of-blackburn"),
+])
+def test_peer_slug_from_personal_name(title, personal, expected):
+    assert member_profiles.member_slug(title, "Lords", "Life peer", personal) == expected
 
 
 # ── Routes: DB only, no network ───────────────────────────────────────────────
@@ -413,6 +612,29 @@ class TestRoutesFromDb:
         assert client.post("/api/biography", json={"member_id": 777}).get_json()["available"] is False
         assert no_network == []
 
+    @pytest.mark.parametrize("term", ["Jacq", "jacqui smith", "Smith of Mal", "baroness smith", "Malvern"])
+    def test_search_matches_either_name_and_shows_both(self, seeded, no_network, term):
+        results = seeded.test_client().get(f"/api/search_members?q={term}").get_json()["results"]
+        assert {"id": 269, "text": "Baroness Smith of Malvern (Jacqui Smith)"} in results
+        assert no_network == []
+
+    def test_search_mp_partial(self, seeded, no_network):
+        results = seeded.test_client().get("/api/search_members?q=Phillips").get_json()["results"]
+        assert results == [{"id": 4046, "text": "Bridget Phillipson"}]
+
+    def test_search_before_names_filled(self, seeded, no_network):
+        from cache_models import MemberName
+        from extensions import db
+        MemberName.query.delete()
+        db.session.commit()
+        results = seeded.test_client().get("/api/search_members?q=Smith of Mal").get_json()["results"]
+        assert results == [{"id": 269, "text": "Baroness Smith of Malvern"}]
+
+    def test_peer_page_shows_personal_name(self, seeded, no_network):
+        html = seeded.test_client().get("/members/269/jacqui-smith-of-malvern").get_data(as_text=True)
+        assert "Baroness Smith of Malvern (Jacqui Smith)" in html
+        assert '"name": "Jacqui Smith"' in html and '"alternateName": "Baroness Smith of Malvern"' in html
+
     def test_word_export_uses_stored_text(self, seeded, no_network):
         from docx import Document
         client = seeded.test_client()
@@ -438,7 +660,7 @@ class TestRoutesFromDb:
     def test_sitemap_members(self, seeded, no_network):
         xml = seeded.test_client().get("/sitemap-members.xml").get_data(as_text=True)
         assert f"https://westminsterbrief.co.uk{PROFILE_URL}" in xml
-        assert "/members/269/baroness-smith-of-malvern" in xml
+        assert "/members/269/jacqui-smith-of-malvern" in xml
         assert "/members/777/" not in xml
 
 
@@ -475,9 +697,11 @@ def test_migration_is_idempotent(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'm.db'}")
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE cached_member (id INTEGER PRIMARY KEY, name TEXT)"))
-    assert sorted(mig.upgrade(engine)) == ["member_biography", "member_profile"]
+    assert sorted(mig.upgrade(engine)) == ["member_biography", "member_name", "member_name_audit",
+                                           "member_profile"]
     assert mig.upgrade(engine) == []
-    assert {"cached_member", "member_profile", "member_biography"} <= set(inspect(engine).get_table_names())
+    assert {"cached_member", "member_profile", "member_biography", "member_name",
+            "member_name_audit"} <= set(inspect(engine).get_table_names())
     assert [c["name"] for c in inspect(engine).get_columns("cached_member")] == ["id", "name"]
 
 

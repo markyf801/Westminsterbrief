@@ -96,7 +96,11 @@ Needs `migrations/members_profile_tables.py --execute` run once first (one-off,
 | Service | Cron (UTC) | Start command | Purpose |
 |---|---|---|---|
 | `member-profile-refresh` | `0 3 * * 0` | `python scripts/refresh_members.py` | Weekly — identity, posts, committees, contact, interests, archive activity counts (~4,400 polite requests, ~30–40 min) |
-| `member-bio-refresh` | `0 4 2 * *` | `python scripts/refresh_members.py --regenerate-bios` | Monthly — same refresh, then Gemini Flash-Lite bios only where inputs changed |
+| `member-bio-refresh` | `0 4 2 * *` | `python scripts/refresh_members.py --audit-names --regenerate-bios` | Monthly — same refresh, re-checks every personal name (Wikidata P10428, Parliament fallback) with an audit report in `member_name_audit`, then Gemini Flash-Lite bios only where inputs changed |
+
+Names: `member_name` holds personal names (e.g. Baroness Smith of Malvern → Jacqui Smith); set
+`source='manual'` on a row to lock an owner correction. Peer slugs follow
+`firstname-lastname-of-place` once a name is known; old slugs 301.
 
 After a reshuffle, run `python scripts/refresh_members.py --regenerate-bios --member-id <id>`
 (repeatable) as a one-off rather than waiting for the schedule. `--dry-run`

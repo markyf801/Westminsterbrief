@@ -287,7 +287,11 @@ class MemberProfile(db.Model):
     __tablename__ = 'member_profile'
 
     member_id         = db.Column(db.Integer, primary_key=True, autoincrement=False)
-    slug              = db.Column(db.String(300), nullable=False, index=True)  # stable-first: set once
+    slug              = db.Column(db.String(300), nullable=False, index=True)
+    # 'personal' (built from the member's personal name) or 'title' (fallback to Parliament's display
+    # title). Stable-first: a slug only changes when a 'title' slug can be upgraded to 'personal';
+    # any old slug 301s to the current one because the numeric id is the key.
+    slug_source       = db.Column(db.String(20))
     name              = db.Column(db.String(300), nullable=False)               # nameDisplayAs
     name_list_as      = db.Column(db.String(300))
     full_title        = db.Column(db.String(400))
@@ -309,7 +313,13 @@ class MemberProfile(db.Model):
     committees        = db.Column(db.JSON)
     contact           = db.Column(db.JSON)    # [{type, address, phone, email, website}]
     interests         = db.Column(db.JSON)    # [{category, description}]
+    representations   = db.Column(db.JSON)    # constituencies held: [{name, start, end, info}]
+    house_memberships = db.Column(db.JSON)    # [{name, start, end, info}] e.g. Commons then Lords
     wikipedia_url     = db.Column(db.String(500))
+    wiki_status       = db.Column(db.String(20))   # found | not_found | ambiguous | error
+    wiki_checked_at   = db.Column(db.DateTime)
+    wikidata_id       = db.Column(db.String(20))
+    wikidata_facts    = db.Column(db.JSON)    # {education: [...], occupations: [...]} — bio fallback input
 
     # Activity derived from our own DB (ha_pq, ha_contribution) at refresh time
     wq_12m            = db.Column(db.Integer)
@@ -353,3 +363,41 @@ class MemberBiography(db.Model):
     generated_at    = db.Column(db.DateTime)
     last_attempt_at = db.Column(db.DateTime)
     last_error      = db.Column(db.String(500))
+
+
+class MemberName(db.Model):
+    """Personal name for a member alongside Parliament's display name/title.
+
+    Filled by scripts/refresh_members.py from Wikidata (matched on P10428,
+    "parliament.uk member ID") with Parliament's own name fields as fallback
+    (MPs: display/list name; peers: the Members API synopsis "His/Her name is …").
+    Never guessed. Rows with source='manual' are owner corrections and are not
+    overwritten by the refresh.
+    """
+    __tablename__ = 'member_name'
+
+    member_id       = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    personal_name   = db.Column(db.String(300))      # e.g. "Jacqui Smith"; NULL if not found
+    given_name      = db.Column(db.String(200))
+    family_name     = db.Column(db.String(200))
+    peerage_title   = db.Column(db.String(300))      # e.g. "Baroness Smith of Malvern"; NULL for MPs
+    full_title      = db.Column(db.String(400))      # Parliament's full title incl. honorifics/post-nominals
+    wikidata_id     = db.Column(db.String(20))
+    wikidata_name   = db.Column(db.String(300))      # what each source said, kept for the audit
+    parliament_name = db.Column(db.String(300))
+    source          = db.Column(db.String(20))       # wikidata | parliament | manual
+    source_url      = db.Column(db.String(500))
+    confidence      = db.Column(db.String(10))       # high | medium | low
+    last_audited_at = db.Column(db.DateTime)
+    audit_notes     = db.Column(db.String(1000))
+    updated_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class MemberNameAudit(db.Model):
+    """One row per name audit run (refresh_members.py --audit-names): counts + the gaps to review."""
+    __tablename__ = 'member_name_audit'
+
+    id      = db.Column(db.Integer, primary_key=True)
+    run_at  = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    counts  = db.Column(db.JSON)     # matched, missing, changed, conflicts, wiki_not_found, ...
+    gaps    = db.Column(db.JSON)     # [{member_id, name, issue, detail}]

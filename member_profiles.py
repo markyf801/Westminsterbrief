@@ -27,7 +27,7 @@ import requests
 from markupsafe import Markup, escape
 from sqlalchemy.exc import SQLAlchemyError
 
-from cache_models import CachedMember, MemberBiography, MemberProfile
+from cache_models import CachedMember, MemberBiography, MemberName, MemberProfile
 from extensions import db
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ MEMBERS_SITE = "https://members.parliament.uk/member"
 PARLIAMENT_IMAGE_PREFIX = "https://members-api.parliament.uk/"
 
 BIO_MODEL = "gemini-2.5-flash-lite"
-PROMPT_VERSION = "2026-10-v1"
+PROMPT_VERSION = "2026-10-v2"
 AI_LABEL = "AI-generated — check the official record"
 
 _GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{BIO_MODEL}:generateContent"
@@ -55,6 +55,11 @@ _HONORIFIC_RE = re.compile(
     r"^(?:the\s+)?(?:rt\.?\s+hon\.?\s+)?(?:(?:sir|dame|dr|mr|mrs|ms|miss|prof|professor)\.?\s+)+",
     re.IGNORECASE,
 )
+_BISHOP_RE = re.compile(r"^(?:the\s+)?(?:lord\s+)?((?:arch)?bishop)\s+of\s+(.+)$", re.IGNORECASE)
+_OF_PLACE_RE = re.compile(r"\bof\s+(.+)$", re.IGNORECASE)
+_RANK_WORDS = {"lord": "baron", "baroness": "baroness", "lady": "lady", "viscount": "viscount",
+               "viscountess": "viscountess", "earl": "earl", "countess": "countess",
+               "marquess": "marquess", "marchioness": "marchioness", "duke": "duke", "duchess": "duchess"}
 
 
 def _slug_part(text: str) -> str:
@@ -66,16 +71,125 @@ def _slug_part(text: str) -> str:
     return text.strip("-")
 
 
-def member_slug(name: str, house: str, membership_from: str = "") -> str:
-    """MPs: firstname-lastname-constituency. Peers: their title (e.g. baroness-smith-of-malvern)."""
-    if house == "Lords":
-        return _slug_part(name) or "member"
-    person = _HONORIFIC_RE.sub("", (name or "").strip())
-    return _slug_part(f"{person} {membership_from or ''}") or "member"
+def strip_honorifics(name: str) -> str:
+    return _HONORIFIC_RE.sub("", (name or "").strip()).strip()
+
+
+def slug_for(name: str, house: str, membership_from: str = "",
+             personal_name: str | None = None) -> tuple[str, str]:
+    """(slug, source) following CLAUDE.md "SEO and URLs".
+
+    MPs:    firstname-lastname-constituency                 (source 'personal')
+    Peers:  firstname-lastname-of-place, from the official title; else firstname-lastname-<rank>
+            (e.g. jacqui-smith-of-malvern, dominic-hubbard-baron). Bishops (not covered by the
+            locked rule): firstname-lastname-bishop-of-place.
+            Without a personal name, the title itself (baroness-smith-of-malvern, source 'title').
+    """
+    if house != "Lords":
+        person = strip_honorifics(personal_name or name)
+        return (_slug_part(f"{person} {membership_from or ''}") or "member"), "personal"
+    if not personal_name:
+        return (_slug_part(name) or "member"), "title"
+    title = re.sub(r"^the\s+", "", (name or "").strip(), flags=re.IGNORECASE)
+    bishop = _BISHOP_RE.match(title)
+    if bishop:
+        tail = f"{bishop.group(1)} of {bishop.group(2)}"
+    elif _OF_PLACE_RE.search(title):
+        tail = f"of {_OF_PLACE_RE.search(title).group(1)}"
+    else:
+        first = title.split()[0].lower() if title else ""
+        tail = _RANK_WORDS.get(first, "baron")
+    return (_slug_part(f"{personal_name} {tail}") or "member"), "personal"
+
+
+def member_slug(name: str, house: str, membership_from: str = "", personal_name: str | None = None) -> str:
+    return slug_for(name, house, membership_from, personal_name)[0]
 
 
 def profile_path(member_id: int, slug: str) -> str:
     return f"/members/{int(member_id)}/{slug}"
+
+
+# ── Personal names (Wikidata first, Parliament fallback, never guessed) ───────
+
+_SYNOPSIS_NAME_RE = re.compile(r"\b(?:His|Her|Their) name is ([^,.<]+?)\s*(?:,|\.|$)")
+
+
+def synopsis_name(synopsis: str) -> str | None:
+    """Parliament's own statement of a peer's name, e.g. 'Her name is Jacqui Smith, and …'."""
+    m = _SYNOPSIS_NAME_RE.search(synopsis or "")
+    return m.group(1).strip() if m else None
+
+
+def parliament_personal_name(summary: dict, synopsis: str | None) -> tuple[str | None, str | None, str | None]:
+    """(personal_name, given, family) from Parliament's own fields only.
+
+    MPs: the display name is the personal name; nameListAs is 'Family, Given'.
+    Peers: only the synopsis sentence; given/family are not split (that would be a guess).
+    """
+    if summary.get("house") == "Lords":
+        return synopsis_name(synopsis), None, None
+    personal = strip_honorifics(summary.get("name") or "") or None
+    given = family = None
+    list_as = summary.get("name_list_as") or ""
+    if ", " in list_as:
+        family, given = (x.strip() for x in list_as.split(", ", 1))
+        given = strip_honorifics(given) or None
+    return personal, given, family
+
+
+def _surname_token(name: str) -> str:
+    parts = _slug_part(name).split("-") if name else []
+    return parts[-1] if parts else ""
+
+
+def names_consistent(a: str, b: str) -> bool:
+    """Same person-name if the final name token matches ('Michael Beasley' ~ 'Noel Michael Roy Beasley')."""
+    return bool(a and b) and _surname_token(a) == _surname_token(b)
+
+
+def resolve_name(summary: dict, wd: dict | None, parliament_name: tuple, member_id: int) -> dict:
+    """Pick the personal name for one member. Returns member_name column values (no DB access).
+
+    wd: {'status': 'matched'|'not_found'|'ambiguous'|'error', 'qid', 'name', 'given', 'family'} or None.
+    parliament_name: (personal, given, family) from parliament_personal_name().
+    """
+    p_name, p_given, p_family = parliament_name
+    wd_ok = wd is not None and wd.get("status") == "matched" and wd.get("name")
+    w_name = wd.get("name") if wd_ok else None
+    notes = []
+    if wd is not None and wd.get("status") == "ambiguous":
+        notes.append("wikidata: more than one item carries this parliament.uk member ID")
+    if wd is not None and wd.get("status") == "error":
+        notes.append("wikidata: lookup failed this run")
+
+    out = {
+        "wikidata_id": wd.get("qid") if wd_ok else None,
+        "wikidata_name": w_name,
+        "parliament_name": p_name,
+        "peerage_title": summary.get("name") if summary.get("house") == "Lords" else None,
+        "full_title": summary.get("full_title"),
+    }
+    if w_name and p_name and not names_consistent(w_name, p_name):
+        notes.append(f"conflict: wikidata '{w_name}' vs parliament '{p_name}' — using Parliament's")
+        out.update(personal_name=p_name, given_name=p_given, family_name=p_family, source="parliament",
+                   source_url=f"{MEMBERS_SITE}/{member_id}/career", confidence="low")
+    elif w_name:
+        family = wd.get("family")
+        given = wd.get("given")
+        out.update(personal_name=w_name, given_name=given or p_given, family_name=family or p_family,
+                   source="wikidata", source_url=f"https://www.wikidata.org/wiki/{wd['qid']}",
+                   confidence="high" if p_name else "medium")
+    elif p_name:
+        out.update(personal_name=p_name, given_name=p_given, family_name=p_family, source="parliament",
+                   source_url=f"{MEMBERS_SITE}/{member_id}/career",
+                   confidence="high" if summary.get("house") != "Lords" else "medium")
+    else:
+        notes.append("missing: no personal name from Wikidata or Parliament")
+        out.update(personal_name=None, given_name=None, family_name=None, source=None,
+                   source_url=None, confidence=None)
+    out["audit_notes"] = "; ".join(notes)[:1000] or None
+    return out
 
 
 # ── Safe DB reads (a missing table before the migration must not 500) ─────────
@@ -110,6 +224,21 @@ def get_cached_member(member_id) -> CachedMember | None:
     return _safe_read(CachedMember.get, member_id)
 
 
+def _get_name(member_id):
+    return db.session.get(MemberName, int(member_id))
+
+
+def get_name(member_id) -> MemberName | None:
+    return _safe_read(_get_name, member_id)
+
+
+def display_name(title: str, house: str, personal_name: str | None) -> str:
+    """'Baroness Smith of Malvern (Jacqui Smith)' for peers; MPs keep their own name."""
+    if house == "Lords" and personal_name and _slug_part(personal_name) not in _slug_part(title):
+        return f"{title} ({personal_name})"
+    return title
+
+
 def _role_line(house: str, membership_from: str) -> str:
     if house == "Lords":
         return f"Member of the House of Lords ({membership_from})" if membership_from else "Member of the House of Lords"
@@ -118,11 +247,15 @@ def _role_line(house: str, membership_from: str) -> str:
 
 def member_header(member_id) -> dict:
     """Header dict for templates, from member_profile or the cached_member fallback. {} if unknown."""
+    name_row = get_name(member_id)
+    personal = name_row.personal_name if name_row is not None else None
     profile = get_profile(member_id)
     if profile is not None:
         return {
             "id": profile.member_id,
             "name": profile.name,
+            "personal_name": personal or "",
+            "display_name": display_name(profile.name, profile.house, personal),
             "party": profile.party or "",
             "role": _role_line(profile.house, profile.membership_from or ""),
             "photo_url": profile.thumbnail_url or "",
@@ -141,6 +274,8 @@ def member_header(member_id) -> dict:
         return {
             "id": cached.member_id,
             "name": cached.name or "",
+            "personal_name": personal or "",
+            "display_name": display_name(cached.name or "", house, personal),
             "party": cached.party or "",
             "role": _role_line(house, cached.constituency or ""),
             "photo_url": cached.image_url or "",
@@ -150,7 +285,8 @@ def member_header(member_id) -> dict:
             "current_role": cached.ministerial_role or "",
             "is_current": True,
             "last_updated": _iso(cached.cached_at),
-            "profile_url": profile_path(cached.member_id, member_slug(cached.name, house, cached.constituency)),
+            "profile_url": profile_path(cached.member_id,
+                                        member_slug(cached.name, house, cached.constituency, personal)),
             "stored": False,
         }
     return {}
@@ -248,13 +384,25 @@ def fetch_member_photo(url: str):
 # ── Member search (autocomplete) ──────────────────────────────────────────────
 
 def _search(term: str, limit: int) -> list[dict]:
+    """One LIMITed query over member_profile + member_name, matching any part of either name.
+
+    "Jacq", "Jacqui Smith" and "Smith of Mal" all find Baroness Smith of Malvern, labelled
+    "Baroness Smith of Malvern (Jacqui Smith)". Before member_name is filled the outer join simply
+    matches Parliament's names; cached_member tops up members not yet in member_profile.
+    """
     pattern = f"%{term}%"
     results: dict[int, str] = {}
-    for row in (MemberProfile.query
-                .filter(MemberProfile.is_current.is_(True),
-                        MemberProfile.name.ilike(pattern) | MemberProfile.name_list_as.ilike(pattern))
-                .order_by(MemberProfile.name).limit(limit).all()):
-        results[row.member_id] = row.name
+    rows = (db.session.query(MemberProfile.member_id, MemberProfile.name, MemberProfile.house,
+                             MemberName.personal_name)
+            .outerjoin(MemberName, MemberName.member_id == MemberProfile.member_id)
+            .filter(MemberProfile.is_current.is_(True),
+                    MemberProfile.name.ilike(pattern) | MemberProfile.name_list_as.ilike(pattern)
+                    | MemberName.personal_name.ilike(pattern) | MemberName.given_name.ilike(pattern)
+                    | MemberName.family_name.ilike(pattern) | MemberName.peerage_title.ilike(pattern)
+                    | MemberName.parliament_name.ilike(pattern))
+            .order_by(MemberProfile.name).limit(limit).all())
+    for mid, name, house, personal in rows:
+        results[mid] = display_name(name, house, personal)
     if len(results) < limit:
         for row in (CachedMember.query.filter(CachedMember.name.ilike(pattern))
                     .order_by(CachedMember.name).limit(limit).all()):
@@ -287,18 +435,25 @@ def _posts_lines(posts) -> list[str]:
     return lines
 
 
-def bio_inputs(profile: MemberProfile, wiki_text: str, wiki_url: str | None) -> dict:
+def bio_inputs(profile: MemberProfile, wiki_text: str, wiki_url: str | None,
+               personal_name: str | None = None) -> dict:
     """Everything the prompt uses, as a deterministic structure (hashed for change detection).
 
     Activity counts are deliberately left out — only the set of subjects is used —
     so a bio is not regenerated every week just because a member spoke again.
+    Wikidata education/occupation statements are always included; they are the
+    background source when no Wikipedia article is matched.
     """
+    facts = profile.wikidata_facts or {}
     return {
         "name": profile.name,
+        "personal_name": personal_name,
         "house": profile.house,
         "party": profile.party,
         "membership_from": profile.membership_from,
         "membership_start": profile.membership_start.isoformat() if profile.membership_start else None,
+        "house_memberships": _posts_lines(profile.house_memberships),
+        "representations": _posts_lines(profile.representations),
         "government_posts": _posts_lines(profile.government_posts),
         "opposition_posts": _posts_lines(profile.opposition_posts),
         "committees": _posts_lines(profile.committees),
@@ -307,6 +462,9 @@ def bio_inputs(profile: MemberProfile, wiki_text: str, wiki_url: str | None) -> 
         "interests_total": len(profile.interests or []),
         "debate_subjects": [t.get("theme") for t in (profile.top_policy_areas or [])][:6],
         "wq_departments": [d.get("department") for d in (profile.wq_departments or [])][:6],
+        "wikidata_id": profile.wikidata_id,
+        "wikidata_education": sorted(facts.get("education") or [])[:8],
+        "wikidata_occupations": sorted(facts.get("occupations") or [])[:8],
         "wikipedia_text": (wiki_text or "")[:3500],
         "wikipedia_url": wiki_url,
     }
@@ -330,6 +488,9 @@ def bio_sources(member_id: int, inputs: dict) -> list[dict]:
     ]
     if inputs.get("wikipedia_text") and inputs.get("wikipedia_url"):
         sources.append({"label": "Wikipedia (publicly editable)", "url": inputs["wikipedia_url"]})
+    if inputs.get("wikidata_id") and (inputs.get("wikidata_education") or inputs.get("wikidata_occupations")):
+        sources.append({"label": "Wikidata (education and occupation statements; publicly editable)",
+                        "url": f"https://www.wikidata.org/wiki/{inputs['wikidata_id']}"})
     return sources
 
 
@@ -347,8 +508,11 @@ def bio_prompt(inputs: dict) -> str:
         interests.append(f"... and {extra} further entries (see the official register)")
 
     parliament_block = "\n\n".join([
-        f"Name: {inputs.get('name')}\nHouse: {house}\nParty: {inputs.get('party')}\n"
+        f"Name: {inputs.get('name')}\nPersonal name: {inputs.get('personal_name') or 'not recorded'}\n"
+        f"House: {house}\nParty: {inputs.get('party')}\n"
         f"Seat / peerage: {seat}\nCurrent membership began: {inputs.get('membership_start') or 'unknown'}",
+        _block("House memberships", inputs.get("house_memberships"), "None recorded."),
+        _block("Constituencies represented", inputs.get("representations"), "None recorded."),
         _block("Government roles", inputs.get("government_posts"), "None recorded."),
         _block("Opposition roles", inputs.get("opposition_posts"), "None recorded."),
         _block("Committee memberships (current and historical)", inputs.get("committees"), "None recorded."),
@@ -359,6 +523,10 @@ def bio_prompt(inputs: dict) -> str:
                [f"  - {d}" for d in inputs.get("wq_departments") or []], "None in the archive."),
     ])
     wiki = inputs.get("wikipedia_text") or "No Wikipedia article was matched to this member."
+    wikidata_block = "\n\n".join([
+        _block("Educated at", [f"  - {e}" for e in inputs.get("wikidata_education") or []], "Not recorded."),
+        _block("Occupations", [f"  - {o}" for o in inputs.get("wikidata_occupations") or []], "Not recorded."),
+    ])
 
     return f"""You are a UK parliamentary researcher writing a short, neutral reference profile of a Member of Parliament or Peer for policy professionals, journalists and researchers.
 
@@ -366,6 +534,9 @@ Write a structured profile of {inputs.get('name')} using ONLY the source data be
 
 --- WIKIPEDIA EXTRACT (background and pre-parliamentary career only; publicly editable) ---
 {wiki}
+
+--- WIKIDATA STATEMENTS (publicly editable) ---
+{wikidata_block}
 
 --- UK PARLIAMENT AND WESTMINSTER BRIEF ARCHIVE DATA ---
 {parliament_block}
@@ -375,7 +546,7 @@ Write a structured profile of {inputs.get('name')} using ONLY the source data be
 Use these exact markdown headings:
 
 ## Background
-Profession, education and career before Parliament, from the Wikipedia extract only. Leave out family, health and other personal-life details.
+Profession, education and career before Parliament, from the Wikipedia extract and the Wikidata statements only (if there is no Wikipedia extract, use the Wikidata statements alone). Leave out family, health and other personal-life details.
 
 ## Parliamentary career
 When they were elected or appointed, party, and constituency or peerage.

@@ -104,7 +104,7 @@ def build_profile_docx(header: dict, bio) -> io.BytesIO:
             log.info('[biography] photo not embedded: %s', exc.__class__.__name__)
 
     name_para = detail_cell.paragraphs[0]
-    name_run = name_para.add_run(header.get('name', 'Unknown Member'))
+    name_run = name_para.add_run(header.get('display_name') or header.get('name', 'Unknown Member'))
     name_run.bold = True
     name_run.font.size = Pt(16)
     compact(name_para, after=4)
@@ -230,19 +230,21 @@ def member_profile(member_id, slug):
     json_ld = {
         "@context": "https://schema.org",
         "@type": "Person",
-        "name": header['name'],
+        "name": header['personal_name'] or header['name'],
         "url": canonical,
         "jobTitle": job_title,
         "memberOf": {"@type": "Organization", "name": house_name},
         "sameAs": same_as,
     }
+    if header['personal_name'] and header['personal_name'] != header['name']:
+        json_ld["alternateName"] = header['name']
     if header['party']:
         json_ld["affiliation"] = {"@type": "Organization", "name": header['party']}
     if header['photo_url']:
         json_ld["image"] = header['photo_url']
 
     party_bit = f"{header['party']} " if header['party'] else ''
-    meta_desc = (f"{header['name']}, {party_bit}{header['role']}. "
+    meta_desc = (f"{header['display_name']}, {party_bit}{header['role']}. "
                  f"{'Current role: ' + header['current_role'] + '. ' if header['current_role'] else ''}"
                  "Career, government and committee roles, registered interests and recent "
                  "parliamentary activity, with links to the official record.")[:300]

@@ -1,7 +1,7 @@
 """
-Members-from-DB migration: member_profile + member_biography tables.
+Members-from-DB migration: member_profile, member_biography, member_name, member_name_audit.
 
-upgrade(engine) — creates the two new tables (and their indexes) if they do
+upgrade(engine) — creates the four new tables (and their indexes) if they do
   not already exist, using the SQLAlchemy model definitions in cache_models.py
   so the DDL is correct for both SQLite and Postgres. Creates only; never
   alters or drops an existing table, and touches no other table. Safe to run
@@ -29,9 +29,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import create_engine, inspect  # noqa: E402
 
-from cache_models import MemberBiography, MemberProfile  # noqa: E402
+from cache_models import MemberBiography, MemberName, MemberNameAudit, MemberProfile  # noqa: E402
 
-TABLES = (MemberProfile.__table__, MemberBiography.__table__)
+TABLES = (MemberProfile.__table__, MemberBiography.__table__,
+          MemberName.__table__, MemberNameAudit.__table__)
 
 
 def missing_tables(engine) -> list[str]:
@@ -40,7 +41,7 @@ def missing_tables(engine) -> list[str]:
 
 
 def upgrade(engine) -> list[str]:
-    """Create member_profile and member_biography if missing. Idempotent."""
+    """Create the members tables that are missing. Idempotent."""
     to_create = missing_tables(engine)
     for table in TABLES:
         table.create(bind=engine, checkfirst=True)

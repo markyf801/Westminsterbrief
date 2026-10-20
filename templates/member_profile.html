@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ header.name }} — {{ header.role }} | Westminster Brief{% endblock %}
+{% block title %}{{ header.display_name }} — {{ header.role }} | Westminster Brief{% endblock %}
 {% block meta_description %}{{ meta_desc }}{% endblock %}
-{% block og_title %}{{ header.name }} — Member profile{% endblock %}
+{% block og_title %}{{ header.display_name }} — Member profile{% endblock %}
 {% block og_description %}{{ meta_desc }}{% endblock %}
-{% block twitter_title %}{{ header.name }} — Member profile{% endblock %}
+{% block twitter_title %}{{ header.display_name }} — Member profile{% endblock %}
 {% block twitter_description %}{{ meta_desc }}{% endblock %}
 {% block canonical %}<link rel="canonical" href="{{ canonical_url }}">{% endblock %}
 {% block json_ld %}
@@ -40,7 +40,7 @@
         <img src="{{ header.photo_url }}" alt="{{ header.name }}" class="mp-header-photo" loading="lazy">
         {% endif %}
         <div style="flex:1;">
-            <h1 class="mp-header-name">{{ header.name }}</h1>
+            <h1 class="mp-header-name">{{ header.display_name }}</h1>
             <div class="mp-header-sub">
                 {% if header.party %}<strong>{{ header.party }}</strong> &nbsp;·&nbsp; {% endif %}{{ header.role }} &nbsp;·&nbsp; House of {{ header.house }}
             </div>

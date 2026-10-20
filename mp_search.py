@@ -468,7 +468,7 @@ def download_mp_word():
     except (TypeError, ValueError):
         stored_bio = None
 
-    name = header.get('name', 'Unknown Member')
+    name = header.get('display_name') or header.get('name', 'Unknown Member')
     party = header.get('party', '')
     role = header.get('role', '')
     photo_url = header.get('photo_url', '')
