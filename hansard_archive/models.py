@@ -198,10 +198,11 @@ class HaPQ(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     # NOT unique: Parliament reuses UINs every session (INC-008). Identity is
-    # api_id (Parliament's id), then (tabled_date, uin). The model change does
-    # not alter an existing database -- create_all() never touches existing
-    # tables; production's unique index is dropped by hand
-    # (docs/plans/pq-identity-phase3-sql.md).
+    # api_id (Parliament's id), then (tabled_date, uin). Production has never
+    # had a unique index on uin (idx_ha_pq_uin is a plain btree); the unique
+    # indexes on api_id and (tabled_date, lower(uin)) are created by hand
+    # (docs/plans/pq-identity-phase3-sql.md) -- create_all() never alters an
+    # existing table.
     uin = db.Column(db.String(50), nullable=False, index=True)
 
     heading = db.Column(db.String(500))

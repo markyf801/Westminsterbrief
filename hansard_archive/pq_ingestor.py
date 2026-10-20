@@ -50,9 +50,28 @@ _COMMIT_BATCH = 200
 _INTER_REQUEST_DELAY = 0.3   # seconds between paginated requests
 _PAGE_RETRIES = 3            # retries on transient errors before skipping a page
 
+_BULK_ANSWER_CAP = 258       # bulk endpoint cuts answerText at this length
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        val = int(raw)
+        if val < 0:
+            raise ValueError
+        return val
+    except ValueError:
+        _log.error("Ignoring invalid %s=%r - using default %d", name, raw, default)
+        return default
+
+
 # Abort a run when more than this many identity mismatches are seen.
 # Override per call (max_identity_mismatches=) or with the env var.
-DEFAULT_MAX_IDENTITY_MISMATCHES = int(os.environ.get("PQ_MAX_IDENTITY_MISMATCHES", "5"))
+DEFAULT_MAX_IDENTITY_MISMATCHES = _env_int("PQ_MAX_IDENTITY_MISMATCHES", 5)
+# Abort a run after this many consecutive API pages fail (all retries used).
+DEFAULT_MAX_FAILED_PAGES = _env_int("PQ_MAX_FAILED_PAGES", 3) or 1
 
 # Refreshed on update when the API gives a non-null value; never blanked.
 _REFRESH_IF_PRESENT = (
@@ -64,12 +83,20 @@ _REFRESH_IF_PRESENT = (
 )
 
 
-class PQIdentityMismatchError(RuntimeError):
-    """Raised when a run sees more identity mismatches than allowed."""
+class PQIngestAborted(RuntimeError):
+    """A run stopped early. ``counts`` holds the totals up to that point."""
 
     def __init__(self, message: str, counts: dict):
         super().__init__(message)
         self.counts = counts
+
+
+class PQIdentityMismatchError(PQIngestAborted):
+    """Raised when a run sees more identity mismatches than allowed."""
+
+
+class PQPageFailureError(PQIngestAborted):
+    """Raised when too many consecutive API pages fail."""
 
 
 @dataclass
@@ -217,18 +244,18 @@ def _planned_changes(existing: HaPQ, fields: dict, matched_by: str,
             consider(name, new)
 
     # Text: the bulk endpoint truncates question/answer text, so only a
-    # complete record (individual endpoint) may replace stored text; a bulk-only
-    # pass just fills text that is missing.
+    # complete record (individual endpoint) may replace stored text. A
+    # bulk-only pass fills missing question text but NEVER writes answer text:
+    # a truncated answer would look complete and never be re-fetched. It still
+    # sets is_answered/answer_date, which makes the answered pass (and
+    # _answer_already_stored) fetch the full answer.
     q_new, a_new = fields["question_text"], fields["answer_text"] or None
     if text_complete:
         consider("question_text", q_new)
         if a_new:
             consider("answer_text", a_new)
-    else:
-        if not existing.question_text:
-            consider("question_text", q_new)
-        if a_new and not existing.answer_text:
-            consider("answer_text", a_new)
+    elif not existing.question_text:
+        consider("question_text", q_new)
     if fields["is_answered"] and not existing.is_answered:
         consider("is_answered", True)
     return changes
@@ -250,6 +277,8 @@ def upsert_pq(fields: dict, *, text_complete: bool = True,
     if existing is None:
         if not dry_run:
             row_fields = dict(fields)
+            if not text_complete:
+                row_fields["answer_text"] = None   # bulk answer is truncated
             row_fields["is_holding"] = bool(row_fields["is_holding"])
             row_fields["is_withdrawn"] = bool(row_fields["is_withdrawn"])
             pq = HaPQ(**row_fields)
@@ -320,7 +349,9 @@ def _complete_from_individual(fields: dict) -> bool:
 
 def _answer_already_stored(fields: dict) -> bool:
     """True when the matching stored row already has this answer (same answer
-    date, answered, text present) — no need to re-fetch the full record."""
+    date, answered, full text present) — no need to re-fetch the full record.
+    A missing answer, or one that looks like the truncated bulk copy, is
+    re-fetched."""
     try:
         existing, _by, ambiguous = find_existing_pq(
             fields.get("api_id"), fields.get("tabled_date"), fields.get("uin"))
@@ -330,8 +361,23 @@ def _answer_already_stored(fields: dict) -> bool:
         existing is not None and not ambiguous
         and existing.is_answered == fields["is_answered"]
         and existing.answer_date == fields["answer_date"]
-        and (existing.answer_text or not fields["is_answered"])
+        and (not fields["is_answered"]
+             or (existing.answer_text and not _looks_truncated(existing.answer_text)))
     )
+
+
+def _looks_truncated(answer_text: str | None) -> bool:
+    """True for a stored answer that is probably the bulk endpoint's cut-off
+    copy: exactly the cap length (the rule scripts/backfill_pq_answers.py
+    Stage B uses), or close to it and ending in the "..." the API appends
+    (sanitising can shift the length by a few characters)."""
+    if not answer_text:
+        return False
+    n = len(answer_text)
+    if n == _BULK_ANSWER_CAP:
+        return True
+    return (_BULK_ANSWER_CAP - 10 <= n <= _BULK_ANSWER_CAP + 40
+            and answer_text.rstrip().endswith("..."))
 
 
 def ingest_pq_date_range(
@@ -345,6 +391,7 @@ def ingest_pq_date_range(
     on_outcome: Callable[[dict, UpsertOutcome], None] | None = None,
     date_field: str = "tabled",
     fetch_only_new_answers: bool = False,
+    max_failed_pages: int | None = None,
 ) -> dict:
     """
     Fetch and upsert WQs with tabledDate (or, with date_field="answered",
@@ -357,29 +404,60 @@ def ingest_pq_date_range(
         rows that are new or whose answer is new/changed — keeps the answered
         pass cheap when its rows were already refreshed by the tabled pass.
 
-    skip_answer_fetch: bulk records only (fast). Stored question/answer text is
-        then never replaced, only filled when missing (bulk text is truncated).
+    skip_answer_fetch: bulk records only (fast). Stored text is never replaced;
+        missing question text is filled; answer text is never written (bulk
+        answers are truncated) — only is_answered/answer_date, so a later
+        full-fetch pass picks the answer up.
     dry_run: no writes; counts are predictions.
     max_identity_mismatches: abort (PQIdentityMismatchError) above this many.
+    max_failed_pages: abort (PQPageFailureError) after this many consecutive
+        pages fail all retries (default 3, env PQ_MAX_FAILED_PAGES). A single
+        skipped page counts in page_errors, so the run is still reported as
+        failed. A permanent API error (400/401/403) aborts at once. Paging stops
+        at the API's totalResults, so a failed last page can't loop forever.
     request_delay: seconds between API requests (default 0.3).
     on_outcome: optional callback(fields, outcome) per row, e.g. for sample diffs.
 
     Returns {"inserted", "updated", "unchanged", "identity_mismatch", "failed",
-    "page_errors", "errors"} — errors = failed + page_errors + identity_mismatch
-    (kept for callers that check a single number).
+    "page_errors", "rolled_back", "errors"} — errors = failed + page_errors +
+    identity_mismatch (kept for callers that check a single number).
+    rolled_back: writes discarded by a mismatch abort (not in inserted/updated).
+    Aborts raise a PQIngestAborted subclass whose .counts has the same keys.
     """
     if max_identity_mismatches is None:
         max_identity_mismatches = DEFAULT_MAX_IDENTITY_MISMATCHES
+    if max_failed_pages is None:
+        max_failed_pages = DEFAULT_MAX_FAILED_PAGES
     delay = _INTER_REQUEST_DELAY if request_delay is None else request_delay
 
     counts = {"inserted": 0, "updated": 0, "unchanged": 0,
-              "identity_mismatch": 0, "failed": 0, "page_errors": 0}
-    pending = 0       # rows written since last commit
+              "identity_mismatch": 0, "failed": 0, "page_errors": 0,
+              "rolled_back": 0}
+    uncommitted = {"inserted": 0, "updated": 0}   # written since the last commit
 
     def result() -> dict:
         out = dict(counts)
         out["errors"] = counts["failed"] + counts["page_errors"] + counts["identity_mismatch"]
         return out
+
+    def _commit() -> None:
+        db.session.commit()
+        uncommitted["inserted"] = uncommitted["updated"] = 0
+
+    def _finish() -> None:
+        """End of run (normal or page-failure abort): keep what was written."""
+        if dry_run:
+            db.session.rollback()
+        elif any(uncommitted.values()):
+            _commit()
+
+    def _discard() -> None:
+        """Mismatch abort: roll back uncommitted writes and stop counting them."""
+        db.session.rollback()
+        for action, n in uncommitted.items():
+            counts[action] -= n
+            counts["rolled_back"] += n
+            uncommitted[action] = 0
 
     if date_field not in ("tabled", "answered"):
         raise ValueError(f"date_field must be 'tabled' or 'answered', not {date_field!r}")
@@ -392,6 +470,8 @@ def ingest_pq_date_range(
 
     skip = 0
     page = 0
+    total_results = None      # from the latest successful page
+    failed_in_a_row = 0
 
     while True:
         params = {**params_base, "skip": skip}
@@ -400,16 +480,22 @@ def ingest_pq_date_range(
             try:
                 resp = requests.get(WQ_API_BASE, params=params, timeout=_REQUEST_TIMEOUT)
                 if resp.status_code in (401, 403, 400):
-                    _log.error("WQ API permanent error %d at skip=%d — aborting", resp.status_code, skip)
                     counts["page_errors"] += 1
-                    if pending and not dry_run:
-                        db.session.commit()
-                    if dry_run:
-                        db.session.rollback()
-                    return result()
+                    _finish()
+                    msg = (f"PQ ingest aborted: WQ API permanent error {resp.status_code} "
+                           f"at skip={skip} ({date_field} {date_from}..{date_to})")
+                    _log.error(msg)
+                    raise PQPageFailureError(msg, result())
                 resp.raise_for_status()
-                payload = resp.json()
+                body = resp.json()
+                # An error body or a page without a results list is a failed
+                # attempt, not "no more questions" (which would end the run early).
+                if not isinstance(body, dict) or not isinstance(body.get("results"), list):
+                    raise ValueError(f"unexpected WQ API payload: {str(body)[:200]}")
+                payload = body
                 break
+            except PQPageFailureError:
+                raise
             except Exception as exc:
                 _log.warning("WQ API error at skip=%d attempt %d/%d: %s", skip, attempt + 1, _PAGE_RETRIES, exc)
                 if attempt < _PAGE_RETRIES - 1:
@@ -419,12 +505,29 @@ def ingest_pq_date_range(
                     counts["page_errors"] += 1
 
         if payload is None:
-            # All retries exhausted for this page — advance and continue
+            # All retries exhausted for this page. Give up after a few in a
+            # row (the API is down) rather than walking skip forever.
+            failed_in_a_row += 1
+            if failed_in_a_row >= max_failed_pages:
+                _finish()   # rows already processed are good
+                msg = (f"PQ ingest aborted: {failed_in_a_row} consecutive API pages "
+                       f"failed at skip={skip} ({date_field} {date_from}..{date_to})")
+                _log.error(msg)
+                raise PQPageFailureError(msg, result())
             skip += _PAGE_SIZE
+            if total_results is not None and skip >= total_results:
+                break             # the failed page was the last one
             continue
 
+        failed_in_a_row = 0
+        if payload.get("totalResults") is not None:
+            total_results = payload["totalResults"]
         results = payload.get("results") or []
         if not results:
+            if total_results and skip < total_results:
+                _log.error("WQ API returned an empty page at skip=%d of %d - stopping",
+                           skip, total_results)
+                counts["page_errors"] += 1
             break
 
         for item in results:
@@ -458,24 +561,24 @@ def ingest_pq_date_range(
                 continue
 
             counts[outcome.action] += 1
-            if outcome.action in ("inserted", "updated"):
-                pending += 1
+            if outcome.action in ("inserted", "updated") and not dry_run:
+                uncommitted[outcome.action] += 1
             if on_outcome is not None:
                 on_outcome(fields, outcome)
 
             if outcome.action == "identity_mismatch":
                 _log.warning("PQ identity mismatch (left untouched): %s", outcome.detail)
                 if counts["identity_mismatch"] > max_identity_mismatches:
-                    db.session.rollback()   # drop this batch's uncommitted writes
+                    _discard()   # drop this batch's uncommitted writes
                     msg = (f"PQ ingest aborted: {counts['identity_mismatch']} identity "
                            f"mismatches (limit {max_identity_mismatches}) in "
-                           f"{date_from}..{date_to}")
+                           f"{date_from}..{date_to}; {counts['rolled_back']} uncommitted "
+                           f"row write(s) rolled back")
                     _log.error(msg)
                     raise PQIdentityMismatchError(msg, result())
 
-            if not dry_run and pending >= _COMMIT_BATCH:
-                db.session.commit()
-                pending = 0
+            if not dry_run and sum(uncommitted.values()) >= _COMMIT_BATCH:
+                _commit()
 
         page += 1
         if verbose:
@@ -490,12 +593,11 @@ def ingest_pq_date_range(
             break
 
         skip += _PAGE_SIZE
+        if total_results is not None and skip >= total_results:
+            break
         time.sleep(delay)
 
-    if dry_run:
-        db.session.rollback()
-    elif pending:
-        db.session.commit()
+    _finish()
 
     out = result()
     if verbose:

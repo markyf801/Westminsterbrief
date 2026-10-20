@@ -4,9 +4,13 @@ asking/answering member names) on PQs ingested before Parliament assigned them.
 
 Uses the ingestor's own upsert (hansard_archive.pq_ingestor) — same identity
 rules (api_id, then (tabled_date, uin); never uin alone), same tripwire, same
-"never blank a stored value" rules. Bulk records only: stored question/answer
-text is never replaced (bulk text is truncated), only filled if missing, so
-this pass does not clear theme tags.
+"never blank a stored value" rules. Bulk records only: stored question text is
+never replaced (bulk text is truncated), only filled if missing, so this pass
+does not clear theme tags. Answer text is NEVER written by this pass — the bulk
+copy is cut off at 258 characters and would look complete. A question it
+inserts (or marks answered) gets is_answered/answer_date only; the full answer
+comes from the cron's answered pass or scripts/backfill_pq_answers.py --stage b,
+both of which re-fetch missing or truncated answers.
 
 DRY RUN BY DEFAULT — prints the predicted insert/update/unchanged/mismatch
 split and sample diffs, and writes nothing. --apply writes.
@@ -19,7 +23,8 @@ Usage:
 Railway one-off: safe with SKIP_MIGRATIONS=1 (set by default below, so no
 startup migrations or seeding run). Don't run within 30 minutes of a PQ cron.
 Review the dry run before --apply; --apply aborts once identity mismatches
-exceed --max-mismatches across the whole run.
+exceed --max-mismatches across the whole run. Either mode stops (exit 2) when
+the API fails several pages in a row.
 """
 
 import argparse
@@ -54,8 +59,13 @@ class Tally:
         self.update_samples: list[str] = []
         self.mismatch_samples: list[str] = []
         self.insert_samples: list[str] = []
+        self.answers_to_fetch = 0     # answered rows left without answer text
 
     def on_outcome(self, fields, outcome):
+        if fields.get("is_answered") and (
+                outcome.action == "inserted"
+                or (outcome.action == "updated" and "is_answered" in outcome.changes)):
+            self.answers_to_fetch += 1
         if outcome.action == "updated":
             self.field_changes.update(outcome.changes.keys())
             if len(self.update_samples) < SAMPLE_LIMIT:
@@ -95,7 +105,7 @@ def main(argv=None) -> int:
     delay = max(MIN_DELAY, args.delay)
 
     from flask_app import app
-    from hansard_archive.pq_ingestor import PQIdentityMismatchError, ingest_pq_date_range
+    from hansard_archive.pq_ingestor import PQIngestAborted, ingest_pq_date_range
 
     _log.info("=== %s === tabled %s → %s, %ss between requests",
               "APPLY" if apply else "DRY RUN (no writes)", args.since, until, delay)
@@ -116,7 +126,7 @@ def main(argv=None) -> int:
                     max_identity_mismatches=allowance, request_delay=delay,
                     on_outcome=tally.on_outcome,
                 )
-            except PQIdentityMismatchError as exc:
+            except PQIngestAborted as exc:   # mismatches, or API pages failing
                 res, aborted = exc.counts, str(exc)
             for key in ("inserted", "updated", "unchanged", "identity_mismatch",
                         "failed", "page_errors"):
@@ -145,6 +155,11 @@ def main(argv=None) -> int:
             _log.info("%s:", title)
             for r in rows:
                 _log.info("  %s", r)
+    if tally.answers_to_fetch:
+        _log.info("%s%d answered question(s) %s answer text (never taken from the bulk "
+                  "API). Run scripts/backfill_pq_answers.py --stage b afterwards.",
+                  verb, tally.answers_to_fetch,
+                  "would have no" if not apply else "have no")
     if c["inserted"]:
         _log.info("NOTE: inserts are questions missing from the archive — expected to be "
                   "few for an already-ingested window. Many inserts = investigate first.")

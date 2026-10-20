@@ -42,11 +42,51 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, ".")
 
 from flask_app import app
-from hansard_archive.pq_ingestor import ingest_pq_date_range
+from hansard_archive.pq_ingestor import PQIngestAborted, ingest_pq_date_range
 from hansard_archive.models import HaCronRun
 from extensions import db
 
 _LOG_RETENTION_DAYS = 90
+_PASS_KEYS = ("inserted", "updated", "unchanged", "identity_mismatch",
+              "failed", "page_errors", "rolled_back", "errors")
+
+
+def _run_pass(label: str, date_from: date, date_to: date, **kwargs) -> tuple[dict, str | None]:
+    """Run one ingest pass. Returns (counts, abort_message).
+
+    An aborted pass (PQIngestAborted) still returns the counts it reached, so
+    the run summary and the alert show what happened before it stopped."""
+    try:
+        counts = ingest_pq_date_range(date_from, date_to, verbose=True, **kwargs)
+        abort = None
+    except PQIngestAborted as exc:
+        counts, abort = exc.counts, f"{type(exc).__name__}: {exc}"
+        print(f"[pq-cron] {label} ABORTED: {abort}", flush=True)
+    counts = {k: counts.get(k, 0) for k in _PASS_KEYS}
+    print(
+        f"[pq-cron] {label} done — "
+        f"inserted={counts['inserted']} updated={counts['updated']} "
+        f"unchanged={counts['unchanged']} "
+        f"identity_mismatch={counts['identity_mismatch']} "
+        f"failed={counts['failed']} page_errors={counts['page_errors']} "
+        f"rolled_back={counts['rolled_back']} errors={counts['errors']}",
+        flush=True,
+    )
+    return counts, abort
+
+
+def _alert_reasons(passes: dict, tag_errors: int, fatal_error: str | None) -> list[str]:
+    """Why this run needs an alert email (empty list = no alert)."""
+    reasons = []
+    if fatal_error:
+        reasons.append("fatal error")
+    for label, counts in passes.items():
+        for key in ("identity_mismatch", "failed", "page_errors"):
+            if counts.get(key):
+                reasons.append(f"{label}: {key}={counts[key]}")
+    if tag_errors >= 3:
+        reasons.append(f"tagging errors={tag_errors}")
+    return reasons
 
 
 def _alert_email() -> str:
@@ -119,6 +159,8 @@ def main() -> None:
     total_updated = 0
     total_errors = 0
     total_tagged = 0
+    tag_errors = 0
+    passes: dict[str, dict] = {}
     run_record_id: int | None = None
     fatal_error: str | None = None
 
@@ -152,42 +194,31 @@ def main() -> None:
         try:
             # --- Ingestion ---
             print(f"[pq-cron] Ingesting WQs {date_from} → {today}…", flush=True)
-            result = ingest_pq_date_range(date_from, today, verbose=True,
-                                          skip_answer_fetch=args.skip_answer_fetch)
+            result, abort = _run_pass("Tabled pass", date_from, today,
+                                      skip_answer_fetch=args.skip_answer_fetch)
+            passes["tabled"] = result
             total_inserted = result["inserted"]
             total_updated = result["updated"]
             total_errors += result["errors"]
-            print(
-                f"[pq-cron] Ingestion done — "
-                f"inserted={total_inserted} updated={total_updated} "
-                f"unchanged={result['unchanged']} "
-                f"identity_mismatch={result['identity_mismatch']} "
-                f"failed={result['failed']} errors={result['errors']}",
-                flush=True,
-            )
 
             # --- Answers to older questions (tabled before the window) ---
-            if answered_days > 0:
+            # Skipped after an abort: the API is down or identities disagree.
+            if answered_days > 0 and not abort:
                 answered_from = today - timedelta(days=answered_days - 1)
                 print(f"[pq-cron] Refreshing WQs answered {answered_from} → {today}…", flush=True)
-                ans = ingest_pq_date_range(answered_from, today, verbose=True,
-                                           skip_answer_fetch=args.skip_answer_fetch,
-                                           date_field="answered",
-                                           fetch_only_new_answers=True)
+                ans, abort = _run_pass("Answered pass", answered_from, today,
+                                       skip_answer_fetch=args.skip_answer_fetch,
+                                       date_field="answered",
+                                       fetch_only_new_answers=True)
+                passes["answered"] = ans
                 total_inserted += ans["inserted"]
                 total_updated += ans["updated"]
                 total_errors += ans["errors"]
-                print(
-                    f"[pq-cron] Answered pass done — "
-                    f"inserted={ans['inserted']} updated={ans['updated']} "
-                    f"unchanged={ans['unchanged']} "
-                    f"identity_mismatch={ans['identity_mismatch']} "
-                    f"failed={ans['failed']} errors={ans['errors']}",
-                    flush=True,
-                )
+            if abort:
+                fatal_error = abort
 
             # --- Theme tagging ---
-            if not args.no_tag:
+            if not args.no_tag and not fatal_error:
                 from hansard_archive.tagger import tag_pq_all_untagged
                 new_rows = total_inserted + total_updated
                 if new_rows > 0:
@@ -202,6 +233,8 @@ def main() -> None:
                     f"[pq-cron] Tagging done — tagged={total_tagged} errors={tag_errors}",
                     flush=True,
                 )
+            elif fatal_error:
+                print("[pq-cron] Tagging skipped (ingest aborted)", flush=True)
             else:
                 print("[pq-cron] Tagging skipped (--no-tag)", flush=True)
 
@@ -244,10 +277,17 @@ def main() -> None:
         print(f"[pq-cron] finished_at={run_end.isoformat()}Z", flush=True)
 
     # --- Failure alerting ---
-    should_alert = fatal_error is not None or total_errors >= 3
-    if should_alert:
+    # One email per run. Any identity mismatch, failed row or failed API page
+    # alerts (missing or mis-matched questions); tagging errors alone at 3+.
+    reasons = _alert_reasons(passes, tag_errors, fatal_error)
+    if reasons:
         alert_subject = f"PQ cron failure: {args.service_name} — {total_errors} error(s)"
+        pass_lines = "".join(
+            f"{label.capitalize():<10} " + " ".join(f"{k}={v}" for k, v in counts.items()) + "\n"
+            for label, counts in passes.items()
+        )
         alert_body = (
+            f"Reasons:   {'; '.join(reasons)}\n"
             f"Service:   {args.service_name}\n"
             f"Schedule:  {run_start.strftime('%Y-%m-%d %H:%M')} UTC\n"
             f"Window:    {date_from} → {today} ({args.days} days)\n"
@@ -257,6 +297,7 @@ def main() -> None:
             f"Errors:    {total_errors}\n"
             f"Status:    {final_status}\n"
             f"Elapsed:   {elapsed:.1f}s\n"
+            f"\n{pass_lines}"
         )
         if fatal_error:
             alert_body += f"\nFatal error:\n{fatal_error}"
