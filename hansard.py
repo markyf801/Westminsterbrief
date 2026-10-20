@@ -2,7 +2,9 @@ import re
 import json
 import html as _html_mod
 import time
-import requests, io, csv
+import requests
+import io
+import csv
 from urllib.parse import urlencode
 from flask import Blueprint, render_template, request, make_response, redirect
 from docx import Document
@@ -79,6 +81,12 @@ PARTY_COLOURS = {
 
 # DB cap — mirrors the old API cap so template variables are unchanged.
 WQ_MAX_RESULTS = 1200
+WQ_PAGE_SIZE = 50
+# Results list: answers up to _WQ_SHORT_ANSWER chars of HTML show in full; longer
+# ones show a WQ_EXCERPT_CHARS plain-text excerpt cut from the first _WQ_ANSWER_HEAD.
+WQ_EXCERPT_CHARS = 400
+_WQ_SHORT_ANSWER = 1500
+_WQ_ANSWER_HEAD = 2000
 
 MEMBER_CACHE = {}
 
@@ -241,9 +249,9 @@ def _last_pq_update():
     return None
 
 
-def _search_pq_db(subjects, start_date, end_date, dept_id, house_filter, status_filter):
+def _pq_query(subjects, start_date, end_date, dept_id, house_filter, status_filter):
     """
-    Query ha_pq and return (rows: list[HaPQ], total: int).
+    Build the ha_pq query for a Written Questions search, newest first.
 
     All filters applied at SQL level.
     Keyword search: Postgres FTS via question_tsv GIN index; ILIKE fallback for SQLite.
@@ -304,10 +312,101 @@ def _search_pq_db(subjects, start_date, end_date, dept_id, house_filter, status_
                 ))
             q = q.filter(or_(*ilike_filters))
 
-    q = q.order_by(HaPQ.tabled_date.desc())
-    total = q.count()
-    rows = q.limit(WQ_MAX_RESULTS).all()
-    return rows, total
+    # id breaks ties within a day so OFFSET paging is stable
+    return q.order_by(HaPQ.tabled_date.desc(), HaPQ.id.desc())
+
+
+def _wq_list_columns():
+    """Columns the results list needs: answer HTML is cut to its first few KB, plus its full length."""
+    from hansard_archive.models import HaPQ
+    from sqlalchemy import func
+    return (
+        HaPQ.uin, HaPQ.heading, HaPQ.question_text, HaPQ.tabled_date, HaPQ.answer_date,
+        HaPQ.chamber, HaPQ.asking_member, HaPQ.asking_mnis_id, HaPQ.answering_member,
+        HaPQ.answering_mnis_id, HaPQ.answering_body, HaPQ.is_answered, HaPQ.is_holding,
+        HaPQ.is_withdrawn,
+        func.substr(HaPQ.answer_text, 1, _WQ_ANSWER_HEAD).label('answer_text'),
+        func.length(HaPQ.answer_text).label('answer_len'),
+    )
+
+
+def _pq_result(pq) -> dict:
+    """Display/export dict for one PQ (an HaPQ or a row from _wq_list_columns)."""
+    api_name, party, constituency, actual_house = get_member_details(
+        pq.asking_mnis_id, pq.chamber or 'Commons'
+    )
+
+    tabled_str = pq.tabled_date.isoformat() if pq.tabled_date else ''
+    try:
+        f_date = f"{pq.tabled_date.day} {pq.tabled_date.strftime('%B %Y')}"
+    except Exception:
+        f_date = 'N/A'
+
+    try:
+        date_answered = (
+            f"{pq.answer_date.day} {pq.answer_date.strftime('%B %Y')}"
+            if pq.answer_date else ''
+        )
+    except Exception:
+        date_answered = ''
+
+    question_url = (
+        f"https://questions-statements.parliament.uk/written-questions/detail"
+        f"/{tabled_str}/{pq.uin}"
+    )
+
+    house = pq.chamber or actual_house
+
+    answering_role = None
+    if pq.answering_mnis_id:
+        ans_cached = CachedMember.get(pq.answering_mnis_id)
+        if ans_cached:
+            answering_role = ans_cached.ministerial_role
+
+    return {
+        'uin':                    pq.uin,
+        'url':                    question_url,
+        'dept':                   pq.answering_body or '',
+        'name':                   pq.asking_member or api_name or 'Unknown',
+        'party':                  party,
+        'role':                   "Life Peer" if house == "Lords" else f"MP for {constituency}",
+        'date':                   f_date,
+        'text':                   pq.question_text or '',
+        'heading':                pq.heading or '',
+        'party_colour':           PARTY_COLOURS.get(party, '#888888'),
+        'answered':               pq.is_answered,
+        'is_holding':             pq.is_holding,
+        'is_withdrawn':           pq.is_withdrawn,
+        'answer_text':            pq.answer_text or '',
+        'answering_minister':     pq.answering_member or '',
+        'answering_minister_role': answering_role or '',
+        'date_answered':          date_answered,
+    }
+
+
+def _add_answer_preview(r: dict, answer_len) -> None:
+    """
+    Short answers stay as full HTML. Long ones (or any with a table) become a
+    plain-text excerpt; the full answer is on /archive/pq/<uin>.
+    """
+    head = r['answer_text']
+    r['answer_truncated'] = False
+    if not head:
+        return
+    if (answer_len or 0) <= _WQ_SHORT_ANSWER and '<table' not in head:
+        return
+    plain = ' '.join(to_plain_text(re.sub(r'<[^>]*$', '', head)).split())
+    if len(plain) > WQ_EXCERPT_CHARS:
+        plain = plain[:WQ_EXCERPT_CHARS].rsplit(' ', 1)[0] + '…'
+    r['answer_text'] = ''
+    r['answer_excerpt'] = plain
+    r['answer_truncated'] = True
+
+
+def _status_label(r: dict) -> str:
+    return ('WITHDRAWN' if r.get('is_withdrawn') else
+            'HOLDING ANSWER' if r.get('is_holding') else
+            'ANSWERED' if r.get('answered') else 'UNANSWERED')
 
 
 # GET parameters for a Written Questions search. The keyword is ?q= (the old
@@ -329,6 +428,100 @@ def _wq_search_qs(source) -> str:
     return urlencode(params)
 
 
+def _wq_page_url(source, page: int) -> str:
+    """URL of one results page; keeps the search and filters. Page 1 has no ?page=."""
+    # An empty search still needs a parameter, or the page shows the blank form
+    qs = _wq_search_qs(source) or 'q='
+    return f"/written-questions?{qs}" + (f"&page={page}" if page > 1 else '')
+
+
+def _parse_page(raw) -> int:
+    """?page= as a positive int; anything unreadable is page 1."""
+    try:
+        return max(int(raw), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _wq_pager(source, page: int, last_page: int) -> dict:
+    """Previous/Next links and a short run of page numbers (None marks a gap)."""
+    shown = sorted({1, last_page, *range(max(1, page - 2), min(last_page, page + 2) + 1)})
+    numbers = []
+    for n in shown:
+        if numbers and n - numbers[-1][0] > 1:
+            numbers.append((None, None))
+        numbers.append((n, _wq_page_url(source, n)))
+    return {
+        'page': page,
+        'last_page': last_page,
+        'prev_url': _wq_page_url(source, page - 1) if page > 1 else None,
+        'next_url': _wq_page_url(source, page + 1) if page < last_page else None,
+        'numbers': numbers,
+    }
+
+
+def _wq_export(action, rows, total, meta_lines, filename_ts):
+    """Word or CSV download of the full (capped) result set."""
+    results = [_pq_result(pq) for pq in rows]
+    meta_lines = meta_lines + [
+        f"Results: {len(results)}" + (f" (newest {len(results)} of {total})" if total > len(results) else ''),
+        f"Generated: {datetime.now().strftime('%d %b %Y %H:%M')}",
+    ]
+
+    if action == 'word':
+        doc = Document()
+        doc.add_heading('Parliamentary Written Questions', 0)
+        for line in meta_lines:
+            p = doc.add_paragraph(line)
+            p.runs[0].italic = True
+        doc.add_paragraph()
+        for r in results:
+            p = doc.add_paragraph()
+            p.add_run(f"[{_status_label(r)}] [{r['dept']}] {r['name']} ({r['party']}, {r['role']})\n").bold = True
+            meta_run = f"UIN: {r['uin']}  ·  Date Asked: {r['date']}"
+            if r['answering_minister']:
+                meta_run += f"  ·  Answered by: {r['answering_minister']}"
+                if r.get('answering_minister_role'):
+                    meta_run += f" ({r['answering_minister_role']})"
+            if r['date_answered']:
+                meta_run += f"  ·  {r['date_answered']}"
+            p.add_run(meta_run + "\n")
+            p.add_run(f"Question: {r['text']}")
+            if r['answer_text']:
+                if '<table' in r['answer_text']:
+                    p.add_run("\nAnswer:")
+                    _add_answer_to_doc(doc, r['answer_text'])
+                else:
+                    p.add_run(f"\nAnswer: {to_plain_text(r['answer_text'])}")
+            p_link = doc.add_paragraph()
+            p_link.add_run("Link: ")
+            add_hyperlink(p_link, r['url'], r['url'])
+        b = io.BytesIO()
+        doc.save(b)
+        b.seek(0)
+        resp = make_response(b.getvalue())
+        resp.headers["Content-Disposition"] = f"attachment; filename=WQ_{filename_ts}.docx"
+        return resp
+
+    si = io.StringIO()
+    si.write('﻿')  # UTF-8 BOM for Excel on Windows
+    cw = csv.writer(si)
+    for line in meta_lines:
+        cw.writerow([line])
+    cw.writerow([])
+    cw.writerow(['UIN', 'Status', 'Department', 'Member', 'Party', 'Role',
+                 'Date Asked', 'Answering Minister', 'Date Answered',
+                 'Question', 'Answer', 'URL'])
+    for r in results:
+        cw.writerow([r['uin'], _status_label(r), r['dept'], r['name'], r['party'],
+                     r['role'], r['date'], r['answering_minister'] or '',
+                     r['date_answered'], r['text'], to_plain_text(r['answer_text']), r['url']])
+    resp = make_response(si.getvalue())
+    resp.headers["Content-Disposition"] = f"attachment; filename=WQ_{filename_ts}.csv"
+    resp.headers["Content-type"] = "text/csv; charset=utf-8"
+    return resp
+
+
 @hansard_bp.route('/questions', methods=['GET', 'POST'])
 def index():
     results, error_message = [], None
@@ -337,8 +530,9 @@ def index():
     status_filter = "all"
     subject, start_date, end_date = "", "", ""
     total_available = 0
-    pre_filter_count = 0
     grouped_results = []
+    pager = None
+    page_start = page_end = 0
     departments = _get_department_list()
 
     # Searches run on GET so results can be bookmarked and shared. POST is kept
@@ -367,152 +561,54 @@ def index():
         subjects = [s.strip() for s in subject.split(',') if s.strip()] or ['']
 
         try:
-            pq_rows, total_available = _search_pq_db(
-                subjects, start_date, end_date,
-                selected_dept_id, selected_house, status_filter,
-            )
-            pre_filter_count = len(pq_rows)
+            q = _pq_query(subjects, start_date, end_date,
+                          selected_dept_id, selected_house, status_filter)
+            total_available = q.count()
+
+            # Exports rebuild the whole (capped) result set from the filters,
+            # not just the page on screen.
+            if action in ('word', 'csv') and total_available:
+                export_rows = q.limit(WQ_MAX_RESULTS).all()
+                prefetch_members(list({r.asking_mnis_id for r in export_rows if r.asking_mnis_id}))
+                dept_label = next((k for k, v in departments.items() if v == selected_dept_id),
+                                  'All Departments')
+                meta_lines = [
+                    f"Search: {subject or '(all)'}",
+                    f"Department: {dept_label}",
+                    f"House: {selected_house}",
+                    f"Date range: {start_date or 'any'} to {end_date or 'any'}",
+                    f"Status filter: {status_filter}",
+                ]
+                return _wq_export(action, export_rows, total_available, meta_lines,
+                                  datetime.now().strftime('%Y%m%d_%H%M'))
+
+            # Paging covers the same newest-WQ_MAX_RESULTS window as the export.
+            last_page = max(1, -(-min(total_available, WQ_MAX_RESULTS) // WQ_PAGE_SIZE))
+            page = _parse_page(params.get('page')) if action == 'search' else 1
+            if page > last_page:
+                return redirect(_wq_page_url(params, last_page), 302)
+
+            offset = (page - 1) * WQ_PAGE_SIZE
+            pq_rows = q.with_entities(*_wq_list_columns()).offset(offset).limit(WQ_PAGE_SIZE).all()
 
             # Pre-warm member cache in parallel (DB lookup, API fallback)
-            member_ids = list({r.asking_mnis_id for r in pq_rows if r.asking_mnis_id})
-            prefetch_members(member_ids)
+            prefetch_members(list({r.asking_mnis_id for r in pq_rows if r.asking_mnis_id}))
 
             for pq in pq_rows:
-                api_name, party, constituency, actual_house = get_member_details(
-                    pq.asking_mnis_id, pq.chamber or 'Commons'
-                )
+                r = _pq_result(pq)
+                _add_answer_preview(r, pq.answer_len)
+                results.append(r)
 
-                tabled_str = pq.tabled_date.isoformat() if pq.tabled_date else ''
-                try:
-                    f_date = f"{pq.tabled_date.day} {pq.tabled_date.strftime('%B %Y')}"
-                except Exception:
-                    f_date = 'N/A'
+            if results:
+                page_start, page_end = offset + 1, offset + len(results)
+                pager = _wq_pager(params, page, last_page)
 
-                try:
-                    date_answered = (
-                        f"{pq.answer_date.day} {pq.answer_date.strftime('%B %Y')}"
-                        if pq.answer_date else ''
-                    )
-                except Exception:
-                    date_answered = ''
-
-                question_url = (
-                    f"https://questions-statements.parliament.uk/written-questions/detail"
-                    f"/{tabled_str}/{pq.uin}"
-                )
-
-                house = pq.chamber or actual_house
-
-                answering_role = None
-                if pq.answering_mnis_id:
-                    ans_cached = CachedMember.get(pq.answering_mnis_id)
-                    if ans_cached:
-                        answering_role = ans_cached.ministerial_role
-
-                results.append({
-                    'uin':                    pq.uin,
-                    'url':                    question_url,
-                    'dept':                   pq.answering_body or '',
-                    'name':                   pq.asking_member or api_name or 'Unknown',
-                    'party':                  party,
-                    'role':                   "Life Peer" if house == "Lords" else f"MP for {constituency}",
-                    'date':                   f_date,
-                    'text':                   pq.question_text or '',
-                    'heading':                pq.heading or '',
-                    'party_colour':           PARTY_COLOURS.get(party, '#888888'),
-                    'answered':               pq.is_answered,
-                    'is_holding':             pq.is_holding,
-                    'is_withdrawn':           pq.is_withdrawn,
-                    'answer_text':            pq.answer_text or '',
-                    'answering_minister':     pq.answering_member or '',
-                    'answering_minister_role': answering_role or '',
-                    'date_answered':          date_answered,
-                    '_sort_date':             tabled_str,
-                })
-
-            results.sort(key=lambda r: r.get('_sort_date', ''), reverse=True)
-            for r in results:
-                r.pop('_sort_date', None)
-
-            # Group by Parliament heading for topic view
+            # Group this page by Parliament heading for topic view
             heading_groups = {}
             for r in results:
                 key = r.get('heading') or 'Other'
                 heading_groups.setdefault(key, []).append(r)
             grouped_results = sorted(heading_groups.items(), key=lambda x: len(x[1]), reverse=True)
-
-            # Export metadata (shared by Word and CSV)
-            dept_label = next((k for k, v in departments.items() if v == selected_dept_id), 'All Departments')
-            filename_ts = datetime.now().strftime('%Y%m%d_%H%M')
-            meta_lines = [
-                f"Search: {subject or '(all)'}",
-                f"Department: {dept_label}",
-                f"House: {selected_house}",
-                f"Date range: {start_date or 'any'} to {end_date or 'any'}",
-                f"Status filter: {status_filter}",
-                f"Results: {len(results)} shown",
-                f"Generated: {datetime.now().strftime('%d %b %Y %H:%M')}",
-            ]
-
-            if action == 'word' and results:
-                doc = Document()
-                doc.add_heading('Parliamentary Written Questions', 0)
-                for line in meta_lines:
-                    p = doc.add_paragraph(line)
-                    p.runs[0].italic = True
-                doc.add_paragraph()
-                for r in results:
-                    p = doc.add_paragraph()
-                    status_label = ('WITHDRAWN' if r['is_withdrawn'] else
-                                    'HOLDING ANSWER' if r['is_holding'] else
-                                    'ANSWERED' if r['answered'] else 'UNANSWERED')
-                    p.add_run(f"[{status_label}] [{r['dept']}] {r['name']} ({r['party']}, {r['role']})\n").bold = True
-                    meta_run = f"UIN: {r['uin']}  ·  Date Asked: {r['date']}"
-                    if r['answering_minister']:
-                        meta_run += f"  ·  Answered by: {r['answering_minister']}"
-                        if r.get('answering_minister_role'):
-                            meta_run += f" ({r['answering_minister_role']})"
-                    if r['date_answered']:
-                        meta_run += f"  ·  {r['date_answered']}"
-                    p.add_run(meta_run + "\n")
-                    p.add_run(f"Question: {r['text']}")
-                    if r['answer_text']:
-                        if '<table' in r['answer_text']:
-                            p.add_run("\nAnswer:")
-                            _add_answer_to_doc(doc, r['answer_text'])
-                        else:
-                            p.add_run(f"\nAnswer: {to_plain_text(r['answer_text'])}")
-                    p_link = doc.add_paragraph()
-                    p_link.add_run("Link: ")
-                    add_hyperlink(p_link, r['url'], r['url'])
-                b = io.BytesIO()
-                doc.save(b)
-                b.seek(0)
-                resp = make_response(b.getvalue())
-                resp.headers["Content-Disposition"] = f"attachment; filename=WQ_{filename_ts}.docx"
-                return resp
-
-            elif action == 'csv' and results:
-                si = io.StringIO()
-                si.write('﻿')  # UTF-8 BOM for Excel on Windows
-                cw = csv.writer(si)
-                for line in meta_lines:
-                    cw.writerow([line])
-                cw.writerow([])
-                cw.writerow(['UIN', 'Status', 'Department', 'Member', 'Party', 'Role',
-                              'Date Asked', 'Answering Minister', 'Date Answered',
-                              'Question', 'Answer', 'URL'])
-                for r in results:
-                    status_label = ('WITHDRAWN' if r['is_withdrawn'] else
-                                    'HOLDING ANSWER' if r['is_holding'] else
-                                    'ANSWERED' if r['answered'] else 'UNANSWERED')
-                    cw.writerow([r['uin'], status_label, r['dept'], r['name'], r['party'],
-                                 r['role'], r['date'], r['answering_minister'] or '',
-                                 r['date_answered'], r['text'], to_plain_text(r['answer_text']), r['url']])
-                resp = make_response(si.getvalue())
-                resp.headers["Content-Disposition"] = f"attachment; filename=WQ_{filename_ts}.csv"
-                resp.headers["Content-type"] = "text/csv; charset=utf-8"
-                return resp
 
         except Exception as e:
             error_message = f"Search error: {str(e)}"
@@ -529,12 +625,32 @@ def index():
                            start_date=start_date,
                            end_date=end_date,
                            total_available=total_available,
-                           pre_filter_count=pre_filter_count,
+                           page_start=page_start,
+                           page_end=page_end,
+                           pager=pager,
                            results_cap=WQ_MAX_RESULTS,
                            searched=searched,
                            robots_meta='noindex, follow' if searched else 'index, follow',
                            last_pq_update=_last_pq_update(),
                            oldest_pq_date=_oldest_pq_date())
+
+
+def _selected_results(items: list) -> list[dict]:
+    """
+    Full records for ticked questions, read from the archive by UIN (the page
+    only carries UINs and truncated answers). Items whose UIN isn't in the
+    archive fall back to the posted fields, for pages rendered before this change.
+    """
+    from hansard_archive.models import HaPQ
+    items = [i for i in items if isinstance(i, dict)][:WQ_MAX_RESULTS]
+    uins = [str(i.get('uin')) for i in items if i.get('uin')]
+    by_uin = {pq.uin: pq for pq in HaPQ.query.filter(HaPQ.uin.in_(uins)).all()} if uins else {}
+    prefetch_members(list({pq.asking_mnis_id for pq in by_uin.values() if pq.asking_mnis_id}))
+    out = []
+    for item in items:
+        pq = by_uin.get(str(item.get('uin')))
+        out.append(_pq_result(pq) if pq else item)
+    return out
 
 
 @hansard_bp.route('/questions/download_selected', methods=['POST'])
@@ -543,6 +659,9 @@ def download_selected():
         items = json.loads(request.form.get('items_json', '[]'))
     except Exception:
         items = []
+    if not isinstance(items, list):
+        items = []
+    items = _selected_results(items)
     if not items:
         return "No items selected", 400
 
@@ -557,10 +676,7 @@ def download_selected():
                      'Date Asked', 'Answering Minister', 'Date Answered',
                      'Question', 'Answer', 'URL'])
         for r in items:
-            status_label = ('WITHDRAWN' if r.get('is_withdrawn') else
-                            'HOLDING ANSWER' if r.get('is_holding') else
-                            'ANSWERED' if r.get('answered') else 'UNANSWERED')
-            cw.writerow([r.get('uin', ''), status_label, r.get('dept', ''),
+            cw.writerow([r.get('uin', ''), _status_label(r), r.get('dept', ''),
                          r.get('name', ''), r.get('party', ''), r.get('role', ''),
                          r.get('date', ''), r.get('answering_minister') or '',
                          r.get('date_answered', ''), r.get('text', ''),
@@ -577,10 +693,7 @@ def download_selected():
     doc.add_paragraph()
     for r in items:
         p = doc.add_paragraph()
-        status_label = ('WITHDRAWN' if r.get('is_withdrawn') else
-                        'HOLDING ANSWER' if r.get('is_holding') else
-                        'ANSWERED' if r.get('answered') else 'UNANSWERED')
-        p.add_run(f"[{status_label}] [{r.get('dept', '')}] {r.get('name', '')} ({r.get('party', '')}, {r.get('role', '')})\n").bold = True
+        p.add_run(f"[{_status_label(r)}] [{r.get('dept', '')}] {r.get('name', '')} ({r.get('party', '')}, {r.get('role', '')})\n").bold = True
         meta = f"UIN: {r.get('uin', '')}  ·  Date Asked: {r.get('date', '')}"
         if r.get('answering_minister'):
             meta += f"  ·  Answered by: {r['answering_minister']}"

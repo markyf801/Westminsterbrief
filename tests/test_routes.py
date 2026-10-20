@@ -11,7 +11,7 @@ Run: python -m pytest tests/test_routes.py -v
 
 import re
 import pytest
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -544,8 +544,10 @@ class TestWrittenQuestionsSearch:
         assert 'attachment' in r.headers['Content-Disposition']
         assert 'SCH001' in r.get_data(as_text=True)
 
-    def test_page_param_is_ignored(self, client):
-        assert client.get('/questions?q=school&page=99999999999999999999').status_code == 200
+    def test_huge_page_redirects_to_last_page(self, client):
+        r = client.get('/questions?q=school&page=99999999999999999999')
+        assert r.status_code == 302
+        assert r.headers['Location'].endswith('/written-questions?q=school')
 
     def test_department_list_drops_defunct_departments(self, app):
         import hansard
