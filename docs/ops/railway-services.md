@@ -41,6 +41,7 @@ each consumer service keeps the old password until redeployed.
    - `backup-cron-r2`
    - `member-cache-refresh`
    - `rediscovery-cron`
+   - `health-report` (once set up)
 3. Verify Flask picked up the new credential: hit `/health` and confirm `status=ok`
 
 ## Cron services
@@ -137,6 +138,24 @@ tabled in the last 90 days. Logs a row in `ha_cron_run` (`service_name=edm-cron`
 exits 1 if most API requests fail. Needs `migrations/edm_tables.py --execute`
 and a one-shot `--backfill` first. Pages are hidden until `FEATURE_EDMS=live`
 on the web service.
+
+### Daily health report (`scripts/daily_health_report.py`) — not yet set up
+
+| Service | Cron (UTC) | Purpose |
+|---|---|---|
+| `health-report` | `30 7 * * *` | Read-only freshness checks (archive, PQs, bills, EDMs, members, stats, crons, R2 backup, `/ping` + `/health`). Emails `CRON_ALERT_EMAIL`/`ADMIN_EMAIL` when anything is WARN/FAIL; all-OK days send nothing except a Monday summary. |
+
+07:30 sits after the bills window (06:30–07:15) and before `archive-cron-morning`
+(08:00). Setup: Dockerfile Path `Dockerfile.cron`, start command
+`python scripts/daily_health_report.py`, restart policy Never, `SKIP_MIGRATIONS=1`.
+Env: `DATABASE_URL` (Variable Reference; the script opens it read-only),
+`POSTMARK_SERVER_TOKEN`, `ADMIN_EMAIL` (or `CRON_ALERT_EMAIL`), and optionally
+`R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`
+(without them the R2 check shows SKIPPED; a read-only R2 token is enough).
+Exits 0 even when it finds problems; non-zero only if the checker crashes or the
+email can't be sent. Try it first with `--dry-run` via Run Now. Thresholds and
+recess dates: `CONFIG` / `RECESS_PERIODS` at the top of
+`hansard_archive/health_checks.py`.
 
 ### Other
 
