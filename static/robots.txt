@@ -10,4 +10,23 @@ Disallow: /my_preferences
 Disallow: /onboarding
 Disallow: /archive/search
 
+# SEO-tool crawlers: no search traffic, only bandwidth cost
+User-agent: DotBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DataForSeoBot
+Disallow: /
+
+User-agent: BLEXBot
+Disallow: /
+
 Sitemap: https://westminsterbrief.co.uk/sitemap.xml
