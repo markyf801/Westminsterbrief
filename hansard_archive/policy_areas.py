@@ -161,6 +161,32 @@ HANSARD_POLICY_NAMES: list[str] = [
     "Welfare and benefits",
 ]
 
+# ---------------------------------------------------------------------------
+# /brief/<slug> aliases — slugs that would otherwise hit an exact free-text
+# "specific" tag and show a thin, misleading page. 301 to the canonical page.
+#   - Acronyms that lowercase into ordinary words: SEND -> "send".
+#   - One-word policy synonyms the tagger emits as specific tags ("housing",
+#     "health"), which the topic page then treats as a tiny separate topic.
+# Only add a slug here when the target page is the obviously right home for it.
+# ---------------------------------------------------------------------------
+
+BRIEF_SLUG_ALIASES: dict[str, str] = {
+    "send":        "special-educational-needs",
+    "sen":         "special-educational-needs",
+    "housing":     "housing-and-planning",
+    "health":      "health-and-social-care",
+    "defence":     "defence-and-national-security",
+    "immigration": "immigration-and-asylum",
+    "welfare":     "welfare-and-social-security",
+    "crime":       "crime-justice-and-law",
+}
+
+
+def brief_alias(slug: str) -> Optional[str]:
+    """Canonical /brief slug that `slug` should redirect to, or None."""
+    return BRIEF_SLUG_ALIASES.get(slug)
+
+
 # Fast-lookup indexes built once at import time.
 _BY_SLUG: dict[str, PolicyArea] = {pa.slug: pa for pa in _POLICY_AREAS}
 _BY_LABEL: dict[str, PolicyArea] = {pa.label: pa for pa in _POLICY_AREAS}

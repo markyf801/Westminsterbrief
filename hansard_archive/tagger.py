@@ -20,7 +20,6 @@ excluded from the initial tagging run.
 import json
 import logging
 import os
-import re
 import time
 from datetime import datetime
 from typing import Optional
@@ -53,6 +52,51 @@ _PQ_BATCH_DELAY = 0.5   # between batch calls — paid tier
 # ---------------------------------------------------------------------------
 
 POLICY_AREAS = _HANSARD_POLICY_NAMES
+
+# ---------------------------------------------------------------------------
+# Specific-topic hygiene — applied to every free-text theme before it is stored.
+# Topic pages (/brief/<slug>) match stored themes exactly, so a theme that is
+# only an acronym or only a policy-area word becomes its own tiny, misleading page.
+# ---------------------------------------------------------------------------
+
+# Whole-theme acronym expansions. Stored themes are lowercased, and "SEND"
+# lowercased is the verb "send".
+_THEME_ALIASES = {
+    "send": "special educational needs",
+    "sen": "special educational needs",
+    "sen/d": "special educational needs",
+    "senco": "special educational needs coordinators",
+}
+
+# One-word themes that just restate a policy area. The prompt already says not
+# to repeat policy-area names, but the model does ("housing", "immigration").
+_GENERIC_THEMES = frozenset({a.lower() for a in POLICY_AREAS} | {
+    "housing", "health", "healthcare", "education", "defence", "immigration",
+    "energy", "transport", "environment", "trade", "welfare", "crime", "justice",
+    "economy", "business", "employment", "taxation", "finance", "planning",
+    "policy", "government", "parliament", "foreign policy", "security",
+})
+
+
+def normalise_specific_theme(theme: str) -> Optional[str]:
+    """Lowercase, trim and expand a free-text theme; None if it should be dropped."""
+    t = " ".join((theme or "").lower().split())
+    if not t:
+        return None
+    t = _THEME_ALIASES.get(t, t)
+    if t in _GENERIC_THEMES:
+        return None
+    return t
+
+
+def _clean_themes(themes) -> list[str]:
+    """Normalised, de-duplicated specific themes in the model's order, at most 5."""
+    out: list[str] = []
+    for raw in themes or []:
+        t = normalise_specific_theme(raw if isinstance(raw, str) else "")
+        if t and t not in out:
+            out.append(t)
+    return out[:5]
 
 # ---------------------------------------------------------------------------
 # Gemini client — structured output variant
@@ -334,11 +378,11 @@ def tag_session(session_id: int, api_key: Optional[str] = None) -> int:
             ))
             count += 1
 
-    for theme in result.get("themes", [])[:5]:
+    for theme in _clean_themes(result.get("themes")):
         if theme:
             db.session.add(HansardSessionTheme(
                 session_id=session_id,
-                theme=theme.lower().strip(),
+                theme=theme,
                 theme_type=THEME_TYPE_SPECIFIC,
                 tagged_at=now,
                 model_used=model_name,
@@ -467,11 +511,11 @@ def _write_pq_tags(pq: "HaPQ", result: dict, model_name: str, now: "datetime") -
                 model_used=model_name,
             ))
             count += 1
-    for theme in result.get("themes", [])[:5]:
+    for theme in _clean_themes(result.get("themes")):
         if theme:
             db.session.merge(HaPQTheme(
                 pq_id=pq.id,
-                theme=theme.lower().strip(),
+                theme=theme,
                 theme_type=THEME_TYPE_SPECIFIC,
                 tagged_at=now,
                 model_used=model_name,
@@ -541,11 +585,11 @@ def tag_pq(pq_id: int, api_key: Optional[str] = None) -> int:
             ))
             count += 1
 
-    for theme in result.get("themes", [])[:5]:
+    for theme in _clean_themes(result.get("themes")):
         if theme:
             db.session.merge(HaPQTheme(
                 pq_id=pq_id,
-                theme=theme.lower().strip(),
+                theme=theme,
                 theme_type=THEME_TYPE_SPECIFIC,
                 tagged_at=now,
                 model_used=model_name,

@@ -1739,6 +1739,11 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
 @brief_bp.route("/<string:theme_slug>")
 def brief_theme(theme_slug: str):
+    # Ambiguous or generic slugs ("send", "housing") 301 to their real page rather
+    # than an exact free-text tag match. Page numbers belong to the old listing.
+    alias = _pa.brief_alias(theme_slug)
+    if alias:
+        return redirect(f"/brief/{alias}", code=301)
     return _brief_theme_response(theme_slug, canonical_prefix="/brief")
 
 
@@ -1749,6 +1754,9 @@ def brief_theme(theme_slug: str):
 @archive_bp.route("/theme/<string:theme_slug>")
 def archive_theme(theme_slug: str):
     """301: /archive/theme/<slug> â†' /brief/<slug>"""
+    alias = _pa.brief_alias(theme_slug)
+    if alias:
+        return redirect(f"/brief/{alias}", code=301)
     qs = ('?' + request.query_string.decode()) if request.query_string else ''
     return redirect(f"/brief/{theme_slug}{qs}", code=301)
 

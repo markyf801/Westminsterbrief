@@ -397,6 +397,25 @@ class TestBriefRoutes:
         assert r.status_code == 301
         assert r.headers['Location'].endswith('/brief/chagos-islands?page=1')
 
+    @pytest.mark.parametrize('slug, target', [
+        ('send', 'special-educational-needs'),       # acronym that lowercases to a verb
+        ('housing', 'housing-and-planning'),         # one-word policy synonym
+        ('immigration', 'immigration-and-asylum'),
+    ])
+    def test_ambiguous_brief_slugs_redirect(self, client, slug, target):
+        r = client.get(f'/brief/{slug}?page=3')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith(f'/brief/{target}')
+        r = client.get(f'/archive/theme/{slug}')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith(f'/brief/{target}')   # one hop, not two
+
+    def test_alias_targets_are_real_pages(self):
+        from hansard_archive import policy_areas
+        for target in policy_areas.BRIEF_SLUG_ALIASES.values():
+            assert policy_areas.by_slug(target) or target == 'special-educational-needs'
+        assert not set(policy_areas.BRIEF_SLUG_ALIASES) & policy_areas.valid_slugs()
+
     def test_pq_only_topic_lists_written_questions(self, client):
         r = client.get('/brief/chagos-islands')
         html = r.get_data(as_text=True)
