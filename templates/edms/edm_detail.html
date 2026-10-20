@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}{{ edm.title }} — EDM {{ edm.uin }} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ edm.title }} — Early Day Motion {{ edm.uin }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ edm.title|tojson }},
+  "description": {{ meta_desc|tojson }},
+  {% if edm.date_tabled %}"datePublished": "{{ edm.date_tabled.date().isoformat() }}",{% endif %}
+  "author": {"@type": "Person", "name": {{ edm.sponsor.name|tojson }}{% if edm.sponsor.party %}, "affiliation": {"@type": "Organization", "name": {{ edm.sponsor.party|tojson }}}{% endif %}},
+  "isBasedOn": "{{ edm.official_url }}",
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.edm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.edm-meta-text { font-size: 13px; color: #5a6878; }
+.edm-official { font-size: 13px; color: #4a7fa5; text-decoration: none; font-weight: 500; }
+.edm-official:hover { text-decoration: underline; }
+.edm-box { background: #fff; border: 1px solid #dde3ed; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+.edm-box h2 { font-size: 15px; font-weight: 700; color: #1a2332; margin: 0 0 10px; }
+.edm-text { font-size: 15px; line-height: 1.65; color: #2d3748; margin: 0; white-space: pre-line; }
+.edm-sponsor-line { font-size: 13px; color: #5a6878; margin: 12px 0 0; }
+.edm-party-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.edm-party-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
+.edm-party-list li { font-size: 12px; background: #f0f4f8; border-radius: 12px; padding: 3px 10px; color: #2d3748; }
+.edm-table-wrap { overflow-x: auto; }
+.edm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.edm-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #8a96a4; padding: 6px 8px; border-bottom: 2px solid #dde3ed; }
+.edm-table td { padding: 7px 8px; border-bottom: 1px solid #eef1f5; vertical-align: top; color: #2d3748; }
+.edm-table a { color: #1a2332; text-decoration: none; font-weight: 600; }
+.edm-table a:hover { text-decoration: underline; }
+.edm-role { font-size: 11px; color: #8a96a4; }
+.edm-note { font-size: 12px; color: #8a96a4; margin: 10px 0 0; }
+.edm-amendment + .edm-amendment { margin-top: 14px; padding-top: 14px; border-top: 1px solid #eef1f5; }
+.edm-amendment h3 { font-size: 14px; margin: 0 0 6px; color: #1a2332; }
+.edm-related { display: flex; flex-wrap: wrap; gap: 6px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <a href="/edms">Early Day Motions</a><span class="ac-breadcrumb-sep">›</span>
+        <span>EDM {{ edm.uin }}</span>
+    </nav>
+
+    <div class="ac-header">
+        <span class="archive-tag archive-tag-topic ac-tag-large">Early Day Motion {{ edm.uin }}</span>
+        <h1 class="ac-title">{{ edm.title }}</h1>
+        <div class="edm-meta">
+            {% if edm.is_withdrawn %}<span class="archive-dtype-badge archive-dtype-other">Withdrawn</span>{% endif %}
+            {% if edm.is_amendment %}<span class="archive-dtype-badge archive-dtype-other">Amendment</span>{% endif %}
+            {% if edm.human_date %}<span class="edm-meta-text">Tabled {{ edm.human_date }}</span>{% endif %}
+            <span class="edm-meta-text">· <strong>{{ edm.signatures }}</strong> signature{{ 's' if edm.signatures != 1 else '' }}</span>
+            <a class="edm-official" href="{{ edm.official_url }}" target="_blank" rel="noopener">View on parliament.uk ↗</a>
+        </div>
+    </div>
+
+    <section class="edm-box">
+        <h2>Motion text</h2>
+        {% if edm.si_title %}<p class="edm-note" style="margin:0 0 8px;">Prayer against a negative statutory instrument: {{ edm.si_title }}</p>{% endif %}
+        <p class="edm-text">{{ edm.text or 'No motion text published.' }}</p>
+        <p class="edm-sponsor-line">
+            Tabled by
+            {% if edm.sponsor.colour %}<span class="edm-party-dot" style="background:#{{ edm.sponsor.colour }}"></span>{% endif %}
+            <strong>{{ edm.sponsor.name }}</strong>{% if edm.sponsor.party %} ({{ edm.sponsor.party }}){% endif %}{% if edm.sponsor.constituency %}, {{ edm.sponsor.constituency }}{% endif %}
+        </p>
+        {% if edm.is_amendment and edm.amends_id %}
+        <p class="edm-note">This is an amendment to <a href="/edms/{{ edm.amends_id }}">another Early Day Motion</a>.</p>
+        {% endif %}
+    </section>
+
+    <section class="edm-box">
+        <h2>Who has signed ({{ edm.signatures }})</h2>
+        {% if edm.signatories %}
+        {% if edm.party_counts|length > 1 %}
+        <ul class="edm-party-list" aria-label="Signatures by party">
+            {% for party, count in edm.party_counts %}<li>{{ party }}: {{ count }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        <div class="edm-table-wrap">
+        <table class="edm-table">
+            <thead><tr><th>MP</th><th>Party</th><th>Constituency</th><th>Signed</th></tr></thead>
+            <tbody>
+            {% for s in edm.signatories %}
+            <tr>
+                <td>
+                    {% if s.contact_url %}<a href="{{ s.contact_url }}" target="_blank" rel="noopener">{{ s.name }}</a>{% else %}{{ s.name }}{% endif %}
+                    {% if s.role != 'Supporter' %}<div class="edm-role">{{ s.role }}</div>{% endif %}
+                </td>
+                <td>{% if s.colour %}<span class="edm-party-dot" style="background:#{{ s.colour }}"></span>{% endif %}{{ s.party }}</td>
+                <td>{{ s.constituency }}</td>
+                <td>{{ s.human_signed }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <p class="edm-note">MP names link to their contact details on parliament.uk.{% if edm.withdrawn_count %} {{ edm.withdrawn_count }} MP{{ 's have' if edm.withdrawn_count != 1 else ' has' }} since withdrawn their signature.{% endif %}</p>
+        {% else %}
+        <p class="edm-note" style="margin:0;">No signatures recorded yet.</p>
+        {% endif %}
+    </section>
+
+    {% if edm.amendments %}
+    <section class="edm-box">
+        <h2>Amendments ({{ edm.amendments|length }})</h2>
+        {% for a in edm.amendments %}
+        <div class="edm-amendment">
+            <h3><a href="/edms/{{ a.id }}">Amendment {{ a.uin }}</a></h3>
+            <p class="edm-text">{{ a.text }}</p>
+            <p class="edm-note">Tabled by {{ a.sponsor.name }}{% if a.sponsor.party %} ({{ a.sponsor.party }}){% endif %}{% if a.human_date %} on {{ a.human_date }}{% endif %} · {{ a.signatures }} signature{{ 's' if a.signatures != 1 else '' }}</p>
+        </div>
+        {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if related %}
+    <section class="edm-box">
+        <h2>Related on Westminster Brief</h2>
+        <div class="edm-related">
+            {% for r in related %}<a href="/brief/{{ r.slug }}" class="archive-tag archive-tag-policy">{{ r.label }}</a>{% endfor %}
+        </div>
+        <p class="edm-note">Debates and written questions in these policy areas. Matched on keywords — check relevance before use.</p>
+    </section>
+    {% endif %}
+
+    <p><a href="/edms" class="edm-official">‹ All Early Day Motions</a></p>
+
+    <p class="ah-source-note">
+        Early Day Motion data from
+        <a href="https://edm.parliament.uk" target="_blank" rel="noopener">UK Parliament</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Signatures may be up to an hour behind Parliament’s site.
+    </p>
+
+</div>
+</div>
+{% endblock %}

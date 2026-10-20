@@ -61,6 +61,7 @@ from debate_scanner import debate_scanner_bp
 from mp_search import mp_search_bp
 from stakeholder_directory.views import directory_bp
 from stats_catalogue import stats_catalogue_bp
+from edms import edms_bp
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -1021,7 +1022,7 @@ def _build_sitemap_core_xml() -> str:
 
     # Static tool pages (content changes via deployments, not DB; omit lastmod)
     for path in ('/', '/hansard', '/bills', '/written-questions', '/written-questions/today',
-                 '/mp_search', '/biography', '/debates',
+                 '/mp_search', '/biography', '/debates', '/edms',
                  '/directory', '/about', '/terms', '/privacy', '/history-of-hansard',
                  '/about/legislation'):
         urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
@@ -2531,6 +2532,7 @@ app.register_blueprint(brief_bp)
 app.register_blueprint(stats_catalogue_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(hansard_bp2)
+app.register_blueprint(edms_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
