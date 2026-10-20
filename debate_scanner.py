@@ -241,9 +241,9 @@ def get_source_label(source):
             'lords': 'Lords', 'wrans': 'Written Answer',
             'wms': 'Ministerial Statement'}.get(source, source.title())
 
-# TWFY returns a mix of abbreviated and full party names — normalise to canonical
+# Sources return a mix of abbreviated and full party names — normalise to canonical
 # full names so set membership checks work consistently everywhere in the pipeline.
-_TWFY_PARTY_NORM = {
+_PARTY_NORM = {
     'snp':          'Scottish National Party',
     'ld':           'Liberal Democrat',
     'lib dem':      'Liberal Democrat',
@@ -263,88 +263,10 @@ _TWFY_PARTY_NORM = {
 }
 
 def _normalise_party(raw):
-    """Normalise TWFY party strings to canonical full names."""
+    """Normalise party strings to canonical full names."""
     if not raw:
         return ''
-    return _TWFY_PARTY_NORM.get(raw.strip().lower(), raw.strip())
-
-def fetch_twfy_topic(search, source_type, date_range, num=150):
-    """Fetch rows from TWFY for a topic search. Returns normalised list or [] on failure.
-    Results are cached for 6h (date-filtered) or 24h (open) to reduce API usage."""
-    cache_key_query = f"{search} {date_range}".strip()
-    ttl = 6 if date_range else 24
-    try:
-        cached = CachedTWFYSearch.get(cache_key_query, source_type, ttl_hours=ttl)
-        if cached is not None:
-            return cached
-    except Exception:
-        pass
-    try:
-        if source_type == 'wrans':
-            api_url = TWFY_WRANS_URL
-        elif source_type == 'wms':
-            api_url = TWFY_WMS_URL
-        else:
-            api_url = TWFY_API_URL
-        # TWFY date range syntax: SEARCHTERM YYYYMMDD..YYYYMMDD in search string.
-        # TWFY cannot parse (A OR B) with a date range appended.
-        # Strip outer parens from any leading OR group — handles both the plain case
-        # '("a" OR "b")' and the narrow-keyword case '("a" OR "b") AND "narrow"'.
-        if date_range:
-            clean = search.strip()
-            clean = re.sub(r'^\(([^)]+)\)', r'\1', clean)
-            query = f"{clean} {date_range}"
-        else:
-            query = search
-        params = {'key': TWFY_API_KEY, 'search': query, 'order': 'r', 'num': num, 'output': 'json'}
-        if source_type not in ('wrans', 'wms'):
-            params['type'] = source_type
-        resp = requests.get(api_url, params=params, timeout=15)
-        if resp.status_code != 200:
-            return [{'_error': f"TWFY {source_type} HTTP {resp.status_code}"}]
-        data = resp.json()
-        if isinstance(data, dict) and 'error' in data:
-            return [{'_error': f"TWFY {source_type}: {data['error']}"}]
-        rows = data.get('rows', [])
-        if rows and source_type == 'commons':
-            import logging as _kl
-            _kl.warning(f"[twfy_row_keys] sample raw keys={list(rows[0].keys())} section_id={rows[0].get('section_id')} subsection_id={rows[0].get('subsection_id')} gid={rows[0].get('gid')}")
-        results = []
-        for r in rows:
-            body_raw = r.get('body', '')
-            body_text = clean_body_text(body_raw)
-            debate_title = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
-            if source_type == 'wrans':
-                debate_title = re.sub(r'<[^>]+>', '', body_raw)[:80]
-            elif source_type == 'wms':
-                # WMS parent body contains the actual section title (e.g. "Students: Loans")
-                # Fall back to body text only if parent is missing
-                parent_body = re.sub(r'<[^>]+>', '', r.get('parent', {}).get('body', '') or '')
-                debate_title = parent_body if parent_body else re.sub(r'<[^>]+>', '', body_raw)[:80]
-            if source_type == 'wrans':
-                dtype = 'Written Answer'
-            elif source_type == 'wms':
-                dtype = 'Ministerial Statement'
-            else:
-                dtype = get_debate_type(debate_title, source=source_type)
-            results.append({
-                'listurl': r.get('listurl', ''),
-                'body_clean': body_text[:500],
-                'body_export': body_text[:3000],
-                'body_word_count': len(body_text.split()),
-                'speaker_name': (r.get('speaker') or {}).get('name', 'Unknown'),
-                'speaker_party': _normalise_party((r.get('speaker') or {}).get('party', '')),
-                'hdate': r.get('hdate', ''),
-                'debate_title': debate_title,
-                'source': source_type,
-                'source_label': get_source_label(source_type),
-                'relevance': r.get('relevance', 0),
-                'debate_type': dtype,
-            })
-        CachedTWFYSearch.store(cache_key_query, source_type, results)
-        return results
-    except Exception as e:
-        return [{'_error': f"TWFY {source_type} exception: {type(e).__name__}: {e}"}]
+    return _PARTY_NORM.get(raw.strip().lower(), raw.strip())
 
 
 def _extract_title_queries(search_term):
@@ -3168,14 +3090,6 @@ def stakeholder_search():
     elif start_date:
         date_range = f'{start_date.replace("-","")}..{datetime.now().strftime("%Y%m%d")}'
 
-    # Build Hansard search: topic + org name(s)
-    if org:
-        hansard_query = f'"{topic}" AND "{org["hansard_search_name"] or org["name"]}"'
-    else:
-        hansard_query = f'"{topic}"'
-        if date_range:
-            hansard_query += f' {date_range}'
-
     # Parallel fetch
     hansard_rows = []
     news_items = []
@@ -3184,15 +3098,10 @@ def stakeholder_search():
 
     def _do_hansard():
         rows = []
-        use_hansard = os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard'
-        if use_hansard:
-            clean_query = (f'"{topic}" AND "{org["hansard_search_name"] or org["name"]}"'
-                           if org else f'"{topic}"')
-            for src in ['commons', 'lords', 'westminsterhall']:
-                rows.extend(fetch_hansard_topic(clean_query, src, date_range))
-        elif TWFY_API_KEY:
-            for src in ['commons', 'lords', 'westminsterhall']:
-                rows.extend(fetch_twfy_topic(hansard_query, src, date_range))
+        clean_query = (f'"{topic}" AND "{org["hansard_search_name"] or org["name"]}"'
+                       if org else f'"{topic}"')
+        for src in ['commons', 'lords', 'westminsterhall']:
+            rows.extend(fetch_hansard_topic(clean_query, src, date_range))
         return deduplicate_by_listurl(rows)
 
     def _do_news():
@@ -4157,12 +4066,7 @@ def _prep_media(topic, start_date='', end_date=''):
 def _prep_parl_lords(topic, date_range):
     """Lords debates for topic — called directly in the top-level executor."""
     try:
-        if os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard':
-            rows = fetch_hansard_topic(topic, 'lords', date_range, num=50)
-        elif TWFY_API_KEY:
-            rows = fetch_twfy_topic(topic, 'lords', date_range, num=50)
-        else:
-            return []
+        rows = fetch_hansard_topic(topic, 'lords', date_range, num=50)
         return [r for r in rows if not r.get('_error')]
     except Exception:
         return []
@@ -4172,12 +4076,8 @@ def _prep_parl_commons(topic, date_range):
     """Commons + Westminster Hall debates for topic — called directly in the top-level executor."""
     try:
         rows = []
-        if os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard':
-            rows.extend(fetch_hansard_topic(topic, 'commons', date_range, num=40))
-            rows.extend(fetch_hansard_topic(topic, 'westminsterhall', date_range, num=30))
-        elif TWFY_API_KEY:
-            rows.extend(fetch_twfy_topic(topic, 'commons', date_range, num=40))
-            rows.extend(fetch_twfy_topic(topic, 'westminsterhall', date_range, num=30))
+        rows.extend(fetch_hansard_topic(topic, 'commons', date_range, num=40))
+        rows.extend(fetch_hansard_topic(topic, 'westminsterhall', date_range, num=30))
         return [r for r in rows if not r.get('_error')]
     except Exception:
         return []
@@ -4195,12 +4095,7 @@ def _prep_parl_wqs(topic, start_date, end_date):
 def _prep_parl_statements(topic, date_range):
     """Written ministerial statements for topic — called directly in the top-level executor."""
     try:
-        if os.environ.get('SEARCH_BACKEND', '').lower() == 'hansard':
-            rows = fetch_parliament_wms(topic, date_range, dept_id=None, num=20)
-        elif TWFY_API_KEY:
-            rows = fetch_twfy_topic(topic, 'wms', date_range, num=20)
-        else:
-            return []
+        rows = fetch_parliament_wms(topic, date_range, dept_id=None, num=20)
         return [r for r in rows if not r.get('_error')]
     except Exception:
         return []
