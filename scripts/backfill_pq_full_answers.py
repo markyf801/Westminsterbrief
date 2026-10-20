@@ -74,7 +74,7 @@ def main():
     with app.app_context():
         query = (
             db.session.query(HaPQ)
-            .filter(HaPQ.is_answered == True)
+            .filter(HaPQ.is_answered.is_(True))
             .filter(HaPQ.api_id.isnot(None))   # never look up by UIN alone
             .filter(db.func.length(HaPQ.answer_text) < _TRUNC_THRESHOLD)
             .order_by(HaPQ.id)
