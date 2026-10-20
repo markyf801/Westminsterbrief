@@ -71,7 +71,7 @@
         <h2 style="margin-bottom:0;">MP Research</h2>
     </div>
     <p class="page-desc">
-        Research any MP or Peer: written questions, recent Hansard speeches, career history, and registered interests. Select a member to load all three sections, then export a combined Word briefing.
+        Research any MP or Peer: written questions, recent Hansard speeches, career history, and registered interests, all from Westminster Brief's own database. Select a member to load all three sections, then export a combined Word briefing.
     </p>
 
     <form method="POST" id="mp-research-form" onsubmit="showLoadingState()">
@@ -125,13 +125,18 @@
         <img src="{{ member_header.photo_url }}" alt="{{ member_header.name }}" class="mp-header-photo">
         {% endif %}
         <div class="mp-header-meta">
-            <div class="mp-header-name">{{ member_header.name }}</div>
+            <div class="mp-header-name">{{ member_header.display_name or member_header.name }}</div>
             <div class="mp-header-sub">
                 <strong>{{ member_header.party }}</strong>
                 &nbsp;·&nbsp;
                 {{ member_header.role }}
                 &nbsp;·&nbsp;
                 House of {{ member_header.house }}
+            </div>
+            {% if member_header.current_role %}<div class="mp-header-sub" style="margin-top:3px;">{{ member_header.current_role }}</div>{% endif %}
+            <div style="font-size:11.5px; color:#8a96a4; margin-top:5px;">
+                Member details last updated {{ member_header.last_updated or 'unknown' }}
+                &nbsp;·&nbsp; <a href="{{ member_header.profile_url }}" style="color:#4a7fa5;">Member profile page</a>
             </div>
         </div>
         <div style="flex-shrink:0;">
@@ -164,7 +169,7 @@
         <div class="tab-panel active" id="panel-profile">
             {% if profile_error %}
             <div class="info-box" style="border-left-color:#d9534f; background:rgba(220,53,69,0.1); margin-bottom:16px;">
-                Could not load profile data — {{ profile_error }}. Written Questions and Speeches may still be available.
+                No profile data yet — {{ profile_error }}. Written Questions and Contributions below come from the archive.
             </div>
             {% elif profile_data %}
 
@@ -244,16 +249,22 @@
             <p style="color:#8a96a4; font-size:13px;">No profile data available.</p>
             {% endif %}
 
-            {# AI Profile button #}
+            {# Stored AI profile (generated offline by scripts/refresh_members.py) #}
             <div style="margin-top:20px; margin-bottom:16px; border-top:1px solid #e0e6ed; padding-top:16px;">
-                <button type="button" onclick="generateAiProfile()" id="ai-btn"
-                        class="btn btn-muted" style="font-size:13px;">
-                    <span class="badge-ai" style="margin-right:5px;">AI</span> Generate AI Profile
-                </button>
-                <span style="font-size:12px; color:#8a96a4; margin-left:10px;">
-                    Calls Gemini — summarises career history and parliamentary activity.
-                </span>
-                <div id="ai-profile-output" style="display:none;"></div>
+                <h3 style="font-size:14px; color:#1a2332; margin:0 0 8px;"><span class="badge-ai" style="margin-right:5px;">AI</span> Profile summary</h3>
+                {% if stored_bio %}
+                <div style="font-size:12px; color:#856404; background:#fffbea; border-left:3px solid #f0ad4e; padding:6px 10px; border-radius:4px;">
+                    <strong>{{ ai_label }}.</strong> Generated {{ stored_bio.generated_at.strftime('%Y-%m-%d') if stored_bio.generated_at else '' }} by {{ stored_bio.model_used }}; it may be out of date or contain errors.
+                </div>
+                <div id="ai-profile-output">{{ stored_bio_html }}
+                    {% if stored_bio.sources %}
+                    <p style="font-size:12px; margin-top:10px;"><strong>Sources:</strong>
+                    {% for src in stored_bio.sources %}<a href="{{ src.url }}" target="_blank" rel="noopener" style="color:#4a7fa5;">{{ src.label }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p style="font-size:12.5px; color:#8a96a4; margin:0;">No AI summary is stored for this member yet.</p>
+                {% endif %}
             </div>
         </div>
 
@@ -390,7 +401,6 @@
 <script>
 var MEMBER_HEADER = {{ member_header | tojson | safe }};
 var PROFILE_DATA  = {{ profile_data  | tojson | safe }};
-var AI_PROFILE_KEY = 'ai_profile_{{ member_id }}';
 </script>
 
 {% endif %}{# /is_post and member_header #}
@@ -422,15 +432,9 @@ $(document).ready(function() {
 
     // Pre-populate select2 if returning after POST
     {% if is_post and member_header %}
-    var opt = new Option({{ member_header.name | tojson }}, {{ member_id | tojson }}, true, true);
+    var opt = new Option({{ (member_header.display_name or member_header.name) | tojson }}, {{ member_id | tojson }}, true, true);
     $('#member-search').append(opt).trigger('change');
     {% endif %}
-
-    // Restore AI profile from sessionStorage if already generated this session
-    if (typeof AI_PROFILE_KEY !== 'undefined' && AI_PROFILE_KEY) {
-        var cached = sessionStorage.getItem(AI_PROFILE_KEY);
-        if (cached) { renderAiProfile(cached, false); }
-    }
 });
 
 function showTab(name, btn) {
@@ -444,57 +448,6 @@ function showLoadingState() {
     var btn = document.getElementById('search-btn');
     btn.textContent = 'Loading…';
     btn.disabled = true;
-}
-
-function generateAiProfile() {
-    var btn = document.getElementById('ai-btn');
-    var out = document.getElementById('ai-profile-output');
-    btn.disabled = true;
-    btn.textContent = 'Generating…';
-    out.style.display = 'block';
-    out.innerHTML = '<em style="color:#8a96a4;">Calling AI — this may take a few seconds…</em>';
-
-    fetch('/api/biography', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            mp_name: MEMBER_HEADER.name,
-            member_id: MEMBER_HEADER.id
-        })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        var bio = data.biography || 'No profile generated.';
-        sessionStorage.setItem(AI_PROFILE_KEY, bio);
-        renderAiProfile(bio, true);
-        btn.textContent = 'Regenerate AI Profile';
-        btn.disabled = false;
-    })
-    .catch(function() {
-        out.innerHTML = '<em style="color:#d9534f;">Could not generate profile — please try again.</em>';
-        btn.textContent = 'Generate AI Profile';
-        btn.disabled = false;
-    });
-}
-
-function renderAiProfile(text, animate) {
-    var out = document.getElementById('ai-profile-output');
-    out.style.display = 'block';
-    // Simple markdown → HTML conversion (headings, bullets, bold)
-    var html = text
-        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^# (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-        .replace(/(<li>.*<\/li>\n?)+/gs, '<ul>$&</ul>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\n\n/g, '</p><p>')
-        .replace(/\n/g, '<br>');
-    out.innerHTML = '<p>' + html + '</p>';
-    if (document.getElementById('ai-btn')) {
-        document.getElementById('ai-btn').textContent = 'Regenerate AI Profile';
-        document.getElementById('ai-btn').disabled = false;
-    }
 }
 
 function buildAndDownload() {
@@ -530,15 +483,11 @@ function buildAndDownload() {
         });
     });
 
-    // AI profile from sessionStorage
-    var aiProfile = sessionStorage.getItem(AI_PROFILE_KEY) || '';
-
     var payload = {
         member_header: MEMBER_HEADER,
         profile_data:  PROFILE_DATA,
         questions:     questions,
-        speeches:      speeches,
-        ai_profile:    aiProfile
+        speeches:      speeches
     };
 
     document.getElementById('export-data-input').value = JSON.stringify(payload);

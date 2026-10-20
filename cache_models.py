@@ -272,3 +272,132 @@ class CachedMember(db.Model):
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+
+class MemberProfile(db.Model):
+    """Stored profile for an MP or Peer, refreshed offline by scripts/refresh_members.py.
+
+    /members/<id>/<slug>, /mp_search and /biography read from this table instead
+    of calling the Parliament Members API on page view. On production the table
+    is created by migrations/members_profile_tables.py (the web service runs
+    with SKIP_MIGRATIONS=1, so db.create_all() does not run there).
+
+    Photos are not stored — thumbnail_url points at Parliament's image.
+    """
+    __tablename__ = 'member_profile'
+
+    member_id         = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    slug              = db.Column(db.String(300), nullable=False, index=True)
+    # 'personal' (built from the member's personal name) or 'title' (fallback to Parliament's display
+    # title). Stable-first: a slug only changes when a 'title' slug can be upgraded to 'personal';
+    # any old slug 301s to the current one because the numeric id is the key.
+    slug_source       = db.Column(db.String(20))
+    name              = db.Column(db.String(300), nullable=False)               # nameDisplayAs
+    name_list_as      = db.Column(db.String(300))
+    full_title        = db.Column(db.String(400))
+    party             = db.Column(db.String(100))
+    party_abbreviation = db.Column(db.String(20))
+    party_colour      = db.Column(db.String(6))
+    house             = db.Column(db.String(20))                                # 'Commons' | 'Lords'
+    membership_from   = db.Column(db.String(200))                               # constituency, or 'Life peer' etc.
+    membership_start  = db.Column(db.Date)
+    is_current        = db.Column(db.Boolean, nullable=False, default=True)
+    status_description = db.Column(db.String(200))
+    thumbnail_url     = db.Column(db.String(500))
+    current_role      = db.Column(db.String(500))                               # current govt/opposition post(s)
+
+    # Lists of {name, start, end, info} — dates as 'YYYY-MM-DD' strings
+    government_posts  = db.Column(db.JSON)
+    opposition_posts  = db.Column(db.JSON)
+    other_posts       = db.Column(db.JSON)
+    committees        = db.Column(db.JSON)
+    contact           = db.Column(db.JSON)    # [{type, address, phone, email, website}]
+    interests         = db.Column(db.JSON)    # [{category, description}]
+    representations   = db.Column(db.JSON)    # constituencies held: [{name, start, end, info}]
+    house_memberships = db.Column(db.JSON)    # [{name, start, end, info}] e.g. Commons then Lords
+    wikipedia_url     = db.Column(db.String(500))
+    wiki_status       = db.Column(db.String(20))   # found | not_found | ambiguous | error
+    wiki_checked_at   = db.Column(db.DateTime)
+    wikidata_id       = db.Column(db.String(20))
+    wikidata_facts    = db.Column(db.JSON)    # {education: [...], occupations: [...]} — bio fallback input
+
+    # Activity derived from our own DB (ha_pq, ha_contribution) at refresh time
+    wq_12m            = db.Column(db.Integer)
+    wq_total          = db.Column(db.Integer)
+    sessions_12m      = db.Column(db.Integer)
+    contributions_12m = db.Column(db.Integer)
+    last_spoke_on     = db.Column(db.Date)
+    top_policy_areas  = db.Column(db.JSON)    # [{theme, sessions}] — debates, last 12 months
+    wq_departments    = db.Column(db.JSON)    # [{department, questions}] — WQs asked, last 12 months
+
+    summary_refreshed_at  = db.Column(db.DateTime)   # Members/Search pass
+    details_refreshed_at  = db.Column(db.DateTime)   # Biography / Contact / Interests pass
+    activity_refreshed_at = db.Column(db.DateTime)
+    created_at        = db.Column(db.DateTime, default=datetime.utcnow)
+    # Set explicitly by the refresh only when profile content changes (sitemap lastmod) — no onupdate,
+    # because every run bumps the *_refreshed_at stamps.
+    updated_at        = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def last_updated(self):
+        stamps = [s for s in (self.details_refreshed_at, self.summary_refreshed_at) if s]
+        return max(stamps) if stamps else None
+
+
+class MemberBiography(db.Model):
+    """Pre-generated AI biography for a member (one row per member).
+
+    Generated offline by scripts/refresh_members.py --regenerate-bios with a
+    Gemini Flash-Lite class model. source_hash covers the prompt version and
+    every input the prompt used, so a bio is only regenerated when its inputs
+    change. Free feature: Gemini only, never Claude.
+    """
+    __tablename__ = 'member_biography'
+
+    member_id       = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    bio_text        = db.Column(db.Text)              # NULL until a generation succeeds
+    model_used      = db.Column(db.String(100))
+    prompt_version  = db.Column(db.String(20))
+    source_hash     = db.Column(db.String(64))
+    sources         = db.Column(db.JSON)              # [{label, url}]
+    generated_at    = db.Column(db.DateTime)
+    last_attempt_at = db.Column(db.DateTime)
+    last_error      = db.Column(db.String(500))
+
+
+class MemberName(db.Model):
+    """Personal name for a member alongside Parliament's display name/title.
+
+    Filled by scripts/refresh_members.py from Wikidata (matched on P10428,
+    "parliament.uk member ID") with Parliament's own name fields as fallback
+    (MPs: display/list name; peers: the Members API synopsis "His/Her name is …").
+    Never guessed. Rows with source='manual' are owner corrections and are not
+    overwritten by the refresh.
+    """
+    __tablename__ = 'member_name'
+
+    member_id       = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    personal_name   = db.Column(db.String(300))      # e.g. "Jacqui Smith"; NULL if not found
+    given_name      = db.Column(db.String(200))
+    family_name     = db.Column(db.String(200))
+    peerage_title   = db.Column(db.String(300))      # e.g. "Baroness Smith of Malvern"; NULL for MPs
+    full_title      = db.Column(db.String(400))      # Parliament's full title incl. honorifics/post-nominals
+    wikidata_id     = db.Column(db.String(20))
+    wikidata_name   = db.Column(db.String(300))      # what each source said, kept for the audit
+    parliament_name = db.Column(db.String(300))
+    source          = db.Column(db.String(20))       # wikidata | parliament | manual
+    source_url      = db.Column(db.String(500))
+    confidence      = db.Column(db.String(10))       # high | medium | low
+    last_audited_at = db.Column(db.DateTime)
+    audit_notes     = db.Column(db.String(1000))
+    updated_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class MemberNameAudit(db.Model):
+    """One row per name audit run (refresh_members.py --audit-names): counts + the gaps to review."""
+    __tablename__ = 'member_name_audit'
+
+    id      = db.Column(db.Integer, primary_key=True)
+    run_at  = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    counts  = db.Column(db.JSON)     # matched, missing, changed, conflicts, wiki_not_found, ...
+    gaps    = db.Column(db.JSON)     # [{member_id, name, issue, detail}]

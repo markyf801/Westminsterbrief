@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}{{ header.display_name }} — {{ header.role }} | Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ header.display_name }} — Member profile{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block twitter_title %}{{ header.display_name }} — Member profile{% endblock %}
+{% block twitter_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="{{ canonical_url }}">{% endblock %}
+{% block json_ld %}
+<script type="application/ld+json">{{ json_ld | tojson }}</script>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+.mp-header-box { display:flex; gap:16px; align-items:flex-start; padding:16px 20px; background:#f7f9fc;
+    border-left:4px solid {{ '#' ~ profile.party_colour if profile and profile.party_colour else '#1a4a6e' }}; border-radius:0 6px 6px 0; }
+.mp-header-photo { width:90px; height:112px; object-fit:cover; border-radius:3px; flex-shrink:0; }
+.mp-header-name { font-size:20px; font-weight:700; color:#1a2332; margin:0 0 4px; }
+.mp-header-sub { font-size:13px; color:#5a6878; }
+.mp-updated { font-size:11.5px; color:#8a96a4; margin-top:6px; }
+.career-table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:16px; }
+.career-table th { background:#eef3f8; padding:7px 10px; text-align:left; font-weight:600; color:#1a2332; border-bottom:1px solid #e0e6ed; }
+.career-table td { padding:6px 10px; border-bottom:1px solid #f0f2f5; vertical-align:top; color:#2d3748; }
+.section-h { font-size:15px; color:#1a2332; margin:18px 0 8px; }
+.ai-label { display:inline-block; font-size:12px; font-weight:700; color:#856404; background:#fffbea;
+    border:1px solid #f0d58a; border-radius:4px; padding:2px 8px; margin-bottom:8px; }
+.bio-body { font-size:14px; line-height:1.65; color:#2d3748; }
+.bio-body h3 { font-size:14px; color:#1a2332; margin:14px 0 4px; }
+.bio-body ul { margin:4px 0 8px 18px; }
+.stat-row { display:flex; gap:24px; flex-wrap:wrap; font-size:13px; margin-bottom:10px; }
+.stat-row strong { font-size:18px; color:#1a2332; display:block; }
+.link-list { font-size:13px; margin:0; padding-left:18px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="box" style="padding:0; overflow:hidden;">
+    <div class="mp-header-box">
+        {% if header.photo_url %}
+        <img src="{{ header.photo_url }}" alt="{{ header.name }}" class="mp-header-photo" loading="lazy">
+        {% endif %}
+        <div style="flex:1;">
+            <h1 class="mp-header-name">{{ header.display_name }}</h1>
+            <div class="mp-header-sub">
+                {% if header.party %}<strong>{{ header.party }}</strong> &nbsp;·&nbsp; {% endif %}{{ header.role }} &nbsp;·&nbsp; House of {{ header.house }}
+            </div>
+            {% if header.current_role %}<div class="mp-header-sub" style="margin-top:4px;">{{ header.current_role }}</div>{% endif %}
+            {% if not header.is_current %}<div class="mp-header-sub" style="margin-top:4px; color:#b45309;">{{ profile.status_description if profile and profile.status_description else 'No longer a current member' }}</div>{% endif %}
+            <div class="mp-updated">
+                Member details last updated {{ header.last_updated or 'unknown' }} from the UK Parliament Members API.
+                {% if not header.stored %}Full profile not stored yet — it is added by the weekly refresh.{% endif %}
+            </div>
+        </div>
+        <div style="flex-shrink:0;">
+            <a href="/members/{{ header.id }}/profile.docx" class="btn btn-success" rel="nofollow">Download Word</a>
+        </div>
+    </div>
+</div>
+
+<div class="box" style="margin-top:16px; border-top:4px solid #005a8f;">
+    <h2 style="margin-top:0;">Profile</h2>
+    {% if bio %}
+    <div class="ai-label">{{ ai_label }}</div>
+    <div style="font-size:12px; color:#6b7684; margin-bottom:10px;">
+        Generated {{ bio_generated }} by {{ bio.model_used }} from the sources below. It may be out of date or contain errors; Wikipedia is publicly editable.
+    </div>
+    <div class="bio-body">{{ bio_html }}</div>
+    {% if bio.sources %}
+    <h3 class="section-h">Sources</h3>
+    <ul class="link-list">
+        {% for s in bio.sources %}<li><a href="{{ s.url }}" rel="noopener" target="_blank">{{ s.label }}</a></li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% else %}
+    <p style="color:#6b7684; font-size:13px;">No AI-generated summary is stored for this member yet. The records below and the official links have the full detail.</p>
+    {% endif %}
+</div>
+
+{% if profile and profile.details_refreshed_at %}
+<div class="box" style="margin-top:16px;">
+    {% for label, posts in [('Government roles', profile.government_posts), ('Opposition roles', profile.opposition_posts), ('Committee memberships', profile.committees)] %}
+    {% if posts %}
+    <h3 class="section-h">{{ label }}</h3>
+    <table class="career-table">
+        <thead><tr><th>{{ 'Committee' if label == 'Committee memberships' else 'Post' }}</th><th style="width:90px;">From</th><th style="width:90px;">To</th></tr></thead>
+        <tbody>
+        {% for p in posts %}
+        <tr><td>{{ p.name }}</td><td>{{ (p.start or '')[:7] }}</td><td>{{ (p.end or '')[:7] or 'present' }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endfor %}
+    {% if not profile.government_posts and not profile.opposition_posts and not profile.committees %}
+    <p style="color:#8a96a4; font-size:13px;">No government, opposition or committee roles recorded.</p>
+    {% endif %}
+
+    <h3 class="section-h">Registered interests</h3>
+    {% if profile.interests %}
+    <table class="career-table">
+        <thead><tr><th style="width:200px;">Category</th><th>Interest</th></tr></thead>
+        <tbody>
+        {% for i in profile.interests[:40] %}
+        <tr><td style="color:#5a6878;">{{ i.category }}</td><td>{{ i.description }}</td></tr>
+        {% endfor %}
+        {% if profile.interests|length > 40 %}
+        <tr><td colspan="2" style="color:#8a96a4; font-size:12px; font-style:italic;">… and {{ profile.interests|length - 40 }} more — see the official register.</td></tr>
+        {% endif %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#8a96a4; font-size:13px;">None declared on the register when last checked.</p>
+    {% endif %}
+
+    {% if profile.contact %}
+    <h3 class="section-h">Contact</h3>
+    <ul class="link-list">
+        {% for c in profile.contact %}
+        <li><strong>{{ c.type }}</strong>{% if c.address %} — {{ c.address }}{% endif %}{% if c.phone %} · {{ c.phone }}{% endif %}{% if c.email %} · <a href="mailto:{{ c.email }}">{{ c.email }}</a>{% endif %}{% if c.website %} · <a href="{{ c.website if c.website.startswith('http') else 'https://' ~ c.website }}" rel="nofollow noopener" target="_blank">{{ c.website }}</a>{% endif %}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="box" style="margin-top:16px;">
+    <h3 class="section-h" style="margin-top:0;">Activity in the Westminster Brief archive</h3>
+    {% if profile and profile.activity_refreshed_at %}
+    <div class="stat-row">
+        <div><strong>{{ profile.sessions_12m or 0 }}</strong>debates spoken in (12 months)</div>
+        <div><strong>{{ profile.contributions_12m or 0 }}</strong>contributions (12 months)</div>
+        <div><strong>{{ profile.wq_12m or 0 }}</strong>written questions asked (12 months)</div>
+        {% if profile.last_spoke_on %}<div><strong>{{ profile.last_spoke_on.isoformat() }}</strong>last contribution on record</div>{% endif %}
+    </div>
+    {% if profile.top_policy_areas %}
+    <p style="font-size:13px; margin:4px 0;"><strong>Debate subjects:</strong>
+        {% for t in profile.top_policy_areas[:6] %}<a href="/archive/policy/{{ t.theme | slugify }}">{{ t.theme }}</a> ({{ t.sessions }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+    {% if profile.wq_departments %}
+    <p style="font-size:13px; margin:4px 0;"><strong>Written questions to:</strong>
+        {% for d in profile.wq_departments[:6] %}{{ d.department }} ({{ d.questions }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+    <p style="font-size:11.5px; color:#8a96a4;">Counts cover the Westminster Brief archive only, as of {{ profile.activity_refreshed_at.strftime('%Y-%m-%d') }}.</p>
+    {% else %}
+    <p style="color:#8a96a4; font-size:13px;">Activity counts are added by the weekly refresh.</p>
+    {% endif %}
+    <ul class="link-list">
+        {% if profile and profile.last_spoke_on %}<li><a href="/archive/mp/{{ header.id }}">Debate contributions in the archive</a></li>{% endif %}
+        <li><a href="/mp_search">Research this member's written questions and speeches (MP Research)</a></li>
+    </ul>
+</div>
+
+<div class="box" style="margin-top:16px;">
+    <h3 class="section-h" style="margin-top:0;">Official record</h3>
+    <ul class="link-list">
+        {% for l in links %}<li><a href="{{ l.url }}" rel="noopener" target="_blank">{{ l.label }}</a></li>{% endfor %}
+    </ul>
+</div>
+{% endblock %}

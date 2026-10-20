@@ -1120,7 +1120,7 @@ def _build_sitemap_index_xml() -> str:
     from datetime import date as _date
     BASE = "https://westminsterbrief.co.uk"
     today = _date.today().isoformat()
-    chunks = ['sitemap-core.xml',
+    chunks = ['sitemap-core.xml', 'sitemap-members.xml',
               'sitemap-pqs-1.xml', 'sitemap-pqs-2.xml',
               'sitemap-pqs-3.xml', 'sitemap-pqs-4.xml']
     if feature_enabled('FEATURE_EDMS'):
