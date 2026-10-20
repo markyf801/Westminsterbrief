@@ -32,7 +32,8 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 from flask import Blueprint, abort, redirect, render_template, make_response, request
 from markupsafe import Markup
-from sqlalchemy import func, text as sqla_text
+from sqlalchemy import func, select, text as sqla_text
+from sqlalchemy.orm import load_only
 
 from cache_models import CachedMember
 from extensions import db
@@ -1349,113 +1350,202 @@ def archive_policy(policy_slug: str):
 # Policy area slug/label/hansard-name data lives in hansard_archive/policy_areas.py.
 # Use _pa.by_slug(), _pa.hansard_names_for_slug(), _pa.display_name_from_slug().
 
+_BRIEF_MAX_PAGES  = 40   # deep OFFSETs on large policy areas are slow; nobody pages this far
+_BRIEF_THIN_ITEMS = 3    # fewer debates + questions than this -> noindex, follow
+_THEME_SLUG_RE    = re.compile(r"[a-z0-9-]+")
+
+
+def _specific_themes_for_slug(theme_col, type_col, theme_slug: str) -> list[str]:
+    """
+    Stored specific-topic strings whose slugify_theme() equals theme_slug.
+
+    Narrows candidates in SQL so the full topic vocabulary (large for PQs) is
+    never pulled into Python, then confirms each candidate with slugify_theme.
+    Slugs only contain [a-z0-9-], so the LIKE patterns need no escaping.
+
+    1. Slug words in order, anchored: "chagos-islands" -> LIKE 'chagos%islands'.
+    2. Fallback for punctuation inside words ("women's" -> "womens") or at the
+       ends: every slug character in order, with a length bound.
+    """
+    if not _THEME_SLUG_RE.fullmatch(theme_slug):
+        return []
+    words = [w for w in theme_slug.split("-") if w]
+    if not words:
+        return []
+
+    def _candidates(pattern: str, max_len: int | None, limit: int) -> list[str]:
+        q = (
+            db.session.query(theme_col)
+            .filter(type_col == THEME_TYPE_SPECIFIC, func.lower(theme_col).like(pattern))
+        )
+        if max_len is not None:
+            q = q.filter(func.length(theme_col) <= max_len)
+        rows = q.distinct().limit(limit).all()
+        return sorted({r[0] for r in rows if slugify_theme(r[0]) == theme_slug})
+
+    found = _candidates("%".join(words), None, 200)
+    if not found:
+        chars = theme_slug.replace("-", "")
+        found = _candidates("%" + "%".join(chars) + "%", len(theme_slug) + 8, 500)
+    return found
+
+
+def _build_pq_items(pqs: list) -> list:
+    """Template-ready dicts for written questions on a topic brief page."""
+    return [
+        {
+            "uin":            pq.uin,
+            "heading":        pq.heading or pq.uin,
+            "asking_member":  pq.asking_member or "",
+            "answering_body": pq.answering_body or "",
+            "chamber":        pq.chamber or "Commons",
+            "is_answered":    pq.is_answered,
+            "human_date":     _human_date(pq.tabled_date) if pq.tabled_date else "",
+        }
+        for pq in pqs
+    ]
+
+
 def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     """
-    Render /brief/<slug> pages.
+    Render /brief/<slug> pages: debate sessions plus written questions (PQs).
 
     Lookup order:
     0. Bridge mapping (policy_areas module) — resolves the mismatch
        between brief page slugs and Hansard DB policy area taxonomy strings.
     1. Policy area slug reverse-lookup — catches any policy areas not in the map.
-    2. Specific topic match (THEME_TYPE_SPECIFIC) — fallback for /archive/theme/ redirects.
+    2. Specific topic match (THEME_TYPE_SPECIFIC) on sessions and on PQs —
+       fallback for /archive/theme/ redirects. PQ-only topics resolve here.
+
+    No debates and no PQs -> friendly page with a 404 status, so search engines
+    drop the URL instead of indexing an empty page (soft 404).
+    Fewer than _BRIEF_THIN_ITEMS items in total -> noindex, follow.
     """
-    # â"€â"€ 0. Bridge mapping: brief slug â†' DB policy area name(s) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    # -- 0. Bridge mapping: brief slug -> DB policy area name(s)
     policy_names = _pa.hansard_names_for_slug(theme_slug) or None
+    if not policy_names:
+        # -- 1. Policy area match via slug reverse-lookup
+        policy_name  = next((p for p in _all_policy_areas() if slugify_theme(p) == theme_slug), None)
+        policy_names = [policy_name] if policy_name else None
+
     if policy_names:
-        theme_name      = _pa.display_name_from_slug(theme_slug) or theme_slug.replace("-", " ").title()
+        theme_name      = (_pa.display_name_from_slug(theme_slug)
+                           or (policy_names[0] if len(policy_names) == 1 else None)
+                           or theme_slug.replace("-", " ").title())
         theme_type_used = THEME_TYPE_POLICY_AREA
-        session_filter  = (
-            HansardSessionTheme.theme.in_(policy_names),
-            HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
-        )
+        session_names   = pq_names = policy_names
     else:
-        # â"€â"€ 1. Try policy area match via slug reverse-lookup â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-        all_policies = _all_policy_areas()
-        policy_name  = next((p for p in all_policies if slugify_theme(p) == theme_slug), None)
+        # -- 2. Fallback: specific topic match on sessions and PQs
+        theme_type_used = THEME_TYPE_SPECIFIC
+        session_names   = _specific_themes_for_slug(
+            HansardSessionTheme.theme, HansardSessionTheme.theme_type, theme_slug)
+        pq_names        = _specific_themes_for_slug(
+            HaPQTheme.theme, HaPQTheme.theme_type, theme_slug)
+        theme_name      = (session_names or pq_names or [None])[0]
 
-        if policy_name:
-            theme_name      = policy_name
-            theme_type_used = THEME_TYPE_POLICY_AREA
-            session_filter  = (
-                HansardSessionTheme.theme == theme_name,
-                HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
+    session_total = pq_total = 0
+    session_stmt = pq_stmt = None
+    if session_names:
+        theme_sub = (
+            select(HansardSessionTheme.session_id)
+            .where(
+                HansardSessionTheme.theme.in_(session_names),
+                HansardSessionTheme.theme_type == theme_type_used,
             )
-        else:
-            # â"€â"€ 2. Fallback: specific topic match â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
-            rows = (
-                db.session.query(HansardSessionTheme.theme)
-                .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
-                .distinct()
-                .all()
+        )
+        session_stmt = (
+            HansardSession.query
+            .filter_by(is_container=False)
+            .filter(HansardSession.id.in_(theme_sub))
+            .order_by(HansardSession.date.desc())
+        )
+        session_total = session_stmt.count()
+    if pq_names:
+        pq_sub = (
+            select(HaPQTheme.pq_id)
+            .where(
+                HaPQTheme.theme.in_(pq_names),
+                HaPQTheme.theme_type == theme_type_used,
             )
-            theme_name = next((r[0] for r in rows if slugify_theme(r[0]) == theme_slug), None)
-            theme_type_used = THEME_TYPE_SPECIFIC
-            session_filter  = (
-                HansardSessionTheme.theme == theme_name,
-                HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
-            ) if theme_name else None
+        )
+        pq_stmt = (
+            HaPQ.query
+            .options(load_only(
+                HaPQ.uin, HaPQ.heading, HaPQ.asking_member, HaPQ.answering_body,
+                HaPQ.chamber, HaPQ.is_answered, HaPQ.tabled_date,
+            ))
+            .filter(HaPQ.id.in_(pq_sub))
+            .order_by(HaPQ.tabled_date.desc(), HaPQ.id.desc())
+        )
+        pq_total = pq_stmt.count()
 
-    if not theme_name:
-        # Slug not in DB — show friendly empty page rather than 404
-        display_name = theme_slug.replace("-", " ")
+    if session_total + pq_total == 0:
+        # Nothing on this topic — friendly page, but 404 so it is never indexed
+        display_name = theme_name or theme_slug.replace("-", " ")
         return render_template(
             "hansard_archive/brief_theme.html",
             page_type         = "theme",
             heading           = display_name,
-            subtitle          = "No sessions on this topic in the archive",
+            subtitle          = "No debates or written questions on this topic in the archive",
             breadcrumb        = [("Hansard Archive", "/archive"), (display_name, None)],
             items             = [],
+            pq_items          = [],
             page              = 1,
             total_pages       = 1,
             total             = 0,
+            pq_total          = 0,
             base_qs           = "",
             canonical_path    = f"{canonical_prefix}/{theme_slug}",
             og_title          = f"{display_name} — Westminster Brief",
-            meta_desc         = f"No sessions found in the Westminster Brief archive for {display_name}.",
+            meta_desc         = f"No debates or written questions found in the Westminster Brief archive for {display_name}.",
             json_ld_type      = "CollectionPage",
             headline_stat     = None,
-        )
+            theme_slug        = theme_slug,
+            robots_meta       = "noindex, follow",
+        ), 404
 
+    total_pages = min(
+        _BRIEF_MAX_PAGES,
+        max(1, (max(session_total, pq_total) + _PER_PAGE - 1) // _PER_PAGE),
+    )
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
         page = 1
+    if page > total_pages:
+        abort(404)
 
-    theme_sub = (
-        db.session.query(HansardSessionTheme.session_id)
-        .filter(
-            HansardSessionTheme.theme == theme_name,
-            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
-        )
-        .subquery()
-    )
-    stmt = (
-        HansardSession.query
-        .filter_by(is_container=False)
-        .filter(HansardSession.id.in_(theme_sub))
-        .order_by(HansardSession.date.desc())
-    )
-    total       = stmt.count()
-    sessions    = stmt.offset((page - 1) * _PER_PAGE).limit(_PER_PAGE).all()
-    total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
+    # One page number drives both lists; a list past its last page shows nothing.
+    offset   = (page - 1) * _PER_PAGE
+    sessions = (session_stmt.offset(offset).limit(_PER_PAGE).all()
+                if session_stmt is not None and offset < session_total else [])
+    pqs      = (pq_stmt.offset(offset).limit(_PER_PAGE).all()
+                if pq_stmt is not None and offset < pq_total else [])
 
     session_ids    = [s.id for s in sessions]
     contrib_counts = _batch_load_contrib_counts(session_ids)
     policy_areas, specific_topics = _batch_load_tags(session_ids)
     items          = _build_session_items(sessions, contrib_counts, policy_areas, specific_topics)
+    pq_items       = _build_pq_items(pqs)
 
     base_qs = urlencode({"page": page}) if page > 1 else ""
 
-    subtitle = (
-        f"{total} session{'s' if total != 1 else ''} tagged with this policy area"
-        if theme_type_used == THEME_TYPE_POLICY_AREA
-        else f"{total} session{'s' if total != 1 else ''} on this topic"
+    counts = []
+    if session_total:
+        counts.append(f"{session_total} session{'s' if session_total != 1 else ''}")
+    if pq_total:
+        counts.append(f"{pq_total} written question{'s' if pq_total != 1 else ''}")
+    subtitle = " and ".join(counts) + (
+        " tagged with this policy area" if theme_type_used == THEME_TYPE_POLICY_AREA
+        else " on this topic"
     )
 
     # Headline stat teaser — shown as one-line link to /stats/<slug>
     headline_stat = None
     if theme_type_used == THEME_TYPE_POLICY_AREA and _pa.by_slug(theme_slug) is not None:
         headline_stat = get_headline_stat(theme_slug)
+
+    thin = session_total + pq_total < _BRIEF_THIN_ITEMS
 
     return render_template(
         "hansard_archive/brief_theme.html",
@@ -1464,18 +1554,23 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         subtitle          = subtitle,
         breadcrumb        = [("Hansard Archive", "/archive"), (theme_name, None)],
         items             = items,
+        pq_items          = pq_items,
         page              = page,
         total_pages       = total_pages,
-        total             = total,
+        total             = session_total,
+        pq_total          = pq_total,
         per_page          = _PER_PAGE,
         base_qs           = base_qs,
         canonical_path    = f"{canonical_prefix}/{theme_slug}",
         og_title          = f"{theme_name} — Westminster Brief",
         meta_desc         = (
-            f"UK parliamentary debates on {theme_name}. "
-            f"{total} Hansard session{'s' if total != 1 else ''} tagged with this topic."
+            f"UK parliamentary debates and written questions on {theme_name}. "
+            f"{subtitle[0].upper()}{subtitle[1:]}."
         ),
-        json_ld_type   = "CollectionPage",
+        json_ld_type      = "CollectionPage",
+        headline_stat     = headline_stat,
+        theme_slug        = theme_slug,
+        robots_meta       = "noindex, follow" if thin else "index, follow",
     )
 
 

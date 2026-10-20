@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Westminster Brief{% endblock %}</title>
     <meta name="description" content="{% block meta_description %}Westminster Brief — AI-powered UK parliamentary research tools for policy professionals, charities, journalists and researchers. Search Hansard, track Written Questions, build member profiles, and generate Word briefings instantly.{% endblock %}">
-    <meta name="robots" content="index, follow">
+    <meta name="robots" content="{{ robots_meta|default('index, follow') }}">
     <meta name="google-site-verification" content="PROzTChJy6NoBENAMozZW9YtOt0__vuPtGm5MBxAFHc" />
     <meta name="msvalidate.01" content="53E2C777F2451424C622E672DB7F9F74" />
     <meta property="og:site_name" content="Westminster Brief">
