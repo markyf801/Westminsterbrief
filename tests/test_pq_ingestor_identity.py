@@ -793,3 +793,89 @@ def test_invalid_env_values_do_not_break_import():
         cwd=PROJECT_ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stderr
     assert out.stdout.split() == ["3", "5"]
+
+
+# ── re-review: stale holding answers, commit per page ─────────────────────────
+
+_FULL = {"questionText": "To ask the Secretary of State, what steps are being taken.",
+         "answerText": "<p>The substantive answer.</p>", "answerIsHolding": False,
+         "isWithdrawn": False}
+
+
+def _holding_row(db, api_id):
+    db.session.add(_pq(api_id=api_id, uin=str(api_id), is_answered=True, is_holding=True,
+                       answer_text="<p>I will reply as soon as possible.</p>",
+                       answer_date=date(2026, 9, 10)))
+    db.session.commit()
+
+
+def _later_answer(api_id):
+    v = _value(api_id, str(api_id), "2026-06-04", answer=_CUT, answered="2026-10-15")
+    v["value"]["answerIsHolding"] = False
+    return v
+
+
+def test_bulk_only_pass_keeps_holding_answer_metadata(db, fake_api):
+    """Holding answer stored, real answer published later: a bulk-only pass
+    must not move answer_date/is_holding without the text, or the answer
+    would look up to date and never be re-fetched."""
+    from hansard_archive.models import HaPQ
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    _holding_row(db, 1101)
+    fake_api["bulk"] = [_later_answer(1101)]
+
+    _ingest(skip_answer_fetch=True)          # e.g. the headings backfill
+
+    row = HaPQ.query.filter_by(api_id=1101).one()
+    assert row.answer_date == date(2026, 9, 10) and row.is_holding is True
+    assert "as soon as possible" in row.answer_text
+
+    fake_api["individual"] = {1101: _FULL}
+    ingest_pq_date_range(date(2026, 10, 14), date(2026, 10, 20), verbose=False,
+                         date_field="answered", fetch_only_new_answers=True)
+    db.session.expire_all()
+    row = HaPQ.query.filter_by(api_id=1101).one()
+    assert fake_api["individual_calls"] == [1101]
+    assert row.answer_text == "<p>The substantive answer.</p>"
+    assert row.answer_date == date(2026, 10, 15) and row.is_holding is False
+
+
+def test_failed_full_fetch_keeps_holding_answer_for_next_run(db, fake_api):
+    from hansard_archive.models import HaPQ
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    _holding_row(db, 1102)
+    fake_api["bulk"] = [_later_answer(1102)]
+    fake_api["individual"] = {}              # individual endpoint fails
+
+    for _ in range(2):
+        ingest_pq_date_range(date(2026, 10, 14), date(2026, 10, 20), verbose=False,
+                             date_field="answered", fetch_only_new_answers=True)
+    db.session.expire_all()
+    row = HaPQ.query.filter_by(api_id=1102).one()
+    assert row.answer_date == date(2026, 9, 10) and row.is_holding is True
+    assert fake_api["individual_calls"] == [1102, 1102]     # still re-tried
+
+
+def test_bulk_only_pass_sets_answer_date_when_no_answer_stored(db, fake_api):
+    from hansard_archive.models import HaPQ
+    db.session.add(_pq(api_id=1103, uin="1103", is_answered=False))
+    db.session.commit()
+    fake_api["bulk"] = [_later_answer(1103)]
+    _ingest(skip_answer_fetch=True)
+    row = HaPQ.query.filter_by(api_id=1103).one()
+    assert row.is_answered is True and row.answer_date == date(2026, 10, 15)
+    assert row.answer_text is None
+
+
+def test_commits_after_every_page(db, paged_api, monkeypatch):
+    paged_api["rows"] = _rows(5)                          # pages at skip 0, 2, 4
+    commits = []
+    real_commit = db.session.commit
+
+    def counting_commit():
+        commits.append(1)
+        real_commit()
+    monkeypatch.setattr(db.session, "commit", counting_commit)
+    res = _ingest()
+    assert res["inserted"] == 5
+    assert len(commits) == 3
