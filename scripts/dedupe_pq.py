@@ -5,10 +5,11 @@ A duplicate group is a set of rows that share Parliament's api_id, or share
 (tabled_date, lower(uin)) — Parliament's public key. Each group is reduced to
 one canonical row:
 
-  * keep: the row with the most complete data; ties go to the earliest id
+  * keep: the row with the newest data — latest answer_date, then latest
+    updated_at, then the most complete row, then the earliest id
   * fill: empty fields on the kept row are filled from the duplicates (a
-    stored value is never overwritten; a missing or truncated answer is
-    replaced by a full one)
+    stored value is never overwritten, except that a truncated question or
+    answer text is replaced by the full copy of the same text)
   * themes: ha_pq_theme rows are moved onto the kept row, skipping themes it
     already has, then the duplicates' leftover theme rows are removed
   * references: every other foreign key to ha_pq.id (found from the database
@@ -16,8 +17,11 @@ one canonical row:
   * delete: the duplicate rows
 
 A group is left alone and listed for review when its rows disagree about which
-question they are: different non-null api_ids, or the same api_id with a
-different tabled_date / uin. Also groups larger than --max-group-size.
+question they are (different non-null api_ids, or the same api_id with a
+different tabled_date / uin), or hold different versions of it: answer text
+beyond a truncated prefix (e.g. holding vs substantive answer), answer date,
+holding / withdrawn flag, question text beyond a prefix. Also groups larger
+than --max-group-size.
 
 Set-based: duplicate keys come from two GROUP BY queries and rows are loaded
 in batches, so any number of groups is fine. No Parliament API calls.
@@ -142,8 +146,28 @@ def find_duplicate_groups(session, HaPQ) -> list[list[int]]:
 
 # ── deciding what to do with one group ────────────────────────────────────────
 
+def _stem(text: str | None) -> str:
+    """Text without trailing whitespace or the "..." of a truncated copy."""
+    t = (text or "").rstrip()
+    while t.endswith("..."):
+        t = t[:-3].rstrip()
+    return t
+
+
+def _texts_compatible(texts) -> bool:
+    """True when the non-empty texts are equal or each is a prefix of the
+    longest one (a truncated copy of the same text)."""
+    stems = sorted({_stem(t) for t in texts if not _empty(t)}, key=len)
+    return all(stems[-1].startswith(t) for t in stems[:-1])
+
+
 def review_reason(rows, max_group: int) -> str:
-    """Why this group must not be merged automatically ("" = safe to merge)."""
+    """Why this group must not be merged automatically ("" = safe to merge).
+
+    Rows must agree on which question they are, and must not hold different
+    versions of its content: answer text (beyond a truncated prefix), answer
+    date, holding/withdrawn flags, question text (beyond a prefix). Picking one
+    version over another is left to a person."""
     api_ids = {r.api_id for r in rows if r.api_id is not None}
     if len(api_ids) > 1:
         return f"different api_ids {sorted(api_ids)} — not the same question"
@@ -151,6 +175,16 @@ def review_reason(rows, max_group: int) -> str:
         return "same api_id but different tabled_date/uin — stored identity disagrees"
     if len(rows) > max_group:
         return f"{len(rows)} rows (more than --max-group-size {max_group})"
+    if not _texts_compatible(r.question_text for r in rows):
+        return "question text differs (not just truncated)"
+    if not _texts_compatible(r.answer_text for r in rows):
+        return "answer text differs (e.g. holding answer vs substantive answer)"
+    if len({r.answer_date for r in rows if r.answer_date is not None}) > 1:
+        return "different answer dates"
+    if len({bool(r.is_holding) for r in rows if not _empty(r.answer_text)}) > 1:
+        return "holding flag differs"
+    if len({bool(r.is_withdrawn) for r in rows}) > 1:
+        return "withdrawn flag differs"
     return ""
 
 
@@ -165,12 +199,21 @@ def _completeness(row) -> int:
 
 
 def choose_keep(rows):
-    return min(rows, key=lambda r: (-_completeness(r), r.id))
+    """Newest data first: latest answer_date, then latest updated_at, then the
+    most complete row, then the earliest id. (Unknown dates sort last.)"""
+    def key(r):
+        ad = r.answer_date.toordinal() if r.answer_date else 0
+        up = r.updated_at.timestamp() if r.updated_at else 0.0
+        return (-ad, -up, -_completeness(r), r.id)
+    return min(rows, key=key)
 
 
 def planned_fills(keep, extras) -> dict:
-    """field -> (source_row_id, value) to copy onto the kept row."""
-    from hansard_archive.pq_ingestor import _looks_truncated
+    """field -> (source_row_id, value) to copy onto the kept row.
+
+    Empty fields are filled, never overwritten. Question and answer text: the
+    longest copy wins (the group passed review_reason, so the others are
+    truncated prefixes of it); the answer's holding flag comes with it."""
     fills = {}
     for name in FILL_FIELDS:
         if not _empty(getattr(keep, name)):
@@ -179,19 +222,18 @@ def planned_fills(keep, extras) -> dict:
             if not _empty(getattr(r, name)):
                 fills[name] = (r.id, getattr(r, name))
                 break
-    if _empty(keep.answer_text) or _looks_truncated(keep.answer_text):
-        full = [r for r in extras if r.answer_text and not _looks_truncated(r.answer_text)]
-        if full:
-            best = max(full, key=lambda r: (len(r.answer_text), -r.id))
-            fills["answer_text"] = (best.id, best.answer_text)
+    for name in ("question_text", "answer_text"):
+        current = getattr(keep, name)
+        longer = [r for r in extras if not _empty(getattr(r, name))
+                  and len(_stem(getattr(r, name))) > len(_stem(current))]
+        if longer:
+            best = max(longer, key=lambda r: (len(getattr(r, name)), -r.id))
+            fills[name] = (best.id, getattr(best, name))
+            if name == "answer_text" and bool(best.is_holding) != bool(keep.is_holding):
+                fills["is_holding"] = (best.id, bool(best.is_holding))
     if not keep.is_answered and any(r.is_answered for r in extras):
         src = min((r for r in extras if r.is_answered), key=lambda r: r.id)
         fills["is_answered"] = (src.id, True)
-    if _empty(keep.question_text):
-        src = next((r for r in sorted(extras, key=lambda x: x.id)
-                    if not _empty(r.question_text)), None)
-        if src is not None:
-            fills["question_text"] = (src.id, src.question_text)
     return fills
 
 
