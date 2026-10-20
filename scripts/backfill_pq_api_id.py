@@ -28,7 +28,9 @@ Usage:
 
 Pacing: at least 0.5s between requests (~1 hour for 7,400 rows). A 429 stops
 the run at once (exit 2) — wait, then resume with --after-id. Exit 1 when some
-rows hit API errors; 0 otherwise.
+rows hit API errors or a write failed (e.g. a unique-index violation — counted
+as failed, the run carries on); 0 otherwise. Every matched row is logged
+(WRITTEN / MATCH id= uin= tabled= api_id=) so a run can be undone from its log.
 
 Railway one-off: SKIP_MIGRATIONS=1 is set by default below. Not during a PQ
 cron window.
@@ -59,12 +61,22 @@ BATCH = 100
 TIMEOUT = 60
 RETRIES = 3                  # attempts per row on 5xx / timeouts
 MAX_ERRORS_IN_A_ROW = 5      # then stop: the API is down
-TEXT_PREFIX = 60             # normalised characters compared
+TEXT_PREFIX = 120            # normalised characters compared, after the "To ask …" opener
+TEXT_MIN = 20                # shorter bodies must match exactly
 LIST_LIMIT = 100             # rows listed per outcome in the summary
 
 
 class RateLimited(Exception):
     pass
+
+
+# The standard opener ("To ask the Secretary of State for Health and Social
+# Care," / "To ask His Majesty's Government") is shared by thousands of
+# questions, so it is removed before comparing.
+_OPENER = re.compile(
+    r"^\s*to ask (?:his|her) majesty'?s government\b[\s,]*"
+    r"|^\s*to ask (?:the |my )?[^,?]{0,160},\s*",
+    re.IGNORECASE)
 
 
 def _norm(text: str | None) -> str:
@@ -73,10 +85,20 @@ def _norm(text: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+def _body(text: str | None) -> str:
+    """Normalised question text without the standard "To ask …" opener."""
+    plain = re.sub(r"<[^>]+>", " ", text or "")
+    return _norm(_OPENER.sub("", plain, count=1))
+
+
 def texts_match(stored: str | None, api: str | None) -> bool:
-    a, b = _norm(stored), _norm(api)
+    """Same question text: the bodies (opener removed) agree on their first
+    TEXT_PREFIX characters — stored text may be the bulk API's cut-off copy."""
+    a, b = _body(stored), _body(api)
     n = min(len(a), len(b), TEXT_PREFIX)
-    return n >= 20 and a[:n] == b[:n]
+    if n == 0 or a[:n] != b[:n]:
+        return False
+    return n >= TEXT_MIN or a == b
 
 
 def fetch(tabled_date, uin: str, delay: float):
@@ -145,7 +167,7 @@ def main(argv=None) -> int:
 
     from flask_app import app
     from sqlalchemy import select, update
-    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.exc import IntegrityError, OperationalError
     from extensions import db
     from hansard_archive.models import HaPQ
 
@@ -227,13 +249,25 @@ def main(argv=None) -> int:
                 note(outcome, row, detail if outcome != "match" else f"api_id={api_id}")
                 if outcome == "match":
                     taken_in_run[api_id] = row.id
+                    written = 0
                     if apply:
-                        res = db.session.execute(
-                            update(HaPQ)
-                            .where(HaPQ.id == row.id, HaPQ.api_id.is_(None))
-                            .values(api_id=api_id, updated_at=datetime.utcnow()),
-                            execution_options={"synchronize_session": False})
-                        tally["written"] += res.rowcount or 0
+                        try:
+                            with db.session.begin_nested():
+                                res = db.session.execute(
+                                    update(HaPQ)
+                                    .where(HaPQ.id == row.id, HaPQ.api_id.is_(None))
+                                    .values(api_id=api_id, updated_at=datetime.utcnow()),
+                                    execution_options={"synchronize_session": False})
+                                written = res.rowcount or 0
+                        except IntegrityError as exc:   # e.g. uq_ha_pq_api_id
+                            tally["failed"] += 1
+                            note("failed", row, f"api_id={api_id} not written: "
+                                                f"{str(exc.orig).splitlines()[0]}")
+                    tally["written"] += written
+                    # One line per match so the run can be undone from the log.
+                    _log.info("%s id=%d uin=%s tabled=%s api_id=%d",
+                              "WRITTEN" if written else ("MATCH" if not apply else "NOT WRITTEN"),
+                              row.id, row.uin, row.tabled_date, api_id)
                 last_id = row.id
 
             if apply:
@@ -257,12 +291,12 @@ def main(argv=None) -> int:
         db.session.rollback()
 
     _log.info("=== SUMMARY (%s) ===", "applied" if apply else "dry run — nothing written")
-    _log.info("checked=%d %smatch=%d written=%d not_found=%d text_mismatch=%d "
+    _log.info("checked=%d %smatch=%d written=%d failed=%d not_found=%d text_mismatch=%d "
               "ambiguous=%d conflict=%d error=%d; rows still without api_id=%d; last_id=%d",
               processed, "" if apply else "(would write) ", tally["match"], tally["written"],
-              tally["not_found"], tally["text_mismatch"], tally["ambiguous"],
+              tally["failed"], tally["not_found"], tally["text_mismatch"], tally["ambiguous"],
               tally["conflict"], tally["error"], remaining, last_id)
-    for outcome in ("not_found", "text_mismatch", "ambiguous", "conflict", "error"):
+    for outcome in ("failed", "not_found", "text_mismatch", "ambiguous", "conflict", "error"):
         rows = listed.get(outcome) or []
         if rows:
             _log.info("%s (first %d):", outcome, len(rows))
@@ -272,7 +306,7 @@ def main(argv=None) -> int:
         _log.error("STOPPED: %s", stop_reason)
         if not stop_reason.startswith("--limit"):
             return 2
-    return 1 if tally["error"] else 0
+    return 1 if (tally["error"] or tally["failed"]) else 0
 
 
 if __name__ == "__main__":

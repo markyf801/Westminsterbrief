@@ -6,8 +6,9 @@ Two-stage process:
   Stage A — populate api_id on all rows that are missing it by re-fetching
              the bulk endpoint for the full archive window. Fast (~30 min).
   Stage B — fetch the individual endpoint (by api_id) for each answered row
-             whose answer_text is exactly 258 chars (the bulk cut-off) or
-             missing — bulk-only ingest passes never write answer text — and
+             whose answer_text is missing (bulk-only ingest passes never write
+             answer text) or looks like the bulk cut-off copy (the ingestor's
+             _looks_truncated rule: 258 chars, or near it ending in "...") — and
              store the full answer as sanitised HTML, like the ingestor.
              Also sets is_holding and is_withdrawn from the individual record.
 
@@ -17,8 +18,8 @@ Usage:
   python scripts/backfill_pq_answers.py --stage b # answer backfill only
   python scripts/backfill_pq_answers.py --test    # Stage B on first 100 rows
 
-The script is naturally resumable: Stage B's query targets rows WHERE
-length(answer_text) = 258 or answer_text is missing. Once a row is updated to
+The script is naturally resumable: Stage B's query targets rows whose answer
+is missing or looks truncated. Once a row is updated to
 full text it falls out of the query automatically, so restarting after
 interruption is safe.
 
@@ -40,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
 from dotenv import load_dotenv
-from sqlalchemy import func, or_
+from sqlalchemy import func
 
 load_dotenv()
 
@@ -63,8 +64,9 @@ _BACKFILL_DELAY = 0.5
 _BULK_DELAY = 0.3         # bulk endpoint pagination — same as normal ingest
 
 
-def _get_full_answer(api_id: int) -> tuple[str | None, bool, bool]:
-    """Fetch individual endpoint. Returns (full_answer_html, is_holding, is_withdrawn).
+def _get_full_answer(api_id: int) -> tuple[str | None, bool, bool, date | None]:
+    """Fetch individual endpoint.
+    Returns (full_answer_html, is_holding, is_withdrawn, answer_date).
 
     The answer is sanitised HTML, the same form the ingestor stores."""
     for attempt in range(3):
@@ -77,16 +79,17 @@ def _get_full_answer(api_id: int) -> tuple[str | None, bool, bool]:
                 continue
             if resp.status_code != 200:
                 _log.warning("Individual fetch id=%s returned %s", api_id, resp.status_code)
-                return None, False, False
+                return None, False, False, None
             v = resp.json().get("value") or {}
             from hansard_archive.html_sanitizer import sanitize_answer_html
             text = sanitize_answer_html(v.get("answerText") or "")
-            return text, bool(v.get("answerIsHolding")), bool(v.get("isWithdrawn"))
+            return (text, bool(v.get("answerIsHolding")), bool(v.get("isWithdrawn")),
+                    _parse_tabled(v.get("dateAnswered")))
         except Exception as exc:
             _log.warning("Individual fetch id=%s error (attempt %d): %s", api_id, attempt + 1, exc)
             if attempt < 2:
                 time.sleep(2 ** attempt)
-    return None, False, False
+    return None, False, False, None
 
 
 # ---------------------------------------------------------------------------
@@ -191,12 +194,11 @@ def stage_b(db, HaPQ, test_mode: bool = False):
     if test_mode:
         _log.info("TEST MODE: processing first 100 rows only.")
 
+    from hansard_archive.pq_ingestor import answer_needs_fetch_sql
     _BASE_FILTER = (
         HaPQ.is_answered.is_(True),
         HaPQ.api_id.isnot(None),
-        or_(func.length(HaPQ.answer_text) == 258,
-            HaPQ.answer_text.is_(None),
-            HaPQ.answer_text == ""),
+        answer_needs_fetch_sql(HaPQ.answer_text),   # missing, or the ingestor's truncation rule
     )
 
     total = db.session.query(func.count(HaPQ.id)).filter(*_BASE_FILTER).scalar()
@@ -239,12 +241,14 @@ def stage_b(db, HaPQ, test_mode: bool = False):
             current_len = len(row.answer_text or "")
             last_id = row.id
 
-            full_text, is_holding, is_withdrawn = _get_full_answer(api_id)
+            full_text, is_holding, is_withdrawn, answer_date = _get_full_answer(api_id)
 
             if full_text and len(full_text) > current_len:
                 row.answer_text = full_text
                 row.is_holding = is_holding
                 row.is_withdrawn = is_withdrawn
+                if answer_date:
+                    row.answer_date = answer_date   # date and text change together
                 row.updated_at = datetime.utcnow()
                 updated += 1
             elif full_text:

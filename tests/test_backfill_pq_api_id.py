@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parents[1]
-TEXT = "To ask the Secretary of State for Health and Social Care, whether he plans to review."
+TEXT = ("To ask the Secretary of State for Health and Social Care, whether he plans to review "
+        "eligibility for NHS COVID-19 vaccination for people with severe heart failure.")
 
 
 @pytest.fixture
@@ -200,6 +201,40 @@ def test_uin_is_url_quoted(env):
 def test_texts_match_ignores_markup_and_punctuation(env):
     mod, _db, _api = env
     assert mod.texts_match(TEXT, "<p>" + TEXT.upper() + "</p>")
-    assert mod.texts_match(TEXT[:70] + "...", TEXT)           # stored bulk-truncated text
+    assert mod.texts_match(TEXT[:120] + "...", TEXT)          # stored bulk-truncated text
     assert not mod.texts_match(TEXT, "To ask the Chancellor of the Exchequer, what steps.")
     assert not mod.texts_match("", TEXT)
+    # Same department opener, different question: the opener alone never matches
+    assert not mod.texts_match(
+        TEXT, "To ask the Secretary of State for Health and Social Care, what steps he is "
+              "taking to reduce waiting times for hospice care in the North East.")
+    lords = "To ask His Majesty's Government what steps they are taking to improve rail punctuality."
+    assert mod.texts_match(lords, lords.upper())
+    assert not mod.texts_match(lords, "To ask His Majesty's Government what plans they have "
+                                      "for the future of the BBC charter.")
+
+
+def test_every_match_is_logged_for_undo(env, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="pq-api-id")
+    mod, db, api = env
+    rid = _pq(db)
+    api["records"]["2026-06-04/6978"] = _record(1912500)
+    _run(mod, db, ["--apply"])
+    assert f"WRITTEN id={rid} uin=6978 tabled=2026-06-04 api_id=1912500" in caplog.text
+
+
+def test_unique_violation_counted_and_run_continues(env):
+    from sqlalchemy import text
+    mod, db, api = env
+    a = _pq(db, uin="1")
+    b = _pq(db, uin="2")
+    api["records"]["2026-06-04/1"] = _record(2001, uin="1")
+    api["records"]["2026-06-04/2"] = _record(2002, uin="2")
+    # Simulate a row that took api_id 2001 after the script checked (race).
+    db.session.execute(text(
+        "CREATE TRIGGER grab BEFORE UPDATE OF api_id ON ha_pq WHEN NEW.api_id = 2001 "
+        "BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: ha_pq.api_id'); END"))
+    db.session.commit()
+    assert _run(mod, db, ["--apply"]) == 1
+    assert _row(a).api_id is None and _row(b).api_id == 2002

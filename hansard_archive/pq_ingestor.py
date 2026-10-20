@@ -50,6 +50,8 @@ _INTER_REQUEST_DELAY = 0.3   # seconds between paginated requests
 _PAGE_RETRIES = 3            # retries on transient errors before skipping a page
 
 _BULK_ANSWER_CAP = 258       # bulk endpoint cuts answerText at this length
+# "Looks truncated" window: near the cap and ending in the API's "...".
+_TRUNC_MIN, _TRUNC_MAX = _BULK_ANSWER_CAP - 10, _BULK_ANSWER_CAP + 40
 
 
 def _env_int(name: str, default: int) -> int:
@@ -386,8 +388,19 @@ def _looks_truncated(answer_text: str | None) -> bool:
     n = len(answer_text)
     if n == _BULK_ANSWER_CAP:
         return True
-    return (_BULK_ANSWER_CAP - 10 <= n <= _BULK_ANSWER_CAP + 40
-            and answer_text.rstrip().endswith("..."))
+    return _TRUNC_MIN <= n <= _TRUNC_MAX and answer_text.rstrip().endswith("...")
+
+
+def answer_needs_fetch_sql(col):
+    """SQL form of "missing or _looks_truncated" for an answer_text column
+    (scripts and checks use the same rule as the ingestor)."""
+    from sqlalchemy import and_, or_
+    length = func.length(col)
+    return or_(
+        col.is_(None), col == "",
+        length == _BULK_ANSWER_CAP,
+        and_(length.between(_TRUNC_MIN, _TRUNC_MAX), func.rtrim(col).like("%...")),
+    )
 
 
 def ingest_pq_date_range(
