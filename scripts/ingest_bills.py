@@ -31,7 +31,8 @@ from hansard_archive.models import HaBill, HaBillSponsor, HaBillStage
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://bills-api.parliament.uk/api/v1"
-SESSIONS = [38, 39]
+SESSIONS = [38, 39, 40]          # last entry = current session
+CURRENT_SESSION_ID = SESSIONS[-1]
 REQUEST_TIMEOUT = 30
 INTER_REQUEST_DELAY = 0.15   # polite pacing between calls
 MAX_RETRIES = 3
@@ -54,6 +55,7 @@ SESSION_LABELS = {
     37: "2023-24",
     38: "2024-25",
     39: "2025-26",
+    40: "2026-27",
 }
 
 
@@ -184,7 +186,8 @@ def _upsert_bill(detail: dict, stages: list[dict]) -> HaBill | None:
         "is_act":               bool(detail.get("isAct", False)),
         "is_defeated":          bool(detail.get("isDefeated", False)),
         "bill_withdrawn_date":  _parse_date(detail.get("billWithdrawn")),
-        "is_carried_over":      intro_session_id == 38 and 39 in (detail.get("includedSessionIds") or []),
+        "is_carried_over":      (intro_session_id != CURRENT_SESSION_ID
+                                 and CURRENT_SESSION_ID in (detail.get("includedSessionIds") or [])),
         "current_stage":        current_stage_obj.get("description"),
         "current_house":   detail.get("currentHouse") or current_stage_obj.get("house"),
         "introduced_date": introduced_date,
@@ -367,6 +370,9 @@ def ingest_all(
             )
             last_progress_time = now
 
+    if not dry_run and not single_bill_id:
+        _populate_missing_slugs()
+
     # ── End-of-run summary ─────────────────────────────────────────────────
     elapsed = time.time() - start_time
     summary = {
@@ -394,6 +400,26 @@ def ingest_all(
     return summary
 
 
+def _populate_missing_slugs() -> None:
+    """Give newly ingested bills a URL slug (mirrors the web app's startup step,
+    which is skipped when SKIP_MIGRATIONS=1)."""
+    from hansard_archive.slugs import slugify_bill
+    missing = HaBill.query.filter(HaBill.slug.is_(None)).all()
+    if not missing:
+        return
+    used = {r[0] for r in db.session.query(HaBill.slug).filter(HaBill.slug.isnot(None)).all()}
+    for bill in missing:
+        base = slugify_bill(bill.title)
+        candidate, n = base, 2
+        while candidate in used:
+            candidate = f"{base}-{n}"
+            n += 1
+        bill.slug = candidate
+        used.add(candidate)
+    db.session.commit()
+    print(f"[ingest] Slugs populated for {len(missing)} new bill(s)", flush=True)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -412,11 +438,13 @@ def main():
 
     from flask_app import app
     with app.app_context():
-        ingest_all(
+        summary = ingest_all(
             limit=args.limit,
             dry_run=args.dry_run,
             single_bill_id=args.bill_id,
         )
+    if summary["total"] and summary["failed"] > summary["total"] // 2:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
