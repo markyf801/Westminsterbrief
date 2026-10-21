@@ -15,15 +15,22 @@ checks for tables that are still being built.
 Tables are read with SQLAlchemy reflection rather than the ORM models, so this
 module keeps working while other modules' models change.
 
-Sitting-day rule (no Parliament calendar in the repo)
------------------------------------------------------
-"Gap" = the number of weekdays (Mon-Fri) strictly between the newest row's
-date and today, ignoring any day inside ``RECESS_PERIODS``. A gap above the
-threshold (default 4) is a WARN. Example: last session Thursday, report runs
-the following Friday -> Fri, Mon, Tue, Wed, Thu = 5 -> WARN. Today is never
-counted (the report runs before the day's sittings). Without recess dates the
-check will WARN during long recesses; add the dates to ``RECESS_PERIODS`` from
-the parliament.uk recess-dates page to silence that.
+Sitting-day rule ("no new data" checks for Hansard and written questions)
+-------------------------------------------------------------------------
+Sitting days come from Parliament's public What's On API, once per run, per
+House: ``GET https://whatson-api.parliament.uk/calendar/proceduraldates/
+{Commons|Lords}/sittingdates.json?startDate=...&endDate=...`` (read-only, no
+key). Data for a sitting day is *overdue* once the following working day
+(Mon-Fri) has fully passed: Hansard is published the same or next day, and
+questions tabled on a sitting day appear the next working day. One or more
+overdue sitting days for a House is a WARN. Example: Commons sat Thursday;
+Thursday's data is due by the end of Friday, so on Monday 07:30 it must be in.
+Recess days simply aren't sitting days, so recesses never warn.
+
+If the calendar can't be fetched, the checks fall back to a weekday rule (WARN
+when more than ``max_weekday_gap`` weekdays pass without new data) and say so
+in the report line. ``RECESS_PERIODS`` is a manual override: days in it are
+never expected to have data, under either rule.
 
 Cron "active hours"
 -------------------
@@ -49,10 +56,12 @@ SKIPPED = "SKIPPED"
 PROBLEM_STATUSES = (WARN, FAIL)
 _STATUS_ORDER = {FAIL: 0, WARN: 1, SKIPPED: 2, OK: 3}
 
-# Inclusive (start, end) ISO dates when neither House sits. Owner-maintained:
-# copy from https://www.parliament.uk/about/faqs/house-of-commons-faqs/business-faq-page/recess-dates/
-# Days in these ranges don't count towards "weekdays without new data".
+# Manual override: inclusive (start, end) ISO dates on which no new Hansard/PQ
+# data is expected, whatever the calendar says. Normally empty: the sitting
+# calendar is fetched from Parliament's What's On API each run.
 RECESS_PERIODS: list[tuple[str, str]] = []
+
+CALENDAR_URL = "https://whatson-api.parliament.uk/calendar/proceduraldates/{house}/sittingdates.json"
 
 _DAYS = {
     "daily": {0, 1, 2, 3, 4, 5, 6},
@@ -67,8 +76,13 @@ _DAYS = {
 # (see module docstring); "daily" means plain clock hours. A fail value of None
 # means the check can WARN but never FAIL.
 CONFIG: dict = {
+    "calendar": {
+        "lookback_days": 60,              # sitting days fetched for [today - N, today]
+        "timeout_seconds": 15,
+    },
     "archive": {
-        "max_weekday_gap": 4,
+        "overdue_sitting_days_warn": 1,   # calendar rule (see module docstring)
+        "max_weekday_gap": 4,             # fallback rule when the calendar is unavailable
         "houses": ["Commons", "Lords"],
     },
     "archive_crons": {
@@ -78,7 +92,8 @@ CONFIG: dict = {
         "daytime-fri": {"days": "fri", "warn_hours": 26, "fail_hours": None},
     },
     "pq": {
-        "max_weekday_gap": 4,             # newest tabled_date per chamber
+        "overdue_sitting_days_warn": 1,   # newest tabled_date per chamber, calendar rule
+        "max_weekday_gap": 4,             # fallback rule
         "chambers": ["Commons", "Lords"],
         "write_warn_hours": 26,           # newest updated_at/ingested_at, Mon-Fri hours
         "write_fail_hours": 50,
@@ -105,6 +120,8 @@ CONFIG: dict = {
     "member_profile": {"warn_hours": 8 * 24, "fail_hours": None},
     "member_biography": {"warn_hours": 35 * 24, "fail_hours": None},
     "cached_member": {"warn_hours": 8 * 24, "fail_hours": 15 * 24, "min_fresh_rows": 400},
+    # Neither stats job is scheduled on Railway yet (confirmed 2026-10-20: no service runs
+    # `flask stats refresh-all` / `flask upcoming refresh-all`), so these WARN until it is.
     "headline_stats": {"warn_hours": 8 * 24, "fail_hours": None},
     "upcoming_releases": {"warn_hours": 72, "fail_hours": None},
     "rediscovery": {"warn_hours": 48, "fail_hours": 96},
@@ -136,8 +153,13 @@ class HealthContext:
     """Shared state for one report run: DB connection, clock, config."""
 
     def __init__(self, conn, now: datetime, config: dict | None = None,
-                 recess_periods: list[tuple[str, str]] | None = None):
+                 recess_periods: list[tuple[str, str]] | None = None,
+                 sitting_days: dict[str, set[date]] | None = None, calendar_note: str = ""):
+        """sitting_days: {"Commons": {...}, "Lords": {...}}, or None when the calendar
+        couldn't be fetched (the checks then use the weekday fallback rule)."""
         self.conn = conn
+        self.sitting_days = sitting_days
+        self.calendar_note = calendar_note
         self.now = now
         self.today = now.date()
         self.config = config or CONFIG
@@ -159,6 +181,44 @@ class HealthContext:
 
     def in_recess(self, d: date) -> bool:
         return any(a <= d <= b for a, b in self.recess)
+
+
+# ---------------------------------------------------------------------------
+# Parliament sitting calendar
+# ---------------------------------------------------------------------------
+
+def fetch_sitting_days(http_get: Callable, today: date, houses=("Commons", "Lords"),
+                       config: dict | None = None) -> tuple[dict[str, set[date]] | None, str]:
+    """Sitting days per House from the What's On API, or (None, reason) on failure."""
+    cfg = (config or CONFIG)["calendar"]
+    start = today - timedelta(days=cfg["lookback_days"])
+    result: dict[str, set[date]] = {}
+    try:
+        for house in houses:
+            resp = http_get(CALENDAR_URL.format(house=house),
+                            params={"startDate": start.isoformat(), "endDate": today.isoformat()},
+                            timeout=cfg["timeout_seconds"])
+            if resp.status_code != 200:
+                return None, f"calendar HTTP {resp.status_code} for {house}"
+            result[house] = {date.fromisoformat(row["Date"][:10]) for row in resp.json()["SittingDates"]}
+    except Exception as exc:  # noqa: BLE001
+        return None, f"calendar unavailable ({type(exc).__name__})"
+    if not any(result.values()):
+        return None, f"calendar returned no sitting days in the last {cfg['lookback_days']} days"
+    return result, ""
+
+
+def next_working_day(d: date) -> date:
+    d += timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def overdue_sitting_days(ctx: HealthContext, house: str, latest: date) -> list[date]:
+    """Sitting days after `latest` whose publication window (next working day) has passed."""
+    return sorted(d for d in ctx.sitting_days.get(house, set())
+                  if d > latest and next_working_day(d) < ctx.today and not ctx.in_recess(d))
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +323,7 @@ def _skipped_table(name: str, table: str) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 def _gap_check(ctx: HealthContext, name: str, table: str, date_col: str,
-               group_col: str, groups: list[str], max_gap: int) -> CheckResult:
+               group_col: str, groups: list[str], cfg: dict) -> CheckResult:
     if not ctx.has_table(table):
         return _skipped_table(name, table)
     t = ctx.table(table)
@@ -279,23 +339,32 @@ def _gap_check(ctx: HealthContext, name: str, table: str, date_col: str,
             parts.append(f"{g}: none")
             worst = min(worst, WARN, key=_STATUS_ORDER.get)
             continue
-        gap = weekday_gap(ctx, latest)
         newest = latest if newest is None or latest > newest else newest
         flag = ""
-        if gap > max_gap:
-            worst = min(worst, WARN, key=_STATUS_ORDER.get)
-            flag = f" ({gap} weekdays without new data)"
+        if ctx.sitting_days is not None:
+            overdue = overdue_sitting_days(ctx, g, latest)
+            if len(overdue) >= cfg["overdue_sitting_days_warn"]:
+                worst = min(worst, WARN, key=_STATUS_ORDER.get)
+                shown = ", ".join(d.isoformat() for d in overdue[:3]) + (" ..." if len(overdue) > 3 else "")
+                flag = f" ({len(overdue)} sitting day(s) missing: {shown})"
+        else:
+            gap = weekday_gap(ctx, latest)
+            if gap > cfg["max_weekday_gap"]:
+                worst = min(worst, WARN, key=_STATUS_ORDER.get)
+                flag = f" ({gap} weekdays without new data)"
         parts.append(f"{g}: {latest.isoformat()}{flag}")
     detail = "; ".join(parts)
-    if worst != OK:
-        detail += f" - limit {max_gap} weekdays; expected during recess (see RECESS_PERIODS)"
+    if ctx.sitting_days is not None:
+        detail += " [sitting calendar]"
+    else:
+        detail += f" [{ctx.calendar_note or 'calendar not loaded'}: weekday rule, limit {cfg['max_weekday_gap']}]"
     return CheckResult(name, worst, detail, newest)
 
 
 def check_archive_sessions(ctx: HealthContext) -> CheckResult:
     cfg = ctx.config["archive"]
     return _gap_check(ctx, "Hansard archive: newest session", "ha_session", "date",
-                      "house", cfg["houses"], cfg["max_weekday_gap"])
+                      "house", cfg["houses"], cfg)
 
 
 def _cron_service_check(ctx: HealthContext, label: str, service: str, rule: dict) -> CheckResult:
@@ -342,7 +411,7 @@ def check_archive_crons(ctx: HealthContext) -> list[CheckResult]:
 def check_pq_tabled(ctx: HealthContext) -> CheckResult:
     cfg = ctx.config["pq"]
     return _gap_check(ctx, "Written questions: newest tabled", "ha_pq", "tabled_date",
-                      "chamber", cfg["chambers"], cfg["max_weekday_gap"])
+                      "chamber", cfg["chambers"], cfg)
 
 
 def check_pq_writes(ctx: HealthContext) -> CheckResult:
@@ -405,6 +474,9 @@ def check_pq_answers(ctx: HealthContext) -> CheckResult:
     latest = _coerce(ctx.scalar(sa.select(sa.func.max(t.c.answer_date)).where(t.c.is_answered.is_(True))))
     if count:
         return CheckResult(name, OK, f"{count} answered since {since.isoformat()}", latest)
+    if ctx.sitting_days is not None and not any(
+            since <= d < ctx.today for days in ctx.sitting_days.values() for d in days):
+        return CheckResult(name, OK, f"no answers since {since.isoformat()}; neither House sat (recess)", latest)
     return CheckResult(name, WARN, f"no answers dated since {since.isoformat()} "
                                    f"(last {n} sitting weekdays); expected only in recess", latest)
 

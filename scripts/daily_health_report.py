@@ -17,6 +17,10 @@ Usage:
   python scripts/daily_health_report.py --dry-run     # print only, never email
   python scripts/daily_health_report.py --always-send
   python scripts/daily_health_report.py --skip-web    # don't GET the live site
+  python scripts/daily_health_report.py --no-calendar # skip Parliament's sitting calendar
+
+Sitting days come from Parliament's What's On API (read-only, no key); see
+hansard_archive/health_checks.py for the rule and the fallback.
 
 Railway (see docs/ops/railway-services.md):
   service health-report, Dockerfile.cron, SKIP_MIGRATIONS=1,
@@ -70,12 +74,24 @@ def make_engine(url: str | None = None) -> sa.Engine:
 
 
 def collect(engine: sa.Engine, now: datetime, *, env: dict | None = None, skip_web: bool = False,
-            http_get=None, s3_factory=None) -> list[hc.CheckResult]:
+            no_calendar: bool = False, http_get=None, s3_factory=None) -> list[hc.CheckResult]:
     env = os.environ if env is None else env
+    if http_get is None:
+        import requests
+        http_get = requests.get
+    # Parliament sitting calendar: fetched once per run; on failure the
+    # "no new data" checks fall back to the weekday rule and say so.
+    if no_calendar:
+        sitting_days, note = None, "--no-calendar"
+    else:
+        sitting_days, note = hc.fetch_sitting_days(http_get, now.date())
+    if note:
+        _log(f"Sitting calendar: {note}; using weekday fallback rule")
     results: list[hc.CheckResult] = []
     try:
         with engine.connect() as conn:
-            results.extend(hc.run_db_checks(hc.HealthContext(conn, now)))
+            ctx = hc.HealthContext(conn, now, sitting_days=sitting_days, calendar_note=note)
+            results.extend(hc.run_db_checks(ctx))
     except Exception as exc:  # noqa: BLE001 — DB unreachable is a finding, not a crash
         results.append(hc.CheckResult("Database connection", hc.FAIL,
                                       f"{type(exc).__name__}: {str(exc)[:200]}"))
@@ -83,9 +99,6 @@ def collect(engine: sa.Engine, now: datetime, *, env: dict | None = None, skip_w
     if skip_web:
         results.append(hc.CheckResult("Web", hc.SKIPPED, "--skip-web"))
     else:
-        if http_get is None:
-            import requests
-            http_get = requests.get
         config = dict(hc.CONFIG)
         config["web"] = {**hc.CONFIG["web"], "base_url": env.get("HEALTH_BASE_URL") or hc.CONFIG["web"]["base_url"]}
         results.extend(hc.check_web(http_get, config))
@@ -98,6 +111,8 @@ def main(argv: list[str] | None = None, *, engine: sa.Engine | None = None, now:
     parser.add_argument("--dry-run", action="store_true", help="Print the report; never email")
     parser.add_argument("--always-send", action="store_true", help="Email even when all checks are OK")
     parser.add_argument("--skip-web", action="store_true", help="Don't GET the live site")
+    parser.add_argument("--no-calendar", action="store_true",
+                        help="Don't fetch Parliament's sitting calendar (use the weekday rule)")
     args = parser.parse_args(argv)
 
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
@@ -106,7 +121,7 @@ def main(argv: list[str] | None = None, *, engine: sa.Engine | None = None, now:
         return 1
     try:
         engine = engine or make_engine()
-        results = collect(engine, now, env=env, skip_web=args.skip_web,
+        results = collect(engine, now, env=env, skip_web=args.skip_web, no_calendar=args.no_calendar,
                           http_get=http_get, s3_factory=s3_factory)
         subject = hc.subject_for(results)
         text_body = hc.render_text(results, now)
