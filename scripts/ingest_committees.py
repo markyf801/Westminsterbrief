@@ -18,8 +18,9 @@ How a run works (all GETs, https://committees-api.parliament.uk/api):
    /CommitteeBusiness?CommitteeId={id}&Status=Open   -> upsert open inquiries + links
    /Publications?CommitteeId={id}&PublicationTypeIds=1,12,2  -> 10 latest reports /
                                            special reports / government responses
-3. /CommitteeBusiness/{id} (scope text) only for inquiries that are new, changed
-   since the last run, or not detail-fetched for 14 days.
+3. /CommitteeBusiness/{id} (scope text) only for inquiries and open calls for
+   evidence that are new, changed since the last run, or not detail-fetched for
+   30 days (other business is shown by title only).
 4. Inquiries we hold as Open that no committee lists any more are marked Closed
    (only when every committee they belong to was fetched completely this run).
 
@@ -28,10 +29,14 @@ Idempotent upserts keyed by Parliament ids: re-running is safe. Calls are paced
 fatal error. Logs a row in ha_cron_run (service_name committees-cron).
 
 Railway (proposed): cron service `committees-cron`, schedule `30 1 * * *`
-(daily 01:30 UTC; a full run takes ~15 min, well clear of the 02:00 Sunday
-member-cache refresh and the 03:00+ windows), start command
+(daily 01:30 UTC, clear of the 03:00+ windows), start command
 `python scripts/ingest_committees.py`, SKIP_MIGRATIONS=1. Run
 migrations/committees_appgs_tables.py --execute first.
+
+Timing: the API is slow (CommitteeBusiness calls take 3-10s), so the FIRST run
+fetches ~300 inquiries' scope text and takes ~1-1.5 hours; run it once as a
+one-shot backfill before enabling the cron. Later daily runs take roughly
+40-60 minutes (147 committees x 3 list calls, plus new/changed inquiries).
 """
 
 from __future__ import annotations
@@ -61,11 +66,12 @@ from hansard_archive.slugs import slugify_edm  # noqa: E402
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://committees-api.parliament.uk/api"
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 60                   # list calls for big committees can take >30s
 INTER_REQUEST_DELAY = 0.25
 MAX_RETRIES = 3
 PAGE_SIZE = 100
-DETAIL_REFRESH_DAYS = 14
+DETAIL_REFRESH_DAYS = 30
+OPEN_ENDED_MAX_DAYS = 365              # a call with no closing date older than this is treated as stale
 RECENT_PUBLICATIONS = 10
 PUBLICATION_TYPE_IDS = [1, 12, 2]      # Report, Special Report, Government Response
 EVIDENCE_TYPES = ("WrittenEvidence", "OralEvidence")
@@ -223,20 +229,34 @@ def replace_memberships(committee_id: int, items: list[dict]) -> int:
 
 
 def evidence_window(item: dict, now: datetime) -> tuple[bool, datetime | None, list[dict]]:
-    """(open?, deadline, open periods) from a CommitteeBusiness payload's openSubmissionPeriods."""
+    """
+    (open?, deadline, open periods) from a CommitteeBusiness payload's
+    openSubmissionPeriods. A period with no end date counts as open only if it
+    started within OPEN_ENDED_MAX_DAYS (older ones are usually stale: the API
+    still lists 2024 periods that nobody closed). Periods are returned with the
+    one that sets the deadline first, so pages link to the right submission form.
+    """
     periods = [p for p in item.get("openSubmissionPeriods") or []
                if isinstance(p, dict) and p.get("submissionType") in EVIDENCE_TYPES]
+
+    def state(p):
+        start, end = _dt(p.get("startDate")), _dt(p.get("endDate"))
+        if end is not None:
+            return (0, end) if end >= now else (3, end)
+        recent = start is None or start >= now - timedelta(days=OPEN_ENDED_MAX_DAYS)
+        return (1, start or now) if recent else (2, start)
+
+    periods.sort(key=lambda p: (state(p)[0], state(p)[1]))
     summary = [{"id": p.get("id"), "type": p.get("submissionType"),
                 "start": p.get("startDate"), "end": p.get("endDate")} for p in periods]
     if not periods:
         return False, None, summary
-    ends = [_dt(p.get("endDate")) for p in periods]
-    future = [e for e in ends if e and e >= now]
-    if future:
-        return True, min(future), summary
-    if any(e is None for e in ends):
+    kind, when = state(periods[0])
+    if kind == 0:
+        return True, when, summary
+    if kind == 1:
         return True, None, summary
-    return False, max(e for e in ends if e), summary
+    return False, None, summary
 
 
 def upsert_inquiry(item: dict, detail: dict | None, now: datetime) -> tuple[CommitteeInquiry, bool]:
@@ -272,6 +292,13 @@ def upsert_inquiry(item: dict, detail: dict | None, now: datetime) -> tuple[Comm
 
 
 def needs_detail(inq: CommitteeInquiry | None, item: dict, now: datetime) -> bool:
+    """
+    Scope text is fetched only for inquiries and anything with an open call for
+    evidence. Other business (bill / SI scrutiny, one-off sessions — about 70% of
+    open items, ~10s per call) is shown by title only.
+    """
+    if not ((item.get("type") or {}).get("isInquiry") or evidence_window(item, now)[0]):
+        return False
     if inq is None or inq.detail_fetched_at is None:
         return True
     if inq.list_hash != _hash(item):
