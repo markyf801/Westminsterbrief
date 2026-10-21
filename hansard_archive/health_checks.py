@@ -77,7 +77,7 @@ _DAYS = {
 # means the check can WARN but never FAIL.
 CONFIG: dict = {
     "calendar": {
-        "lookback_days": 60,              # sitting days fetched for [today - N, today]
+        "lookback_days": 90,              # sitting days fetched for [today - N, today]; > longest recess
         "timeout_seconds": 15,
     },
     "archive": {
@@ -102,6 +102,8 @@ CONFIG: dict = {
         "missing_heading_min_count": 10,
         "answers_window_weekdays": 3,     # answered in the last N sitting weekdays
     },
+    # Unique indexes created by hand (docs/plans/pq-identity-phase3-sql.md step 4).
+    "pq_integrity": {"indexes": ["uq_ha_pq_api_id", "uq_ha_pq_date_uin"]},
     "pq_crons": {
         "known": {
             "pq-morning": {"days": "mon-fri", "warn_hours": 26, "fail_hours": 50},
@@ -115,15 +117,20 @@ CONFIG: dict = {
     },
     "cron_recent_failures_hours": 24,     # failed runs in this window are listed in the detail
     "cron_stuck_hours": 3,                # latest run still "running" after this -> WARN
-    "bills": {"warn_hours": 48, "fail_hours": 96},
-    "edms": {"warn_hours": 48, "fail_hours": 96},
+    "bills": {"warn_hours": 48, "fail_hours": 96},              # bills-cron daily 06:30
+    "edms": {"warn_hours": 48, "fail_hours": 96},               # edm-cron daily 04:30, ha_edm.last_refreshed
+    "edm_cron": {"service": "edm-cron", "warn_hours": 26, "fail_hours": 50},
+    # member-profile-refresh weekly (Sun 03:00): member_profile.summary_refreshed_at
     "member_profile": {"warn_hours": 8 * 24, "fail_hours": None},
+    # member-bio-refresh monthly (2nd, 04:00). Bios are only regenerated when their inputs
+    # change, so the run itself is dated by its member_name_audit row (same job).
     "member_biography": {"warn_hours": 35 * 24, "fail_hours": None},
     "cached_member": {"warn_hours": 8 * 24, "fail_hours": 15 * 24, "min_fresh_rows": 400},
-    # Neither stats job is scheduled on Railway yet (confirmed 2026-10-20: no service runs
-    # `flask stats refresh-all` / `flask upcoming refresh-all`), so these WARN until it is.
-    "headline_stats": {"warn_hours": 8 * 24, "fail_hours": None},
-    "upcoming_releases": {"warn_hours": 72, "fail_hours": None},
+    # The stats-refresh job (`flask stats refresh-all`) is intentionally NOT scheduled yet,
+    # so this check reports SKIPPED with its age instead of a daily WARN. Set
+    # "scheduled": True once the Railway service exists.
+    "headline_stats": {"scheduled": False, "warn_hours": 8 * 24, "fail_hours": None},
+    "upcoming_releases": {"warn_hours": 24, "fail_hours": 72},  # upcoming-refresh daily 05:45
     "rediscovery": {"warn_hours": 48, "fail_hours": 96},
     "committee_evidence": {"service": "committee-evidence-cron", "warn_hours": 8 * 24, "fail_hours": None},
     "backup_record": {"service": "backup-r2", "warn_hours": 26, "fail_hours": 50},
@@ -481,6 +488,67 @@ def check_pq_answers(ctx: HealthContext) -> CheckResult:
                                    f"(last {n} sitting weekdays); expected only in recess", latest)
 
 
+def _pq_index_state(ctx: HealthContext, names: list[str]) -> dict[str, str]:
+    """{index name: "ok" | "INVALID" | "not unique" | "missing"} for ha_pq."""
+    dialect = ctx.conn.dialect.name
+    if dialect == "postgresql":
+        rows = ctx.conn.execute(sa.text(
+            "SELECT c.relname, i.indisvalid, i.indisunique FROM pg_index i "
+            "JOIN pg_class c ON c.oid = i.indexrelid "
+            "WHERE i.indrelid = 'ha_pq'::regclass AND c.relname = ANY(:names)"),
+            {"names": names}).all()
+        found = {r[0]: "INVALID" if not r[1] else "ok" if r[2] else "not unique" for r in rows}
+    elif dialect == "sqlite":
+        rows = ctx.conn.execute(sa.text(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ha_pq'")).all()
+        found = {r[0]: "ok" if "UNIQUE" in (r[1] or "").upper() else "not unique"
+                 for r in rows if r[0] in names}
+    else:
+        found = {}
+    return {n: found.get(n, "missing") for n in names}
+
+
+def check_pq_integrity(ctx: HealthContext) -> CheckResult:
+    """No question stored twice (INC-008), and the unique indexes that prevent it are in place."""
+    name = "Written questions: duplicates + unique indexes"
+    if not ctx.has_table("ha_pq"):
+        return _skipped_table(name, "ha_pq")
+    t = ctx.table("ha_pq")
+    dup_api = ctx.scalar(sa.select(sa.func.count()).select_from(
+        sa.select(t.c.api_id).where(t.c.api_id.isnot(None)).group_by(t.c.api_id)
+        .having(sa.func.count() > 1).subquery())) or 0
+    dup_date_uin = ctx.scalar(sa.select(sa.func.count()).select_from(
+        sa.select(t.c.tabled_date).group_by(t.c.tabled_date, sa.func.lower(t.c.uin))
+        .having(sa.func.count() > 1).subquery())) or 0
+    indexes = _pq_index_state(ctx, ctx.config["pq_integrity"]["indexes"])
+    status = OK
+    if any(v != "ok" for v in indexes.values()):
+        status = WARN
+    if dup_api or dup_date_uin:
+        status = FAIL
+    idx = ", ".join(f"{k} {v}" for k, v in indexes.items())
+    return CheckResult(name, status, f"duplicate groups: api_id {dup_api}, (tabled_date, uin) {dup_date_uin}; "
+                                     f"indexes: {idx}")
+
+
+def check_pq_headings_total(ctx: HealthContext) -> CheckResult:
+    """Report only: every row without a heading. Older ones should fall as the heading backfill runs."""
+    name = "Written questions: missing headings (all)"
+    if not ctx.has_table("ha_pq"):
+        return _skipped_table(name, "ha_pq")
+    t = ctx.table("ha_pq")
+    cutoff = ctx.today - timedelta(days=ctx.config["pq"]["heading_window_days"])
+    no_heading = sa.or_(t.c.heading.is_(None), t.c.heading == "")
+    total, missing, old = ctx.conn.execute(sa.select(
+        sa.func.count(),
+        sa.func.sum(sa.case((no_heading, 1), else_=0)),
+        sa.func.sum(sa.case((sa.and_(no_heading, t.c.tabled_date < cutoff), 1), else_=0)),
+    )).one()
+    return CheckResult(name, OK, f"{missing or 0:,} of {total or 0:,} rows have no heading, "
+                                 f"{old or 0:,} of them tabled before {cutoff.isoformat()} "
+                                 f"(report only: should fall after the heading backfill)")
+
+
 def _table_freshness(ctx: HealthContext, name: str, table: str, cfg_key: str,
                      column: str | None = None, count: bool = True) -> CheckResult:
     if not ctx.has_table(table):
@@ -508,12 +576,49 @@ def check_edms(ctx: HealthContext) -> CheckResult:
     return _table_freshness(ctx, "EDMs: last refresh", "ha_edm", "edms", "last_refreshed")
 
 
+def check_edm_cron(ctx: HealthContext) -> CheckResult:
+    return _cron_record(ctx, "EDM cron", "edm_cron")
+
+
 def check_member_profiles(ctx: HealthContext) -> CheckResult:
-    return _table_freshness(ctx, "Members: profiles", "member_profile", "member_profile")
+    name = "Members: profiles"
+    if not ctx.has_table("member_profile"):
+        return _skipped_table(name, "member_profile")
+    cfg = ctx.config["member_profile"]
+    t = ctx.table("member_profile")
+    total, current, detailed, latest = ctx.conn.execute(sa.select(
+        sa.func.count(),
+        sa.func.sum(sa.case((t.c.is_current.is_(True), 1), else_=0)),
+        sa.func.count(t.c.details_refreshed_at),
+        sa.func.max(t.c.summary_refreshed_at),
+    )).one()
+    if not total:
+        return CheckResult(name, WARN, "member_profile is empty (refresh_members.py not run yet?)")
+    return _freshness(name, latest, ctx.now, cfg["warn_hours"], cfg["fail_hours"],
+                      extra=f"; {total:,} profiles ({current or 0:,} current, {detailed:,} with details)")
 
 
 def check_member_biographies(ctx: HealthContext) -> CheckResult:
-    return _table_freshness(ctx, "Members: biographies", "member_biography", "member_biography")
+    name = "Members: biographies"
+    if not ctx.has_table("member_biography"):
+        return _skipped_table(name, "member_biography")
+    cfg = ctx.config["member_biography"]
+    t = ctx.table("member_biography")
+    total, with_text, errors, generated, attempted = ctx.conn.execute(sa.select(
+        sa.func.count(), sa.func.count(t.c.bio_text), sa.func.count(t.c.last_error),
+        sa.func.max(t.c.generated_at), sa.func.max(t.c.last_attempt_at),
+    )).one()
+    audit = None
+    if ctx.has_table("member_name_audit"):
+        audit = ctx.scalar(sa.select(sa.func.max(ctx.table("member_name_audit").c.run_at)))
+    generated, audit = _coerce(generated), _coerce(audit)
+    stamps = [v for v in (generated, _coerce(attempted), audit) if v is not None]
+    if not total:
+        return CheckResult(name, WARN, "member_biography is empty (bio job not run yet?)")
+    extra = (f"; {with_text:,} bios in {total:,} rows, {errors:,} with last_error; "
+             f"last generated {fmt_when(generated)}, last name audit {fmt_when(audit)}")
+    return _freshness(name, max(stamps, default=None), ctx.now, cfg["warn_hours"], cfg["fail_hours"],
+                      extra=extra)
 
 
 def check_cached_members(ctx: HealthContext) -> CheckResult:
@@ -535,7 +640,11 @@ def check_cached_members(ctx: HealthContext) -> CheckResult:
 
 def check_headline_stats(ctx: HealthContext) -> CheckResult:
     # last_success, not last_refreshed: stats_refresh bumps last_refreshed on failure too (SWR).
-    return _table_freshness(ctx, "Stats: headline refresh", "headline_stat", "headline_stats", "last_success")
+    res = _table_freshness(ctx, "Stats: headline refresh", "headline_stat", "headline_stats", "last_success")
+    if not ctx.config["headline_stats"].get("scheduled", True) and res.status in PROBLEM_STATUSES:
+        res.status = SKIPPED
+        res.detail += " - stats-refresh not scheduled yet (intentional), info only"
+    return res
 
 
 def check_upcoming_releases(ctx: HealthContext) -> CheckResult:
@@ -572,8 +681,11 @@ DB_CHECKS: list[Callable[[HealthContext], CheckResult | list[CheckResult]]] = [
     check_pq_crons,
     check_pq_headings,
     check_pq_answers,
+    check_pq_integrity,
+    check_pq_headings_total,
     check_bills,
     check_edms,
+    check_edm_cron,
     check_member_profiles,
     check_member_biographies,
     check_cached_members,
