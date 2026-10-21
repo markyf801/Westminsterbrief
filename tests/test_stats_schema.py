@@ -356,7 +356,15 @@ class TestCutoffHelpers:
 
 class TestStatsQueryHelpers:
 
-    def test_get_headline_stat_with_value(self, test_app, db):
+    def test_get_headline_stat_hidden_by_default(self, test_app, db, monkeypatch):
+        monkeypatch.delenv("SHOW_HEADLINE_STATS", raising=False)
+        from hansard_archive.stats_queries import get_headline_stat
+        with test_app.app_context():
+            _make_stat(db, 'hs-query-hidden', theme_slug='economy', latest_value='7%')
+            assert get_headline_stat('economy') is None
+
+    def test_get_headline_stat_with_value(self, test_app, db, monkeypatch):
+        monkeypatch.setenv("SHOW_HEADLINE_STATS", "1")
         from hansard_archive.stats_queries import get_headline_stat
         with test_app.app_context():
             _make_stat(db, 'hs-query-has-val', theme_slug='environment', latest_value='42%')
