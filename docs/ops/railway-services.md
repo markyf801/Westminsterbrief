@@ -145,20 +145,57 @@ on the web service.
 |---|---|---|
 | `health-report` | `30 7 * * *` | Read-only freshness checks (archive, PQs, bills, EDMs, members, stats, crons, R2 backup, `/ping` + `/health`). Emails `CRON_ALERT_EMAIL`/`ADMIN_EMAIL` when anything is WARN/FAIL; all-OK days send nothing except a Monday summary. |
 
-07:30 sits after the bills window (06:30–07:15) and before `archive-cron-morning`
-(08:00). Setup: Dockerfile Path `Dockerfile.cron`, start command
-`python scripts/daily_health_report.py`, restart policy Never, `SKIP_MIGRATIONS=1`.
-Env: `DATABASE_URL` (Variable Reference; the script opens it read-only),
-`POSTMARK_SERVER_TOKEN`, `ADMIN_EMAIL` (or `CRON_ALERT_EMAIL`), and optionally
-`R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`
-(without them the R2 check shows SKIPPED; a read-only R2 token is enough).
-Exits 0 even when it finds problems; non-zero only if the checker crashes or the
-email can't be sent. Try it first with `--dry-run` via Run Now. "No new data"
-checks for Hansard and written questions use Parliament's sitting calendar
-(What's On API `calendar/proceduraldates/{House}/sittingdates.json`, fetched once
-per run, read-only); if it can't be reached they fall back to a weekday rule and
-the report line says so. Thresholds and the manual `RECESS_PERIODS` override:
-`CONFIG` / `RECESS_PERIODS` at the top of `hansard_archive/health_checks.py`.
+07:30 sits after the edm (04:30), upcoming-refresh (05:45) and bills (06:30–07:15)
+windows and before `archive-cron-morning` (08:00).
+
+**Railway setup (new cron service):**
+
+| Setting | Value |
+|---|---|
+| Service name | `health-report` |
+| Source | this repo, branch `master` |
+| Dockerfile Path | `Dockerfile.cron` |
+| Start command | `python scripts/daily_health_report.py` |
+| Cron schedule | `30 7 * * *` (UTC) |
+| Restart policy | Never |
+| `DATABASE_URL` | Variable Reference to the Postgres service (the script opens it read-only) |
+| `POSTMARK_SERVER_TOKEN` | same value as the web service |
+| `ADMIN_EMAIL` or `CRON_ALERT_EMAIL` | where the report goes (`CRON_ALERT_EMAIL` wins if both are set) |
+| `SKIP_MIGRATIONS` | `1` |
+| `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` | optional; without them the R2 backup check shows SKIPPED (a read-only R2 token is enough) |
+
+First run: set the start command to `python scripts/daily_health_report.py --dry-run`,
+press Run Now, read the log, then put the normal start command back. Exits 0 even
+when it finds problems; non-zero only if the checker crashes or the email can't be
+sent.
+
+"No new data" checks for Hansard and written questions use Parliament's sitting
+calendar (What's On API `calendar/proceduraldates/{House}/sittingdates.json`, both
+Houses, fetched once per run, read-only, no key). A sitting day's data is overdue
+once the following working day has passed. If the calendar can't be reached they
+fall back to a weekday rule and the report line says so. `--no-calendar` forces
+the fallback.
+
+What it checks (thresholds in `CONFIG` at the top of
+`hansard_archive/health_checks.py`; `RECESS_PERIODS` there is a manual override,
+normally empty):
+
+- Hansard archive newest session per House; archive and PQ cron runs (`ha_cron_run`)
+- Written questions: newest tabled per House, last write, recent answers, missing
+  headings (last 14 days, WARN at 5%), all-time missing headings (count only — should
+  fall after the heading backfill), and integrity: duplicate groups by `api_id` and by
+  `(tabled_date, lower(uin))` must be 0 (FAIL otherwise), and `uq_ha_pq_api_id` /
+  `uq_ha_pq_date_uin` must exist and be valid (WARN otherwise)
+- Bills `last_refreshed` (WARN > 2 days), EDMs `last_refreshed` (WARN > 2 days) plus the
+  `edm-cron` run record (WARN > 26 h)
+- Members: `member_profile.summary_refreshed_at` (WARN > 8 days, with profile counts),
+  `member_biography` (WARN > 35 days, dated by the newest bio attempt or monthly name
+  audit, since unchanged bios aren't regenerated), `cached_member`
+- Stats: upcoming releases (WARN > 24 h, FAIL > 72 h), producer rediscovery, headline
+  stats — the stats-refresh job is intentionally not scheduled yet, so a stale
+  headline table shows SKIPPED with its age; set `CONFIG["headline_stats"]["scheduled"]
+  = True` once that service exists
+- Committee evidence cron, backup cron record, newest R2 object, live `/ping` + `/health`
 
 ### Other
 

@@ -34,6 +34,13 @@ MONDAY = datetime(2026, 10, 19, 7, 30)
 ALL_TABLES = [
     m.HansardSession, m.HaCronRun, m.HaPQ, m.HaBill, m.HaEdm, cache_models.CachedMember,
     m.HeadlineStat, m.UpcomingRelease, m.StatProducer,
+    cache_models.MemberProfile, cache_models.MemberBiography, cache_models.MemberNameAudit,
+]
+
+# Created by hand on production (docs/plans/pq-identity-phase3-sql.md step 4).
+PQ_UNIQUE_INDEXES = [
+    "CREATE UNIQUE INDEX uq_ha_pq_api_id ON ha_pq (api_id)",
+    "CREATE UNIQUE INDEX uq_ha_pq_date_uin ON ha_pq (tabled_date, lower(uin))",
 ]
 
 
@@ -47,10 +54,14 @@ def _no_real_email(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
-def _engine(models=ALL_TABLES) -> sa.Engine:
+def _engine(models=ALL_TABLES, unique_pq_indexes: bool = True) -> sa.Engine:
     engine = sa.create_engine("sqlite://", poolclass=sa.pool.StaticPool,
                               connect_args={"check_same_thread": False})
     db.metadata.create_all(engine, tables=[cls.__table__ for cls in models])
+    if m.HaPQ in models and unique_pq_indexes:
+        with engine.begin() as conn:
+            for ddl in PQ_UNIQUE_INDEXES:
+                conn.execute(sa.text(ddl))
     return engine
 
 
@@ -73,7 +84,7 @@ def _seed_fresh(engine: sa.Engine, now: datetime, skip: tuple = ()) -> None:
         add("ha_cron_run", [
             {"service_name": svc, "started_at": recent, "finished_at": recent, "status": "ok"}
             for svc in ["morning-catchup", "daytime-mth", "daytime-fri", "pq-morning", "pq-afternoon",
-                        "pq-monday", "committee-evidence-cron", "backup-r2"]
+                        "pq-monday", "committee-evidence-cron", "backup-r2", "edm-cron"]
         ])
         add("ha_pq", [
             {"uin": f"HL{i}" if i % 2 else f"C{i}", "question_text": "Q", "heading": "Schools",
@@ -97,6 +108,15 @@ def _seed_fresh(engine: sa.Engine, now: datetime, skip: tuple = ()) -> None:
         add("ha_stat_producer", [{"slug": "ons", "name": "ONS", "producer_type": "central_department",
                                   "web_root_url": "https://example.test", "licence": "OGL_v3",
                                   "last_rediscovered_at": recent}])
+        add("member_profile", [{"member_id": i, "slug": f"m-{i}", "name": f"M {i}", "is_current": i < 9,
+                                "summary_refreshed_at": now - timedelta(days=2),
+                                "details_refreshed_at": now - timedelta(days=2) if i < 5 else None}
+                               for i in range(10)])
+        add("member_biography", [{"member_id": i, "bio_text": "Bio" if i < 4 else None,
+                                  "generated_at": now - timedelta(days=40),
+                                  "last_attempt_at": now - timedelta(days=40),
+                                  "last_error": "boom" if i == 4 else None} for i in range(5)])
+        add("member_name_audit", [{"run_at": now - timedelta(days=18), "counts": {}, "gaps": []}])
 
 
 def _mon_thu(start: date, end: date, skip: tuple[date, date] | None = None) -> set[date]:
@@ -158,7 +178,7 @@ def test_fresh_data_all_ok():
     bad = [(r.name, r.status, r.detail) for r in results if r.status not in (hc.OK, hc.SKIPPED)]
     assert bad == []
     skipped = {r.name for r in results if r.status == hc.SKIPPED}
-    assert skipped == {"Members: profiles", "Members: biographies"}   # tables don't exist yet
+    assert skipped == set()
     assert hc.count_problems(results) == 0
 
 
@@ -479,3 +499,138 @@ def test_calendar_failure_noted_in_report(capsys):
     out = capsys.readouterr().out
     assert "calendar unavailable (TimeoutError): weekday rule" in out
     assert "0 problem(s)" in out
+
+
+# ---------------------------------------------------------------------------
+# Checks added for jobs deployed after the first version
+# ---------------------------------------------------------------------------
+
+def _pq_row(uin, tabled, api_id=None, heading="H"):
+    return {"uin": uin, "question_text": "Q", "heading": heading, "tabled_date": tabled,
+            "chamber": "Commons", "is_answered": False, "api_id": api_id}
+
+
+def test_pq_integrity_ok_with_indexes_and_no_duplicates():
+    res = _run_db(_fresh_engine(TUESDAY), TUESDAY)["Written questions: duplicates + unique indexes"]
+    assert res.status == hc.OK
+    assert res.detail == ("duplicate groups: api_id 0, (tabled_date, uin) 0; "
+                          "indexes: uq_ha_pq_api_id ok, uq_ha_pq_date_uin ok")
+
+
+def test_pq_integrity_duplicates_fail_and_missing_index_warns():
+    engine = _engine(unique_pq_indexes=False)
+    _seed_fresh(engine, TUESDAY, skip=("ha_pq",))
+    d = date(2026, 10, 19)
+    with engine.begin() as conn:
+        conn.execute(m.HaPQ.__table__.insert(), [_pq_row("100", d, 5), _pq_row("101", d, 6)])
+    res = _run_db(engine, TUESDAY)["Written questions: duplicates + unique indexes"]
+    assert res.status == hc.WARN
+    assert "uq_ha_pq_api_id missing, uq_ha_pq_date_uin missing" in res.detail
+    with engine.begin() as conn:
+        conn.execute(m.HaPQ.__table__.insert(), [
+            _pq_row("200", d, 5),                       # same api_id as "100"
+            _pq_row("hl1", d), _pq_row("HL1", d),      # same date + uin, case differs
+            _pq_row("100", date(2025, 1, 6), None),    # UIN reused in an older session: fine
+        ])
+    res = _run_db(engine, TUESDAY)["Written questions: duplicates + unique indexes"]
+    assert res.status == hc.FAIL
+    assert res.detail.startswith("duplicate groups: api_id 1, (tabled_date, uin) 1;")
+
+
+def test_pq_index_state_flags_non_unique_index():
+    engine = _engine(unique_pq_indexes=False)
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE INDEX uq_ha_pq_api_id ON ha_pq (api_id)"))
+    with engine.connect() as conn:
+        state = hc._pq_index_state(hc.HealthContext(conn, TUESDAY), ["uq_ha_pq_api_id", "uq_ha_pq_date_uin"])
+    assert state == {"uq_ha_pq_api_id": "not unique", "uq_ha_pq_date_uin": "missing"}
+
+
+def test_missing_headings_total_is_report_only():
+    engine = _engine()
+    _seed_fresh(engine, TUESDAY)
+    with engine.begin() as conn:
+        conn.execute(m.HaPQ.__table__.insert(), [
+            _pq_row(str(i), date(2026, 6, 1), heading=None) for i in range(30)])
+    res = _run_db(engine, TUESDAY)["Written questions: missing headings (all)"]
+    assert res.status == hc.OK
+    assert res.detail.startswith("30 of 50 rows have no heading, 30 of them tabled before 2026-10-06")
+
+
+def test_edm_freshness_and_cron_record():
+    engine = _engine()
+    _seed_fresh(engine, TUESDAY, skip=("ha_cron_run",))
+    with engine.begin() as conn:
+        conn.execute(m.HaEdm.__table__.update().values(last_refreshed=TUESDAY - timedelta(hours=50)))
+        conn.execute(m.HaCronRun.__table__.insert(), [
+            {"service_name": "edm-cron", "started_at": TUESDAY - timedelta(hours=27),
+             "finished_at": TUESDAY - timedelta(hours=27), "status": "ok"},
+            {"service_name": "edm-cron", "started_at": TUESDAY - timedelta(hours=3), "finished_at": None,
+             "status": "failed"},
+        ])
+    res = _run_db(engine, TUESDAY)
+    assert res["EDMs: last refresh"].status == hc.WARN          # > 2 days
+    assert res["EDM cron"].status == hc.WARN                   # missed one daily run
+    assert "latest run failed" in res["EDM cron"].detail
+
+
+def test_upcoming_releases_daily_threshold():
+    engine = _fresh_engine(TUESDAY)
+    up = m.UpcomingRelease.__table__
+    with engine.begin() as conn:
+        conn.execute(up.update().values(last_refreshed=TUESDAY - timedelta(hours=25, minutes=45)))
+    assert _run_db(engine, TUESDAY)["Stats: upcoming releases"].status == hc.WARN   # missed 05:45 run
+    with engine.begin() as conn:
+        conn.execute(up.update().values(last_refreshed=TUESDAY - timedelta(days=4)))
+    assert _run_db(engine, TUESDAY)["Stats: upcoming releases"].status == hc.FAIL
+
+
+def test_headline_stats_unscheduled_is_skipped_not_warn():
+    engine = _fresh_engine(TUESDAY)
+    with engine.begin() as conn:
+        conn.execute(m.HeadlineStat.__table__.update().values(last_success=TUESDAY - timedelta(days=30)))
+    res = _run_db(engine, TUESDAY)["Stats: headline refresh"]
+    assert res.status == hc.SKIPPED
+    assert "30d ago" in res.detail and "not scheduled yet" in res.detail
+    with engine.connect() as conn:
+        config = {**hc.CONFIG, "headline_stats": {**hc.CONFIG["headline_stats"], "scheduled": True}}
+        ctx = hc.HealthContext(conn, TUESDAY, config=config, recess_periods=[])
+        assert hc.check_headline_stats(ctx).status == hc.WARN
+
+
+def test_member_profiles_and_biographies():
+    engine = _fresh_engine(TUESDAY)
+    res = _run_db(engine, TUESDAY)
+    profiles = res["Members: profiles"]
+    assert profiles.status == hc.OK
+    assert "10 profiles (9 current, 5 with details)" in profiles.detail
+    bios = res["Members: biographies"]
+    # bios themselves are 40 days old, but the monthly job ran 18 days ago (name audit)
+    assert bios.status == hc.OK
+    assert "4 bios in 5 rows, 1 with last_error" in bios.detail
+    with engine.begin() as conn:
+        conn.execute(cache_models.MemberProfile.__table__.update().values(
+            summary_refreshed_at=TUESDAY - timedelta(days=9)))
+        conn.execute(cache_models.MemberNameAudit.__table__.delete())
+    res = _run_db(engine, TUESDAY)
+    assert res["Members: profiles"].status == hc.WARN
+    assert res["Members: biographies"].status == hc.WARN
+
+
+def test_member_tables_empty_warn():
+    engine = _engine()
+    _seed_fresh(engine, TUESDAY, skip=("member_profile", "member_biography", "member_name_audit"))
+    res = _run_db(engine, TUESDAY)
+    assert res["Members: profiles"].status == hc.WARN and "empty" in res["Members: profiles"].detail
+    assert res["Members: biographies"].status == hc.WARN
+
+
+def test_calendar_lookback_spans_summer_recess():
+    seen = {}
+
+    def getter(url, **kwargs):
+        seen.update(kwargs["params"])
+        return _calendar_response({date(2026, 7, 20)})
+    days, note = hc.fetch_sitting_days(getter, date(2026, 9, 1))
+    assert note == "" and date(2026, 7, 20) in days["Commons"]
+    assert seen == {"startDate": "2026-06-03", "endDate": "2026-09-01"}
