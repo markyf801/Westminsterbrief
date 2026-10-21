@@ -216,6 +216,38 @@ class TestFindHansardMentions:
     def test_blank_keyword_returns_nothing(self, app):
         assert debate_scanner.find_hansard_mentions("  ", date.today()) == []
 
+    def test_long_debate_does_not_crowd_out_other_sessions(self, app):
+        from extensions import db
+        from hansard_archive.models import HansardContribution, HansardSession
+        today = date.today()
+        big = HansardSession(ext_id="b-1", title="Big Debate", date=today, house="Commons",
+                             debate_type="debate", slug="big-debate-1", is_container=False)
+        small = HansardSession(ext_id="b-2", title="Small Debate", date=today - timedelta(days=2),
+                               house="Lords", debate_type="debate", slug="small-debate-2",
+                               is_container=False)
+        db.session.add_all([big, small])
+        db.session.flush()
+        db.session.add_all([HansardContribution(session_id=big.id, member_name=f"M{i}",
+                                                speech_text="Tuition fees again.", speech_order=i)
+                            for i in range(1, 41)])
+        db.session.add(HansardContribution(session_id=small.id, member_name="Lord X",
+                                           speech_text="On tuition fees.", speech_order=1))
+        db.session.commit()
+
+        hits = debate_scanner.find_hansard_mentions("tuition fees", today - timedelta(days=7), limit=2)
+
+        assert [(h["title"], h["speaker"]) for h in hits] == [
+            ("Big Debate", "M1"), ("Small Debate", "Lord X")]
+
+    def test_snippet_shows_the_mention(self):
+        text = "Opening words. " * 40 + "Tuition fees have risen sharply this year."
+        snippet = debate_scanner._keyword_snippet(text, "tuition fees")
+        assert snippet.startswith("…")
+        assert "Tuition fees have risen" in snippet
+        assert len(snippet) <= 301
+        assert debate_scanner._keyword_snippet("Short text on fees.", "tuition fees") == \
+            "Short text on fees."
+
 
 class TestManualScan:
     @pytest.fixture
@@ -266,3 +298,33 @@ class TestManualScan:
                 ("Hansard", "Student Loans", "A Member")]
             assert alerts[0].url.startswith("/archive/debate/")
         assert no_http == []
+
+    def test_new_topic_looks_back_30_days(self, fa, no_http):
+        _fa, (user_id, topic_id) = fa
+        from extensions import db
+        from hansard_archive.models import HansardContribution, HansardSession
+        with _fa.app.app_context():
+            s = HansardSession(ext_id="a-4", title="Recess Eve Debate",
+                               date=date.today() - timedelta(days=20), house="Commons",
+                               debate_type="debate", slug="recess-eve-4", is_container=False)
+            db.session.add(s)
+            db.session.flush()
+            db.session.add(HansardContribution(session_id=s.id, member_name="E Member",
+                                               speech_text="Tuition fees before recess.",
+                                               speech_order=1))
+            db.session.commit()
+        client = _fa.app.test_client()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user_id)
+            sess["_fresh"] = True
+        try:
+            assert client.post("/run_manual_scan").status_code == 302
+            with _fa.app.app_context():
+                titles = {a.title for a in _fa.Alert.query.filter_by(topic_id=topic_id)}
+            assert titles == {"Student Loans", "Recess Eve Debate"}
+        finally:
+            with _fa.app.app_context():
+                sid = HansardSession.query.filter_by(ext_id="a-4").one().id
+                HansardContribution.query.filter_by(session_id=sid).delete()
+                HansardSession.query.filter_by(id=sid).delete()
+                db.session.commit()

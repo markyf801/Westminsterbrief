@@ -1880,12 +1880,13 @@ def run_manual_scan():
 
         # --- 2. HANSARD SCAN (our own archive) ---
         # Look back from this topic's last Hansard alert (3 days' overlap for
-        # ingestion lag, capped at 30 days); repeat finds are skipped by URL.
+        # ingestion lag), or 30 days for a topic with none yet; never more than
+        # 30 days. Repeat finds are skipped by URL.
         last_found = db.session.query(db.func.max(Alert.date_found)).filter(
             Alert.topic_id == topic.id, Alert.source == 'Hansard').scalar()
         today = datetime.now().date()
-        since = (last_found.date() if last_found else today) - timedelta(days=3)
-        since = max(since, today - timedelta(days=30))
+        earliest = today - timedelta(days=30)
+        since = max(last_found.date() - timedelta(days=3), earliest) if last_found else earliest
         for hit in find_hansard_mentions(topic.keyword, since, limit=15):
             if not Alert.query.filter_by(topic_id=topic.id, url=hit['url']).first():
                 db.session.add(Alert(topic_id=topic.id, source='Hansard', title=hit['title'][:255],

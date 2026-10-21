@@ -1749,23 +1749,35 @@ def find_hansard_mentions(keyword, since, limit=15):
         match = 'LOWER(c.speech_text) LIKE :q'
         q = f'%{keyword.lower()}%'
         not_container = 's.is_container = 0'
+    # One row per session (its first matching speech), so a long debate with
+    # many matching speeches cannot crowd other sessions out of the limit.
     sql = sqla_text(f"""
+        WITH hits AS (
+            SELECT c.session_id, MIN(c.speech_order) AS first_order
+            FROM ha_contribution c
+            JOIN ha_session s ON s.id = c.session_id
+            WHERE {not_container} AND s.slug IS NOT NULL AND s.date >= :since AND {match}
+            GROUP BY c.session_id
+        )
         SELECT s.id, s.title, s.date, s.slug, c.member_name, c.speech_text
-        FROM ha_contribution c
-        JOIN ha_session s ON s.id = c.session_id
-        WHERE {not_container} AND s.date >= :since AND {match}
-        ORDER BY s.date DESC, s.id, c.speech_order
+        FROM hits h
+        JOIN ha_session s ON s.id = h.session_id
+        JOIN ha_contribution c ON c.session_id = h.session_id
+                              AND c.speech_order = h.first_order AND {match}
+        ORDER BY s.date DESC, s.id, c.id
         LIMIT :lim
     """)
     try:
-        rows = db.session.execute(sql, {'q': q, 'since': since, 'lim': limit * 10}).fetchall()
-    except Exception:
+        rows = db.session.execute(sql, {'q': q, 'since': since, 'lim': limit * 2}).fetchall()
+    except Exception as e:
         db.session.rollback()
+        import logging
+        logging.warning(f"find_hansard_mentions failed for {keyword!r}: {e}")
         return []
 
     results, seen = [], set()
     for r in rows:
-        if r.id in seen or not r.slug:
+        if r.id in seen:
             continue
         seen.add(r.id)
         d = r.date if hasattr(r.date, 'month') else datetime.strptime(str(r.date)[:10], '%Y-%m-%d').date()
@@ -1773,13 +1785,32 @@ def find_hansard_mentions(keyword, since, limit=15):
         results.append({
             'title': r.title or 'Parliamentary debate',
             'url': f"/archive/debate/{url_date}/{r.slug}",
-            'snippet': re.sub(r'\s+', ' ', r.speech_text or '').strip()[:300],
+            'snippet': _keyword_snippet(r.speech_text, keyword),
             'speaker': r.member_name or '',
             'date': d.isoformat(),
         })
         if len(results) >= limit:
             break
     return results
+
+
+def _keyword_snippet(text, keyword, width=300):
+    """About `width` characters of `text` around the first mention of `keyword`
+    (or of its longest word, since full-text search also matches word forms),
+    else the start of the text."""
+    text = re.sub(r'\s+', ' ', text or '').strip()
+    low = text.lower()
+    needles = [keyword.lower().strip(' "')]
+    needles += sorted(re.findall(r'\w{3,}', keyword.lower()), key=len, reverse=True)
+    for needle in needles:
+        pos = low.find(needle) if needle else -1
+        if pos > width // 3:
+            space = text.find(' ', pos - width // 3, pos)
+            start = space + 1 if space >= 0 else pos - width // 3
+            return '…' + text[start:start + width]
+        if pos >= 0:
+            break
+    return text[:width]
 
 
 def _debate_group_key(title: str) -> str:
