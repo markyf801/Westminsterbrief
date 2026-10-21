@@ -199,6 +199,7 @@ class TagOutcome:
     model: str = ""
     usage: dict = field(default_factory=dict)
     retried: bool = False      # PQ batches: came from a single-question retry
+    empty_reason: str = ""     # the model answered with no content (e.g. safety block)
 
     @property
     def ok(self) -> bool:
@@ -662,7 +663,45 @@ class GeminiCallFailed(Exception):
         self.final = final
 
 
+class GeminiEmptyResponse(Exception):
+    """HTTP 200 without any content (safety block, no candidates). Counted as a
+    tagging attempt for the item, never as an API failure."""
+
+    def __init__(self, reason: str, usage: dict | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.usage = usage or {}
+
+
 _BODY_LOG_CHARS = 500
+
+
+def _response_text(body: dict) -> Optional[str]:
+    try:
+        parts = (body.get("candidates") or [])[0]["content"]["parts"]
+        text_ = "".join(p.get("text") or "" for p in parts)
+    except (IndexError, KeyError, TypeError, AttributeError):
+        return None
+    return text_ if text_.strip() else None
+
+
+def _empty_reason(body: dict) -> str:
+    """finishReason / blockReason / safety categories of an empty response, for logs and attempts."""
+    bits = []
+    fb = body.get("promptFeedback") or {}
+    if fb.get("blockReason"):
+        bits.append(f"prompt blocked: {fb['blockReason']}")
+    cands = body.get("candidates") or []
+    if not cands:
+        bits.append("no candidates")
+    for c in cands[:1]:
+        if c.get("finishReason"):
+            bits.append(f"finishReason={c['finishReason']}")
+        flagged = [r.get("category") for r in (c.get("safetyRatings") or fb.get("safetyRatings") or [])
+                   if r.get("blocked") or r.get("probability") in ("MEDIUM", "HIGH")]
+        if flagged:
+            bits.append("safety: " + ",".join(str(f) for f in flagged))
+    return "empty response (" + "; ".join(bits or ["no text"]) + ")"
 
 
 def _gemini_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[object, dict]:
@@ -691,7 +730,14 @@ def _gemini_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[o
                 r = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
                 if r.status_code == 200:
                     body = r.json()
-                    raw = body["candidates"][0]["content"]["parts"][0]["text"]
+                    raw = _response_text(body)
+                    if raw is None:
+                        # A real answer with nothing in it (safety block, empty
+                        # candidates, MAX_TOKENS before any text): the item's
+                        # problem, not the API's. Not retried, not an API failure.
+                        why = _empty_reason(body)
+                        logger.warning("Tagger: Gemini returned no content (%s, model %s)", why, model)
+                        raise GeminiEmptyResponse(why, body.get("usageMetadata") or {})
                     return json.loads(raw), body.get("usageMetadata") or {}
                 text_ = (r.text or "")[:_BODY_LOG_CHARS]
                 if r.status_code in (400, 401, 403):
@@ -759,9 +805,26 @@ def usage_cost(usage: dict, model: str) -> Optional[float]:
 # Tagging without writing
 # ---------------------------------------------------------------------------
 
+def _empty_outcome(e: GeminiEmptyResponse, model: str) -> TagOutcome:
+    out = TagOutcome(model=model, empty_reason=e.reason)
+    _add_usage(out.usage, e.usage)
+    return out
+
+
 def tag_session_input(si: SessionInput, api_key: str, model: Optional[str] = None) -> TagOutcome:
-    """Tag one session (no DB writes). Raises GeminiCallFailed on API failure."""
+    """
+    Tag one session (no DB writes). Raises GeminiCallFailed on API failure; an
+    empty (e.g. safety-blocked) response returns an outcome with nothing in it
+    and empty_reason set.
+    """
     model = resolve_model(api_key, model)
+    try:
+        return _tag_session_input(si, api_key, model)
+    except GeminiEmptyResponse as e:
+        return _empty_outcome(e, model)
+
+
+def _tag_session_input(si: SessionInput, api_key: str, model: str) -> TagOutcome:
     if is_multi_question(si) and len(question_groups(si.contributions)) >= 2:
         prompt, sources = build_grouped_prompt(si)
         parsed, usage = _gemini_json(api_key, model, prompt, _GROUPED_RESPONSE_SCHEMA)
@@ -786,10 +849,13 @@ def tag_session_input(si: SessionInput, api_key: str, model: Optional[str] = Non
 
 
 def tag_pq_input(pq: PQInput, api_key: str, model: Optional[str] = None) -> TagOutcome:
-    """Tag one Written Question on its own (no DB writes)."""
+    """Tag one Written Question on its own (no DB writes); empty response -> empty outcome."""
     model = resolve_model(api_key, model)
     prompt, source = build_pq_prompt(pq)
-    parsed, usage = _gemini_json(api_key, model, prompt, _RESPONSE_SCHEMA)
+    try:
+        parsed, usage = _gemini_json(api_key, model, prompt, _RESPONSE_SCHEMA)
+    except GeminiEmptyResponse as e:
+        return _empty_outcome(e, model)
     out = verify_tags(parsed if isinstance(parsed, dict) else {}, source)
     out.model = model
     _add_usage(out.usage, usage)
@@ -816,6 +882,9 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
             if e.final:
                 raise
             logger.warning("Tagger batch at %d failed (%s) — retrying individually", start, e)
+            parsed, usage, sources = None, {}, []
+        except GeminiEmptyResponse as e:
+            logger.warning("Tagger batch at %d: %s — retrying individually", start, e.reason)
             parsed, usage, sources = None, {}, []
         if isinstance(parsed, list) and len(parsed) == len(batch):
             share = {k: int(v or 0) // len(batch) for k, v in usage.items() if isinstance(v, int)}
@@ -975,6 +1044,8 @@ def record_failed_attempt(kind: str, item_id: int, reason: str) -> None:
 
 
 def _failure_reason(outcome: TagOutcome) -> str:
+    if outcome.empty_reason:
+        return outcome.empty_reason
     if not outcome.proposed_areas:
         return "model proposed no policy area"
     reasons = Counter(why for kind, _, why in outcome.dropped if kind == "policy_area")

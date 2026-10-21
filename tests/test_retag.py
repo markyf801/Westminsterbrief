@@ -173,18 +173,78 @@ def test_final_api_error_stops_at_once(retag, seeded, monkeypatch):
     assert len(calls) == 1
 
 
-def test_cron_windows(retag):
-    assert retag.cron_window(datetime(2026, 10, 20, 3, 5)) == "03:00-03:15"
-    assert retag.cron_window(datetime(2026, 10, 20, 8, 45)) == "08:30-09:00"      # Tuesday PQ cron
-    assert retag.cron_window(datetime(2026, 10, 24, 8, 45)) is None               # Saturday
-    assert retag.cron_window(datetime(2026, 10, 21, 15, 2)) == "15:00-15:06"      # archive daytime, Wed
-    assert retag.cron_window(datetime(2026, 10, 23, 15, 2)) is None               # Friday
-    assert retag.cron_window(datetime(2026, 10, 20, 12, 30)) is None
-    times = iter([datetime(2026, 10, 20, 3, 5), datetime(2026, 10, 20, 3, 14), datetime(2026, 10, 20, 3, 15)])
-    slept = []
-    args = type("A", (), {"ignore_cron_windows": False})()
-    retag.wait_outside_cron_windows(args, sleep=slept.append, clock=lambda: next(times))
-    assert slept == [60, 60]
+@pytest.mark.parametrize("when, blocked", [
+    (datetime(2026, 10, 20, 3, 5), "backup"),             # daily 03:00
+    (datetime(2026, 10, 24, 2, 50), "backup"),            # Saturday, 5 min before + lookahead
+    (datetime(2026, 10, 20, 7, 30), "health report"),
+    (datetime(2026, 10, 20, 8, 0), "archive 08:00"),      # Tuesday morning catch-up
+    (datetime(2026, 10, 19, 9, 0), "Mon also 09:00"),     # Monday PQ run
+    (datetime(2026, 10, 21, 15, 30), "hourly"),           # Wednesday daytime, between runs
+    (datetime(2026, 10, 23, 12, 0), "Fri"),               # Friday daytime
+    (datetime(2026, 10, 23, 21, 0), None),                # Friday evening
+    (datetime(2026, 10, 24, 12, 0), None),                # Saturday midday
+    (datetime(2026, 10, 21, 23, 45), None),               # after the last weekday run
+    (datetime(2026, 10, 24, 7, 50), None),                # Saturday: no archive run
+    (datetime(2026, 10, 22, 7, 50), "archive 08:00"),     # Thursday, about to start
+])
+def test_shared_cron_windows(when, blocked):
+    from hansard_archive.cron_windows import blocked_window
+    label = blocked_window(when)
+    if blocked is None:
+        assert label is None
+    else:
+        assert label and blocked in label
+
+
+def test_apply_refuses_to_start_in_a_cron_window(retag, seeded, monkeypatch, capsys):
+    import hansard_archive.cron_windows as cw
+    monkeypatch.setattr(tg, "_gemini_json", _fake_ok)
+    monkeypatch.setattr(cw, "blocked_window", lambda now: "test window")
+    assert retag.main(["--what", "sessions", "--apply", "--no-backup"]) == 4
+    assert "STOPPED for cron window: test window" in capsys.readouterr().out
+    assert {t for _, t in _tags(seeded)[0]} == {"Welfare and benefits"}
+
+
+def test_window_mid_run_stops_after_chunk_and_resumes(retag, seeded, monkeypatch):
+    import hansard_archive.cron_windows as cw
+    monkeypatch.setattr(tg, "_gemini_json", _fake_ok)
+    monkeypatch.setattr(retag, "_CHUNK", 1)
+    checks = []
+
+    def window(now):
+        checks.append(1)
+        return "test window" if len(checks) == 3 else None   # start ok, chunk 1 ok, chunk 2 blocked
+    monkeypatch.setattr(cw, "blocked_window", window)
+    assert retag.main(["--what", "sessions", "--apply", "--no-backup"]) == 4
+    sessions, _ = _tags(seeded)
+    assert sum(1 for _, t in sessions if t == "Environment") == 1          # one chunk written
+    assert _checkpoints(seeded) == [("sessions", "stopped")]
+    monkeypatch.setattr(cw, "blocked_window", lambda now: None)
+    assert retag.main(["--what", "sessions", "--apply", "--no-backup"]) == 0
+    assert {t for _, t in _tags(seeded)[0]} == {"Environment", "brown hares"}
+
+
+def test_resumed_run_reuses_its_backup(retag, seeded, monkeypatch, capsys):
+    from sqlalchemy import inspect
+    from extensions import db
+    import hansard_archive.cron_windows as cw
+    monkeypatch.setattr(tg, "_gemini_json", _fake_ok)
+    monkeypatch.setattr(retag, "_CHUNK", 1)
+    calls = []
+
+    def window(now):
+        calls.append(1)
+        return "test window" if len(calls) == 3 else None
+    monkeypatch.setattr(cw, "blocked_window", window)
+    with seeded.app_context():
+        before = {n for n in inspect(db.engine).get_table_names() if "_bak_" in n}
+    assert retag.main(["--what", "sessions", "--apply", "--backup"]) == 4
+    monkeypatch.setattr(cw, "blocked_window", lambda now: None)
+    assert retag.main(["--what", "sessions", "--apply", "--backup"]) == 0
+    with seeded.app_context():
+        made = {n for n in inspect(db.engine).get_table_names() if "_bak_" in n} - before
+    assert len(made) == 1                                     # one snapshot for the whole job
+    assert "backup: reusing" in capsys.readouterr().out
 
 
 def test_estimate_cost(retag):

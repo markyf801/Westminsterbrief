@@ -466,3 +466,52 @@ def test_question_groups_follow_hansard_name_forms():
     ]
     groups = question_groups(contribs)
     assert [len(g) for g in groups] == [4, 3, 4]
+
+
+_BLOCKED = {"candidates": [{"finishReason": "SAFETY", "safetyRatings": [
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "probability": "HIGH", "blocked": True}]}],
+    "usageMetadata": {"promptTokenCount": 900}}
+
+
+def test_empty_200_is_not_an_api_failure(monkeypatch, caplog):
+    calls = []
+    monkeypatch.setattr(tg.requests, "post",
+                        lambda url, json=None, timeout=None: calls.append(1) or _Resp(200, "", _BLOCKED))
+    with pytest.raises(tg.GeminiEmptyResponse) as exc:
+        tg._gemini_json("key", "m", "prompt", tg._RESPONSE_SCHEMA)
+    assert len(calls) == 1                                      # not retried
+    assert "finishReason=SAFETY" in exc.value.reason and "DANGEROUS_CONTENT" in exc.value.reason
+    assert "no content" in caplog.text
+    no_candidates = tg._empty_reason({"promptFeedback": {"blockReason": "OTHER"}})
+    assert "prompt blocked: OTHER" in no_candidates and "no candidates" in no_candidates
+
+
+def test_empty_response_counts_as_attempt_not_error(app_db, monkeypatch):
+    from hansard_archive.models import HaTagAttempt
+    app_db.create_all()
+    HaTagAttempt.query.delete()
+    app_db.session.commit()
+    rows = _sessions(app_db, 6)
+
+    def empty(*a):
+        raise tg.GeminiEmptyResponse("empty response (finishReason=SAFETY)")
+    monkeypatch.setattr(tg, "_gemini_json", empty)
+    res = tg.tag_all_untagged(api_key="key", verbose=False)
+    assert res["errors"] == 0 and res["api_errors"] == 0 and not res["aborted"]   # all 6 tried
+    assert res["failed"] == 6
+    att = app_db.session.get(HaTagAttempt, ("session", rows[0].id))
+    assert att.attempts == 1 and "SAFETY" in att.last_reason
+    HaTagAttempt.query.delete()
+    app_db.session.commit()
+
+
+def test_empty_batch_falls_back_to_single_questions(monkeypatch):
+    seen = []
+
+    def fake(key, model, prompt, schema):
+        seen.append(schema is tg._BATCH_RESPONSE_SCHEMA)
+        raise tg.GeminiEmptyResponse("empty response (no candidates)")
+    monkeypatch.setattr(tg, "_gemini_json", fake)
+    outs = tg.tag_pq_inputs([PQInput(uin="1", question_text="What about rail fares?")], "key", "m")
+    assert seen == [True, False]
+    assert outs[0] is not None and not outs[0].ok and "no candidates" in outs[0].empty_reason

@@ -8,7 +8,8 @@ before and after. It writes nothing to the database.
 
 --apply re-tags every selected row, replacing its tags. Safety:
   - --apply needs --backup or --no-backup. --backup first copies the whole
-    theme table(s) being changed into snapshot tables
+    theme table(s) being changed into snapshot tables (once per checkpoint:
+    a resumed run reuses the snapshot recorded in its checkpoint)
     (ha_session_theme_bak_YYYYMMDD_HHMMSS / ha_pq_theme_bak_...) with
     CREATE TABLE ... AS SELECT; restoring is a manual SQL step (Mark's call).
   - An item is only rewritten when the new tags include at least one verified
@@ -17,8 +18,11 @@ before and after. It writes nothing to the database.
     of the arguments>", notes = JSON with the last id done) after every chunk,
     so a stopped Railway one-off resumes when started again with the same
     arguments. Nothing is kept on the container's disk.
-  - It pauses (does not write) during the scheduled cron windows listed in
-    CRON_WINDOWS_UTC, unless --ignore-cron-windows.
+  - It never writes in or just before a production cron window
+    (hansard_archive/cron_windows.py, which blocks weekday daytime whole):
+    it refuses to start, or stops after the current chunk, with exit code 4
+    and the checkpoint saved, so the same command resumes later. Override
+    with --ignore-cron-windows.
   - It stops with exit code 3 after --max-failures consecutive API failures
     (rate limit, outage), or at once on a final API error (bad request, key,
     model), so the one-off fails visibly instead of skipping rows.
@@ -37,7 +41,8 @@ Examples (Railway one-off; dry run first, then a small apply, then everything):
     python scripts/retag.py --what pqs --limit 500 --apply --backup --model gemini-2.5-flash
     python scripts/retag.py --apply --backup --model gemini-2.5-flash
 
-Exit codes: 0 ok, 2 no GEMINI_API_KEY / bad arguments, 3 stopped after API failures.
+Exit codes: 0 ok, 2 no GEMINI_API_KEY / bad arguments, 3 stopped after API failures,
+4 stopped for a cron window (resume later with the same command).
 """
 
 from __future__ import annotations
@@ -58,41 +63,23 @@ _CHUNK = 50
 _EST_OUTPUT_TOKENS = {"session": 450, "pq": 120}
 _EST_THINKING_TOKENS = {"gemini-2.5-flash-lite": 0, "gemini-2.5-flash": 700, "gemini-2.5-pro": 1500}
 
-# Scheduled cron windows (UTC) from CLAUDE.md "Branches and workflow":
-# (weekdays or None for every day, start "HH:MM", end "HH:MM"). The hourly
-# archive daytime runs (first ~5 minutes of 11:00-23:00 Mon-Thu) are listed
-# hour by hour.
-CRON_WINDOWS_UTC: list[tuple[set[int] | None, str, str]] = [
-    (None, "03:00", "03:15"),                    # backup-cron-r2
-    (None, "04:30", "04:45"),                    # edm-cron
-    (None, "06:30", "07:15"),                    # bills-cron
-    ({0, 1, 2, 3, 4}, "08:30", "09:00"),         # PQ crons
-    ({0, 1, 2, 3, 4}, "09:30", "10:00"),
-    ({0, 1, 2, 3, 4}, "14:00", "14:30"),
-] + [({0, 1, 2, 3}, f"{h:02d}:00", f"{h:02d}:06") for h in range(11, 24)]
-
 
 class TooManyFailures(Exception):
     pass
 
 
-def cron_window(now: datetime) -> str | None:
-    """'HH:MM-HH:MM' when `now` (UTC) falls in a scheduled cron window, else None."""
-    hm = now.strftime("%H:%M")
-    for days, start, end in CRON_WINDOWS_UTC:
-        if (days is None or now.weekday() in days) and start <= hm < end:
-            return f"{start}-{end}"
-    return None
+class WindowStop(Exception):
+    """A production cron window is due: stop cleanly (checkpoint saved) before writing more."""
 
 
-def wait_outside_cron_windows(args, sleep=time.sleep, clock=datetime.utcnow) -> None:
+def check_cron_window(args, clock=datetime.utcnow) -> None:
+    """Raise WindowStop when now, or the next LOOKAHEAD_MINUTES, is in a cron window."""
+    from hansard_archive.cron_windows import blocked_window
     if args.ignore_cron_windows:
         return
-    window = cron_window(clock())
-    while window:
-        print(f"[retag] in cron window {window} UTC — pausing (no writes)", flush=True)
-        sleep(60)
-        window = cron_window(clock())
+    label = blocked_window(clock())
+    if label:
+        raise WindowStop(label)
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +351,15 @@ def run(kind: str, args, api_key: str) -> dict:
               f"checkpoint ha_cron_run service_name={service})", flush=True)
     if not todo:
         return stats
+    check_cron_window(args)
     if args.backup:
-        stats["backup_table"] = backup_table(kind)
+        if state.get("backup_table"):
+            stats["backup_table"] = state["backup_table"]
+            print(f"[retag] backup: reusing {state['backup_table']} from the checkpoint", flush=True)
+        else:
+            stats["backup_table"] = backup_table(kind)
+    elif state.get("backup_table"):
+        stats["backup_table"] = state["backup_table"]
     run_id = start_checkpoint(service, {"last_id": done_upto, **stats})
 
     write = tg.write_session_tags if kind == "sessions" else tg.write_pq_tags
@@ -373,8 +367,8 @@ def run(kind: str, args, api_key: str) -> dict:
     try:
         for start in range(0, len(todo), _CHUNK):
             chunk = todo[start:start + _CHUNK]
+            check_cron_window(args)
             results = tag_chunk(kind, chunk, api_key, model, args.batch, failures, args.max_failures)
-            wait_outside_cron_windows(args)
             for item_id, label, outcome in results:
                 if shown < args.sample:
                     _print_before_after(kind, item_id, label, outcome)
@@ -394,6 +388,11 @@ def run(kind: str, args, api_key: str) -> dict:
     except TooManyFailures:
         db.session.rollback()
         save_checkpoint(run_id, {**load_checkpoint(service), "stopped": "API failures"}, status="failed")
+        raise
+    except WindowStop as e:
+        db.session.rollback()
+        save_checkpoint(run_id, {**load_checkpoint(service), "stopped": f"cron window: {e}"},
+                        status="stopped")
         raise
     save_checkpoint(run_id, {"last_id": todo[-1], **stats}, status="ok")
     return stats
@@ -438,6 +437,10 @@ def main(argv=None) -> int:
             print(f"[retag] STOPPED after API failures ({e}). "
                   "Progress is saved; run the same command again to resume.", flush=True)
             return 3
+        except WindowStop as e:
+            print(f"[retag] STOPPED for cron window: {e}. "
+                  "Progress is saved; run the same command again outside the window.", flush=True)
+            return 4
     return 0
 
 
