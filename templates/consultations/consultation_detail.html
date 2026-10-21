@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}{{ c.title }} — consultation{% if c.lead_org_title %} by {{ c.lead_org_title }}{% endif %} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ c.title }} — government consultation{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ c.title|tojson }},
+  "description": {{ meta_desc|tojson }},
+  {% if c.opening_date %}"datePublished": "{{ c.opening_date.date().isoformat() }}",{% endif %}
+  {% if c.updated_at %}"dateModified": "{{ c.updated_at.date().isoformat() }}",{% endif %}
+  {% if c.closing_date %}"expires": "{{ c.closing_date.isoformat() }}Z",{% endif %}
+  "author": {"@type": "GovernmentOrganization", "name": {{ (c.lead_org_title or 'UK Government')|tojson }}},
+  {% if areas %}"about": [{% for a in areas %}{{ a.label|tojson }}{% if not loop.last %}, {% endif %}{% endfor %}],{% endif %}
+  "isBasedOn": "{{ govuk_link }}",
+  "license": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.cons-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.cons-meta-text { font-size: 13px; color: #5a6878; }
+.cons-official { font-size: 13px; color: #4a7fa5; text-decoration: none; font-weight: 500; }
+.cons-official:hover { text-decoration: underline; }
+.cons-days { font-size: 12px; font-weight: 600; color: #1a2332; background: #eef2f7; border-radius: 10px; padding: 2px 9px; }
+.cons-days-urgent { background: #fdecea; color: #a12622; }
+.cons-days-closed { background: #f0f0f0; color: #5a6878; font-weight: 500; }
+.cons-box { background: #fff; border: 1px solid #dde3ed; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+.cons-box h2 { font-size: 15px; font-weight: 700; color: #1a2332; margin: 0 0 10px; }
+.cons-box h3 { font-size: 13px; font-weight: 700; color: #1a2332; margin: 14px 0 6px; }
+.cons-box p { font-size: 14px; line-height: 1.6; color: #2d3748; margin: 0 0 8px; }
+.cons-deadline { font-size: 16px; font-weight: 600; color: #1a2332; margin: 0 0 4px; }
+.cons-list { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+.cons-list li { margin-bottom: 4px; }
+.cons-note { font-size: 12px; color: #8a96a4; margin: 10px 0 0; }
+.cons-postal { white-space: pre-line; font-size: 14px; color: #2d3748; margin: 0; }
+.cons-related { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.cons-item-meta { font-size: 12px; color: #8a96a4; }
+.cons-respond-btn { display: inline-block; background: #1a2332; color: #fff; text-decoration: none; font-weight: 600; font-size: 14px; padding: 8px 14px; border-radius: 4px; margin: 4px 0 8px; }
+.cons-respond-btn:hover { background: #2d3a4d; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <a href="/consultations">Consultations</a><span class="ac-breadcrumb-sep">›</span>
+        <span>{{ c.lead_org_title or 'Consultation' }}</span>
+    </nav>
+
+    <div class="ac-header">
+        <span class="archive-tag archive-tag-topic ac-tag-large">Government consultation</span>
+        <h1 class="ac-title">{{ c.title }}</h1>
+        <div class="cons-meta">
+            <span class="cons-days {% if info.urgent %}cons-days-urgent{% elif not info.is_open %}cons-days-closed{% endif %}">{{ info.label }}</span>
+            {% if org_names %}<span class="cons-meta-text">{{ org_names|join(', ') }}</span>{% endif %}
+            <a class="cons-official" href="{{ govuk_link }}" target="_blank" rel="noopener">View on GOV.UK ↗</a>
+        </div>
+    </div>
+
+    {% if c.is_withdrawn %}
+    <div class="info-box"><p style="margin:0;">GOV.UK has withdrawn or removed this consultation. The details below are our last copy.</p></div>
+    {% endif %}
+
+    <section class="cons-box">
+        <h2>Closing date</h2>
+        {% if info.is_open %}
+        <p class="cons-deadline">Closes at {{ info.closing_human }}</p>
+        <p>{% if info.not_yet_open %}Opens {{ info.opening_human }}.{% elif info.days_left == 0 %}Closes today.{% elif info.days_left == 1 %}Closes tomorrow.{% else %}{{ info.days_left }} days left to respond.{% endif %}{% if info.opening_human and not info.not_yet_open %} Opened {{ info.opening_human }}.{% endif %}</p>
+        {% elif info.closing_date_human %}
+        <p class="cons-deadline">Closed {{ info.closing_date_human }}</p>
+        <p>{% if c.status == 'outcome' %}The government has published its response — see “Outcome” below.{% else %}Responses are no longer being accepted. GOV.UK will publish the outcome when it is ready.{% endif %}</p>
+        {% else %}
+        <p>No closing date published.</p>
+        {% endif %}
+        <p class="cons-note">UK time. Check GOV.UK before relying on a deadline — departments sometimes extend them.</p>
+    </section>
+
+    <section class="cons-box">
+        <h2>Summary</h2>
+        {% if c.summary %}<p><strong>{{ c.summary }}</strong></p>{% endif %}
+        {% for p in paragraphs %}<p>{{ p }}</p>{% endfor %}
+        {% if not c.summary and not paragraphs %}<p>No summary published.</p>{% endif %}
+        {% if c.applies_to %}<p class="cons-note">Applies to: {{ c.applies_to|join(', ') }}</p>{% endif %}
+    </section>
+
+    <section class="cons-box">
+        <h2>Who is consulting</h2>
+        <ul class="cons-list">
+            {% for o in orgs %}
+            <li>{{ o.title }}{% if o.acronym and o.acronym != o.title %} ({{ o.acronym }}){% endif %}</li>
+            {% else %}
+            <li>UK Government</li>
+            {% endfor %}
+        </ul>
+    </section>
+
+    {% if info.is_open %}
+    <section class="cons-box">
+        <h2>How to respond</h2>
+        {% if c.response_url %}
+        <a class="cons-respond-btn" href="{{ c.response_url }}" target="_blank" rel="noopener">Respond online ↗</a>
+        {% endif %}
+        {% if c.response_email %}
+        <h3>By email</h3>
+        <p><a href="mailto:{{ c.response_email }}">{{ c.response_email }}</a></p>
+        {% endif %}
+        {% if c.response_form_url %}
+        <h3>Response form</h3>
+        <p><a href="{{ c.response_form_url }}" target="_blank" rel="noopener">Download the response form ↗</a></p>
+        {% endif %}
+        {% if c.response_postal %}
+        <h3>By post</h3>
+        <p class="cons-postal">{{ c.response_postal }}</p>
+        {% endif %}
+        {% if not (c.response_url or c.response_email or c.response_form_url or c.response_postal) %}
+        <p>The consultation documents explain how to respond. <a href="{{ govuk_link }}" target="_blank" rel="noopener">See GOV.UK ↗</a></p>
+        {% endif %}
+        <p class="cons-note">You respond directly to the government department, not through Westminster Brief.</p>
+    </section>
+    {% endif %}
+
+    {% if documents %}
+    <section class="cons-box">
+        <h2>Documents ({{ documents|length }})</h2>
+        <ul class="cons-list">
+            {% for d in documents %}
+            <li><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.title }}</a>
+                <span class="cons-item-meta">{% if d.kind == 'html' %}web page{% elif d.content_type == 'application/pdf' %}PDF{% elif d.kind == 'external' %}external link{% else %}file{% endif %}{% if d.pages %} · {{ d.pages }} page{{ 's' if d.pages != 1 else '' }}{% endif %}</span></li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    {% if c.status == 'outcome' %}
+    <section class="cons-box">
+        <h2>Outcome</h2>
+        {% if c.outcome_summary %}{% for p in c.outcome_summary.split('\n\n') %}<p>{{ p }}</p>{% endfor %}{% endif %}
+        {% if outcome_documents %}
+        <ul class="cons-list">
+            {% for d in outcome_documents %}<li><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.title }}</a></li>{% endfor %}
+        </ul>
+        {% elif c.outcome_url %}
+        <p><a href="{{ c.outcome_url }}" target="_blank" rel="noopener">Read the government response on GOV.UK ↗</a></p>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if areas or has_related %}
+    <section class="cons-box">
+        <h2>Related on Westminster Brief</h2>
+        {% if areas %}
+        <div class="cons-related">
+            {% for a in areas %}<a href="/brief/{{ a.slug }}" class="archive-tag archive-tag-policy">{{ a.label }}</a>{% endfor %}
+        </div>
+        {% endif %}
+        {% if related.debates %}
+        <h3>Recent debates</h3>
+        <ul class="cons-list">{% for r in related.debates %}<li><a href="{{ r.url }}">{{ r.title }}</a> <span class="cons-item-meta">{{ r.meta }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        {% if related.pqs %}
+        <h3>Recent written questions</h3>
+        <ul class="cons-list">{% for r in related.pqs %}<li><a href="{{ r.url }}">{{ r.title }}</a> <span class="cons-item-meta">{{ r.meta }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        {% if related.bills %}
+        <h3>Bills before Parliament</h3>
+        <ul class="cons-list">{% for r in related.bills %}<li><a href="{{ r.url }}">{{ r.title }}</a> <span class="cons-item-meta">{{ r.meta }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        <p class="cons-note">Matched on policy area, not on this consultation specifically — check relevance before use.</p>
+    </section>
+    {% endif %}
+
+    <p><a href="/consultations" class="cons-official">‹ All open consultations</a></p>
+
+    <p class="ah-source-note">
+        Consultation details from <a href="{{ govuk_link }}" target="_blank" rel="noopener">GOV.UK</a>.
+        Contains public sector information licensed under the
+        <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noopener">Open Government Licence v3.0</a>.
+        Westminster Brief is not part of government.{% if checked_date %} Last checked {{ checked_date }}.{% endif %}
+    </p>
+
+</div>
+</div>
+{% endblock %}
