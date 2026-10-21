@@ -467,11 +467,19 @@ def test_active_run_blocks_second_run(env):
     (datetime(2026, 10, 25, 3, 40), True),    # Sun member-profile-refresh
     (datetime(2026, 10, 24, 3, 40), False),   # Sat between backup and EDM
     (datetime(2026, 10, 24, 4, 10), True),    # EDM 04:30 inside lookahead
-    (datetime(2026, 10, 24, 7, 40), False),   # Sat after bills
+    (datetime(2026, 10, 24, 7, 40), True),    # Sat health report 07:30
+    (datetime(2026, 10, 24, 7, 50), False),   # Sat after the morning jobs
     (datetime(2026, 5, 2, 3, 40), True),      # 2nd of month: member-bio-refresh
 ])
 def test_blocked_window(moment, blocked):
     assert (bps.blocked_window(moment) is not None) is blocked
+
+
+def test_uses_the_shared_cron_schedule():
+    from hansard_archive import cron_windows
+    assert bps.blocked_window is cron_windows.blocked_window
+    import backfill_pq_parliament_start as bpq
+    assert bpq.blocked_window is cron_windows.blocked_window
 
 
 def test_wrappers_restored_after_run(env):

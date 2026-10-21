@@ -33,8 +33,9 @@ How it works
   good, so it never blocks the backfill. Failures only stop the run when a
   Gemini health check confirms the API itself is failing (see TagBudget).
 - Cron windows: by default the run will not start a (day, house) or a tagging
-  call inside, or within 20 minutes of, a production cron window (see
-  _CRON_WINDOWS) and stops cleanly instead.
+  call inside, or within 20 minutes of, a production cron window (the shared
+  schedule in hansard_archive/cron_windows.py) and stops cleanly instead. In
+  practice it runs on weekday evenings/nights and at weekends.
 - Every loop is bounded: days by the date range and --max-days, fetch and day
   retries by fixed attempt counts, tagging by --max-tag and a consecutive
   failure limit. Repeated API failure exits non-zero.
@@ -78,6 +79,8 @@ from sqlalchemy.exc import OperationalError  # noqa: E402
 
 from extensions import db  # noqa: E402
 from hansard_archive import ingestion  # noqa: E402
+# Shared production cron schedule; re-exported for backfill_pq_parliament_start.py.
+from hansard_archive.cron_windows import LOOKAHEAD_MINUTES, blocked_window  # noqa: E402,F401
 from hansard_archive.models import (  # noqa: E402
     HaCronRun,
     HansardContribution,
@@ -105,33 +108,13 @@ TAG_MAX_ATTEMPTS = 2                 # counted failures before the backfill skip
 MAX_SKIPPED_ITEMS = 200
 HEARTBEAT_STALE_MINUTES = 20
 HEARTBEAT_EVERY_SECONDS = 300
-CRON_LOOKAHEAD_MINUTES = 20
+CRON_LOOKAHEAD_MINUTES = LOOKAHEAD_MINUTES
 
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_REFUSED = 2
 EXIT_TAG_FAILED = 3
 EXIT_BUSY = 4
-
-# Production cron windows, UTC (docs/ops/railway-services.md, CLAUDE.md).
-# (weekdays Mon=0, start, end, label). Deliberately wide: weekday daytime is
-# blocked whole because the archive cron runs hourly 11:00-23:00 Mon-Thu, and
-# its tagger tags every untagged session it finds.
-_ALL_DAYS = frozenset(range(7))
-_CRON_WINDOWS = (
-    (frozenset({6}), "01:55", "02:20", "member-cache-refresh (Sun 02:00)"),
-    (_ALL_DAYS, "02:55", "03:30", "backup-cron-r2 (03:00)"),
-    (frozenset({6}), "02:55", "03:50", "member-profile-refresh (Sun 03:00)"),
-    (_ALL_DAYS, "04:25", "07:30",
-     "edm (04:30) / upcoming (05:00-05:45) / rediscovery (06:00) / bills (06:30)"),
-    (frozenset({0, 1, 2, 3}), "07:55", "23:30",
-     "archive 08:00 + hourly 11:00-23:00, PQ 08:30/09:30/14:00"),
-    (frozenset({4}), "07:55", "19:30", "archive 08:00 + hourly Fri 09:00-19:00, PQ crons"),
-)
-# (day of month, start, end, label)
-_MONTHLY_WINDOWS = (
-    (2, "03:55", "05:00", "member-bio-refresh (2nd of month, 04:00)"),
-)
 
 _FETCH_FAIL_PREFIX = "[archive] failed to fetch session"
 _HTTP_STATUS_RE = re.compile(r"\b([45]\d\d) (?:Client|Server) Error")
@@ -173,28 +156,6 @@ class RunStats:
     tag_no_text: int = 0
     stop_reason: str = ""
     frontier: dict = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Cron-window guard
-# ---------------------------------------------------------------------------
-
-def _hhmm(s: str) -> tuple[int, int]:
-    h, m = s.split(":")
-    return int(h), int(m)
-
-
-def blocked_window(now: datetime, lookahead_minutes: int = CRON_LOOKAHEAD_MINUTES) -> str | None:
-    """Label of the cron window `now` (UTC) is in, or will be within the lookahead."""
-    for moment in (now, now + timedelta(minutes=lookahead_minutes)):
-        hm = (moment.hour, moment.minute)
-        for days, start, end, label in _CRON_WINDOWS:
-            if moment.weekday() in days and _hhmm(start) <= hm < _hhmm(end):
-                return label
-        for mday, start, end, label in _MONTHLY_WINDOWS:
-            if moment.day == mday and _hhmm(start) <= hm < _hhmm(end):
-                return label
-    return None
 
 
 # ---------------------------------------------------------------------------

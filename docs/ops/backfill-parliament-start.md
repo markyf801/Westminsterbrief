@@ -15,7 +15,7 @@ failure stops tagging.
 
 Both walk newest-first (the archive stays contiguous), keep their checkpoint in
 `ha_cron_run` (re-running carries on where the last run stopped), stop cleanly
-before production cron windows, and refuse to run at the same time as each other.
+before production cron windows (`hansard_archive/cron_windows.py`), and refuse to run at the same time as each other.
 
 ## Estimates (sampled October 2026)
 
@@ -75,10 +75,16 @@ SELECT MIN(date) FROM ha_session;  SELECT MIN(tabled_date) FROM ha_pq;
 9. Copy changes ("from July 2024") and the bill-page archive start date
    (`hansard_archive/bill_session_match.py` `_DEFAULT_ARCHIVE_START`).
 
-Runs are allowed roughly Mon–Thu 23:30–02:55 UTC and from Friday 19:30 to
-Monday 07:55 outside the early-morning cron windows; a run started inside a
-window exits 0 at once with `cron window: …`. Capture the full log of each run
-before deleting the service.
+When runs are allowed: the shared schedule in `hansard_archive/cron_windows.py`
+(20-minute lookahead) blocks weekday daytime whole (07:55–23:30 Mon–Thu,
+07:55–19:30 Fri), 02:55–03:30 and 04:25–07:45 every day, plus Sunday
+01:55–02:20 / 02:55–03:50 and 03:55–05:00 on the 2nd of the month. In practice:
+weekday nights (Mon–Thu 23:30–02:55, then 03:30–04:25), Friday evening onwards
+and weekends (Sat/Sun 07:45 until the next early-morning window), about 60 hours
+a week. Start runs on a Friday evening or at the weekend; a run started inside a
+window exits 0 at once with `cron window: …`, and a running one stops cleanly
+before the next window. Capture the full log of each run before deleting the
+service.
 
 ## Exit codes
 
