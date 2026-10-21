@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}{{ c.name }} — members, inquiries and calls for evidence — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ c.name }} ({{ house_label }}){% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "GovernmentOrganization",
+  "name": {{ c.name|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "sameAs": "{{ official_url }}",
+  "parentOrganization": {"@type": "GovernmentOrganization", "name": {{ (parent.name if parent else house_label)|tojson }}},
+  {% if c.contact_email %}"email": {{ c.contact_email|tojson }},{% endif %}
+  {% if c.start_date %}"foundingDate": "{{ c.start_date.isoformat() }}",{% endif %}
+  "member": [
+    {% for m in members %}{"@type": "OrganizationRole", "roleName": {{ m.role|tojson }}, "member": {"@type": "Person", "name": {{ m.name|tojson }}{% if m.official_url %}, "sameAs": "{{ m.official_url }}"{% endif %}}}{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.cm-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.cm-meta-text { font-size: 13px; color: #5a6878; }
+.cm-official { font-size: 13px; color: #4a7fa5; text-decoration: none; font-weight: 500; }
+.cm-official:hover { text-decoration: underline; }
+.cm-box { background: #fff; border: 1px solid #dde3ed; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+.cm-box h2 { font-size: 15px; font-weight: 700; color: #1a2332; margin: 0 0 10px; }
+.cm-text { font-size: 14px; line-height: 1.6; color: #2d3748; margin: 0 0 8px; }
+.cm-table-wrap { overflow-x: auto; }
+.cm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cm-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #8a96a4; padding: 6px 8px; border-bottom: 2px solid #dde3ed; }
+.cm-table td { padding: 7px 8px; border-bottom: 1px solid #eef1f5; vertical-align: top; color: #2d3748; }
+.cm-table a { color: #1a2332; text-decoration: none; font-weight: 600; }
+.cm-table a:hover { text-decoration: underline; }
+.cm-role { font-size: 11px; color: #8a96a4; }
+.cm-chair { font-weight: 700; color: #1a2332; }
+.cm-sub { font-size: 12px; color: #5a6878; margin-top: 2px; }
+.cm-sub a { font-weight: 400; color: #4a7fa5; }
+.cm-note { font-size: 12px; color: #8a96a4; margin: 10px 0 0; }
+.cm-deadline { white-space: nowrap; font-weight: 600; }
+.cm-soon { color: #a33a1f; }
+.cm-item + .cm-item { margin-top: 14px; padding-top: 14px; border-top: 1px solid #eef1f5; }
+.cm-item h3 { font-size: 14px; margin: 0 0 4px; color: #1a2332; }
+.cm-item h3 a { color: #1a2332; text-decoration: none; }
+.cm-item h3 a:hover { text-decoration: underline; }
+.cm-related { display: flex; flex-wrap: wrap; gap: 6px; }
+.cm-badge { display: inline-block; font-size: 11px; font-weight: 600; background: #e6f2ea; color: #1f6b3a; border-radius: 10px; padding: 1px 8px; margin-left: 6px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <a href="/committees">Committees</a><span class="ac-breadcrumb-sep">›</span>
+        {% if parent %}<a href="{{ parent.path }}">{{ parent.name }}</a><span class="ac-breadcrumb-sep">›</span>{% endif %}
+        <span>{{ c.name }}</span>
+    </nav>
+
+    <div class="ac-header">
+        <span class="archive-tag archive-tag-topic ac-tag-large">{{ house_label }}{% if c.category %} · {{ c.category }} committee{% endif %}</span>
+        <h1 class="ac-title">{{ c.name }}</h1>
+        <div class="cm-meta">
+            {% if not c.is_current %}<span class="archive-dtype-badge archive-dtype-other">No longer current</span>{% endif %}
+            {% set chairs = members|selectattr('is_chair')|list %}
+            {% if chairs %}<span class="cm-meta-text">Chair: <strong>{{ chairs|map(attribute='name')|join(' and ') }}</strong> ·</span>{% endif %}
+            <span class="cm-meta-text">{{ members|length }} member{{ 's' if members|length != 1 else '' }} ·</span>
+            <a class="cm-official" href="{{ official_url }}" target="_blank" rel="noopener">View on parliament.uk ↗</a>
+        </div>
+    </div>
+
+    {% if purpose_paras %}
+    <section class="cm-box">
+        <h2>What the committee does</h2>
+        {% for p in purpose_paras %}<p class="cm-text">{{ p }}</p>{% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="cm-box" id="open-calls">
+        <h2>Open calls for evidence ({{ calls|length }})</h2>
+        {% if calls %}
+        {% for call in calls %}
+        <div class="cm-item">
+            <h3><a href="{{ call.inquiry_url }}" target="_blank" rel="noopener">{{ call.title }} ↗</a></h3>
+            <div class="cm-sub">
+                <span class="cm-deadline {% if call.days_left is not none and call.days_left <= 7 %}cm-soon{% endif %}">
+                {% if call.deadline %}Deadline {{ call.human_deadline }}{% if call.days_left is not none %} ({% if call.days_left == 0 %}today{% elif call.days_left == 1 %}tomorrow{% else %}in {{ call.days_left }} days{% endif %}){% endif %}{% else %}No deadline published{% endif %}
+                </span>
+                {% if call.submit_url %} · <a href="{{ call.submit_url }}" target="_blank" rel="noopener">Submit evidence on parliament.uk ↗</a>{% endif %}
+            </div>
+            {% if call.scope_excerpt %}<p class="cm-text" style="margin-top:6px;">{{ call.scope_excerpt }}</p>{% endif %}
+        </div>
+        {% endfor %}
+        <p class="cm-note">Check the call for evidence and the committee’s guidance on parliament.uk before submitting. Deadlines are UK time.</p>
+        {% else %}
+        <p class="cm-note" style="margin:0;">This committee has no open calls for evidence at the moment.</p>
+        {% endif %}
+    </section>
+
+    <section class="cm-box">
+        <h2>Members ({{ members|length }})</h2>
+        {% if members %}
+        <div class="cm-table-wrap">
+        <table class="cm-table">
+            <thead><tr><th>Name</th><th>Role</th><th>Party</th><th>Constituency / House</th><th>Member since</th></tr></thead>
+            <tbody>
+            {% for m in members %}
+            <tr>
+                <td>{% if m.url %}<a href="{{ m.url }}"{% if m.url.startswith('http') %} target="_blank" rel="noopener"{% endif %}>{{ m.name }}</a>{% else %}{{ m.name }}{% endif %}{% if m.is_lay_member %}<div class="cm-role">Lay member</div>{% endif %}</td>
+                <td class="{% if m.is_chair %}cm-chair{% endif %}">{{ m.role }}</td>
+                <td>{{ m.party }}</td>
+                <td>{{ m.member_from }}{% if m.house and c.house == 'Joint' %} ({{ m.house }}){% endif %}</td>
+                <td>{{ m.since }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="cm-note" style="margin:0;">No current members recorded.</p>
+        {% endif %}
+    </section>
+
+    <section class="cm-box">
+        <h2>Current inquiries and work ({{ inquiries|length }})</h2>
+        {% if inquiries %}
+        {% for i in inquiries %}
+        <div class="cm-item">
+            <h3><a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.title }} ↗</a>{% if i.has_open_call %}<span class="cm-badge">Call for evidence open</span>{% endif %}</h3>
+            <div class="cm-sub">{{ i.business_type }}{% if i.opened %} · opened {{ i.opened }}{% endif %}{% if i.next_oral_evidence %} · next evidence session {{ i.next_oral_evidence }}{% endif %}{% if i.joint_with %} · joint with {% for o in i.joint_with %}<a href="{{ o.path }}">{{ o.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</div>
+            {% if i.scope_excerpt %}<p class="cm-text" style="margin-top:6px;">{{ i.scope_excerpt }}</p>{% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="cm-note" style="margin:0;">No current inquiries recorded.</p>
+        {% endif %}
+    </section>
+
+    {% if reports %}
+    <section class="cm-box">
+        <h2>Recent reports and government responses</h2>
+        <div class="cm-table-wrap">
+        <table class="cm-table">
+            <thead><tr><th>Publication</th><th>Type</th><th>Published</th></tr></thead>
+            <tbody>
+            {% for r in reports %}
+            <tr>
+                <td>{% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.description }} ↗</a>{% else %}{{ r.description }}{% endif %}
+                    {% if r.paper_number or r.inquiry_title %}<div class="cm-sub">{{ r.paper_number }}{% if r.paper_number and r.inquiry_title %} · {% endif %}{% if r.inquiry_title %}{% if r.inquiry_url %}<a href="{{ r.inquiry_url }}" target="_blank" rel="noopener">{{ r.inquiry_title }}</a>{% else %}{{ r.inquiry_title }}{% endif %}{% endif %}</div>{% endif %}
+                    {% if r.response_due %}<div class="cm-sub">Government response due {{ r.response_due }}</div>{% endif %}
+                </td>
+                <td>{{ r.type }}</td>
+                <td style="white-space:nowrap;">{{ r.date }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if sub_committees %}
+    <section class="cm-box">
+        <h2>Sub-committees</h2>
+        <ul>{% for s in sub_committees %}<li><a href="{{ s.path }}">{{ s.name }}</a></li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+
+    {% if c.contact_email or c.contact_address %}
+    <section class="cm-box">
+        <h2>Contact the committee</h2>
+        {% if c.contact_email %}<p class="cm-text">Email: <a href="mailto:{{ c.contact_email }}">{{ c.contact_email }}</a></p>{% endif %}
+        {% if c.contact_address %}<p class="cm-text">{{ c.contact_address }}</p>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if topics %}
+    <section class="cm-box">
+        <h2>Related on Westminster Brief</h2>
+        <div class="cm-related">
+            {% for t in topics %}<a href="/brief/{{ t.slug }}" class="archive-tag archive-tag-policy">{{ t.label }}</a>{% endfor %}
+        </div>
+        <p class="cm-note">Debates and written questions on these topics. Matched on keywords — check relevance before use. See also <a href="/committees?topic={{ topics[0].slug }}">other committees</a> and <a href="/appgs?topic={{ topics[0].slug }}">APPGs</a> on {{ topics[0].label|lower }}.</p>
+    </section>
+    {% endif %}
+
+    <p><a href="/committees" class="cm-official">‹ All committees</a></p>
+
+    <p class="ah-source-note">
+        Committee data from the
+        <a href="https://committees.parliament.uk" target="_blank" rel="noopener">UK Parliament Committees</a> service,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        {% if checked_date %}Last checked {{ checked_date }}.{% endif %}
+    </p>
+
+</div>
+</div>
+{% endblock %}

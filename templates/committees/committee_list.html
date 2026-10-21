@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}{% if q %}Search: {{ q }} — Parliamentary committees{% elif topic_label %}{{ topic_label }} — Parliamentary committees{% else %}Parliamentary committees, inquiries and calls for evidence{% endif %} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}Parliamentary committees — Westminster Brief{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/committees">{% endblock %}
+
+{% block json_ld %}
+{% if not filtered %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  "name": "UK Parliament committees",
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk/committees",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
+  "mainEntity": {
+    "@type": "ItemList",
+    "itemListElement": [
+      {% for item in items %}{"@type": "ListItem", "position": {{ loop.index }}, "url": "https://westminsterbrief.co.uk{{ item.path }}", "name": {{ item.name|tojson }}}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  }
+}
+</script>
+{% endif %}
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.cm-intro { margin-bottom: 16px; }
+.cm-intro p { margin: 0 0 6px; }
+.cm-intro p:last-child { margin-bottom: 0; }
+.cm-box { background: #fff; border: 1px solid #dde3ed; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+.cm-box h2 { font-size: 15px; font-weight: 700; color: #1a2332; margin: 0 0 10px; }
+.cm-table-wrap { overflow-x: auto; }
+.cm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cm-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #8a96a4; padding: 6px 8px; border-bottom: 2px solid #dde3ed; }
+.cm-table td { padding: 7px 8px; border-bottom: 1px solid #eef1f5; vertical-align: top; color: #2d3748; }
+.cm-table a { color: #1a2332; text-decoration: none; font-weight: 600; }
+.cm-table a:hover { text-decoration: underline; }
+.cm-sub { font-size: 12px; color: #5a6878; margin-top: 2px; }
+.cm-sub a { font-weight: 400; color: #4a7fa5; }
+.cm-deadline { white-space: nowrap; font-weight: 600; }
+.cm-soon { color: #a33a1f; }
+.cm-note { font-size: 12px; color: #8a96a4; margin: 10px 0 0; }
+.cm-count { font-size: 12px; color: #5a6878; white-space: nowrap; }
+.cm-badge { display: inline-block; font-size: 11px; font-weight: 600; background: #e6f2ea; color: #1f6b3a; border-radius: 10px; padding: 1px 8px; margin-left: 6px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <span>Committees</span>
+    </nav>
+
+    <div class="ac-header">
+        <h1 class="ac-title">Parliamentary committees</h1>
+        <p class="ac-desc">Who sits on each committee, what they are investigating, and where you can submit evidence · <a href="/appgs">All-Party Parliamentary Groups</a></p>
+    </div>
+
+    {% if not filtered %}
+    <div class="info-box cm-intro">
+        <p>Select committees of MPs and peers scrutinise government departments and run inquiries into specific issues. When an inquiry opens, the committee usually publishes a call for evidence: anyone, including charities and individuals, can send a written submission before the deadline.</p>
+        <p>Bill committees and delegated legislation committees examine legislation line by line; they do not normally take public submissions.</p>
+    </div>
+    {% endif %}
+
+    <form class="ah-form" method="get" action="/committees">
+        <div class="ah-search-row">
+            <label for="cm-q" class="ah-visually-hidden">Search committees and inquiries</label>
+            <input type="text" name="q" id="cm-q" value="{{ q }}" maxlength="100"
+                   placeholder="Search committees and current inquiries, e.g. social care…" class="ah-search-input" autocomplete="off">
+            <button type="submit" class="ah-search-btn">Search</button>
+            {% if filtered %}<a href="/committees" class="ah-clear-link">Clear</a>{% endif %}
+        </div>
+        <div class="ah-filter-row">
+            <label for="cm-house" class="ah-filter-label">House</label>
+            <select name="house" id="cm-house" class="ah-filter-select" onchange="this.form.submit()">
+                <option value="">All</option>
+                {% for key, label in houses.items() %}<option value="{{ key }}" {% if house_key == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+            <label for="cm-type" class="ah-filter-label">Type</label>
+            <select name="type" id="cm-type" class="ah-filter-select" onchange="this.form.submit()">
+                {% for key, label in types.items() %}<option value="{{ key }}" {% if ctype == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+            <label for="cm-topic" class="ah-filter-label">Topic</label>
+            <select name="topic" id="cm-topic" class="ah-filter-select" onchange="this.form.submit()">
+                <option value="">All topics</option>
+                {% for t in topics %}<option value="{{ t.slug }}" {% if topic == t.slug %}selected{% endif %}>{{ t.label }}</option>{% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <section class="cm-box" id="open-calls">
+        <h2>Open calls for evidence ({{ calls|length }}){% if q or topic_label %} matching {% if q %}“{{ q }}”{% else %}{{ topic_label }}{% endif %}{% endif %}</h2>
+        {% if calls %}
+        <div class="cm-table-wrap">
+        <table class="cm-table">
+            <thead><tr><th>Inquiry</th><th>Committee</th><th>Deadline</th></tr></thead>
+            <tbody>
+            {% for call in calls %}
+            <tr>
+                <td>
+                    <a href="{{ call.inquiry_url }}" target="_blank" rel="noopener">{{ call.title }} ↗</a>
+                    {% if call.submit_url %}<div class="cm-sub"><a href="{{ call.submit_url }}" target="_blank" rel="noopener">Submit evidence on parliament.uk ↗</a></div>{% endif %}
+                </td>
+                <td>{% for c in call.committees %}<a href="{{ c.path }}">{{ c.name }}</a>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+                <td class="cm-deadline {% if call.days_left is not none and call.days_left <= 7 %}cm-soon{% endif %}">
+                    {% if call.deadline %}{{ call.human_deadline }}{% if call.days_left is not none %}<div class="cm-sub">{% if call.days_left == 0 %}today{% elif call.days_left == 1 %}tomorrow{% else %}in {{ call.days_left }} days{% endif %}</div>{% endif %}{% else %}No deadline published{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <p class="cm-note">Check the deadline and guidance on parliament.uk before submitting. Deadlines are UK time.</p>
+        {% else %}
+        <p class="cm-note" style="margin:0;">No open calls for evidence{% if filtered %} match these filters{% endif %} at the moment.</p>
+        {% endif %}
+    </section>
+
+    <section class="cm-box">
+        <h2>{{ types[ctype] }}{% if house_key %} · {{ houses[house_key] }}{% endif %} ({{ items|length }})</h2>
+        {% if items %}
+        <div class="cm-table-wrap">
+        <table class="cm-table">
+            <thead><tr><th>Committee</th><th>House</th><th>Chair</th><th>Current work</th></tr></thead>
+            <tbody>
+            {% for item in items %}
+            <tr>
+                <td><a href="{{ item.path }}">{{ item.name }}</a>{% if item.open_calls %}<span class="cm-badge">{{ item.open_calls }} open call{{ 's' if item.open_calls != 1 else '' }}</span>{% endif %}</td>
+                <td>{{ item.house }}</td>
+                <td>{{ item.chairs|join(', ') }}</td>
+                <td class="cm-count">{% if item.open_inquiries %}{{ item.open_inquiries }} inquir{{ 'ies' if item.open_inquiries != 1 else 'y' }}{% endif %}{% if item.members %}{% if item.open_inquiries %} · {% endif %}{{ item.members }} member{{ 's' if item.members != 1 else '' }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="cm-note" style="margin:0;">{% if q %}No committees match “{{ q }}”. Try a shorter or different search, or <a href="/appgs?q={{ q|urlencode }}">search APPGs</a>.{% else %}No committees to show.{% endif %}</p>
+        {% endif %}
+    </section>
+
+    <p class="ah-source-note">
+        Committee data from the
+        <a href="https://committees.parliament.uk" target="_blank" rel="noopener">UK Parliament Committees</a> service,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Updated daily, so very recent changes may be up to a day behind Parliament’s site. Topics are matched on keywords — check relevance before use.
+    </p>
+
+</div>
+</div>
+{% endblock %}

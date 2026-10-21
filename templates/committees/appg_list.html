@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}{% if q %}Search: {{ q }} — APPGs{% elif topic_label %}{{ topic_label }} — All-Party Parliamentary Groups{% else %}All-Party Parliamentary Groups (APPGs) — officers and secretariats{% endif %}{% if page > 1 %} (page {{ page }}){% endif %} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}All-Party Parliamentary Groups — Westminster Brief{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk/appgs">{% endblock %}
+
+{% block json_ld %}
+{% if not filtered and page == 1 %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  "name": "All-Party Parliamentary Groups",
+  "description": {{ meta_desc|tojson }},
+  "url": "https://westminsterbrief.co.uk/appgs",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
+  "mainEntity": {
+    "@type": "ItemList",
+    "itemListElement": [
+      {% for item in items %}{"@type": "ListItem", "position": {{ loop.index }}, "url": "https://westminsterbrief.co.uk{{ item.path }}", "name": {{ item.name|tojson }}}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  }
+}
+</script>
+{% endif %}
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.ap-intro { margin-bottom: 16px; }
+.ap-intro p { margin: 0 0 6px; }
+.ap-intro p:last-child { margin-bottom: 0; }
+.ap-chair { font-size: 12px; color: #5a6878; margin-top: 2px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <a href="/committees">Committees</a><span class="ac-breadcrumb-sep">›</span>
+        <span>APPGs</span>
+    </nav>
+
+    <div class="ac-header">
+        <h1 class="ac-title">All-Party Parliamentary Groups</h1>
+        <p class="ac-desc">Cross-party interest groups of MPs and peers{% if edition %}, from the official register as at {{ edition }}{% endif %}</p>
+    </div>
+
+    {% if not filtered and page == 1 %}
+    <div class="info-box ap-intro">
+        <p>All-Party Parliamentary Groups (APPGs) are informal groups of MPs and peers who share an interest in a subject or a country. They are not official committees of Parliament and have no formal powers, but they can be a route for organisations to raise an issue with parliamentarians.</p>
+        <p>Many APPGs have a secretariat provided by a charity, trade body or consultancy. Each group’s officers, secretariat and registered benefits are listed below as published in the register.</p>
+    </div>
+    {% endif %}
+
+    <form class="ah-form" method="get" action="/appgs">
+        <div class="ah-search-row">
+            <label for="ap-q" class="ah-visually-hidden">Search APPGs</label>
+            <input type="text" name="q" id="ap-q" value="{{ q }}" maxlength="100"
+                   placeholder="Search group names, purposes and secretariats…" class="ah-search-input" autocomplete="off">
+            <button type="submit" class="ah-search-btn">Search</button>
+            {% if filtered %}<a href="/appgs" class="ah-clear-link">Clear</a>{% endif %}
+        </div>
+        <div class="ah-filter-row">
+            <label for="ap-topic" class="ah-filter-label">Topic</label>
+            <select name="topic" id="ap-topic" class="ah-filter-select" onchange="this.form.submit()">
+                <option value="">All topics</option>
+                {% for t in topics %}<option value="{{ t.slug }}" {% if topic == t.slug %}selected{% endif %}>{{ t.label }}</option>{% endfor %}
+            </select>
+            <label for="ap-cat" class="ah-filter-label">Type</label>
+            <select name="category" id="ap-cat" class="ah-filter-select" onchange="this.form.submit()">
+                <option value="">All groups</option>
+                {% for key, (_value, label) in categories.items() %}<option value="{{ key }}" {% if cat_key == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <div class="ah-results-bar">
+        <span class="ah-results-count">
+            <strong>{{ '{:,}'.format(total) }}</strong> group{{ 's' if total != 1 else '' }}{% if q %} matching “{{ q }}”{% endif %}
+        </span>
+        {% if total_pages > 1 %}<span class="ah-results-range">page {{ page }} of {{ total_pages }}</span>{% endif %}
+    </div>
+
+    {% if items %}
+    <div class="ah-results-list">
+        {% for item in items %}
+        <div class="ah-card">
+            <div class="ah-card-meta">
+                {% if item.category %}<span class="archive-dtype-badge">{{ item.category }}</span>{% endif %}
+                {% for t in item.topics[:2] %}<span class="archive-dtype-badge archive-dtype-other">{{ t.label }}</span>{% endfor %}
+            </div>
+            <a class="ah-card-title" href="{{ item.path }}">{{ item.name }}</a>
+            {% if item.chairs %}<div class="ap-chair">Chair: {{ item.chairs|join(', ') }}</div>{% endif %}
+            {% if item.purpose_excerpt %}<p class="ah-card-snippet">{{ item.purpose_excerpt }}</p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state ac-empty">
+        <p>{% if q %}No APPGs match “{{ q }}”. Try a shorter or different search, or <a href="/committees?q={{ q|urlencode }}">search committees</a>.{% else %}No groups to show.{% endif %}</p>
+    </div>
+    {% endif %}
+
+    {% if total_pages > 1 %}
+    <nav class="ah-pagination" aria-label="Results pages">
+        {% if prev_url %}<a href="{{ prev_url }}" class="ah-page-btn">&#8249; Previous</a>
+        {% else %}<span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>{% endif %}
+        <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
+        {% if next_url %}<a href="{{ next_url }}" class="ah-page-btn">Next &#8250;</a>
+        {% else %}<span class="ah-page-btn ah-page-disabled">Next &#8250;</span>{% endif %}
+    </nav>
+    {% endif %}
+
+    <p class="ah-source-note">
+        From the <a href="{{ register_url }}" target="_blank" rel="noopener">Register of All-Party Parliamentary Groups</a>,
+        published by the House of Commons and licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        A new edition is published roughly every six weeks; we check for one weekly. Topics are matched on keywords — check relevance before use.
+    </p>
+
+</div>
+</div>
+{% endblock %}

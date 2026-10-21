@@ -53,6 +53,7 @@
         <a href="/written-questions" {% if request.path.startswith('/written-questions') or request.path == '/questions' or request.path == '/tracker' %}class="nav-active"{% endif %}>Written Questions</a>
         {% if feature_enabled('FEATURE_EDMS', current_user) %}<a href="/edms" {% if request.path.startswith('/edms') %}class="nav-active"{% endif %}>EDMs</a>{% endif %}
         {% if feature_enabled('FEATURE_CONSULTATIONS', current_user) %}<a href="/consultations" {% if request.path.startswith('/consultations') %}class="nav-active"{% endif %}>Consultations</a>{% endif %}
+        {% if feature_enabled('FEATURE_COMMITTEES', current_user) %}<a href="/committees" {% if request.path.startswith('/committees') or request.path.startswith('/appgs') %}class="nav-active"{% endif %}>Committees</a>{% endif %}
         <a href="/debates"  {% if request.path.startswith('/debates') %}class="nav-active"{% endif %}>Research</a>
         <a href="/mp_search"{% if request.path == '/mp_search' or request.path == '/biography' %}class="nav-active"{% endif %}>Members</a>
         <a href="/directory" {% if request.path.startswith('/directory') %}class="nav-active"{% endif %}>Directory</a>
