@@ -60,7 +60,7 @@ def _business(bid, title, kind="Inquiry", open_periods=(), report=None):
         "id": bid, "title": title,
         "type": {"id": 1, "name": kind, "isInquiry": kind == "Inquiry"},
         "openDate": "2026-06-02T00:00:00", "closeDate": None, "latestReport": report,
-        "openSubmissionPeriods": [{"id": pid, "startDate": "2026-09-01T00:00:00", "endDate": end,
+        "openSubmissionPeriods": [{"id": pid, "startDate": (NOW - timedelta(days=30)).isoformat(), "endDate": end,
                                    "submissionType": "WrittenEvidence"} for pid, end in open_periods],
         "closedSubmissionPeriods": [], "nextOralEvidenceSession": None,
     }
@@ -552,12 +552,32 @@ class TestCommitteesIngest:
             s = ingest_committees.ingest(api=ingest_committees.Api(sleep=_no_sleep), now=NOW)
         assert s["committees_listed"] == 0 and ingest_committees.mostly_failed(s)
 
+    def test_non_inquiry_business_skips_detail_fetch(self, ingest_app):
+        from committees_models import CommitteeInquiry
+        scrutiny = _business(7777, "Planning Bill: scrutiny", kind="Legislative scrutiny")
+        data = {**API, "business": {**API["business"], 518: [OPEN_ENDED, scrutiny]}}
+        calls = []
+        _run_committees(data, calls=calls)
+        assert "/CommitteeBusiness/7777" not in calls and "/CommitteeBusiness/8885" in calls
+        row = _get(CommitteeInquiry, 7777)
+        assert row.status == "Open" and not row.is_inquiry and row.scope is None
+
     def test_evidence_window(self):
         past, future = NOW - timedelta(days=19), NOW + timedelta(days=12)
         item = _business(1, "x", open_periods=[(1, past.isoformat()), (2, future.isoformat())])
         assert ingest_committees.evidence_window(item, NOW)[:2] == (True, future)
         item = _business(1, "x", open_periods=[(1, past.isoformat())])
         assert ingest_committees.evidence_window(item, NOW)[0] is False
+        # Open-ended + dated period: the dated one sets the deadline and is listed first
+        item = _business(1, "x", open_periods=[(5, None), (6, future.isoformat())])
+        is_open, deadline, periods = ingest_committees.evidence_window(item, NOW)
+        assert (is_open, deadline, periods[0]["id"]) == (True, future, 6)
+        # Open-ended periods: open if started within a year, stale otherwise
+        item = _business(1, "x", open_periods=[(7, None)])
+        item["openSubmissionPeriods"][0]["startDate"] = (NOW - timedelta(days=400)).isoformat()
+        assert ingest_committees.evidence_window(item, NOW)[:2] == (False, None)
+        item["openSubmissionPeriods"][0]["startDate"] = (NOW - timedelta(days=30)).isoformat()
+        assert ingest_committees.evidence_window(item, NOW)[:2] == (True, None)
 
 
 # ── APPG parsing and ingest ───────────────────────────────────────────────────

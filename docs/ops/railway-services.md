@@ -197,6 +197,21 @@ normally empty):
   = True` once that service exists
 - Committee evidence cron, backup cron record, newest R2 object, live `/ping` + `/health`
 
+### Committees and APPGs (`scripts/ingest_committees.py`, `scripts/ingest_appgs.py`) — not yet set up
+
+Proposed services (both Dockerfile.cron, `SKIP_MIGRATIONS=1`):
+
+| Service | Cron (UTC) | Start command | Purpose |
+|---|---|---|---|
+| `committees-cron` | `30 1 * * *` | `python scripts/ingest_committees.py` | Daily — current committees, members/roles, open inquiries + calls for evidence, recent reports (~40–60 min; the API is slow) |
+| `appg-cron` | `30 2 * * 2` | `python scripts/ingest_appgs.py` | Weekly — no-op unless a new Register of APPGs edition is out (~10 min when it is) |
+
+Order: `migrations/committees_appgs_tables.py --execute` → one-shot
+`python scripts/ingest_committees.py` (first run ~1–1.5 h: scope text for
+~300 inquiries) and `python scripts/ingest_appgs.py` → enable the crons → set
+`FEATURE_COMMITTEES=beta`, then `live`, on the web service. Both log a row in
+`ha_cron_run` and exit 1 if most requests fail; `--dry-run` writes nothing.
+
 ### Other
 
 - `backup-cron-r2` — daily pg_dump to Cloudflare R2
