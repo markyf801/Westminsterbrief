@@ -335,20 +335,34 @@ def is_multi_question(si: SessionInput) -> bool:
     return si.debate_type == "pmqs" or any(t.startswith(p) for p in _MULTI_QUESTION_TITLES)
 
 
-def _is_answerer(name: str, frequent: str) -> bool:
-    # Ministers are recorded in proxy form: "The Prime Minister (Name)".
-    return (name or "").startswith("The ") or (bool(frequent) and name == frequent)
+_PROXY_NAME = re.compile(r"^The\s+[^(]+?\(([^)]+)\)\s*$")
+
+
+def _person(name: str) -> str:
+    """
+    One identity per member across Hansard's name forms: a minister first
+    appears as "The Secretary of State for X (Jo Bloggs)" and then as "Jo
+    Bloggs"; a backbencher as "Jo Bloggs (Seat) (Party)" and then "Jo Bloggs".
+    """
+    n = (name or "").strip()
+    m = _PROXY_NAME.match(n)
+    if m:
+        return m.group(1).strip()
+    return re.sub(r"\s*\(.*$", "", n).strip()
 
 
 def question_groups(contributions: list[tuple[str, str]]) -> list[list[tuple[str, str]]]:
     """
     Split a question session into groups: each starts when a new member asks a
     question after an answer, and holds the answer and that member's follow-ups.
-    Chair interventions stay in the current group.
+    Answerers are the members who appear in ministerial form ("The Minister for
+    X (Name)"), or, if nobody does, the most frequent speaker. Chair
+    interventions stay in the current group.
     """
     speakers = [n for n, _ in contributions if n and not _CHAIR_NAMES.match(n)]
-    has_proxy = any(n.startswith("The ") for n in speakers)
-    frequent = "" if has_proxy or not speakers else Counter(speakers).most_common(1)[0][0]
+    answerers = {_person(n) for n in speakers if n.startswith("The ")}
+    if not answerers and speakers:
+        answerers = {Counter(_person(n) for n in speakers).most_common(1)[0][0]}
     groups: list[list[tuple[str, str]]] = []
     questioner = None
     prev_answer = True
@@ -357,12 +371,13 @@ def question_groups(contributions: list[tuple[str, str]]) -> list[list[tuple[str
             if groups:
                 groups[-1].append((name, text_))
             continue
-        answer = _is_answerer(name, frequent)
-        if not groups or (not answer and prev_answer and name != questioner):
+        person = _person(name)
+        answer = (name or "").startswith("The ") or person in answerers
+        if not groups or (not answer and prev_answer and person != questioner):
             groups.append([])
             questioner = None
         if not answer and questioner is None:
-            questioner = name
+            questioner = person
         groups[-1].append((name, text_))
         prev_answer = answer
     return [g for g in groups if g]
@@ -666,6 +681,34 @@ def _gemini_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[o
 def _add_usage(total: dict, usage: dict) -> None:
     for k in ("promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount"):
         total[k] = total.get(k, 0) + int(usage.get(k) or 0)
+
+
+# USD per 1M tokens: (input, output). Output includes thinking tokens, which
+# Gemini bills as output. Paid-tier list prices for prompts under 200K tokens as
+# last checked — confirm at https://ai.google.dev/gemini-api/docs/pricing before
+# a large run (scripts/retag.py prints the estimate it uses).
+MODEL_PRICES_PER_M: dict[str, tuple[float, float]] = {
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+    "gemini-2.5-flash":      (0.30, 2.50),
+    "gemini-2.5-pro":        (1.25, 10.00),
+}
+
+
+def model_prices(model: str) -> Optional[tuple[float, float]]:
+    """Prices for a model id, matching versioned ids ("gemini-2.5-flash-lite-preview-..")."""
+    for name in sorted(MODEL_PRICES_PER_M, key=len, reverse=True):
+        if (model or "").startswith(name):
+            return MODEL_PRICES_PER_M[name]
+    return None
+
+
+def usage_cost(usage: dict, model: str) -> Optional[float]:
+    """USD cost of the token usage recorded on a TagOutcome, or None for an unknown model."""
+    prices = model_prices(model)
+    if prices is None:
+        return None
+    out_tokens = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
+    return (int(usage.get("promptTokenCount") or 0) * prices[0] + out_tokens * prices[1]) / 1_000_000
 
 
 # ---------------------------------------------------------------------------

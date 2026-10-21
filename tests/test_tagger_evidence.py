@@ -305,3 +305,23 @@ def test_api_failure_writes_nothing(app_db, monkeypatch):
     monkeypatch.setattr(tg, "_gemini_json", boom)
     assert tg.tag_session(s.id, api_key="key") == 0
     assert HansardSessionTheme.query.filter_by(session_id=s.id).count() == 0
+
+
+def test_question_groups_follow_hansard_name_forms():
+    """A minister appears as 'The Secretary of State for X (Name)' then as 'Name';
+    a backbencher as 'Name (Seat) (Party)' then 'Name'."""
+    contribs = [
+        ("Freddie van Mierlo (Henley and Thame) (LD)", "T1 question"),
+        ("The Secretary of State for Business and Trade (Jonathan Reynolds)", "answer"),
+        ("Freddie van Mierlo", "follow-up"),
+        ("Jonathan Reynolds", "answer 2"),
+        ("Alex McIntyre (Gloucester) (Lab)", "T2 question"),
+        ("Madam Deputy Speaker (Ms Nusrat Ghani)", "Order."),
+        ("The Minister for the Future of Work (Kate Dearden)", "answer"),
+        ("Julia Lopez (Hornchurch and Upminster) (Con)", "shadow question"),
+        ("Jonathan Reynolds", "answer"),
+        ("Julia Lopez", "follow-up"),
+        ("Jonathan Reynolds", "answer"),
+    ]
+    groups = question_groups(contribs)
+    assert [len(g) for g in groups] == [4, 3, 4]
