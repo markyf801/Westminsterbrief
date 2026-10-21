@@ -1640,35 +1640,47 @@ def _resolve_parliament_id(display_name):
     return None, None
 
 
+def _unique_member_match(query, name_col, name):
+    """The single row of `query` whose name is `name`, else the single row whose
+    normalised name matches. None when there is no match or more than one."""
+    exact = query.filter(name_col == name).limit(2).all()
+    if exact:
+        return exact[0] if len(exact) == 1 else None
+    target = _normalise_name(name)
+    if not target:
+        return None
+    matches = [r for r in query.all() if _normalise_name(r.name or '') == target]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _local_member_lookup(display_name):
     """Resolve a minister's display name to (member_id, is_lord) from our own
-    member tables: member_profile (current members) first, then cached_member.
-    A normalised-name match is only accepted when it is unique. No API calls.
-    Returns (None, False) if not found."""
-    from cache_models import MemberProfile
+    member tables: member_profile (current members) first, then cached_member
+    (which also holds former members). A match is only accepted when it is
+    unique. No API calls. Returns (None, False) if not found."""
+    import logging
+    from cache_models import CachedMember, MemberProfile
     from extensions import db
     name = (display_name or '').strip()
     if not name:
         return None, False
-    try:
-        current = MemberProfile.query.filter_by(is_current=True)
-        row = current.filter_by(name=name).first()
-        if not row:
-            target = _normalise_name(name)
-            matches = [p for p in current.with_entities(
-                           MemberProfile.member_id, MemberProfile.name, MemberProfile.house).all()
-                       if target and _normalise_name(p.name or '') == target]
-            row = matches[0] if len(matches) == 1 else None
+    sources = [
+        (MemberProfile.query.filter_by(is_current=True).with_entities(
+            MemberProfile.member_id, MemberProfile.name, MemberProfile.house),
+         MemberProfile.name),
+        (CachedMember.query.with_entities(
+            CachedMember.member_id, CachedMember.name, CachedMember.house),
+         CachedMember.name),
+    ]
+    for query, name_col in sources:
+        try:
+            row = _unique_member_match(query, name_col, name)
+        except Exception as e:
+            db.session.rollback()
+            logging.warning(f"Minister member lookup failed for {name!r}: {e}")
+            continue
         if row:
             return row.member_id, row.house == 'Lords'
-    except Exception:
-        db.session.rollback()
-    try:
-        member_id, _matched, is_lord = _resolve_member_id(name)
-        if member_id:
-            return member_id, is_lord
-    except Exception:
-        db.session.rollback()
     return None, False
 
 

@@ -131,6 +131,32 @@ class TestDeptMinisterMemberIds:
         assert [(r["name"], r["parliament_id"], r["is_lord"]) for r in result] == [
             ("Baroness Smith of Malvern", 269, True), ("Cached Minister", 77, False)]
 
+    def test_unique_cached_member_match_used(self, app, no_http):
+        from cache_models import CachedMember
+        from extensions import db
+        db.session.add(CachedMember(member_id=5033, name="Josh MacAlister", house="Commons"))
+        db.session.commit()
+
+        result = debate_scanner.get_dept_minister_member_ids(
+            "Department for Education", _minister_data(["The Rt Hon Josh MacAlister MP"]))
+
+        assert [r["parliament_id"] for r in result] == [5033]
+
+    def test_ambiguous_cached_member_falls_back_to_members_api(self, app, monkeypatch):
+        # cached_member also holds former members (e.g. past WQ askers), so a
+        # name shared by two of them must not be resolved to either.
+        from cache_models import CachedMember
+        from extensions import db
+        db.session.add_all([CachedMember(member_id=10, name="Sir John Smith", house="Commons"),
+                            CachedMember(member_id=11, name="John Smith", house="Commons")])
+        db.session.commit()
+        monkeypatch.setattr(debate_scanner, "_resolve_parliament_id", lambda name: (12, "Commons"))
+
+        result = debate_scanner.get_dept_minister_member_ids(
+            "Department for Education", _minister_data(["Rt Hon John Smith"]))
+
+        assert [r["parliament_id"] for r in result] == [12]
+
     def test_failed_lookup_is_cached_and_not_retried(self, app, monkeypatch):
         calls = []
         monkeypatch.setattr(debate_scanner, "_resolve_parliament_id",
