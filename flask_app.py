@@ -1349,6 +1349,23 @@ def ratelimit_handler(e):
     return render_template('429.html'), 429
 
 
+# Crawlers that overloaded the site (2026-10-21: AionBot, ~9 req/s on /brief).
+# Extra names can be added via BLOCKED_USER_AGENTS (comma-separated substrings).
+_BLOCKED_UA_SUBSTRINGS = ['aionbot'] + [
+    s.strip().lower() for s in os.environ.get('BLOCKED_USER_AGENTS', '').split(',') if s.strip()
+]
+
+
+@app.before_request
+def _block_abusive_crawlers():
+    if request.path in ('/robots.txt', '/ping'):
+        return None
+    ua = (request.headers.get('User-Agent') or '').lower()
+    if any(s in ua for s in _BLOCKED_UA_SUBSTRINGS):
+        return ('Forbidden', 403)
+    return None
+
+
 @app.before_request
 def _enforce_feature_flags():
     """Abort 404 for hidden feature routes before @login_required can redirect."""

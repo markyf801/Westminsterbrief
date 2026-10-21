@@ -14,6 +14,9 @@ Disallow: /archive/search
 User-agent: DotBot
 Disallow: /
 
+User-agent: AionBot
+Disallow: /
+
 User-agent: SemrushBot
 Disallow: /
 
