@@ -153,9 +153,12 @@ Env: `DATABASE_URL` (Variable Reference; the script opens it read-only),
 `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`
 (without them the R2 check shows SKIPPED; a read-only R2 token is enough).
 Exits 0 even when it finds problems; non-zero only if the checker crashes or the
-email can't be sent. Try it first with `--dry-run` via Run Now. Thresholds and
-recess dates: `CONFIG` / `RECESS_PERIODS` at the top of
-`hansard_archive/health_checks.py`.
+email can't be sent. Try it first with `--dry-run` via Run Now. "No new data"
+checks for Hansard and written questions use Parliament's sitting calendar
+(What's On API `calendar/proceduraldates/{House}/sittingdates.json`, fetched once
+per run, read-only); if it can't be reached they fall back to a weekday rule and
+the report line says so. Thresholds and the manual `RECESS_PERIODS` override:
+`CONFIG` / `RECESS_PERIODS` at the top of `hansard_archive/health_checks.py`.
 
 ### Other
 

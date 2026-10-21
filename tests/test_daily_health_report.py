@@ -99,9 +99,34 @@ def _seed_fresh(engine: sa.Engine, now: datetime, skip: tuple = ()) -> None:
                                   "last_rediscovered_at": recent}])
 
 
-def _ok_http(url, timeout, allow_redirects):
+def _mon_thu(start: date, end: date, skip: tuple[date, date] | None = None) -> set[date]:
+    """Fake sitting calendar: every Mon-Thu in [start, end], minus an optional recess."""
+    days, d = set(), start
+    while d <= end:
+        if d.weekday() < 4 and not (skip and skip[0] <= d <= skip[1]):
+            days.add(d)
+        d += timedelta(days=1)
+    return days
+
+
+CALENDAR = _mon_thu(date(2026, 8, 1), date(2026, 10, 31))
+calendar_calls: list[str] = []
+
+
+def _calendar_response(days: set[date]):
     resp = MagicMock(status_code=200)
+    resp.json.return_value = {"SittingDates": [{"Date": f"{d.isoformat()}T00:00:00"} for d in sorted(days)]}
     return resp
+
+
+def _ok_http(url, **kwargs):
+    """Mocked requests.get: serves the sitting calendar and 200s for the site."""
+    if "sittingdates" in url:
+        calendar_calls.append(url)
+        start = date.fromisoformat(kwargs["params"]["startDate"])
+        end = date.fromisoformat(kwargs["params"]["endDate"])
+        return _calendar_response({d for d in CALENDAR if start <= d <= end})
+    return MagicMock(status_code=200)
 
 
 def _s3_factory(last_modified: datetime, keys=("daily/2026-10-19.sql.gz.gpg", "daily/2026-10-20.sql.gz.gpg")):
@@ -111,9 +136,11 @@ def _s3_factory(last_modified: datetime, keys=("daily/2026-10-19.sql.gz.gpg", "d
     return lambda: s3
 
 
-def _run_db(engine, now):
+def _run_db(engine, now, sitting_days=None):
+    """sitting_days=None -> weekday fallback rule (calendar unavailable)."""
     with engine.connect() as conn:
-        return {r.name: r for r in hc.run_db_checks(hc.HealthContext(conn, now, recess_periods=[]))}
+        ctx = hc.HealthContext(conn, now, recess_periods=[], sitting_days=sitting_days)
+        return {r.name: r for r in hc.run_db_checks(ctx)}
 
 
 R2_ENV = {"R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s", "R2_ENDPOINT_URL": "https://r2.example.test"}
@@ -263,7 +290,8 @@ def test_web_checks():
 
 def _main(engine, now, *flags, sender=None):
     sender = sender or MagicMock(return_value=True)
-    code = dhr.main(["--skip-web", *flags], engine=engine, now=now, sender=sender, env={})
+    code = dhr.main(["--skip-web", *flags], engine=engine, now=now, sender=sender, env={},
+                    http_get=_ok_http)
     return code, sender
 
 
@@ -335,3 +363,119 @@ def test_unreachable_database_is_reported_not_crash():
     code, sender = _main(engine, TUESDAY)
     assert code == 0
     assert "Daily health: 1 problem" in sender.call_args.kwargs["subject"]
+
+
+# ---------------------------------------------------------------------------
+# Sitting calendar (What's On API, mocked)
+# ---------------------------------------------------------------------------
+
+def _sessions_engine(commons: date, lords: date, now: datetime):
+    engine = _engine()
+    _seed_fresh(engine, now, skip=("ha_session",))
+    with engine.begin() as conn:
+        conn.execute(m.HansardSession.__table__.insert(), [
+            {"ext_id": "c", "title": "t", "date": commons, "house": "Commons"},
+            {"ext_id": "l", "title": "t", "date": lords, "house": "Lords"},
+        ])
+    return engine
+
+
+def test_fetch_sitting_days_parses_and_caches_per_run():
+    calendar_calls.clear()
+    days, note = hc.fetch_sitting_days(_ok_http, TUESDAY.date())
+    assert note == ""
+    assert date(2026, 10, 19) in days["Commons"] and date(2026, 10, 16) not in days["Lords"]
+    assert len(calendar_calls) == 2                      # one request per House
+    calendar_calls.clear()
+    dhr.collect(_fresh_engine(TUESDAY), TUESDAY, env={}, skip_web=True, http_get=_ok_http)
+    assert len(calendar_calls) == 2                      # fetched once per run, shared by all checks
+
+
+def _raise_connection_error(url, **kwargs):
+    raise ConnectionError("down")
+
+
+@pytest.mark.parametrize("getter, expected", [
+    (_raise_connection_error, "calendar unavailable (ConnectionError)"),
+    (lambda url, **kw: MagicMock(status_code=500), "calendar HTTP 500 for Commons"),
+    (lambda url, **kw: _calendar_response(set()), "calendar returned no sitting days"),
+])
+def test_fetch_sitting_days_failures(getter, expected):
+    days, note = hc.fetch_sitting_days(getter, TUESDAY.date())
+    assert days is None
+    assert note.startswith(expected)
+
+
+def test_calendar_allows_publication_lag():
+    # Commons last data Thursday 15th; it didn't sit Friday; Monday 19th's data
+    # isn't due until the end of Tuesday -> nothing overdue on Tuesday 07:30.
+    engine = _sessions_engine(date(2026, 10, 15), date(2026, 10, 19), TUESDAY)
+    res = _run_db(engine, TUESDAY, sitting_days={"Commons": CALENDAR, "Lords": CALENDAR})
+    assert res["Hansard archive: newest session"].status == hc.OK
+    assert "[sitting calendar]" in res["Hansard archive: newest session"].detail
+
+
+def test_calendar_flags_missing_sitting_day():
+    engine = _sessions_engine(date(2026, 10, 14), date(2026, 10, 19), TUESDAY)
+    res = _run_db(engine, TUESDAY, sitting_days={"Commons": CALENDAR, "Lords": CALENDAR})
+    archive = res["Hansard archive: newest session"]
+    assert archive.status == hc.WARN
+    assert "Commons: 2026-10-14 (1 sitting day(s) missing: 2026-10-15)" in archive.detail
+
+
+def test_calendar_recess_does_not_warn_but_weekday_rule_would():
+    recess = (date(2026, 9, 17), date(2026, 10, 11))
+    cal = _mon_thu(date(2026, 8, 1), date(2026, 10, 31), skip=recess)
+    first_day_back = datetime(2026, 10, 12, 7, 30)        # Monday after conference recess
+    engine = _sessions_engine(date(2026, 9, 16), date(2026, 9, 16), first_day_back)
+    with engine.begin() as conn:
+        conn.execute(m.HaPQ.__table__.update().values(tabled_date=date(2026, 9, 16),
+                                                      answer_date=date(2026, 9, 16)))
+    with_cal = _run_db(engine, first_day_back, sitting_days={"Commons": cal, "Lords": cal})
+    assert with_cal["Hansard archive: newest session"].status == hc.OK
+    assert with_cal["Written questions: newest tabled"].status == hc.OK
+    assert with_cal["Written questions: recent answers"].status == hc.OK
+    fallback = _run_db(engine, first_day_back)
+    assert fallback["Hansard archive: newest session"].status == hc.WARN
+    assert "weekday rule" in fallback["Hansard archive: newest session"].detail
+
+
+def test_pq_tabled_uses_each_houses_calendar():
+    # Lords sat Friday 16th (Commons didn't); Lords questions for Friday were due by end of Monday.
+    lords = CALENDAR | {date(2026, 10, 16)}
+    engine = _engine()
+    _seed_fresh(engine, TUESDAY, skip=("ha_pq",))
+    with engine.begin() as conn:
+        conn.execute(m.HaPQ.__table__.insert(), [
+            {"uin": "C1", "question_text": "Q", "heading": "H", "tabled_date": date(2026, 10, 15),
+             "chamber": "Commons", "is_answered": True, "answer_date": date(2026, 10, 19)},
+            {"uin": "HL1", "question_text": "Q", "heading": "H", "tabled_date": date(2026, 10, 15),
+             "chamber": "Lords", "is_answered": False, "answer_date": None},
+        ])
+    res = _run_db(engine, TUESDAY, sitting_days={"Commons": CALENDAR, "Lords": lords})
+    pq = res["Written questions: newest tabled"]
+    assert pq.status == hc.WARN
+    assert "Commons: 2026-10-15;" in pq.detail
+    assert "Lords: 2026-10-15 (1 sitting day(s) missing: 2026-10-16)" in pq.detail
+
+
+def test_manual_recess_override_applies_to_calendar():
+    engine = _sessions_engine(date(2026, 10, 14), date(2026, 10, 19), TUESDAY)
+    with engine.connect() as conn:
+        ctx = hc.HealthContext(conn, TUESDAY, recess_periods=[("2026-10-15", "2026-10-15")],
+                               sitting_days={"Commons": CALENDAR, "Lords": CALENDAR})
+        assert hc.check_archive_sessions(ctx).status == hc.OK
+
+
+def test_calendar_failure_noted_in_report(capsys):
+    def no_calendar(url, **kw):
+        if "sittingdates" in url:
+            raise TimeoutError("slow")
+        return MagicMock(status_code=200)
+
+    engine = _fresh_engine(TUESDAY)
+    code = dhr.main(["--skip-web", "--dry-run"], engine=engine, now=TUESDAY, env={}, http_get=no_calendar)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "calendar unavailable (TimeoutError): weekday rule" in out
+    assert "0 problem(s)" in out
