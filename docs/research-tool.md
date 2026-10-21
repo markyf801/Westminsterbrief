@@ -75,8 +75,8 @@ After deploying a fix: clear cache at `/admin` → run the canonical test case l
 
 ## Feature flag
 
-- `SEARCH_BACKEND=hansard` → Hansard API for minister search (production path)
-- Unset → TWFY for all searches (original behaviour)
+None. `SEARCH_BACKEND` is no longer read: searches always run on the Hansard /
+own-archive path, and TheyWorkForYou is not used (removed Oct 2026).
 
 ## Parliamentary structure knowledge
 

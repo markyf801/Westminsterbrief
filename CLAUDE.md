@@ -292,7 +292,7 @@ surface to Mark.
 Every piece of content links to its authoritative source, visibly — this is the
 trust mechanism, not boilerplate. Patterns: Hansard `session.hansard_url`; WQs
 `https://questions-statements.parliament.uk/written-questions/detail/{tabled_date}/{uin}`;
-MPs `https://members.parliament.uk/member/{mnis_id}/` (or TWFY as interim);
+MPs `https://members.parliament.uk/member/{mnis_id}/`;
 Bills `https://bills.parliament.uk/bills/{bill_id}`; EDMs
 `https://edm.parliament.uk/early-day-motion/{edm_number}`. (May 2026 status
 table: `docs/history/decisions.md`.)
@@ -354,7 +354,6 @@ Research Tool (debate transcripts). Use the tool names above, not "Hansard tool"
 |-----|---------|----------|
 | Google Gemini | `GEMINI_API_KEY` | Summaries, embeddings, categorisation, stats discovery (free features) |
 | Anthropic Claude | `ANTHROPIC_API_KEY` | Paid product outputs only — never from free features |
-| TheyWorkForYou | `TWFY_API_KEY` | Legacy debate search (Hansard API is now the main path) |
 | News API | `NEWS_API_KEY` | Media scan in Smart Alerts |
 | Bluesky | `BSKY_HANDLE`, `BSKY_PASSWORD` | Stakeholder social monitoring |
 | Parliament APIs | none (public) | Hansard, Written Questions, Members, Committees, Bills |
@@ -362,14 +361,22 @@ Research Tool (debate transcripts). Use the tool names above, not "Hansard tool"
 Confirmed parameters, response shapes and gotchas: `docs/api-reference.md`.
 Full env var list (names only): `docs/ops/railway-services.md`.
 
+**TheyWorkForYou is not used** (removed Oct 2026: commercial use needs a paid
+licence, and the same Hansard data is in our own archive under the Open
+Parliament Licence). Don't reintroduce TWFY calls or links without a licence
+decision from Mark. The `member_link` and `cached_twfy_search` tables keep their
+names; `cached_twfy_search` is the general search cache (`CachedSearch`).
+
 ### Feature flags
 
 `feature_enabled(flag)` in `feature_flags.py` reads an env var at call time:
 `hidden` (default, fail closed) / `beta` (only signed-in users whose email is in
 `BETA_USERS`) / `live`. Used for `FEATURE_AUTH`, `FEATURE_ACCOUNT`.
 Plain on/off env vars (not `feature_enabled`): `STATS_CATALOGUE_ENABLED` (any
-non-empty value enables `/stats`; read at import, so needs a redeploy) and
-`SEARCH_BACKEND=hansard` (Hansard backend for the Research Tool — production path).
+non-empty value enables `/stats`; read at import, so needs a redeploy).
+`SEARCH_BACKEND` is no longer read by any code (the Research Tool always uses
+the Hansard / own-archive path); delete it from Railway once the
+TheyWorkForYou removal is deployed and confirmed.
 
 ### Railway (summary)
 
@@ -391,7 +398,7 @@ non-empty value enables `/stats`; read at import, so needs a redeploy) and
 | `docs/pre-launch-checklist.md` | Legal/compliance + SEO checklist |
 | `docs/recovery-runbook.md` | Disaster recovery (drill 13 May 2026) |
 | `docs/design-principles.md` | Visual + copy guide |
-| `docs/api-reference.md` | Parliament / GOV.UK / TWFY API reference |
+| `docs/api-reference.md` | Parliament / GOV.UK API reference (its TWFY section is historical) |
 | `docs/wq-api-constraints.md` | Written Questions API parameters, examples, domain facts |
 | `docs/parliamentary-debate-types.md` | Hansard debate type taxonomy |
 | `docs/research-tool.md` | Research Tool design notes, canonical test case, testing protocol |
@@ -442,7 +449,6 @@ After a Railway failover, sequences can desync (`duplicate key ... "ha_session_p
 - No migration framework: schema changes are `db.create_all()` plus guarded ALTER TABLE blocks in `flask_app.py` and scripts in `migrations/`.
 
 ### External APIs
-- **TWFY:** `person=` ignores the date range — always filter dates in Python. More quirks: `docs/api-reference.md` §2.
 - **Written Questions API:** use `tabledWhenFrom` / `tabledWhenTo` (not `tabledStartDate`), `answered` (not `isAnswered`), and `answeringBodies` only with a date anchor. Paginate with `take`/`skip`. **UINs are not globally unique across sessions.** Full detail: `docs/wq-api-constraints.md`.
 - **Three-strike rule:** if the same call returns the same error or empty result more than twice, stop. Report the exact error and suggest manual intervention.
 - **Before any retry**, state what the error was and what is different this time. If nothing, abort and report.

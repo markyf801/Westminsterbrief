@@ -221,9 +221,8 @@ Order: `migrations/committees_appgs_tables.py --execute` → one-shot
 
 Settings: restart policy Never, `SKIP_MIGRATIONS=1`, internal `DATABASE_URL`.
 
-`SKIP_MIGRATIONS=1` makes startup skip `db.create_all()`, the dev seeds and the
-`seed_all_minister_links` background thread. (ALTER TABLE migration blocks have
-`try/except` and are no-ops.)
+`SKIP_MIGRATIONS=1` makes startup skip `db.create_all()` and the dev seeds.
+(ALTER TABLE migration blocks have `try/except` and are no-ops.)
 
 **Capture logs before teardown — do not skip steps 3 and 4:**
 
@@ -249,8 +248,9 @@ paid tiers with zero downtime.
 Set on the **service** (not just the project) in the Railway dashboard.
 
 - Core: `SECRET_KEY` (long random string), `DATABASE_URL` (Variable Reference), `ADMIN_EMAIL`, `ADMIN_TOKEN`, `TOTP_SECRET`
-- AI / data APIs: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (paid products only), `TWFY_API_KEY`, `NEWS_API_KEY`, `BSKY_HANDLE`, `BSKY_PASSWORD`
+- AI / data APIs: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (paid products only), `NEWS_API_KEY`, `BSKY_HANDLE`, `BSKY_PASSWORD`
 - Email: `POSTMARK_SERVER_TOKEN`, `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`, `EMAIL_TEST_MODE`, `CRON_ALERT_EMAIL`
 - Billing (paid products; test keys during dev): `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - Backups: `R2_ENDPOINT_URL`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `BACKUP_ENCRYPTION_KEY`
-- Flags / behaviour: `SEARCH_BACKEND`, `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`
+- No longer read by any code (delete from the web service once the TheyWorkForYou removal is deployed and confirmed): `TWFY_API_KEY`, `SEARCH_BACKEND`
+- Flags / behaviour: `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`
