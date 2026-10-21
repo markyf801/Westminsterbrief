@@ -101,7 +101,9 @@ Needs `migrations/members_profile_tables.py --execute` run once first (one-off,
 Bios: generated with `MEMBER_BIO_MODEL` (default `gemini-2.5-flash`), then verified — filler and any
 sentence naming an institution or year not in that section's source are dropped, plus a
 `MEMBER_BIO_VERIFY_MODEL` check (default `gemini-2.5-flash-lite`; `off` disables it). The report is in
-`member_biography.verification` (added by re-running the migration with `--execute`). Background comes
+`member_biography.verification` (added by re-running the migration with `--execute`). If a draft
+loses more than 40% of its claims it is not published (`last_error` starts `needs_review`, the
+`[review]` log lines list the dropped claims) — that usually means the verifier, not the bio, is wrong. Background comes
 from Wikipedia; Wikidata education/occupation only when there is no article. Before a backfill, run
 `python scripts/refresh_members.py --sample 12` and read the printed bios + dropped claims.
 
