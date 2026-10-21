@@ -21,16 +21,16 @@ How it works
   are retried (the Hansard API times out regularly). A day that still fails is
   retried once, then the run stops with exit code 1 — the frontier never skips
   a day.
-- Checkpoint: after each completed day the frontier (earliest fully-done day,
+- Checkpoint: after each completed (day, house) the frontier (earliest fully-done day,
   per house) is saved in ``ha_cron_run`` (service_name below), so a Railway
   one-off can be re-run and carries on where it stopped. No local files needed.
 - Tagging (on by default): each day's new sessions are tagged straight after
   ingest, and any untagged sessions left in the range are tagged first. The
   per-run cap ``--max-tag`` stops the run cleanly when reached, so a large
   untagged backlog never builds up for the hourly cron's unlimited tagger.
-- Cron windows: by default the run will not start a day inside, or within
-  15 minutes of, a production cron window (see _CRON_WINDOWS) and stops
-  cleanly instead.
+- Cron windows: by default the run will not start a (day, house) or a tagging
+  call inside, or within 20 minutes of, a production cron window (see
+  _CRON_WINDOWS) and stops cleanly instead.
 - Every loop is bounded: days by the date range and --max-days, fetch and day
   retries by fixed attempt counts, tagging by --max-tag and a consecutive
   failure limit. Repeated API failure exits non-zero.
@@ -84,6 +84,7 @@ from hansard_archive.tagger import tag_session  # noqa: E402
 PARLIAMENT_FIRST_SITTING = date(2024, 7, 9)
 DEFAULT_UNTIL = date(2025, 4, 29)
 SERVICE_NAME = "backfill-parliament-start"
+PQ_SERVICE_NAME = "backfill-pq-parliament-start"   # scripts/backfill_pq_parliament_start.py
 HOUSES = ("Commons", "Lords")
 TAG_SKIP_TYPES = ("other",)          # same default as tagger.tag_all_untagged
 
@@ -95,7 +96,8 @@ DAY_PAUSE = 2                        # seconds between days (polite pacing)
 TAG_PAUSE = 0.4                      # seconds between Gemini calls
 MAX_CONSECUTIVE_TAG_FAILURES = 5
 HEARTBEAT_STALE_MINUTES = 20
-CRON_LOOKAHEAD_MINUTES = 15
+HEARTBEAT_EVERY_SECONDS = 300
+CRON_LOOKAHEAD_MINUTES = 20
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -105,15 +107,22 @@ EXIT_BUSY = 4
 
 # Production cron windows, UTC (docs/ops/railway-services.md, CLAUDE.md).
 # (weekdays Mon=0, start, end, label). Deliberately wide: weekday daytime is
-# blocked whole because the archive cron runs hourly 11:00-23:00 Mon-Thu.
+# blocked whole because the archive cron runs hourly 11:00-23:00 Mon-Thu, and
+# its tagger tags every untagged session it finds.
 _ALL_DAYS = frozenset(range(7))
 _CRON_WINDOWS = (
-    (_ALL_DAYS, "02:55", "03:20", "backup-cron-r2 (03:00)"),
     (frozenset({6}), "01:55", "02:20", "member-cache-refresh (Sun 02:00)"),
-    (_ALL_DAYS, "05:55", "07:20", "rediscovery (06:00) / bills (06:30)"),
+    (_ALL_DAYS, "02:55", "03:30", "backup-cron-r2 (03:00)"),
+    (frozenset({6}), "02:55", "03:50", "member-profile-refresh (Sun 03:00)"),
+    (_ALL_DAYS, "04:25", "07:30",
+     "edm (04:30) / upcoming (05:00-05:45) / rediscovery (06:00) / bills (06:30)"),
     (frozenset({0, 1, 2, 3}), "07:55", "23:30",
      "archive 08:00 + hourly 11:00-23:00, PQ 08:30/09:30/14:00"),
     (frozenset({4}), "07:55", "19:30", "archive 08:00 + hourly Fri 09:00-19:00, PQ crons"),
+)
+# (day of month, start, end, label)
+_MONTHLY_WINDOWS = (
+    (2, "03:55", "05:00", "member-bio-refresh (2nd of month, 04:00)"),
 )
 
 _FETCH_FAIL_PREFIX = "[archive] failed to fetch session"
@@ -127,6 +136,10 @@ class ApiRefused(Exception):
 
 class DayIncomplete(Exception):
     """A (day, house) did not ingest completely; it is safe to retry."""
+
+
+class WindowStop(Exception):
+    """A production cron window is due — stop cleanly before doing more work."""
 
 
 @dataclass
@@ -166,10 +179,12 @@ def _hhmm(s: str) -> tuple[int, int]:
 def blocked_window(now: datetime, lookahead_minutes: int = CRON_LOOKAHEAD_MINUTES) -> str | None:
     """Label of the cron window `now` (UTC) is in, or will be within the lookahead."""
     for moment in (now, now + timedelta(minutes=lookahead_minutes)):
+        hm = (moment.hour, moment.minute)
         for days, start, end, label in _CRON_WINDOWS:
-            if moment.weekday() not in days:
-                continue
-            if _hhmm(start) <= (moment.hour, moment.minute) < _hhmm(end):
+            if moment.weekday() in days and _hhmm(start) <= hm < _hhmm(end):
+                return label
+        for mday, start, end, label in _MONTHLY_WINDOWS:
+            if moment.day == mday and _hhmm(start) <= hm < _hhmm(end):
                 return label
     return None
 
@@ -392,23 +407,29 @@ def _untagged_ids(since: date, until: date, limit: int, house: str | None = None
 
 
 class TagBudget:
-    def __init__(self, cap: int, api_key: str, sleep) -> None:
+    def __init__(self, cap: int, api_key: str, sleep, window_check=lambda: None) -> None:
         self.cap = cap
         self.used = 0
         self.api_key = api_key
         self.sleep = sleep
+        self.window_check = window_check
         self.consecutive_failures = 0
+        self.succeeded = 0
 
     @property
     def remaining(self) -> int:
         return max(0, self.cap - self.used)
 
     def tag(self, session_ids: list[int]) -> int:
-        """Tag sessions until the budget runs out. Raises after repeated failures."""
+        """Tag sessions until the budget runs out. Raises after repeated failures,
+        or WindowStop when a cron window is due."""
         tagged = 0
         for sid in session_ids:
             if self.remaining <= 0:
                 break
+            window = self.window_check()
+            if window:
+                raise WindowStop(window)
             self.sleep(TAG_PAUSE)
             self.used += 1
             try:
@@ -419,6 +440,7 @@ class TagBudget:
                 count = 0
             if count > 0:
                 tagged += 1
+                self.succeeded += 1
                 self.consecutive_failures = 0
             else:
                 self.consecutive_failures += 1
@@ -443,6 +465,19 @@ def _load_checkpoint() -> tuple[HaCronRun | None, dict]:
     except ValueError:
         return rec, {}
     return rec, state if isinstance(state, dict) else {}
+
+
+def run_active(service_name: str, now: datetime) -> datetime | None:
+    """Heartbeat of the latest run of `service_name` if it is still running and fresh."""
+    rec = (HaCronRun.query.filter_by(service_name=service_name)
+           .order_by(HaCronRun.started_at.desc(), HaCronRun.id.desc()).first())
+    if not rec or rec.status != "running" or not rec.notes:
+        return None
+    try:
+        beat = datetime.fromisoformat(json.loads(rec.notes).get("heartbeat", ""))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return beat if now - beat < timedelta(minutes=HEARTBEAT_STALE_MINUTES) else None
 
 
 def _save_checkpoint(run: HaCronRun, state: dict, stats: RunStats, status: str | None = None) -> None:
@@ -545,7 +580,11 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
     _print_existing_coverage(args.since, args.until)
 
     stats = RunStats()
-    budget = TagBudget(args.max_tag, api_key, sleep)
+
+    def window_check() -> str | None:
+        return None if args.ignore_cron_windows else blocked_window(now())
+
+    budget = TagBudget(args.max_tag, api_key, sleep, window_check)
 
     # --- tag-only mode ------------------------------------------------------
     if args.tag_only:
@@ -554,28 +593,36 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
             print(f"[backfill] === END TAG ONLY DRY RUN === untagged eligible={left} "
                   f"(a run would tag up to {min(left, args.max_tag)})", flush=True)
             return EXIT_OK
+        code = EXIT_OK
         try:
             ids = _untagged_ids(args.since, args.until, args.max_tag)
             print(f"[backfill] {len(ids)} untagged eligible session(s) selected", flush=True)
-            stats.tagged = budget.tag(ids)
+            budget.tag(ids)
+        except WindowStop as exc:
+            print(f"[backfill] STOP: cron window: {exc} — re-run later", flush=True)
         except RuntimeError as exc:
             print(f"[backfill] STOP: {exc}", flush=True)
-            return EXIT_TAG_FAILED
+            code = EXIT_TAG_FAILED
+        stats.tagged = budget.succeeded
         left = len(_untagged_ids(args.since, args.until, 1_000_000))
-        print(f"[backfill] === END TAG ONLY === tagged={stats.tagged} still_untagged={left}", flush=True)
-        return EXIT_OK
+        print(f"[backfill] === END TAG ONLY === exit={code} tagged={stats.tagged} "
+              f"still_untagged={left}", flush=True)
+        return code
 
     # --- resume -------------------------------------------------------------
     prev, state = _load_checkpoint()
-    if (not args.dry_run and prev and prev.status == "running" and state.get("heartbeat")):
-        try:
-            beat = datetime.fromisoformat(state["heartbeat"])
-        except ValueError:
-            beat = None
-        if beat and now() - beat < timedelta(minutes=HEARTBEAT_STALE_MINUTES):
-            print(f"[backfill] another backfill run looks active (heartbeat {beat}) — not starting",
-                  flush=True)
+    for service in (SERVICE_NAME, PQ_SERVICE_NAME):
+        beat = None if args.dry_run else run_active(service, now())
+        if beat:
+            print(f"[backfill] {service} looks active (heartbeat {beat}) — not starting", flush=True)
             return EXIT_BUSY
+    if not args.dry_run and prev and prev.status == "running":
+        # The last run was killed (redeploy, container stop) — close its record.
+        prev.status = "failed"
+        prev.finished_at = prev.finished_at or now()
+        db.session.commit()
+        print(f"[backfill] previous run id={prev.id} never finished — marked failed (interrupted)",
+              flush=True)
 
     frontier: dict[str, date | None] = {h: None for h in houses}
     if not args.no_resume and state.get("until") == args.until.isoformat():
@@ -601,6 +648,7 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
 
     def finish(code: int, reason: str) -> int:
         stats.stop_reason = reason
+        stats.tagged = budget.succeeded
         stats.frontier = {h: (frontier[h].isoformat() if frontier[h] else None) for h in houses}
         if run_rec is not None:
             state["frontier"] = stats.frontier
@@ -629,6 +677,21 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
         return code
 
     started = time.monotonic()
+    last_beat = [time.monotonic()]
+
+    def save_progress() -> None:
+        state["frontier"] = {h: (frontier[h].isoformat() if frontier[h] else None) for h in houses}
+        stats.tagged = budget.succeeded
+        _save_checkpoint(run_rec, state, stats)
+        last_beat[0] = time.monotonic()
+
+    def guard() -> str | None:
+        """Cron-window check, plus a heartbeat during long tagging stretches."""
+        if run_rec is not None and time.monotonic() - last_beat[0] > HEARTBEAT_EVERY_SECONDS:
+            save_progress()
+        return window_check()
+
+    budget.window_check = guard
 
     # --- catch-up tagging for days already done --------------------------------
     if tagging:
@@ -637,7 +700,9 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
             if leftover:
                 print(f"[backfill] tagging {len(leftover)} untagged session(s) left from earlier runs",
                       flush=True)
-                stats.tagged += budget.tag(leftover)
+                budget.tag(leftover)
+        except WindowStop as exc:
+            return finish(EXIT_OK, f"cron window: {exc} — re-run later")
         except RuntimeError as exc:
             return finish(EXIT_TAG_FAILED, str(exc))
 
@@ -647,16 +712,15 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
             return finish(EXIT_OK, f"--max-days {args.max_days} reached")
         if args.max_minutes and (time.monotonic() - started) / 60 >= args.max_minutes:
             return finish(EXIT_OK, f"--max-minutes {args.max_minutes} reached")
-        if not args.ignore_cron_windows:
-            window = blocked_window(now())
-            if window:
-                return finish(EXIT_OK, f"cron window: {window} — re-run later")
         if tagging and budget.remaining <= 0:
             return finish(EXIT_OK, f"--max-tag {args.max_tag} reached")
 
         for h in houses:
             if day > next_day(h):
                 continue                        # this house already has this day
+            window = window_check()
+            if window:
+                return finish(EXIT_OK, f"cron window: {window} — re-run later")
             day_t = time.monotonic()
             try:
                 res = process_day(day, h, args.dry_run, sleep, args.verbose)
@@ -668,34 +732,35 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
                 _reset_db()
                 return finish(EXIT_FAILED, f"database error on {day} {h}: {exc}")
 
-            tagged_now = 0
-            if tagging and res.sitting:
-                try:
-                    tagged_now = budget.tag(_untagged_ids(day, day, budget.remaining, house=h))
-                except RuntimeError as exc:
-                    return finish(EXIT_TAG_FAILED, str(exc))
-                stats.tagged += tagged_now
-
+            if not args.dry_run:
+                frontier[h] = day               # ingest complete; tagging catches up later
             if res.sitting:
                 stats.sitting_house_days += 1
                 stats.new_sessions += res.new
                 stats.existing_sessions += res.existing
                 stats.contributions += res.contributions
                 stats.chars += res.chars
+            tagged_now = 0
+            if tagging and res.sitting:
+                try:
+                    tagged_now = budget.tag(_untagged_ids(day, day, budget.remaining, house=h))
+                except WindowStop as exc:
+                    return finish(EXIT_OK, f"cron window: {exc} — re-run later")
+                except RuntimeError as exc:
+                    return finish(EXIT_TAG_FAILED, str(exc))
+
+            if res.sitting:
                 print(f"[backfill] {day} {h:<7} sessions={res.walked} new={res.new} "
                       f"existing={res.existing} contributions={res.contributions} "
                       f"tagged={tagged_now} 404s={res.not_found} "
                       f"({time.monotonic() - day_t:.0f}s)", flush=True)
-            if not args.dry_run:
-                frontier[h] = day
+            if run_rec is not None:
+                try:
+                    save_progress()             # checkpoint per (day, house)
+                except OperationalError as exc:
+                    return finish(EXIT_FAILED, f"could not save checkpoint after {day} {h}: {exc}")
 
         stats.days += 1
-        if run_rec is not None:
-            state["frontier"] = {h: (frontier[h].isoformat() if frontier[h] else None) for h in houses}
-            try:
-                _save_checkpoint(run_rec, state, stats)
-            except OperationalError as exc:
-                return finish(EXIT_FAILED, f"could not save checkpoint after {day}: {exc}")
         day -= timedelta(days=1)
         sleep(DAY_PAUSE)
 

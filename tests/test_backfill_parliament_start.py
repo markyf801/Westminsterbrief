@@ -1,9 +1,10 @@
 """
 Tests for scripts/backfill_parliament_start.py — mocked Hansard HTTP + in-memory SQLite.
 
-Covers: newest-first ingest with per-day checkpoint, idempotent re-runs, resume,
-dry run writes nothing, bounded loops on repeated API failure, 429 abort,
-session-fetch retry, tag cap + catch-up, cron-window guard.
+Covers: newest-first ingest with per-(day, house) checkpoint, idempotent re-runs,
+resume, dry run writes nothing, bounded loops on repeated API failure, 429 abort,
+session-fetch retry, tag cap + catch-up, cron-window guard (also mid-tagging),
+stale run records closed.
 
 Run: python -m pytest tests/test_backfill_parliament_start.py -v
 """
@@ -317,6 +318,11 @@ def test_active_run_blocks_second_run(env):
     (datetime(2026, 10, 24, 6, 40), True),    # Sat bills 06:30
     (datetime(2026, 10, 24, 12, 0), False),   # Sat midday
     (datetime(2026, 10, 25, 2, 0), True),     # Sun member cache
+    (datetime(2026, 10, 25, 3, 40), True),    # Sun member-profile-refresh
+    (datetime(2026, 10, 24, 3, 40), False),   # Sat between backup and EDM
+    (datetime(2026, 10, 24, 4, 10), True),    # EDM 04:30 inside lookahead
+    (datetime(2026, 10, 24, 7, 40), False),   # Sat after bills
+    (datetime(2026, 5, 2, 3, 40), True),      # 2nd of month: member-bio-refresh
 ])
 def test_blocked_window(moment, blocked):
     assert (bps.blocked_window(moment) is not None) is blocked
@@ -326,3 +332,49 @@ def test_wrappers_restored_after_run(env):
     orig = ingestion._fetch_session_full, ingestion._collect_all_sessions_for_date
     _run("--no-tag")
     assert (ingestion._fetch_session_full, ingestion._collect_all_sessions_for_date) == orig
+
+
+def test_cron_window_during_tagging_stops_cleanly(env, fake_tagger, monkeypatch):
+    # Window opens after the first tagging call, mid-way through 3 Dec Commons
+    # (2 sessions): stop at once, keep the ingested day.
+    def fake_window(now, lookahead_minutes=bps.CRON_LOOKAHEAD_MINUTES):
+        return "test window" if fake_tagger else None
+
+    monkeypatch.setattr(bps, "blocked_window", fake_window)
+    assert _run() == bps.EXIT_OK
+    assert len(fake_tagger) == 1
+    rec, state = _checkpoint()
+    assert state["stop_reason"].startswith("cron window: test window")
+    assert state["frontier"] == {"Commons": "2024-12-03", "Lords": None}
+    assert rec.sessions_tagged == 1
+    # The next run tags the leftovers first, then carries on.
+    monkeypatch.setattr(bps, "blocked_window", lambda now, lookahead_minutes=0: None)
+    assert _run() == bps.EXIT_OK
+    assert _counts() == (7, 14, 7)
+
+
+def test_checkpoint_saved_per_house(env, monkeypatch):
+    # Lords seed search refused on the first day: Commons for that day is kept.
+    real = env.__call__
+
+    def lords_refused(url, params=None, timeout=None):
+        if url.endswith("/search/debates.json") and params.get("queryParameters.house") == "Lords":
+            return FakeResp(url, 429)
+        return real(url, params=params, timeout=timeout)
+
+    monkeypatch.setattr(ingestion.requests, "get", lords_refused)
+    assert _run("--no-tag") == bps.EXIT_REFUSED
+    _, state = _checkpoint()
+    assert state["frontier"] == {"Commons": "2024-12-03", "Lords": None}
+
+
+def test_stale_running_record_is_closed(env):
+    from extensions import db as _db
+    from hansard_archive.models import HaCronRun
+    old = HaCronRun(service_name=bps.SERVICE_NAME, started_at=datetime(2026, 10, 24, 9, 0),
+                    status="running",
+                    notes=json.dumps({"heartbeat": "2026-10-24T09:00:00"}))
+    _db.session.add(old)
+    _db.session.commit()
+    assert _run("--no-tag") == bps.EXIT_OK
+    assert _db.session.get(HaCronRun, old.id).status == "failed"
