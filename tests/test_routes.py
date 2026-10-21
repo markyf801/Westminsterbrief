@@ -342,8 +342,35 @@ class TestArchiveRoutes:
         i10 = html.index('href="/archive/pq/test010"')
         assert i2 < i1 < i10
         assert 'Department for Transport' in html
+        # The policy-area fill is labelled as a broader match, after the topic matches
+        i_broad = html.index('Written questions in the same policy area (Transport)')
+        assert i1 < i_broad < i10
+        assert 'Broader match: same policy area' in html
         # Outside the ±180-day window
         assert 'href="/archive/pq/test011"' not in html
+
+    def test_pq_page_related_by_shared_topic(self, client):
+        """PQ page: related items come from shared specific topics, not heading text."""
+        html = client.get('/archive/pq/TEST001').get_data(as_text=True)
+        assert 'Debates on the same topic' in html
+        assert 'href="/archive/debate/1-january-2026/test-session"' in html
+        assert 'Written Questions on the same topic' in html
+        assert 'href="/archive/pq/TEST002"' in html          # shares 'Bus services'
+        assert 'questions matched on shared topic tags' in html
+        # Free slots are filled from the main policy area, in a separately labelled section
+        assert html.index('href="/archive/pq/TEST002"') < html.index('In the same policy area (Transport)')
+
+    def test_pq_page_related_matches_across_topic_family(self, client):
+        """'send funding' (child) and 'send' (parent alias) are the same family."""
+        html = client.get('/archive/pq/SCHB01').get_data(as_text=True)
+        assert 'href="/archive/pq/SCHB00"' in html
+
+    def test_pq_page_policy_area_fallback_is_labelled(self, client):
+        html = client.get('/archive/pq/TEST010').get_data(as_text=True)   # policy area only
+        assert 'In the same policy area (Transport)' in html
+        assert 'Broader match: same policy area' in html
+        assert 'href="/archive/debate/1-january-2026/test-session"' in html
+        assert 'Debates on the same topic' not in html
 
     def test_pq_display_heading_fallback(self):
         from hansard_archive.views import _pq_display_heading

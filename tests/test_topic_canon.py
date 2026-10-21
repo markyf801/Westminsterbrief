@@ -108,3 +108,10 @@ def test_propose_merges_groups_variants_children_and_known(merges):
 def test_variant_key(merges):
     assert merges.variant_key("Women's State Pensions") == merges.variant_key("womens state pension")
     assert merges.variant_key("arts & culture") == merges.variant_key("arts and culture")
+
+
+def test_related_topic_names_span_the_family_root():
+    names = topic_canon.related_topic_names(["send funding"])
+    assert {"send funding", "send", "special educational needs", "ehcp"} <= set(names)
+    assert topic_canon.related_topic_names(["Bus services"]) == ["Bus services", "bus services"]
+    assert topic_canon.related_topic_names([]) == []

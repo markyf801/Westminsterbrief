@@ -467,37 +467,50 @@ def _pqs_sharing_tags(theme_type: str, themes: list[str], date_min, date_max,
     return q.order_by(HaPQ.tabled_date.desc(), HaPQ.id.desc()).limit(limit).all()
 
 
-def _related_pqs(session: HansardSession, policy_areas: list[str],
-                 specific_topics: list[str]) -> list[dict]:
+def _related_pqs_on(day, policy_areas: list[str], specific_topics: list[str],
+                    exclude_ids: list[int] = ()) -> list[dict]:
     """
-    Written questions sharing this debate's topic tags, within
-    ±_TAG_RELATED_WINDOW_DAYS of the debate. Specific-topic matches come first
-    (they are far more precise); policy-area matches only fill remaining slots.
-    Most recent first within each group.
+    Written questions sharing specific topics (whole topic family after
+    canonicalisation, see topic_canon) within ±_TAG_RELATED_WINDOW_DAYS of
+    `day`. Only when those leave slots free, questions in the item's MAIN
+    policy area (first given) fill them, marked broad=True so pages label them
+    as a broader match. Most recent first within each group.
     """
-    date_min = session.date - timedelta(days=_TAG_RELATED_WINDOW_DAYS)
-    date_max = session.date + timedelta(days=_TAG_RELATED_WINDOW_DAYS)
+    date_min = day - timedelta(days=_TAG_RELATED_WINDOW_DAYS)
+    date_max = day + timedelta(days=_TAG_RELATED_WINDOW_DAYS)
     rows: list = []
+    broad_from = None
+    exclude = list(exclude_ids or [])
     for theme_type, themes in (
-        (THEME_TYPE_SPECIFIC, specific_topics),
-        (THEME_TYPE_POLICY_AREA, policy_areas),
+        (THEME_TYPE_SPECIFIC, _tc.related_topic_names(specific_topics)),
+        (THEME_TYPE_POLICY_AREA, list(policy_areas or [])[:1]),
     ):
         remaining = _TAG_RELATED_MAX - len(rows)
         if not themes or remaining <= 0:
             continue
+        if theme_type == THEME_TYPE_POLICY_AREA:
+            broad_from = len(rows)
         rows += _pqs_sharing_tags(theme_type, themes, date_min, date_max,
-                                  [r.id for r in rows], remaining)
+                                  exclude + [r.id for r in rows], remaining)
     return [
         {
             "uin":           r.uin,
             "title":         _pq_display_heading(r.heading, r.question_start),
+            "question_start": r.question_start or "",
             "human_date":    _human_date(r.tabled_date),
             "department":    r.answering_body or "",
             "is_answered":   bool(r.is_answered),
             "url":           f"/archive/pq/{(r.uin or '').lower()}",
+            "broad":         broad_from is not None and i >= broad_from,
         }
-        for r in rows
+        for i, r in enumerate(rows)
     ]
+
+
+def _related_pqs(session: HansardSession, policy_areas: list[str],
+                 specific_topics: list[str]) -> list[dict]:
+    """Related written questions for a debate page (see _related_pqs_on)."""
+    return _related_pqs_on(session.date, policy_areas, specific_topics)
 
 
 def _topic_related_sessions(session: HansardSession, specific_topics: list[str],
@@ -507,14 +520,22 @@ def _topic_related_sessions(session: HansardSession, specific_topics: list[str],
     to signal relatedness on their own). Complements the exact-title
     "other stages" panel; sessions already shown there are excluded.
     """
-    if not specific_topics:
+    return _sessions_sharing_tags(session.date, THEME_TYPE_SPECIFIC,
+                                  _tc.related_topic_names(specific_topics),
+                                  list(exclude_ids or []) + [session.id])
+
+
+def _sessions_sharing_tags(day, theme_type: str, themes: list[str], exclude_ids: list[int],
+                           limit: int = _TAG_RELATED_MAX) -> list[dict]:
+    """Debates within ±_TAG_RELATED_WINDOW_DAYS of `day` carrying any of `themes`."""
+    if not themes:
         return []
     shares_tag = (
         select(HansardSessionTheme.id)
         .where(
             HansardSessionTheme.session_id == HansardSession.id,
-            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
-            HansardSessionTheme.theme.in_(specific_topics),
+            HansardSessionTheme.theme_type == theme_type,
+            HansardSessionTheme.theme.in_(themes),
         )
         .exists()
     )
@@ -522,16 +543,15 @@ def _topic_related_sessions(session: HansardSession, specific_topics: list[str],
         HansardSession.query
         .filter(
             HansardSession.is_container.is_(False),
-            HansardSession.id != session.id,
-            HansardSession.date >= session.date - timedelta(days=_TAG_RELATED_WINDOW_DAYS),
-            HansardSession.date <= session.date + timedelta(days=_TAG_RELATED_WINDOW_DAYS),
+            HansardSession.date >= day - timedelta(days=_TAG_RELATED_WINDOW_DAYS),
+            HansardSession.date <= day + timedelta(days=_TAG_RELATED_WINDOW_DAYS),
             HansardSession.title.notin_(_PROCEDURAL_TITLE_NOISE),
             shares_tag,
         )
     )
     if exclude_ids:
         q = q.filter(HansardSession.id.notin_(exclude_ids))
-    sessions = q.order_by(HansardSession.date.desc(), HansardSession.id.desc()).limit(_TAG_RELATED_MAX).all()
+    sessions = q.order_by(HansardSession.date.desc(), HansardSession.id.desc()).limit(limit).all()
     return [
         {
             "title":             s.title,
@@ -540,9 +560,44 @@ def _topic_related_sessions(session: HansardSession, specific_topics: list[str],
             "human_date":        _human_date(s.date),
             "debate_type":       s.debate_type,
             "debate_type_label": _DEBATE_TYPE_LABELS.get(s.debate_type, "Proceedings"),
+            "url_date":          _url_date(s.date),
+            "slug":              s.slug,
+            "department":        s.department or "",
         }
         for s in sessions
     ]
+
+
+def _pq_related_by_tags(pq: HaPQ, policy_ranked: list[str], specific_topics: list[str]) -> dict:
+    """
+    Related panel for a Written Question from its topic tags (canonical topic
+    families): debates and questions on the same specific topics; if there are
+    none, the main policy area, labelled as a broader match.
+    """
+    day = pq.tabled_date or date_type.today()
+    main_area = policy_ranked[:1]
+    topics = _tc.related_topic_names(specific_topics)
+    debates = _sessions_sharing_tags(day, THEME_TYPE_SPECIFIC, topics, [])
+    debates_broad = []
+    if not debates and main_area:
+        debates_broad = _sessions_sharing_tags(day, THEME_TYPE_POLICY_AREA, main_area, [], limit=4)
+
+    def _pq_card(r: dict) -> dict:
+        return {"url": r["url"], "is_answered": r["is_answered"], "answering_body": r["department"],
+                "human_date": r["human_date"], "heading": r["title"],
+                "question_text": "", "asking_member": ""}
+
+    pq_rows = _related_pqs_on(day, main_area, specific_topics, exclude_ids=[pq.id])
+    return {
+        "debates":       debates,
+        "debates_broad": debates_broad,
+        "pqs":           [_pq_card(r) for r in pq_rows if not r["broad"]],
+        "pqs_broad":     [_pq_card(r) for r in pq_rows if r["broad"]],
+        "broad_area":    main_area[0] if main_area else "",
+        "bills":         [],
+        "query":         pq.heading or "",
+        "basis":         "tags",
+    }
 
 
 def _citation(session: HansardSession, url_date: str) -> dict:
@@ -608,10 +663,13 @@ def _session_context(session: HansardSession) -> dict:
         .order_by(HansardContribution.speech_order)
         .all()
     )
-    themes = session.themes.all()
+    themes = session.themes.order_by(HansardSessionTheme.id).all()
     policy_areas = sorted(
         {t.theme for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA}
     )
+    # Stored most central first (tagger); used for the broader-match fallback.
+    policy_ranked = list(dict.fromkeys(
+        t.theme for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA))
     specific_topics = sorted(
         {t.theme for t in themes if t.theme_type == THEME_TYPE_SPECIFIC}
     )
@@ -640,6 +698,7 @@ def _session_context(session: HansardSession) -> dict:
         "contributions":     contributions,
         "unique_speakers":   unique_speakers,
         "policy_areas":      policy_areas,
+        "policy_ranked":     policy_ranked,
         "specific_topics":   specific_topics,
         "human_date":        _human_date(session.date),
         "url_date":          url_date,
@@ -1153,7 +1212,7 @@ def session_detail(date_str: str, slug: str):
         session, ctx["specific_topics"],
         [r["session"].id for r in ctx["related_sessions"]["items"]],
     )
-    ctx["related_pqs"] = _related_pqs(session, ctx["policy_areas"], ctx["specific_topics"])
+    ctx["related_pqs"] = _related_pqs(session, ctx["policy_ranked"], ctx["specific_topics"])
     ctx["citation"] = _citation(session, ctx["url_date"])
     return render_template("hansard_archive/session_detail.html", **ctx)
 
@@ -2346,6 +2405,8 @@ def pq_detail(uin: str):
 
     themes = HaPQTheme.query.filter_by(pq_id=pq.id).all()
     policy_areas = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA})
+    # ha_pq_theme has no row id; tagged_at ties, so the stored order is unknown.
+    policy_ranked = policy_areas
     specific_topics = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_SPECIFIC})
 
     # Enrich asking and answering members with party + constituency from cached_member
@@ -2376,7 +2437,17 @@ def pq_detail(uin: str):
         title_core += f", {_human_date(pq.tabled_date)}"
     seo_title = f"{title_core} — Westminster Brief"
 
-    related = get_related_content(pq.heading or "", exclude_uin=pq.uin)
+    # Related panel: shared specific topics first (canonical families), main
+    # policy area as a labelled broader fallback. Untagged questions fall back
+    # to a heading text search, labelled as such. Bills always come from text.
+    related = _pq_related_by_tags(pq, policy_ranked, specific_topics) if themes else None
+    text_related = get_related_content(pq.heading or "", exclude_uin=pq.uin)
+    if related is None or not (related["debates"] or related["pqs"] or related["debates_broad"]
+                               or related["pqs_broad"]):
+        related = {**text_related, "debates_broad": [], "pqs_broad": [], "broad_area": "",
+                   "basis": "text"}
+    else:
+        related["bills"] = text_related.get("bills", [])
 
     return render_template(
         "hansard_archive/archive_pq_detail.html",

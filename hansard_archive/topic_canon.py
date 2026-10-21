@@ -207,3 +207,19 @@ def children_of(theme: str) -> list[str]:
     """Canonical child topics of a parent topic (empty for a child or unknown topic)."""
     canon = canonical_topic(theme)
     return sorted(c for c, p in _PARENT_OF.items() if p == canon)
+
+
+def related_topic_names(themes) -> list[str]:
+    """
+    Stored names to match for "related" panels: each topic's whole family from
+    its root (a child topic is related to its parent and siblings), plus the
+    topics exactly as given. Sorted.
+    """
+    out: set[str] = set()
+    for t in themes or []:
+        if not t:
+            continue
+        out.add(t)
+        root = parent_topic(t) or canonical_topic(t)
+        out |= topic_family_names(root)
+    return sorted(out)

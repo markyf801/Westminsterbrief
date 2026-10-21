@@ -178,11 +178,34 @@ body { background: #f0f2f5; }
     <div class="rpa-panel">
         <h2 class="rpa-heading">Related parliamentary activity</h2>
 
-        {% if related_pqs %}
+        {% set topic_pqs = related_pqs | rejectattr('broad') | list %}
+        {% set broad_pqs = related_pqs | selectattr('broad') | list %}
+        {% if topic_pqs %}
         <div class="rpa-section" id="related-written-questions">
             <h3 class="rpa-subheading">Related written questions</h3>
             <div class="rpa-list">
-                {% for r in related_pqs %}
+                {% for r in topic_pqs %}
+                <a class="rpa-card" href="{{ r.url }}">
+                    <div class="rpa-card-meta">
+                        <span class="wq-status-badge wq-status-{% if r.is_answered %}answered{% else %}unanswered{% endif %}">
+                            {% if r.is_answered %}ANSWERED{% else %}UNANSWERED{% endif %}
+                        </span>
+                        {% if r.department %}<span class="archive-dept-badge">{{ r.department }}</span>{% endif %}
+                        <span class="rpa-date">{{ r.human_date }}</span>
+                    </div>
+                    <span class="rpa-title">{{ r.title }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if broad_pqs %}
+        <div class="rpa-section" id="written-questions-same-policy-area">
+            <h3 class="rpa-subheading">Written questions in the same policy area{% if policy_ranked %} ({{ policy_ranked[0] }}){% endif %}</h3>
+            <p class="rpa-note">Broader match: same policy area, not necessarily the same topic.</p>
+            <div class="rpa-list">
+                {% for r in broad_pqs %}
                 <a class="rpa-card" href="{{ r.url }}">
                     <div class="rpa-card-meta">
                         <span class="wq-status-badge wq-status-{% if r.is_answered %}answered{% else %}unanswered{% endif %}">
