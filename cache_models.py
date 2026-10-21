@@ -7,12 +7,12 @@ from extensions import db
 
 
 class MemberLink(db.Model):
-    """Persistent cross-reference: Parliament member ID <-> TWFY person ID.
+    """Legacy table, no longer read or written.
 
-    Parliament IDs are the authoritative source (members-api.parliament.uk).
-    TWFY person IDs are needed for debate search (theyworkforyou.com/api).
-    Both IDs are assigned for life — a resolved row never needs updating.
-    Rows are added lazily as ministers are encountered in searches.
+    It mapped Parliament member ids to TheyWorkForYou person ids. Every search
+    now uses Parliament member ids against our own archive, so nothing needs it.
+    The model stays only so the table and its columns are left as they are
+    (no schema change); it can be dropped in a later migration.
     """
     __tablename__ = 'member_link'
 
@@ -28,63 +28,11 @@ class MemberLink(db.Model):
     created_at       = db.Column(db.DateTime, default=datetime.utcnow)
     resolved_at      = db.Column(db.DateTime, nullable=True)
 
-    @staticmethod
-    def get_by_parliament_id(parliament_id):
-        return MemberLink.query.filter_by(parliament_id=int(parliament_id)).first()
 
-    @staticmethod
-    def get_by_twfy_id(twfy_person_id):
-        return MemberLink.query.filter_by(twfy_person_id=str(twfy_person_id)).first()
-
-    @staticmethod
-    def upsert(parliament_id, display_name, house,
-               twfy_person_id=None, twfy_name=None,
-               resolution_method=None, lookup_failed=False):
-        """Insert or update a MemberLink row. Safe to call multiple times."""
-        existing = MemberLink.query.filter_by(parliament_id=int(parliament_id)).first()
-        if existing:
-            # Only update TWFY fields if we have new information
-            if twfy_person_id and not existing.twfy_person_id:
-                existing.twfy_person_id = str(twfy_person_id)
-                existing.twfy_name = twfy_name
-                existing.resolution_method = resolution_method
-                existing.lookup_failed = False
-                existing.resolved_at = datetime.utcnow()
-            elif lookup_failed and not existing.twfy_person_id:
-                existing.lookup_failed = True
-                existing.resolution_method = 'failed'
-        else:
-            row = MemberLink(
-                parliament_id=int(parliament_id),
-                display_name=display_name,
-                house=house,
-                twfy_person_id=str(twfy_person_id) if twfy_person_id else None,
-                twfy_name=twfy_name,
-                resolution_method=resolution_method,
-                lookup_failed=lookup_failed,
-                resolved_at=datetime.utcnow() if twfy_person_id else None,
-            )
-            db.session.add(row)
-        try:
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-
-    @staticmethod
-    def stats():
-        """Return dict of resolution stats for admin page."""
-        total    = MemberLink.query.count()
-        resolved = MemberLink.query.filter(
-            MemberLink.twfy_person_id.isnot(None)).count()
-        failed   = MemberLink.query.filter_by(lookup_failed=True).count()
-        pending  = total - resolved - failed
-        return {'total': total, 'resolved': resolved,
-                'failed': failed, 'pending': pending}
-
-
-class CachedTWFYSearch(db.Model):
-    """Caches TWFY API search results to reduce API call usage.
-    TTL: 6 hours for date-filtered searches, 24 hours for open searches."""
+class CachedSearch(db.Model):
+    """Caches search results (Hansard / Parliament API searches, AI query expansion).
+    TTL is set by the caller, typically 6-24 hours.
+    The table keeps its original name, cached_twfy_search (no schema change)."""
     __tablename__ = 'cached_twfy_search'
     id = db.Column(db.Integer, primary_key=True)
     cache_key = db.Column(db.String(64), unique=True, nullable=False, index=True)
@@ -100,8 +48,8 @@ class CachedTWFYSearch(db.Model):
 
     @staticmethod
     def get(query, source_type, ttl_hours=24):
-        key = CachedTWFYSearch.make_key(query, source_type)
-        entry = CachedTWFYSearch.query.filter_by(cache_key=key).first()
+        key = CachedSearch.make_key(query, source_type)
+        entry = CachedSearch.query.filter_by(cache_key=key).first()
         if not entry:
             return None
         age = datetime.utcnow() - entry.cached_at
@@ -114,14 +62,14 @@ class CachedTWFYSearch(db.Model):
 
     @staticmethod
     def store(query, source_type, results):
-        key = CachedTWFYSearch.make_key(query, source_type)
-        existing = CachedTWFYSearch.query.filter_by(cache_key=key).first()
+        key = CachedSearch.make_key(query, source_type)
+        existing = CachedSearch.query.filter_by(cache_key=key).first()
         data = json.dumps(results)
         if existing:
             existing.results_json = data
             existing.cached_at = datetime.utcnow()
         else:
-            db.session.add(CachedTWFYSearch(
+            db.session.add(CachedSearch(
                 cache_key=key, search_query=query,
                 source_type=source_type, results_json=data
             ))
@@ -213,7 +161,7 @@ class StakeholderOrg(db.Model):
     description   = db.Column(db.Text, nullable=True)
     bsky_handle   = db.Column(db.String(100), nullable=True)
     rss_url       = db.Column(db.String(500), nullable=True)
-    hansard_search_name = db.Column(db.String(200), nullable=True)  # override for TWFY search
+    hansard_search_name = db.Column(db.String(200), nullable=True)  # override name for Hansard search
     active        = db.Column(db.Boolean, default=True, nullable=False)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
 

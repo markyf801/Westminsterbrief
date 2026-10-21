@@ -49,7 +49,7 @@
         <tr><td style="padding:4px 0; color:#555;">Age</td><td style="font-weight:600;">{{ minister_status.age_hours }}h ({{ minister_status.age_days }} days)</td></tr>
         <tr><td style="padding:4px 0; color:#555;">Departments cached</td><td style="font-weight:600;">{{ minister_status.dept_count }}</td></tr>
         <tr><td style="padding:4px 0; color:#555;">Minister entries</td><td style="font-weight:600;">{{ minister_status.minister_count }}</td></tr>
-        <tr><td style="padding:4px 0; color:#555;">TWFY person IDs cached</td><td style="font-weight:600;">{{ minister_status.twfy_id_count }}</td></tr>
+        <tr><td style="padding:4px 0; color:#555;">Member ids cached</td><td style="font-weight:600;">{{ minister_status.member_id_count }}</td></tr>
       </table>
       <p style="font-size:0.8rem; color:#888; margin:10px 0 0;">Refreshes from GOV.UK after 30 days. Clear early if there has been a ministerial reshuffle.</p>
     {% elif minister_status.get('error') %}
@@ -65,13 +65,13 @@
     </form>
   </div>
 
-  <!-- TWFY Search Cache -->
+  <!-- Search Cache -->
   <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
-    <h3 style="font-size:1rem; margin:0 0 12px;">TWFY Search Cache (database)</h3>
+    <h3 style="font-size:1rem; margin:0 0 12px;">Search Cache (database)</h3>
     <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
-      <tr><td style="padding:4px 0; color:#555;">Total entries</td><td style="font-weight:600;">{{ twfy_total }}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Keyword / minister searches</td><td style="font-weight:600;">{{ twfy_keyword }}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Session expansions (30-day TTL)</td><td style="font-weight:600;">{{ twfy_session }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Total entries</td><td style="font-weight:600;">{{ search_total }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Keyword / minister searches</td><td style="font-weight:600;">{{ search_keyword }}</td></tr>
+      <tr><td style="padding:4px 0; color:#555;">Session expansions (30-day TTL)</td><td style="font-weight:600;">{{ search_session }}</td></tr>
     </table>
     <p style="font-size:0.8rem; color:#888; margin:10px 0 0;">Keyword searches cache for 6–24h. Session expansions cache for 30 days (parliamentary records never change).</p>
     <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
@@ -82,9 +82,9 @@
         </button>
       </form>
       <form method="post" action="?token={{ request.args.get('token', '') }}">
-        <button name="action" value="clear_twfy_search"
+        <button name="action" value="clear_search_cache"
                 style="background:#c62828; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
-          Clear all TWFY cache
+          Clear all search cache
         </button>
       </form>
     </div>
@@ -102,26 +102,6 @@
       <tr><td style="padding:4px 0; color:#555;">Written Questions (answered)</td><td style="font-weight:600; color:#2e7d32;">{{ archive_stats.pq_answered }}</td></tr>
       <tr><td style="padding:4px 0; color:#555;">PQ date range</td><td style="font-weight:600; font-size:0.8rem;">{{ archive_stats.pq_oldest }} → {{ archive_stats.pq_newest }}</td></tr>
     </table>
-    {% endif %}
-  </div>
-
-  <!-- Member Link Cross-Reference DB -->
-  <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
-    <h3 style="font-size:1rem; margin:0 0 12px;">Member ID Cross-Reference (Parliament ↔ TWFY)</h3>
-    <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
-      <tr><td style="padding:4px 0; color:#555;">Total members</td><td style="font-weight:600;">{{ member_link_stats.total }}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Resolved (TWFY ID found)</td><td style="font-weight:600; color:#2e7d32;">{{ member_link_stats.resolved }}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Pending (not yet looked up)</td><td style="font-weight:600; color:#888;">{{ member_link_stats.pending }}</td></tr>
-      <tr><td style="padding:4px 0; color:#555;">Failed (TWFY ID not found)</td><td style="font-weight:600; color:#c62828;">{{ member_link_stats.failed }}</td></tr>
-    </table>
-    <p style="font-size:0.8rem; color:#888; margin:10px 0 0;">Resolved entries are permanent — TWFY person IDs are assigned for life. New ministers are resolved lazily on first search. Failed entries can be retried below (e.g. after TWFY updates their index).</p>
-    {% if member_link_stats.failed > 0 %}
-    <form method="post" action="?token={{ request.args.get('token', '') }}" style="margin-top:14px;">
-      <button name="action" value="retry_failed_links"
-              style="background:#e65100; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">
-        Retry {{ member_link_stats.failed }} failed lookup{{ 's' if member_link_stats.failed != 1 else '' }}
-      </button>
-    </form>
     {% endif %}
   </div>
 
@@ -289,7 +269,7 @@
   <!-- Clear Everything -->
   <div style="border:1px solid #ffcdd2; border-radius:8px; padding:20px; background:#fff9f9; margin-bottom:0;">
     <h3 style="font-size:1rem; margin:0 0 8px; color:#c62828;">Clear Everything</h3>
-    <p style="font-size:0.85rem; color:#666; margin:0 0 12px;">Deletes minister cache file + all TWFY database cache entries. Next search will rebuild from scratch (uses TWFY API quota).</p>
+    <p style="font-size:0.85rem; color:#666; margin:0 0 12px;">Deletes the minister cache file and all search cache entries. The next search rebuilds them.</p>
     <form method="post" action="?token={{ request.args.get('token', '') }}">
       <button name="action" value="clear_all"
               style="background:#b71c1c; color:#fff; border:none; border-radius:5px; padding:8px 16px; font-size:0.85rem; cursor:pointer;">

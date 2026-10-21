@@ -2,8 +2,7 @@
 """Westminster Brief — API Smoke Tests
 
 Run: python scripts/test_apis.py
-Requires: TWFY_API_KEY in environment or .env file in project root.
-All Parliament and GOV.UK APIs are unauthenticated.
+No API keys needed: all Parliament and GOV.UK APIs are unauthenticated.
 
 Each test hits a real endpoint with a minimal query and validates
 the response has the expected structure and non-empty data.
@@ -22,10 +21,7 @@ try:
 except ImportError:
     pass
 
-TWFY_API_KEY = os.environ.get("TWFY_API_KEY", "")
 TWO_WEEKS_AGO = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
-YYYYMMDD_TWO_WEEKS_AGO = (datetime.now() - timedelta(days=14)).strftime("%Y%m%d")
-TODAY_YYYYMMDD = datetime.now().strftime("%Y%m%d")
 
 # Accumulated results: list of (name, passed, detail)
 _results: list[tuple[str, bool, str]] = []
@@ -128,76 +124,6 @@ def test_hansard_session_fetch():
     overview = data.get("Overview", {})
     title = overview.get("Title", "?")
     return bool(items), f"{len(items)} items in '{title}'"
-
-
-# ── TWFY API ──────────────────────────────────────────────────────────────────
-
-def test_twfy_debates():
-    if not TWFY_API_KEY:
-        return False, "TWFY_API_KEY not set"
-    resp = requests.get(
-        "https://www.theyworkforyou.com/api/getDebates",
-        params={
-            "key": TWFY_API_KEY,
-            "search": f"education {YYYYMMDD_TWO_WEEKS_AGO}..{TODAY_YYYYMMDD}",
-            "type": "commons",
-            "num": 5,
-            "order": "d",
-            "output": "json",
-        },
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        return False, f"HTTP {resp.status_code}"
-    data = resp.json()
-    if isinstance(data, dict) and "error" in data:
-        return False, f"API error: {data['error']}"
-    rows = data.get("rows", [])
-    return bool(rows), f"{len(rows)} rows"
-
-
-def test_twfy_wrans():
-    if not TWFY_API_KEY:
-        return False, "TWFY_API_KEY not set"
-    resp = requests.get(
-        "https://www.theyworkforyou.com/api/getWrans",
-        params={
-            "key": TWFY_API_KEY,
-            "search": f"education {YYYYMMDD_TWO_WEEKS_AGO}..{TODAY_YYYYMMDD}",
-            "num": 5,
-            "output": "json",
-        },
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        return False, f"HTTP {resp.status_code}"
-    data = resp.json()
-    if isinstance(data, dict) and "error" in data:
-        return False, f"API error: {data['error']}"
-    rows = data.get("rows", [])
-    return bool(rows), f"{len(rows)} rows (no type= param used)"
-
-
-def test_twfy_wms():
-    if not TWFY_API_KEY:
-        return False, "TWFY_API_KEY not set"
-    resp = requests.get(
-        "https://www.theyworkforyou.com/api/getWMS",
-        params={
-            "key": TWFY_API_KEY,
-            "search": f"education {YYYYMMDD_TWO_WEEKS_AGO}..{TODAY_YYYYMMDD}",
-            "num": 5,
-            "output": "json",
-        },
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        return False, f"HTTP {resp.status_code}"
-    data = resp.json()
-    if isinstance(data, dict) and "error" in data:
-        return False, f"API error: {data['error']}"
-    rows = data.get("rows", [])
-    return True, f"{len(rows)} rows (0 is valid if no WMS in this period)"
 
 
 # ── Parliament WQ API ─────────────────────────────────────────────────────────
@@ -336,9 +262,6 @@ TESTS = [
     ("Hansard /search.json (speech)", test_hansard_speech_search),
     ("Hansard /search.json (minister memberId=5033)", test_hansard_minister_search),
     ("Hansard /debates/debate/{ext_id}.json", test_hansard_session_fetch),
-    ("TWFY getDebates (type=commons)", test_twfy_debates),
-    ("TWFY getWrans (no type=)", test_twfy_wrans),
-    ("TWFY getWMS (no type=)", test_twfy_wms),
     ("Parliament WQ API (unanswered)", test_wq_api),
     ("Parliament WQ API (answeringBodies=60 DfE)", test_wq_api_with_dept),
     ("Parliament WMS API", test_wms_api),
@@ -354,9 +277,6 @@ def main():
     print("Westminster Brief - API Smoke Tests")
     print(f"Date window: {TWO_WEEKS_AGO} to {datetime.now().strftime('%Y-%m-%d')}")
     print("=" * 60)
-
-    if not TWFY_API_KEY:
-        print("WARNING: TWFY_API_KEY not set — TWFY tests will fail\n")
 
     for name, fn in TESTS:
         _run(name, fn)

@@ -2,7 +2,7 @@ import requests, os, json, re, io, concurrent.futures, time
 from flask import Blueprint, render_template, request, send_file, copy_current_request_context, jsonify
 from flask_login import current_user, login_required
 from datetime import datetime
-from cache_models import CachedTWFYSearch, StakeholderOrg
+from cache_models import CachedSearch, StakeholderOrg
 from extensions import limiter
 try:
     import feedparser
@@ -38,13 +38,21 @@ debate_scanner_bp = Blueprint('debates', __name__)
 
 @debate_scanner_bp.app_template_filter('debate_url')
 def debate_url_filter(url):
-    """Return a full debate URL. Hansard API rows already carry full URLs;
-    TWFY rows carry relative paths that need the domain prepended."""
+    """Return a debate URL for a template link. Rows carry full Hansard URLs or
+    internal paths (e.g. /archive/debate/...), both of which work as-is."""
+    return url or ''
+
+
+SITE_URL = "https://westminsterbrief.co.uk"
+
+
+def _full_url(url):
+    """Absolute URL for Word exports: internal paths get our own domain."""
     if not url:
         return ''
     if url.startswith('http'):
         return url
-    return f"https://www.theyworkforyou.com{url}"
+    return SITE_URL + url if url.startswith('/') else ''
 
 
 def _make_hansard_slug(title):
@@ -53,7 +61,6 @@ def _make_hansard_slug(title):
     clean = re.sub(r'[^a-zA-Z0-9\s]', '', title or '')
     return ''.join(w.capitalize() for w in clean.split())
 
-TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 # OUTPUT RULE COMPLIANCE
 # This is a free toolkit feature. Per CLAUDE.md output rules, AI calls in this
 # module must use Gemini only. Claude (Anthropic) must not be invoked from this
@@ -63,25 +70,20 @@ TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
 # When Gemini fails: retry once with backoff, then degrade gracefully.
 # Never swap to a different provider silently.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-TWFY_API_URL = "https://www.theyworkforyou.com/api/getDebates"
-TWFY_WRANS_URL = "https://www.theyworkforyou.com/api/getWrans"
-TWFY_WMS_URL = "https://www.theyworkforyou.com/api/getWMS"
 HANSARD_API_BASE = "https://hansard-api.parliament.uk"
 MINISTER_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'minister_cache.json')
 MINISTER_CACHE_TTL = 30 * 24 * 3600  # 30 days — reshuffles are infrequent
 MINISTER_CACHE_VERSION = 3  # increment when display_name logic changes to bust stale files
 
-# Ministers whose names the TWFY getLords/getMPs search endpoint fails to match.
-# Verified person_ids from direct debate records — these are seeded at cache-write time.
-KNOWN_TWFY_IDS = {
-    # parliament_id is all that's needed for Hansard minister search.
-    # person_id is the TWFY ID for fallback. Both verified 2026-04.
-    'Baroness Smith of Malvern': {'person_id': '10549', 'parliament_id': 269, 'is_lord': True, 'lookup_failed': False},
-    'Josh MacAlister': {'person_id': '26321', 'parliament_id': 5033, 'is_lord': False, 'lookup_failed': False},
-    'Georgia Gould': {'person_id': None, 'parliament_id': 5305, 'is_lord': False, 'lookup_failed': False},
+# Verified Parliament member ids (MNIS ids, = ha_contribution.member_id) for
+# ministers whose GOV.UK name has been hard to match by name. Verified 2026-04.
+KNOWN_MINISTER_MEMBER_IDS = {
+    'Baroness Smith of Malvern': {'parliament_id': 269, 'is_lord': True},
+    'Josh MacAlister': {'parliament_id': 5033, 'is_lord': False},
+    'Georgia Gould': {'parliament_id': 5305, 'is_lord': False},
 }
 
-DEPARTMENTS_TWFY = [
+RESEARCH_DEPARTMENTS = [
     "Attorney General's Office",
     "Cabinet Office",
     "Department for Business and Trade",
@@ -148,7 +150,7 @@ def get_working_model(api_key):
     _MODEL_CACHE[api_key] = result
     return result
 
-def get_twfy_date_range(start_str, end_str):
+def format_date_range(start_str, end_str):
     def parse_date(d_str):
         if not d_str: return ""
         if re.match(r'^\d{4}-\d{2}-\d{2}$', d_str): return d_str.replace('-', '')
@@ -290,8 +292,7 @@ def _extract_title_queries(search_term):
 
 
 def fetch_hansard_topic(search_term, source_type, date_range, num=50):
-    """Hansard Parliament API keyword/title search. Drop-in replacement for
-    fetch_twfy_topic() when SEARCH_BACKEND=hansard.
+    """Hansard Parliament API keyword/title search.
 
     Uses two mechanisms:
       /search/debates.json — title matching (finds sessions titled about the topic)
@@ -314,7 +315,7 @@ def fetch_hansard_topic(search_term, source_type, date_range, num=50):
         end_date_api = _fmt(parts[1].strip()) if parts[1].strip() else ''
 
     cache_key = f"hansard:topic:{source_type}:{search_term}:{date_range}".strip()
-    cached = CachedTWFYSearch.get(cache_key, source_type, ttl_hours=6)
+    cached = CachedSearch.get(cache_key, source_type, ttl_hours=6)
     if cached is not None:
         _htl.warning(f"[hansard_topic] {source_type} from_cache rows={len(cached)}")
         return cached
@@ -444,7 +445,7 @@ def fetch_hansard_topic(search_term, source_type, date_range, num=50):
                  f"unique_sessions={len(ext_ids_meta)}")
 
     if all_rows:
-        CachedTWFYSearch.store(cache_key, source_type, all_rows)
+        CachedSearch.store(cache_key, source_type, all_rows)
     return all_rows
 
 
@@ -522,7 +523,7 @@ def expand_search_query(topic, api_key):
     """Use Gemini to expand a topic into related parliamentary search terms."""
     # Policy vocabulary is stable — cache for 7 days to skip Gemini on repeat searches
     try:
-        cached = CachedTWFYSearch.get(topic, '_expand', ttl_hours=168)
+        cached = CachedSearch.get(topic, '_expand', ttl_hours=168)
         if cached is not None:
             return cached[0] if cached else f'"{topic}"'
     except Exception:
@@ -560,7 +561,7 @@ def expand_search_query(topic, api_key):
             if isinstance(terms, list) and terms:
                 # Only include the original topic phrase if it's short enough to
                 # appear verbatim in debates. Long policy descriptions (> 4 words)
-                # are never said word-for-word and return 0 results from TWFY Xapian.
+                # are never said word-for-word and return 0 results from a phrase search.
                 if len(topic.split()) <= 4:
                     all_terms = [topic] + [str(t) for t in terms[:6]]
                 else:
@@ -569,7 +570,7 @@ def expand_search_query(topic, api_key):
                     return f'"{topic}"'
                 result = '(' + ' OR '.join(f'"{t}"' for t in all_terms) + ')'
                 try:
-                    CachedTWFYSearch.store(topic, '_expand', [result])
+                    CachedSearch.store(topic, '_expand', [result])
                 except Exception:
                     pass
                 return result
@@ -775,7 +776,7 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=800):
 
 def _display_name(title):
     """Strip honorifics/post-nominals from a GOV.UK title for clean display.
-    Preserves Lords titles (Baroness/Lord) so TWFY lookups can find peers.
+    Preserves Lords titles (Baroness/Lord) so name lookups can find peers.
     'The Rt Hon Baroness Smith of Malvern' → 'Baroness Smith of Malvern'
     'The Rt Hon Josh MacAlister MP' → 'Josh MacAlister'"""
     name = title.strip()
@@ -888,15 +889,12 @@ def get_minister_list():
     except Exception:
         pass
 
-    # Preserve twfy_ids from the old cache — TWFY person IDs are permanent identifiers
-    # assigned to a person for life. No need to re-resolve them after a minister list refresh.
-    old_twfy_ids = cache.get('twfy_ids', {})
-    # Seed known IDs for ministers whose TWFY name search fails (newer Lords peers etc.)
-    # Use unconditional assignment so verified IDs always override stale/failed cache entries.
-    for name, entry in KNOWN_TWFY_IDS.items():
-        old_twfy_ids[name] = entry
+    # Keep resolved member ids across a minister list refresh — a member's
+    # Parliament id never changes. Failed lookups are dropped so they are retried.
+    member_ids = {name: entry for name, entry in cache.get('member_ids', {}).items()
+                  if entry.get('parliament_id')}
     data = {'_ts': time.time(), '_source': 'govuk', '_version': MINISTER_CACHE_VERSION,
-            'by_norm': by_norm, 'by_id': by_id, 'by_dept': by_dept, 'twfy_ids': old_twfy_ids}
+            'by_norm': by_norm, 'by_id': by_id, 'by_dept': by_dept, 'member_ids': member_ids}
     try:
         with open(MINISTER_CACHE_FILE, 'w') as f:
             json.dump(data, f)
@@ -908,7 +906,7 @@ def get_minister_list():
 
 def _normalise_name(name):
     """Strip honorifics, titles, and post-nominal letters for name matching.
-    Works on both TWFY speaker names and GOV.UK person titles.
+    Works on both Hansard speaker names and GOV.UK person titles.
     Applies prefix stripping in two passes to handle 'The Rt Hon Baroness ...'."""
     n = name.lower().strip()
     # Strip trailing post-nominals: MP, OBE, CBE, MBE, PC, QC, KC, etc.
@@ -990,95 +988,6 @@ def verify_government_speaker(name):
     return result
 
 
-def lookup_twfy_person(name):
-    """Look up TWFY person_id by name. Checks MPs first, then Lords.
-    Tries multiple name variants to handle titles like 'Baroness Smith of Malvern'.
-    Returns (person_id, matched_name, is_lord) or (None, None, False)."""
-    # Build variants: original → stripped display → normalised title-case
-    variants = [name]
-    display = _display_name(name)
-    if display and display != name:
-        variants.append(display)
-    norm_title = _normalise_name(name).title()
-    if norm_title and norm_title not in variants:
-        variants.append(norm_title)
-
-    # If the name has no Lords title prefix, also try with common prefixes.
-    # This handles "Smith of Malvern" → "Baroness Smith of Malvern" for TWFY getLords.
-    lords_prefixes = ['Baroness ', 'Lord ', 'Baron ']
-    has_lords_prefix = any(name.lower().startswith(p.lower()) for p in lords_prefixes + ['The '])
-    if not has_lords_prefix:
-        for prefix in lords_prefixes:
-            candidate = prefix + name
-            if candidate not in variants:
-                variants.append(candidate)
-
-    for variant in variants:
-        # For variants with a Lords title prefix or a peerage 'of' pattern (e.g.
-        # "Smith of Malvern", "Baroness Smith of Malvern"), check getLords FIRST
-        # and skip getMPs entirely — getMPs search on "Smith" would return the
-        # wrong person (any MP with that surname) before Lords is tried.
-        has_lords_prefix_v = any(variant.lower().startswith(p.lower()) for p in lords_prefixes)
-        has_peerage_of = ' of ' in variant.lower()
-        if has_lords_prefix_v or has_peerage_of:
-            endpoint_pairs = [('getLords', True)]
-        else:
-            endpoint_pairs = [('getMPs', False), ('getLords', True)]
-        for endpoint, is_lord in endpoint_pairs:
-            try:
-                resp = requests.get(
-                    'https://www.theyworkforyou.com/api/' + endpoint,
-                    params={'key': TWFY_API_KEY, 'search': variant, 'output': 'json'},
-                    timeout=10
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if isinstance(data, list) and data:
-                        return data[0].get('person_id'), data[0].get('name'), is_lord
-            except Exception:
-                pass
-
-    # Fallback for Lords: getLords name search fails for newer peers (created ~2023+)
-    # whose records aren't indexed for name search.
-    # Strategy: fetch that peer's recent Lords speeches via a broad search, then
-    # scan speaker fields for a name normalisation match.
-    # We try multiple search terms to maximise the chance of finding a recent speech.
-    is_lords_name = any(name.lower().startswith(p.lower()) for p in ['baroness ', 'lord ', 'baron ']) \
-                    or ' of ' in name.lower()
-    if is_lords_name and TWFY_API_KEY:
-        # Build candidate search terms: stripped display name, family name, territorial name
-        display = _display_name(name)   # e.g. "Baroness Smith of Malvern"
-        parts = display.split()
-        # ["Baroness", "Smith", "of", "Malvern"] → try "Smith", "Malvern", "Smith of Malvern"
-        search_terms = []
-        if ' of ' in display.lower():
-            before_of = display.split(' of ')[0].split()
-            after_of  = display.split(' of ')[1].split()
-            if before_of: search_terms.append(before_of[-1])       # family name: "Smith"
-            if after_of:  search_terms.append(after_of[0])         # territorial: "Malvern"
-        else:
-            if len(parts) > 1: search_terms.append(parts[-1])
-        for search_term in search_terms:
-            try:
-                resp = requests.get(
-                    TWFY_API_URL,
-                    params={'key': TWFY_API_KEY, 'search': search_term, 'type': 'lords',
-                            'num': 100, 'order': 'd', 'output': 'json'},
-                    timeout=10
-                )
-                if resp.status_code == 200:
-                    for row in resp.json().get('rows', []):
-                        spk = row.get('speaker') or {}
-                        spk_name = spk.get('name', '')
-                        spk_pid = spk.get('person_id')
-                        if spk_pid and _normalise_name(spk_name) == _normalise_name(display):
-                            return str(spk_pid), spk_name, True
-            except Exception:
-                pass
-
-    return None, None, False
-
-
 # --- Hansard API helpers (Phase 1: minister search) ---
 
 _HANSARD_PARTY_ABBREV = {
@@ -1103,7 +1012,7 @@ def _parse_hansard_party(attributed_to):
 
 
 def _hansard_section_to_source(house, section):
-    """Map Hansard API House + Section fields to TWFY-compatible source codes."""
+    """Map Hansard API House + Section fields to our source codes."""
     section_lower = (section or '').lower()
     if 'written statement' in section_lower:
         return 'wms'
@@ -1118,8 +1027,7 @@ def _hansard_section_to_source(house, section):
 
 def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=50, is_lord=False):
     """Fetch minister speeches via Hansard API using Parliament member ID directly.
-    Replaces fetch_twfy_minister_topic() when SEARCH_BACKEND=hansard.
-    Returns same normalised row schema — zero changes to grouping or display code."""
+    Returns the normalised row schema used by the grouping and display code."""
     if not parliament_id:
         return []
 
@@ -1134,7 +1042,7 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
 
     import logging as _ml
     cache_key_query = f"hansard:minister:{parliament_id}:{topic} {date_range}".strip()
-    cached = CachedTWFYSearch.get(cache_key_query, 'hansard_minister', ttl_hours=6)
+    cached = CachedSearch.get(cache_key_query, 'hansard_minister', ttl_hours=6)
     if cached is not None:
         _ml.warning(f"[minister_search] parliament_id={parliament_id} from_cache=True rows={len(cached)}")
         return cached
@@ -1205,7 +1113,7 @@ def fetch_hansard_minister_topic(parliament_id, topic, date_range, sources, num=
         with_ext = sum(1 for r in rows if r.get('debate_section_ext_id'))
         _ml.warning(f"[minister_search] parliament_id={parliament_id} rows={len(rows)} with_ext_id={with_ext} sources={set(r['source'] for r in rows)}")
         if rows:  # never cache empty results — empty means API miss, not "no speeches"
-            CachedTWFYSearch.store(cache_key_query, 'hansard_minister', rows)
+            CachedSearch.store(cache_key_query, 'hansard_minister', rows)
         return rows
     except Exception as e:
         import logging
@@ -1240,7 +1148,6 @@ def _lookup_wms_member(member_id):
 
 def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
     """Fetch Written Ministerial Statements from Parliament Q&S API.
-    Drop-in replacement for fetch_twfy_topic(query, 'wms', date_range).
     No API key required. Returns normalised row schema.
 
     Keyword matching: Parliament API does OR-word matching, not phrase matching.
@@ -1262,7 +1169,7 @@ def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
             to_date = f"{raw_to[:4]}-{raw_to[4:6]}-{raw_to[6:]}"
 
     cache_key = f"parl_wms:{query}:{date_range}:{dept_id}"
-    cached = CachedTWFYSearch.get(cache_key, 'wms', ttl_hours=6)
+    cached = CachedSearch.get(cache_key, 'wms', ttl_hours=6)
     if cached is not None:
         return cached
 
@@ -1348,12 +1255,12 @@ def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
     _wms_log.warning(
         f"[parl_wms] query={query!r} dept_id={dept_id} raw={len(raw_results)} kept={len(results)}"
     )
-    CachedTWFYSearch.store(cache_key, 'wms', results)
+    CachedSearch.store(cache_key, 'wms', results)
     return results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LOCAL DB FETCH LAYER — replaces Hansard API / TWFY for Research Tool searches
+# LOCAL DB FETCH LAYER — Research Tool searches run against our own Hansard archive
 # ─────────────────────────────────────────────────────────────────────────────
 
 _DB_SOURCE_FILTER = {
@@ -1733,103 +1640,48 @@ def _resolve_parliament_id(display_name):
     return None, None
 
 
-def lookup_twfy_person_by_parliament_id(parliament_id, display_name, house):
-    """DB-first TWFY person ID lookup.
-    1. Check MemberLink DB — instant, zero API calls if already resolved.
-    2. If not resolved and not marked failed, run lookup_twfy_person() and store result.
-    Returns (twfy_person_id, is_lord) or (None, False).
+def _local_member_lookup(display_name):
+    """Resolve a minister's display name to (member_id, is_lord) from our own
+    member tables: member_profile (current members) first, then cached_member.
+    A normalised-name match is only accepted when it is unique. No API calls.
+    Returns (None, False) if not found."""
+    from cache_models import MemberProfile
+    from extensions import db
+    name = (display_name or '').strip()
+    if not name:
+        return None, False
+    try:
+        current = MemberProfile.query.filter_by(is_current=True)
+        row = current.filter_by(name=name).first()
+        if not row:
+            target = _normalise_name(name)
+            matches = [p for p in current.with_entities(
+                           MemberProfile.member_id, MemberProfile.name, MemberProfile.house).all()
+                       if target and _normalise_name(p.name or '') == target]
+            row = matches[0] if len(matches) == 1 else None
+        if row:
+            return row.member_id, row.house == 'Lords'
+    except Exception:
+        db.session.rollback()
+    try:
+        member_id, _matched, is_lord = _resolve_member_id(name)
+        if member_id:
+            return member_id, is_lord
+    except Exception:
+        db.session.rollback()
+    return None, False
+
+
+def get_dept_minister_member_ids(dept_name, minister_data):
+    """Resolve all ministers for a department to Parliament member ids (MNIS ids,
+    = ha_contribution.member_id). Returns list of {parliament_id, name, role, is_lord}.
+
+    Lookup chain: verified overrides -> minister cache file -> our own member
+    tables -> Parliament Members API search (last resort, result cached).
     """
-    from cache_models import MemberLink
-    row = MemberLink.get_by_parliament_id(parliament_id)
-    if row:
-        if row.twfy_person_id:
-            return row.twfy_person_id, row.house == 'Lords'
-        if row.lookup_failed:
-            return None, house == 'Lords'
-        # Row exists but unresolved — fall through to lookup
-
-    person_id, matched_name, is_lord = lookup_twfy_person(display_name)
-    method = 'twfy_name_search' if person_id else 'failed'
-    MemberLink.upsert(
-        parliament_id=parliament_id,
-        display_name=display_name,
-        house=house,
-        twfy_person_id=person_id,
-        twfy_name=matched_name,
-        resolution_method=method,
-        lookup_failed=(person_id is None),
-    )
-    return person_id, is_lord
-
-
-def seed_all_minister_links(app):
-    """Pre-populate MemberLink with all current government ministers.
-    Runs once in a background thread at startup. Skips if already well-seeded
-    (> 40 resolved entries means a previous run completed successfully).
-    This converts MemberLink from lazy per-search cache to a pre-built reference
-    table — minister-led searches become instant with zero quota cost after first seed.
-    """
-    import threading
-
-    def _run():
-        from cache_models import MemberLink
-        with app.app_context():
-            try:
-                resolved_count = MemberLink.query.filter(
-                    MemberLink.twfy_person_id.isnot(None)
-                ).count()
-                if resolved_count > 40:
-                    return  # already well-seeded — skip
-                minister_data = get_minister_list()
-                # by_dept: {dept_name: [{"name": display_name}, ...]}
-                by_dept = minister_data.get('by_dept', {})
-                # Flatten to unique display names across all departments
-                seen = set()
-                all_names = []
-                for dept_ministers in by_dept.values():
-                    for m in dept_ministers:
-                        name = m.get('name', '').strip()
-                        if name and name not in seen:
-                            seen.add(name)
-                            all_names.append(name)
-                if not all_names:
-                    return
-                seeded = 0
-                for display_name in all_names:
-                    if not display_name:
-                        continue
-                    # Skip if already resolved or marked failed
-                    existing = MemberLink.query.filter(
-                        MemberLink.display_name == display_name
-                    ).first()
-                    if existing and (existing.twfy_person_id or existing.lookup_failed):
-                        continue
-                    # Resolve Parliament ID then TWFY person ID
-                    parliament_id, house = _resolve_parliament_id(display_name)
-                    if not parliament_id:
-                        continue
-                    lookup_twfy_person_by_parliament_id(parliament_id, display_name, house)
-                    seeded += 1
-                    time.sleep(0.3)  # gentle rate limiting — ~3 calls/sec
-            except Exception as e:
-                print(f'[seed_minister_links] error: {e}')
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-
-
-def get_dept_minister_twfy_ids(dept_name, minister_data):
-    """Resolve all ministers for a department to TWFY person IDs.
-    Returns list of {person_id, name, role, is_lord} dicts.
-
-    Lookup chain (cheapest first):
-    1. MemberLink DB — zero TWFY API calls if already resolved
-    2. JSON twfy_ids_cache — legacy fast path during transition
-    3. Parliament Members/Search → lookup_twfy_person_by_parliament_id
-    """
-    from cache_models import MemberLink
+    import logging
     ministers = minister_data.get('by_dept', {}).get(dept_name, [])
-    twfy_ids_cache = minister_data.setdefault('twfy_ids', {})
+    ids_cache = minister_data.setdefault('member_ids', {})
     results = []
     json_updated = False
 
@@ -1837,54 +1689,24 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
         display = m.get('display_name') or m.get('name', '')
         if not display:
             continue
-
-        # 1. DB lookup by display name (via MemberLink index on display_name would be ideal,
-        #    but we use parliament_id as key so we need it first — check JSON cache for it)
-        cached_entry = twfy_ids_cache.get(display, {})
-
-        # Fast path: JSON cache has a parliament_id — sufficient for Hansard path.
-        # person_id may also be present (for TWFY fallback) but is not required.
-        if cached_entry.get('parliament_id') is not None:
+        entry = KNOWN_MINISTER_MEMBER_IDS.get(display) or ids_cache.get(display)
+        if entry is None:
+            member_id, is_lord = _local_member_lookup(display)
+            if not member_id:
+                member_id, house = _resolve_parliament_id(display)
+                is_lord = house == 'Lords'
+            entry = {'parliament_id': member_id, 'is_lord': bool(is_lord),
+                     'lookup_failed': member_id is None}
+            ids_cache[display] = entry
+            json_updated = True
+        if entry.get('parliament_id'):
             results.append({
-                'person_id': cached_entry.get('person_id'),
-                'parliament_id': cached_entry['parliament_id'],
-                'name': display,
-                'role': m.get('role', ''),
-                'is_lord': cached_entry.get('is_lord', False),
-            })
-            continue
-
-        # Skip only if both IDs are absent and we've already tried
-        if cached_entry.get('lookup_failed') and not cached_entry.get('person_id') and not cached_entry.get('parliament_id'):
-            continue
-
-        # Resolve Parliament ID → DB lookup → TWFY lookup
-        parliament_id, house = _resolve_parliament_id(display)
-        if parliament_id:
-            person_id, is_lord = lookup_twfy_person_by_parliament_id(
-                parliament_id, display, house)
-        else:
-            # Parliament ID lookup failed — fall back to name-only TWFY lookup
-            person_id, matched_name, is_lord = lookup_twfy_person(display)
-
-        # Write result back to JSON cache so next search is instant
-        twfy_ids_cache[display] = {
-            'person_id': person_id, 'is_lord': is_lord,
-            'parliament_id': parliament_id,
-            'lookup_failed': person_id is None
-        }
-        json_updated = True
-
-        # Include minister if we have at least one usable ID.
-        # parliament_id alone is sufficient for the Hansard API path.
-        if person_id or parliament_id:
-            results.append({
-                'person_id': person_id, 'parliament_id': parliament_id,
-                'name': display, 'role': m.get('role', ''), 'is_lord': is_lord
+                'parliament_id': entry['parliament_id'],
+                'name': display, 'role': m.get('role', ''),
+                'is_lord': entry.get('is_lord', False),
             })
         else:
-            import logging
-            logging.warning(f"Minister ID lookup failed (no TWFY or Parliament ID): {display!r}")
+            logging.warning(f"Minister member id not found: {display!r}")
 
     if json_updated:
         try:
@@ -1892,6 +1714,59 @@ def get_dept_minister_twfy_ids(dept_name, minister_data):
                 json.dump(minister_data, f)
         except Exception:
             pass
+    return results
+
+
+def find_hansard_mentions(keyword, since, limit=15):
+    """Hansard sessions on or after `since` (a date) with a speech mentioning
+    `keyword`, newest first, from our own archive. Used by the My Alerts scan.
+    Returns [{title, url, snippet, speaker, date}] with internal archive URLs.
+    Postgres uses the speech_tsv full-text index; other databases use LIKE."""
+    import calendar
+    from extensions import db
+    from sqlalchemy import text as sqla_text
+
+    keyword = (keyword or '').strip()
+    if not keyword:
+        return []
+    if _db_is_postgres():
+        match = "c.speech_tsv @@ websearch_to_tsquery('english', :q)"
+        q = keyword
+        not_container = 's.is_container = false'
+    else:
+        match = 'LOWER(c.speech_text) LIKE :q'
+        q = f'%{keyword.lower()}%'
+        not_container = 's.is_container = 0'
+    sql = sqla_text(f"""
+        SELECT s.id, s.title, s.date, s.slug, c.member_name, c.speech_text
+        FROM ha_contribution c
+        JOIN ha_session s ON s.id = c.session_id
+        WHERE {not_container} AND s.date >= :since AND {match}
+        ORDER BY s.date DESC, s.id, c.speech_order
+        LIMIT :lim
+    """)
+    try:
+        rows = db.session.execute(sql, {'q': q, 'since': since, 'lim': limit * 10}).fetchall()
+    except Exception:
+        db.session.rollback()
+        return []
+
+    results, seen = [], set()
+    for r in rows:
+        if r.id in seen or not r.slug:
+            continue
+        seen.add(r.id)
+        d = r.date if hasattr(r.date, 'month') else datetime.strptime(str(r.date)[:10], '%Y-%m-%d').date()
+        url_date = f"{d.day}-{calendar.month_name[d.month].lower()}-{d.year}"
+        results.append({
+            'title': r.title or 'Parliamentary debate',
+            'url': f"/archive/debate/{url_date}/{r.slug}",
+            'snippet': re.sub(r'\s+', ' ', r.speech_text or '').strip()[:300],
+            'speaker': r.member_name or '',
+            'date': d.isoformat(),
+        })
+        if len(results) >= limit:
+            break
     return results
 
 
@@ -1910,11 +1785,10 @@ def _debate_group_key(title: str) -> str:
 
 
 # ==========================================
-# LOCAL DB minister lookup (replaces TWFY for the Debate Contributions tab)
-# Keyed on member_id throughout — no name-search against TWFY. The only
-# name→id step is resolving the controlled dropdown selection against our own
-# member cache. Removes the new-peer failure class (TWFY can't resolve peers
-# created ~2023+ by name; the local DB knows them by member_id).
+# LOCAL DB minister lookup (Debate Contributions tab)
+# Keyed on member_id throughout. The only name→id step is resolving the
+# controlled dropdown selection against our own member cache, so recently
+# created peers are found by member_id like everyone else.
 # ==========================================
 
 def _resolve_member_id(minister_name):
@@ -2103,7 +1977,7 @@ def scan_debates():
                                debate_grouped=[], legislation_grouped=[],
                                debug_query='', user_pref=_get_user_pref(),
                                is_post=False,
-                               departments=DEPARTMENTS_TWFY, selected_dept='All Departments',
+                               departments=RESEARCH_DEPARTMENTS, selected_dept='All Departments',
                                selected_house='all', content_type='exclude_bills')
 
     return render_template('debate_scanner.html',
@@ -2111,7 +1985,7 @@ def scan_debates():
                            grouped_debates={},
                            error_message=None,
                            start_date='', end_date='',
-                           departments=DEPARTMENTS_TWFY, selected_dept='All Departments',
+                           departments=RESEARCH_DEPARTMENTS, selected_dept='All Departments',
                            selected_house='all', content_type='exclude_bills',
                            is_post=False,
                            # Other tab defaults
@@ -2191,7 +2065,7 @@ def debates_topic():
             if selected_depts:
                 m_data_for_ids = get_minister_list()
                 for dept in selected_depts:
-                    minister_people.extend(get_dept_minister_twfy_ids(dept, m_data_for_ids))
+                    minister_people.extend(get_dept_minister_member_ids(dept, m_data_for_ids))
 
             # Run DB topic search, WQ search, and minister-led searches in parallel
             all_rows = []
@@ -2357,8 +2231,6 @@ def debates_topic():
                         name = r.get('speaker_name', '')
                         url = r.get('listurl', '')
                         if name and url and name not in opp_speaker_links:
-                            if not url.startswith('http'):
-                                url = 'https://www.theyworkforyou.com' + url
                             opp_speaker_links[name] = url
 
                     gov_speaker_links = {}
@@ -2366,8 +2238,6 @@ def debates_topic():
                         name = r.get('speaker_name', '')
                         url = r.get('listurl', '')
                         if name and url and name not in gov_speaker_links:
-                            if not url.startswith('http'):
-                                url = 'https://www.theyworkforyou.com' + url
                             gov_speaker_links[name] = url
                     import logging as _dlog
                     _dlog.warning(
@@ -2510,7 +2380,7 @@ def debates_topic():
                     debug_query += f" | AI error: {type(e).__name__}: {str(e)[:120]}"
                     topic_briefing = None
 
-            # Split TWFY rows into display sections, then group debates by session
+            # Split rows into display sections, then group debates by session
             # Group ALL non-statement rows first, then classify each group.
             # Group-level classification is more reliable than per-row:
             # a group where no speech exceeds 300 words is an Oral PQ session
@@ -2524,12 +2394,8 @@ def debates_topic():
                 return (r.get('source') == 'wrans'
                         or 'written answer' in r.get('debate_title', '').lower())
 
-            # TWFY wrans records hold the minister's ANSWER text, not the question.
-            # speaker_name is the answering minister, body_clean is the answer body.
-            # Displaying them as WQ cards would show the minister as the "asker" and
-            # the answer as the "question" — misleading. The Parliament API WQ results
-            # (from _fetch_topic_wqs) are richer and accurate, so TWFY wrans are skipped.
-            # wq_rows stays as-is (Parliament API only).
+            # Written answers come from the written-questions search (wq_rows),
+            # which carries both the question and the answer.
             wq_total = len(wq_rows)
             non_statement_rows = [r for r in topic_rows
                                   if r not in statement_rows
@@ -2632,7 +2498,7 @@ def debates_topic():
                            debug_query=debug_query,
                            user_pref=user_pref,
                            error_message=error_message,
-                           grouped_debates={}, departments=DEPARTMENTS_TWFY,
+                           grouped_debates={}, departments=RESEARCH_DEPARTMENTS,
                            selected_dept="All Departments", selected_house="all",
                            content_type="exclude_bills", is_post=True,
                            stakeholder_topic='',
@@ -2664,8 +2530,7 @@ def debates_minister():
             error_message = "Please select a minister."
         else:
             # Local resolution: controlled dropdown name → cached_member member_id.
-            # No TWFY — fixes the new-peer failure class (e.g. Baroness Smith of
-            # Malvern, a 2024 peer TWFY can't resolve by name).
+            # Keyed on member_id, so recently created peers resolve like anyone else.
             member_id, matched_name, is_lord = _resolve_member_id(minister_name)
             if not member_id:
                 error_message = f"Could not find '{minister_name}' in the member directory."
@@ -2683,7 +2548,7 @@ def debates_minister():
                            minister_debates=minister_debates,
                            topic=topic, start_date=start_date, end_date=end_date,
                            house_filter=house_filter, error_message=error_message,
-                           grouped_debates={}, departments=DEPARTMENTS_TWFY,
+                           grouped_debates={}, departments=RESEARCH_DEPARTMENTS,
                            selected_dept="All Departments", selected_house="all",
                            content_type="exclude_bills", is_post=(request.method == 'POST'),
                            topic_rows=[], topic_briefing=None, topic_briefing_as_text='',
@@ -2707,7 +2572,7 @@ def debates_minister_analyze():
     # Assemble transcripts from the LOCAL DB by session_id (the checkbox now
     # carries session_id||title||date). Full session text — all speakers, in
     # speech order — so Gemini has the Q&A context; it focuses on the minister
-    # via the prompt. No external fetch, no TWFY.
+    # via the prompt. No external fetch.
     full_transcript_text = ""
     for item in selected:
         parts = item.split('||')
@@ -3573,8 +3438,7 @@ def download_research_brief():
                     # Source hyperlink on its own line
                     url = q.get('listurl', '')
                     if url:
-                        if not url.startswith('http'):
-                            url = 'https://www.theyworkforyou.com' + url
+                        url = _full_url(url)
                         src_p = doc.add_paragraph()
                         _add_hyperlink(src_p, url, '↗ View on Hansard')
                         if src_p.runs:
@@ -3732,8 +3596,7 @@ def download_research_brief():
 
                     url = r.get('listurl', '')
                     if url:
-                        if not url.startswith('http'):
-                            url = 'https://www.theyworkforyou.com' + url
+                        url = _full_url(url)
                         lp = doc.add_paragraph()
                         _add_hyperlink(lp, url, '↗ View on Hansard')
                         if lp.runs:
@@ -3752,8 +3615,7 @@ def download_research_brief():
         for r in section.get('items', []):
             title = r.get('debate_title', '') or ''
             url = r.get('listurl', '') or ''
-            if url and not url.startswith('http'):
-                url = 'https://www.theyworkforyou.com' + url
+            url = _full_url(url)
             date = r.get('hdate', '') or ''
             source = r.get('source_label', '') or ''
             key = url or title
@@ -3782,8 +3644,7 @@ def download_research_brief():
             if not spk:
                 continue
             url = r.get('listurl', '') or ''
-            if url and not url.startswith('http'):
-                url = 'https://www.theyworkforyou.com' + url
+            url = _full_url(url)
             role_or_party = (r.get('minister_role') or r.get('speaker_party') or '')
             citation_rows.append({
                 'speaker': spk,
@@ -4226,7 +4087,7 @@ def _debate_prep_post():
         except Exception:
             pass
 
-    parl_date_range = get_twfy_date_range(parl_start, parl_end)
+    parl_date_range = format_date_range(parl_start, parl_end)
 
     peer_info = None
     one_pager = None
@@ -4475,8 +4336,7 @@ def download_debate_prep_brief():
                 seen_d = set()
                 for r in rows[:20]:
                     url = r.get('listurl', '')
-                    if url and not url.startswith('http'):
-                        url = 'https://www.theyworkforyou.com' + url
+                    url = _full_url(url)
                     key_d = url or r.get('debate_title', '')
                     if key_d in seen_d:
                         continue
@@ -4542,8 +4402,7 @@ def download_debate_prep_brief():
         seen_s = set()
         for r in speeches[:12]:
             url = r.get('listurl', '')
-            if url and not url.startswith('http'):
-                url = 'https://www.theyworkforyou.com' + url
+            url = _full_url(url)
             key_s = url or r.get('debate_title', '')
             if key_s in seen_s:
                 continue

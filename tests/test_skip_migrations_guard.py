@@ -14,9 +14,6 @@ flask_app.py startup block:
         _mig_log('SKIP_MIGRATIONS=1 set; skipping db.create_all() and schema modifications')
     else:
         _run_startup_migrations()
-
-    if not _SKIP_MIGRATIONS:
-        seed_all_minister_links(app)
 """
 
 import os
@@ -82,38 +79,6 @@ class TestSkipMigrationsGuardBehaviour:
 
         assert called == ['run'], (
             "_run_startup_migrations() must be called when SKIP_MIGRATIONS is unset"
-        )
-
-    def test_skip_true_prevents_seed_all_minister_links(self, monkeypatch):
-        """When SKIP_MIGRATIONS=1, seed_all_minister_links must not be called."""
-        monkeypatch.setenv('SKIP_MIGRATIONS', '1')
-        called = []
-
-        def mock_seed(app):
-            called.append('seed')
-
-        skip = os.environ.get('SKIP_MIGRATIONS') == '1'
-        if not skip:
-            mock_seed(None)
-
-        assert called == [], (
-            "seed_all_minister_links() must not be called when SKIP_MIGRATIONS=1"
-        )
-
-    def test_skip_false_calls_seed_all_minister_links(self, monkeypatch):
-        """When SKIP_MIGRATIONS is unset, seed_all_minister_links must be called."""
-        monkeypatch.delenv('SKIP_MIGRATIONS', raising=False)
-        called = []
-
-        def mock_seed(app):
-            called.append('seed')
-
-        skip = os.environ.get('SKIP_MIGRATIONS') == '1'
-        if not skip:
-            mock_seed(None)
-
-        assert called == ['seed'], (
-            "seed_all_minister_links() must be called when SKIP_MIGRATIONS is unset"
         )
 
     def test_log_message_matches_expected_text(self, monkeypatch):

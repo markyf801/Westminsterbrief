@@ -2,8 +2,6 @@ import os
 import ipaddress
 import secrets
 import socket
-import requests
-import re
 import numpy as np
 from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
@@ -57,7 +55,7 @@ from biography import biography_bp
 from hansard_archive.views import archive_bp, bills_bp, brief_bp, stats_bp, hansard_bp2
 from hansard_archive.slugs import slugify_theme as _slugify_theme
 from tracker import tracker_bp
-from debate_scanner import debate_scanner_bp
+from debate_scanner import debate_scanner_bp, find_hansard_mentions
 from mp_search import mp_search_bp
 from stakeholder_directory.views import directory_bp
 from stats_catalogue import stats_catalogue_bp
@@ -243,7 +241,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # Import cache models so their tables are created
-from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedTWFYSearch, MemberLink, StakeholderOrg
+from cache_models import CachedTranscript, CachedQuestion, CachedMember, CachedSearch, StakeholderOrg
 # Register stakeholder directory models with SQLAlchemy metadata before db.create_all()
 import stakeholder_directory.models          # noqa: F401
 import stakeholder_directory.ingesters.staging  # noqa: F401
@@ -738,22 +736,6 @@ def _run_startup_migrations():
             _mig_log('StatObservation backfill: nothing to do')
     except Exception as _e:
         app.logger.warning('StatObservation backfill failed: %s', _e)
-    # Seed known hard-to-resolve ministers into MemberLink
-    # These are peers whose TWFY getLords name search fails (newer Life Peers)
-    # parliament_id and twfy_person_id verified from direct Hansard debate records
-    _SEEDS = [
-        {'parliament_id': 269, 'display_name': 'Baroness Smith of Malvern',
-         'house': 'Lords', 'twfy_person_id': '10549',
-         'twfy_name': 'Baroness Smith of Malvern', 'resolution_method': 'seeded'},
-        {'parliament_id': 5033, 'display_name': 'Josh MacAlister',
-         'house': 'Commons', 'twfy_person_id': '26321',
-         'twfy_name': 'Josh MacAlister', 'resolution_method': 'seeded'},
-    ]
-    _mig_log('starting MemberLink seeds')
-    for s in _SEEDS:
-        if not MemberLink.get_by_parliament_id(s['parliament_id']):
-            MemberLink.upsert(**s)
-    _mig_log('MemberLink seeds done')
     if not User.query.filter_by(email='joe@university.ac.uk').first():
         joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
         joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
@@ -850,14 +832,6 @@ with app.app_context():
         _run_startup_migrations()
     _mig_log('app_context block complete')
 
-# Kick off background minister link seeding after app context is established
-_mig_log('importing debate_scanner for seed_all_minister_links')
-from debate_scanner import seed_all_minister_links
-_mig_log('debate_scanner imported')
-if not _SKIP_MIGRATIONS:
-    seed_all_minister_links(app)
-    _mig_log('seed_all_minister_links started')
-
 DEPARTMENTS_FOR_PREFS = [
     "All Departments", "Department for Education",
     "Department of Health and Social Care", "HM Treasury",
@@ -911,7 +885,6 @@ def home():
 
 @app.route('/health')
 def health():
-    from cache_models import CachedTWFYSearch
     checks = {}
 
     # DB
@@ -923,7 +896,7 @@ def health():
 
     # Cache table
     try:
-        CachedTWFYSearch.query.count()
+        CachedSearch.query.count()
         checks['cache_table'] = 'ok'
     except Exception as e:
         checks['cache_table'] = f'FAIL: {e}'
@@ -1845,7 +1818,6 @@ def get_similarity(vec1, vec2):
 @app.route('/run_manual_scan', methods=['POST'])
 @login_required
 def run_manual_scan():
-    TWFY_API_KEY = os.environ.get("TWFY_API_KEY")
     NEWS_API_KEY = os.environ.get("NEWS_API_KEY")
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
     BSKY_HANDLE = os.environ.get("BSKY_HANDLE")
@@ -1906,29 +1878,20 @@ def run_manual_scan():
                             new_count += 1
             except Exception as e: print(f"News API Error: {e}")
 
-        # --- 2. HANSARD SCAN ---
-        if TWFY_API_KEY:
-            try:
-                resp = requests.get(f"https://www.theyworkforyou.com/api/getDebates?key={TWFY_API_KEY}&search={broad_search}&output=json&num=15", timeout=5)
-                if resp.status_code == 200:
-                    for row in resp.json().get('rows', []):
-                        url = "https://www.theyworkforyou.com" + row.get('listurl', '')
-                        if not Alert.query.filter_by(url=url).first():
-                            snippet = re.sub('<[^>]+>', '', row.get('body', ''))[:300]
-                            is_relevant = False
-                            
-                            if ai_client and target_emb and snippet:
-                                try:
-                                    # 🎯 THE FIX: Upgraded to gemini-embedding-001
-                                    art_emb = ai_client.models.embed_content(model='gemini-embedding-001', contents=snippet).embeddings[0].values
-                                    if get_similarity(target_emb, art_emb) >= 0.62:
-                                        is_relevant = True
-                                except: pass
-                                
-                            if is_relevant:
-                                db.session.add(Alert(topic_id=topic.id, source='Hansard', title=row.get('parent', {}).get('body', 'Parliamentary Debate'), url=url, snippet=snippet, speaker=row.get('speaker', {}).get('name')))
-                                new_count += 1
-            except: pass
+        # --- 2. HANSARD SCAN (our own archive) ---
+        # Look back from this topic's last Hansard alert (3 days' overlap for
+        # ingestion lag, capped at 30 days); repeat finds are skipped by URL.
+        last_found = db.session.query(db.func.max(Alert.date_found)).filter(
+            Alert.topic_id == topic.id, Alert.source == 'Hansard').scalar()
+        today = datetime.now().date()
+        since = (last_found.date() if last_found else today) - timedelta(days=3)
+        since = max(since, today - timedelta(days=30))
+        for hit in find_hansard_mentions(topic.keyword, since, limit=15):
+            if not Alert.query.filter_by(topic_id=topic.id, url=hit['url']).first():
+                db.session.add(Alert(topic_id=topic.id, source='Hansard', title=hit['title'][:255],
+                                     url=hit['url'], snippet=hit['snippet'],
+                                     speaker=hit['speaker'][:100] or None))
+                new_count += 1
 
     # --- 3. BLUESKY SCAN ---
     if BSKY_HANDLE and BSKY_PASSWORD:
@@ -2018,19 +1981,19 @@ def admin_panel():
                 _admin_log('clear_minister')
             except Exception as e:
                 message = f'Error clearing minister cache: {e}'
-        elif action == 'clear_twfy_search':
+        elif action == 'clear_search_cache':
             try:
-                deleted = CachedTWFYSearch.query.delete()
+                deleted = CachedSearch.query.delete()
                 db.session.commit()
-                message = f'TWFY search cache cleared ({deleted} entries removed).'
-                _admin_log(f'clear_twfy_search | {deleted} entries')
+                message = f'Search cache cleared ({deleted} entries removed).'
+                _admin_log(f'clear_search_cache | {deleted} entries')
             except Exception as e:
                 db.session.rollback()
-                message = f'Error clearing TWFY search cache: {e}'
+                message = f'Error clearing search cache: {e}'
         elif action == 'clear_sessions':
             try:
-                deleted = CachedTWFYSearch.query.filter(
-                    CachedTWFYSearch.source_type.like('session_%')
+                deleted = CachedSearch.query.filter(
+                    CachedSearch.source_type.like('session_%')
                 ).delete(synchronize_session=False)
                 db.session.commit()
                 message = f'Session expansion cache cleared ({deleted} entries removed).'
@@ -2042,25 +2005,13 @@ def admin_panel():
             try:
                 if os.path.exists(MINISTER_CACHE_FILE):
                     os.remove(MINISTER_CACHE_FILE)
-                deleted = CachedTWFYSearch.query.delete()
+                deleted = CachedSearch.query.delete()
                 db.session.commit()
-                message = f'All caches cleared ({deleted} TWFY entries removed, minister cache deleted).'
-                _admin_log(f'clear_all | {deleted} TWFY entries')
+                message = f'All caches cleared ({deleted} search cache entries removed, minister cache deleted).'
+                _admin_log(f'clear_all | {deleted} search cache entries')
             except Exception as e:
                 db.session.rollback()
                 message = f'Error clearing caches: {e}'
-        elif action == 'retry_failed_links':
-            try:
-                reset = MemberLink.query.filter_by(lookup_failed=True).all()
-                for row in reset:
-                    row.lookup_failed = False
-                    row.resolution_method = None
-                db.session.commit()
-                message = f'{len(reset)} failed member link(s) reset — will retry on next search.'
-                _admin_log(f'retry_failed_links | {len(reset)} reset')
-            except Exception as e:
-                db.session.rollback()
-                message = f'Error resetting failed links: {e}'
 
         elif action == 'ingest_committee_evidence':
             import threading, requests as _requests
@@ -2238,13 +2189,13 @@ def admin_panel():
                 mc = json.load(f)
             age_hours = (time.time() - mc.get('_ts', 0)) / 3600
             minister_count = sum(len(v) for v in mc.get('by_dept', {}).values())
-            twfy_id_count = len(mc.get('twfy_ids', {}))
+            member_id_count = sum(1 for e in mc.get('member_ids', {}).values() if e.get('parliament_id'))
             minister_status = {
                 'exists': True,
                 'age_hours': round(age_hours, 1),
                 'age_days': round(age_hours / 24, 1),
                 'minister_count': minister_count,
-                'twfy_id_count': twfy_id_count,
+                'member_id_count': member_id_count,
                 'dept_count': len(mc.get('by_dept', {})),
             }
         else:
@@ -2252,13 +2203,11 @@ def admin_panel():
     except Exception:
         minister_status = {'exists': False, 'error': True}
 
-    twfy_total = CachedTWFYSearch.query.count()
-    twfy_session = CachedTWFYSearch.query.filter(
-        CachedTWFYSearch.source_type.like('session_%')
+    search_total = CachedSearch.query.count()
+    search_session = CachedSearch.query.filter(
+        CachedSearch.source_type.like('session_%')
     ).count()
-    twfy_keyword = twfy_total - twfy_session
-
-    member_link_stats = MemberLink.stats()
+    search_keyword = search_total - search_session
 
     # --- Directory stats ---
     dir_stats = {'org_count': 0, 'eng_count': 0, 'last_run': None, 'departments': {}, 'error': None}
@@ -2328,10 +2277,9 @@ def admin_panel():
     return render_template('admin.html',
                            message=message,
                            minister_status=minister_status,
-                           twfy_total=twfy_total,
-                           twfy_session=twfy_session,
-                           twfy_keyword=twfy_keyword,
-                           member_link_stats=member_link_stats,
+                           search_total=search_total,
+                           search_session=search_session,
+                           search_keyword=search_keyword,
                            dir_stats=dir_stats,
                            archive_stats=archive_stats,
                            backup_status=backup_status)
