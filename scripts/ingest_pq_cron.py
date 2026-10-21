@@ -72,7 +72,7 @@ _PASS_KEYS = ("inserted", "updated", "unchanged", "identity_mismatch",
 
 _QUICK_NOTE = "quick-check"     # HaCronRun.notes prefix for quick-check runs
 _QUICK_TIMEOUT = 30
-_QUICK_RETRIES = 3
+_QUICK_RETRIES = 2              # one retry on a transient error (CLAUDE.md)
 _ACTIVE_RUN_MINUTES = 60        # a "running" record older than this is treated as dead
 _FULL_WAIT_SECONDS = 15 * 60    # a full sweep waits this long for a running quick-check
 _FULL_WAIT_POLL = 30
@@ -161,21 +161,31 @@ def _prune_old_runs() -> None:
 # ── quick-check ──────────────────────────────────────────────────────────────
 
 def _api_count(params: dict) -> int:
-    """totalResults for a WQ API query, fetching a single row."""
+    """totalResults for a WQ API query, fetching a single row.
+
+    A 4xx (bad request, auth, 429 rate limit) is not retried. A transient error
+    (5xx, timeout, connection reset, bad body) is retried once after a pause."""
     last_exc: Exception | None = None
     for attempt in range(_QUICK_RETRIES):
         try:
             resp = requests.get(WQ_API_BASE, params={**params, "take": 1},
                                 timeout=_QUICK_TIMEOUT)
-            resp.raise_for_status()
-            total = resp.json().get("totalResults")
-            if not isinstance(total, int):
-                raise ValueError("response has no totalResults")
-            return total
         except Exception as exc:
             last_exc = exc
-            if attempt < _QUICK_RETRIES - 1:
-                time.sleep(2 ** attempt)
+        else:
+            if 400 <= resp.status_code < 500:
+                raise QuickCheckError(
+                    f"WQ API count failed for {params}: HTTP {resp.status_code} (not retried)")
+            try:
+                resp.raise_for_status()
+                total = resp.json().get("totalResults")
+                if not isinstance(total, int):
+                    raise ValueError("response has no totalResults")
+                return total
+            except Exception as exc:
+                last_exc = exc
+        if attempt < _QUICK_RETRIES - 1:
+            time.sleep(2 ** (attempt + 1))
     raise QuickCheckError(f"WQ API count failed for {params}: {last_exc}")
 
 

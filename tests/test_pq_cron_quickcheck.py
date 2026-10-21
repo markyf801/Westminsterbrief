@@ -110,7 +110,8 @@ def api(monkeypatch):
     from hansard_archive.pq_ingestor import WQ_API_BASE
 
     state = {"tabled": [], "answered": [], "individual": {},
-             "count_calls": [], "bulk_calls": [], "fail": False, "bulk_status": 200}
+             "count_calls": [], "bulk_calls": [], "fail": False, "bulk_status": 200,
+             "count_status": 200}
 
     def _matching(params):
         if "tabledWhenFrom" in params:
@@ -128,6 +129,8 @@ def api(monkeypatch):
             rows = _matching(params)
             if params["take"] == 1:
                 state["count_calls"].append(dict(params))
+                if state["count_status"] != 200:
+                    return _Resp({}, state["count_status"])
                 return _Resp({"totalResults": len(rows), "results": rows[:1]})
             state["bulk_calls"].append(dict(params))
             if state["bulk_status"] != 200:
@@ -392,3 +395,23 @@ def test_aborted_narrow_pass_fails_the_run_and_keeps_the_counts(db, api, cron, m
     assert run.notes.startswith("quick-check: ran tabled ")
     assert "API=3 DB=2" in run.notes and "PQPageFailureError" in run.notes
     assert cron.alerts == []                     # 1st failure in a row: held
+
+
+@pytest.mark.parametrize("status", [429, 403])
+def test_count_call_not_retried_on_4xx(db, api, cron, monkeypatch, status):
+    _seed_in_sync(db, api)
+    api["count_status"] = status
+
+    assert _run(cron, monkeypatch) == 1
+
+    assert len(api["count_calls"]) == 1 and api["bulk_calls"] == []
+    assert f"HTTP {status} (not retried)" in _last_run().notes
+
+
+def test_count_call_retried_once_on_5xx(db, api, cron, monkeypatch):
+    _seed_in_sync(db, api)
+    api["count_status"] = 503
+
+    assert _run(cron, monkeypatch) == 1
+
+    assert len(api["count_calls"]) == 2           # first call + one retry
