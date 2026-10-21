@@ -62,6 +62,7 @@ from mp_search import mp_search_bp
 from stakeholder_directory.views import directory_bp
 from stats_catalogue import stats_catalogue_bp
 from edms import edms_bp
+from consultations import consultations_bp
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -972,6 +973,7 @@ _sitemap_pqs3_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_pqs4_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_index_cache: dict = {'xml': None, 'ts': 0.0}
 _sitemap_edms_cache:  dict = {'xml': None, 'ts': 0.0}
+_sitemap_consultations_cache: dict = {'xml': None, 'ts': 0.0}
 _SITEMAP_TTL    = 3600   # 1h — core + index
 _SITEMAP_PQ_TTL = 86400  # 24h — PQ chunks
 _PQ_CHUNK_SIZE  = 25_000  # 25k per chunk; 4 chunks covers ~100k PQs
@@ -1010,6 +1012,8 @@ def _build_sitemap_core_xml() -> str:
         urls.append((f"{BASE}{path}", archive_lastmod if path == '/hansard' else ""))
     if feature_enabled('FEATURE_EDMS'):
         urls.append((f"{BASE}/edms", ""))
+    if feature_enabled('FEATURE_CONSULTATIONS'):
+        urls.append((f"{BASE}/consultations", ""))
 
     # Date browse — one URL per distinct date with sessions
     for (d,) in (db.session.query(HansardSession.date)
@@ -1125,6 +1129,8 @@ def _build_sitemap_index_xml() -> str:
               'sitemap-pqs-3.xml', 'sitemap-pqs-4.xml']
     if feature_enabled('FEATURE_EDMS'):
         chunks.append('sitemap-edms.xml')
+    if feature_enabled('FEATURE_CONSULTATIONS'):
+        chunks.append('sitemap-consultations.xml')
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -1204,6 +1210,14 @@ def sitemap_edms():
         abort(404)
     from edms import build_sitemap_xml
     return _serve_xml(_sitemap_edms_cache, build_sitemap_xml, _SITEMAP_TTL, _XML_EMPTY_URLSET)
+
+@app.route('/sitemap-consultations.xml')
+def sitemap_consultations():
+    if not feature_enabled('FEATURE_CONSULTATIONS'):
+        abort(404)
+    from consultations import build_sitemap_xml as _build_consultations_sitemap
+    return _serve_xml(_sitemap_consultations_cache, _build_consultations_sitemap,
+                      _SITEMAP_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/history-of-hansard')
 def history_of_hansard():
@@ -2526,6 +2540,7 @@ app.register_blueprint(stats_catalogue_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(hansard_bp2)
 app.register_blueprint(edms_bp)
+app.register_blueprint(consultations_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
