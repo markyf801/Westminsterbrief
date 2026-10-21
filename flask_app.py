@@ -1114,7 +1114,7 @@ def _build_sitemap_pqs_xml(offset: int, limit: int) -> str:
     ]
     for uin, tabled in rows:
         lines.append('  <url>')
-        lines.append(f'    <loc>{BASE}/archive/pq/{uin}</loc>')
+        lines.append(f'    <loc>{BASE}/archive/pq/{(uin or "").lower()}</loc>')
         if tabled:
             lines.append(f'    <lastmod>{tabled.isoformat()}</lastmod>')
         lines.append('  </url>')

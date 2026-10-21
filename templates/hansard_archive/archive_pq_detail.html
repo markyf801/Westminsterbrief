@@ -16,7 +16,7 @@
   "datePublished": "{{ pq.tabled_date.isoformat() if pq.tabled_date else '' }}",
   "description": {{ meta_desc|tojson }},
   "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
-  "url": "https://westminsterbrief.co.uk/archive/pq/{{ pq.uin }}"
+  "url": "https://westminsterbrief.co.uk/archive/pq/{{ pq.uin|lower }}"
 }
 </script>
 {% endblock %}

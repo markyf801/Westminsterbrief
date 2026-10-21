@@ -603,7 +603,7 @@ def related_items(slugs: list[str], now: datetime | None = None) -> dict:
                .limit(_RELATED_MAX).all())
         out["pqs"] = [{
             "title": heading or _excerpt(start or "", 100) or f"Written question {uin}",
-            "url": f"/archive/pq/{uin}",
+            "url": f"/archive/pq/{(uin or '').lower()}",
             "meta": " · ".join(x for x in (body or "", _human_date(tabled)) if x),
         } for uin, heading, start, tabled, body in pqs]
 

@@ -318,15 +318,15 @@ class TestArchiveRoutes:
         assert ('<span class="rpa-title">What is the government doing about test issues?</span>'
                 in html)
         assert '<span class="rpa-title">TEST001</span>' not in html
-        assert 'href="/archive/pq/TEST001"' in html
+        assert 'href="/archive/pq/test001"' in html
         # Order: specific 'Bus services' (TEST002 Feb, TEST001 Jan), then policy-area TEST010
-        i2 = html.index('href="/archive/pq/TEST002"')
-        i1 = html.index('href="/archive/pq/TEST001"')
-        i10 = html.index('href="/archive/pq/TEST010"')
+        i2 = html.index('href="/archive/pq/test002"')
+        i1 = html.index('href="/archive/pq/test001"')
+        i10 = html.index('href="/archive/pq/test010"')
         assert i2 < i1 < i10
         assert 'Department for Transport' in html
         # Outside the ±180-day window
-        assert 'href="/archive/pq/TEST011"' not in html
+        assert 'href="/archive/pq/test011"' not in html
 
     def test_pq_display_heading_fallback(self):
         from hansard_archive.views import _pq_display_heading
@@ -392,14 +392,14 @@ class TestBriefRoutes:
         html = r.get_data(as_text=True)
         assert r.status_code == 200
         assert 'Chagos Islands question 2' in html
-        assert 'href="/archive/pq/TEST004"' in html
+        assert 'href="/archive/pq/test004"' in html
         assert '3 written questions on this topic' in html
         assert _INDEX in html
 
     def test_topic_with_debates_and_pqs_shows_both(self, client):
         html = client.get('/brief/bus-services').get_data(as_text=True)
         assert 'href="/archive/debate/1-january-2026/test-session"' in html
-        assert 'href="/archive/pq/TEST001"' in html
+        assert 'href="/archive/pq/test001"' in html
         assert '1 session and 2 written questions on this topic' in html
         assert _INDEX in html
 
@@ -409,7 +409,7 @@ class TestBriefRoutes:
         html = r.get_data(as_text=True)
         assert r.status_code == 200
         assert 'test-session' in html
-        assert 'href="/archive/pq/TEST001"' in html
+        assert 'href="/archive/pq/test001"' in html
 
     def test_slug_with_punctuation_resolves(self, client):
         r = client.get('/brief/womens-pensions')
@@ -503,7 +503,7 @@ class TestGetRelatedContentParams:
 # ── Search fixes: GET WQ search, sort, true WQ count, page caps ───────────────
 
 def _pq_uins(html):
-    return re.findall(r'href="/archive/pq/([A-Z0-9]+)"', html)
+    return [u.upper() for u in re.findall(r'href="/archive/pq/([a-z0-9]+)"', html)]
 
 
 class TestWrittenQuestionsSearch:

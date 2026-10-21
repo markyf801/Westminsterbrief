@@ -491,7 +491,7 @@ def _related_pqs(session: HansardSession, policy_areas: list[str],
             "human_date":    _human_date(r.tabled_date),
             "department":    r.answering_body or "",
             "is_answered":   bool(r.is_answered),
-            "url":           f"/archive/pq/{r.uin}",
+            "url":           f"/archive/pq/{(r.uin or '').lower()}",
         }
         for r in rows
     ]
@@ -1989,7 +1989,7 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "",
             "answering_body":answering or "",
             "tabled_date":   tabled,
             "is_answered":   is_answered,
-            "url":           f"/archive/pq/{uin}",
+            "url":           f"/archive/pq/{(uin or '').lower()}",
             "human_date":    _human_date(tabled) if tabled else "",
             "snippet":       Markup(snippet) if snippet else None,
             "question_text": question_text or "",
@@ -2041,7 +2041,7 @@ def _pq_ilike_search(q_raw: str, limit: int = 20, sort: str = "relevance") -> tu
             "answering_body":p.answering_body or "",
             "tabled_date":   p.tabled_date,
             "is_answered":   p.is_answered,
-            "url":           f"/archive/pq/{p.uin}",
+            "url":           f"/archive/pq/{(p.uin or '').lower()}",
             "human_date":    _human_date(p.tabled_date) if p.tabled_date else "",
             "snippet":       None,
             "question_text": p.question_text or "",
@@ -2358,7 +2358,7 @@ def pq_detail(uin: str):
             f"Written Question {pq.uin} — {page_heading} "
             f"tabled by {pq.asking_member or 'an MP'} to {pq.answering_body or 'a department'}."
         ),
-        canonical_path  = f"/archive/pq/{pq.uin}",
+        canonical_path  = f"/archive/pq/{(pq.uin or '').lower()}",
     )
 
 
