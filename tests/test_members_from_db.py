@@ -211,7 +211,8 @@ def gemini(monkeypatch):
 
     monkeypatch.setattr(member_profiles, "generate_bio_text", fake_generate)
     # Verification model: no objections unless a test says otherwise.
-    monkeypatch.setattr(member_profiles, "model_unsupported_claims", lambda bio, texts, key: [])
+    monkeypatch.setattr(member_profiles, "model_verdicts",
+                        lambda claims, texts, key: {c["id"]: (True, "") for c in claims})
     return calls
 
 
@@ -953,8 +954,8 @@ class TestVerification:
 
     def test_model_check_drops_sentences_and_reports(self, monkeypatch):
         monkeypatch.setattr(member_profiles, "VERIFY_MODEL", "gemini-2.5-flash-lite")
-        monkeypatch.setattr(member_profiles, "model_unsupported_claims", lambda bio, texts, key: [
-            {"text": "She taught at Arrow Vale High School from 1986.", "reason": "date not in source"}])
+        monkeypatch.setattr(member_profiles, "model_verdicts", lambda claims, texts, key: {
+            c["id"]: (("Arrow Vale" not in c["text"]), "date not in source") for c in claims})
         inputs = {"wikipedia_text": BACKGROUND_SRC, "house": "Lords", "name": "X"}
         bio = "## Background\nShe studied at Hertford College.\nShe taught at Arrow Vale High School from 1986."
         clean, report = member_profiles.verify_bio(bio, inputs, "key")
@@ -968,7 +969,8 @@ class TestVerification:
         def draft(prompt, key):
             gemini.append(prompt)
             return ("## Background\nShe studied at Hertford College.\nShe is a politician.\n"
-                    "She attended Imaginary Academy.\n## Summary\n- A fact.")
+                    "She attended Imaginary Academy.\n## Summary\n- A fact.\n- Another fact.\n"
+                    "- A third fact.\n- A fourth fact.")
         monkeypatch.setattr(member_profiles, "generate_bio_text", draft)
         fake.wiki_text = "Jacqui Smith studied at Hertford College."
         _run(regenerate_bios=True)
@@ -983,10 +985,10 @@ class TestVerification:
         before = MemberBiography.query.get(4046).bio_text
         fake.interests[4046] = []
 
-        def broken(bio, texts, key):
+        def broken(claims, texts, key):
             raise RuntimeError("Gemini call failed: timeout")
         monkeypatch.setattr(member_profiles, "VERIFY_MODEL", "gemini-2.5-flash-lite")
-        monkeypatch.setattr(member_profiles, "model_unsupported_claims", broken)
+        monkeypatch.setattr(member_profiles, "model_verdicts", broken)
         stats = _run(regenerate_bios=True)
         assert stats["bio_failed"] == 1
         bio = MemberBiography.query.get(4046)
@@ -1040,3 +1042,131 @@ class TestMigrationAddsColumn:
         assert "Generated text" in html
         assert seeded.test_client().post("/mp_search", data={"member_id": "4046"}).status_code == 200
 
+
+
+# ── Verifier regression (production sample, Tom Hayes 5210, 2026-10-21) ──────
+
+HAYES_RECORD = (
+    "Name: Tom Hayes\nPersonal name: Tom Hayes\nHouse: Commons\nParty: Labour\n"
+    "Seat / peerage: MP for Bournemouth East\nCurrent membership began: 2024-07-04\n\n"
+    "Committee memberships (current and historical):\n  - Public Accounts Commission (2024-12–present)\n\n"
+    "Registered interests:\n  None declared."
+)
+HAYES_TEXTS = {"background": "No background source was found for this member.", "record": HAYES_RECORD}
+HAYES_INPUTS = {"_texts": HAYES_TEXTS}
+
+
+class _ScriptedVerifier:
+    """Stands in for the Gemini verification call: parses the numbered claims out of the prompt and
+    answers per claim. Answers 'supported' with a contrarian-sounding reason, like the production
+    responses that were wrongly treated as rejections."""
+
+    def __init__(self, unsupported=(), omit=()):
+        self.unsupported, self.omit, self.seen = list(unsupported), list(omit), []
+
+    def __call__(self, prompt, api_key, model, json_mode=False, schema=None):
+        import json
+        import re as _re
+        assert json_mode and schema["properties"]["verdicts"]["items"]["properties"]["supported"]["type"] == "BOOLEAN"
+        claims = _re.findall(r"^(\d+)\. \[[A-Z ]+\] (.+)$", prompt.split("--- CLAIMS ---", 1)[1], _re.M)
+        verdicts = []
+        for cid, text in claims:
+            self.seen.append(text)
+            if any(o in text for o in self.omit):
+                continue
+            bad = any(u in text for u in self.unsupported)
+            verdicts.append({"id": int(cid), "supported": not bad,
+                             "reason": "wrong seat" if bad else
+                             f"The source states {text.lower()}, not {text}"})
+        return json.dumps({"verdicts": verdicts})
+
+
+@pytest.fixture
+def hayes(monkeypatch):
+    monkeypatch.setattr(member_profiles, "VERIFY_MODEL", "gemini-2.5-flash-lite")
+    monkeypatch.setattr(member_profiles, "bio_source_texts", lambda inputs: HAYES_TEXTS)
+
+
+HAYES_SUPPORTED = [
+    "He was elected MP for Bournemouth East in the 2024 general election.",
+    "Tom Hayes has been a member of the Public Accounts Commission since 2024-12.",
+    "He is a member of the British Labour Party.",
+]
+HAYES_UNSUPPORTED_DETERMINISTIC = [
+    "He studied at the University of Leeds.",                                   # wrong institution
+    "He has been a member of the Public Accounts Commission since 2019.",      # wrong date
+    "He won the Orwell Prize in 2023.",                                        # invented award
+]
+
+
+def _hayes_bio(extra=()):
+    return ("## Parliamentary career\n" + "\n".join(HAYES_SUPPORTED[:1] + list(extra)) +
+            "\n## Committee memberships\n- " + HAYES_SUPPORTED[1] +
+            "\n## Registered interests\nNone declared.\n## Summary\n" + HAYES_SUPPORTED[2])
+
+
+class TestVerifierRegression:
+    def test_hayes_claims_are_kept(self, hayes, monkeypatch):
+        verifier = _ScriptedVerifier()
+        monkeypatch.setattr(member_profiles, "_gemini_call", verifier)
+        clean, report = member_profiles.verify_bio(_hayes_bio(), HAYES_INPUTS, "key")
+        for claim in HAYES_SUPPORTED + ["None declared."]:
+            assert claim in clean
+        assert report["dropped_claims"] == 0 and not report["needs_review"]
+        assert "None declared." not in verifier.seen          # verbatim in source: no model call needed
+
+    def test_genuinely_unsupported_claims_are_dropped(self, hayes, monkeypatch):
+        verifier = _ScriptedVerifier(unsupported=["Bournemouth West"])
+        monkeypatch.setattr(member_profiles, "_gemini_call", verifier)
+        wrong_seat = "He was elected MP for Bournemouth West in 2024."         # only the model can catch this
+        bio = _hayes_bio(HAYES_UNSUPPORTED_DETERMINISTIC + [wrong_seat])
+        clean, report = member_profiles.verify_bio(bio, HAYES_INPUTS, "key")
+        for claim in HAYES_UNSUPPORTED_DETERMINISTIC + [wrong_seat]:
+            assert claim not in clean
+        for claim in HAYES_SUPPORTED:
+            assert claim in clean
+        reasons = {d["sentence"]: d["reason"] for d in report["dropped"]}
+        assert "University of Leeds" in reasons["He studied at the University of Leeds."]
+        assert "2019" in reasons[HAYES_UNSUPPORTED_DETERMINISTIC[1]]
+        assert "Orwell Prize" in reasons["He won the Orwell Prize in 2023."]
+        assert reasons[wrong_seat] == "verification model: wrong seat"
+
+    def test_decision_is_only_the_boolean(self, hayes, monkeypatch):
+        import json
+        monkeypatch.setattr(member_profiles, "_gemini_call", lambda *a, **k: json.dumps({"verdicts": [
+            {"id": 0, "supported": True, "reason": "not supported? The source states it, not this"},
+            {"id": 1, "supported": "false", "reason": "string, not a boolean"},
+        ]}))
+        claims = [{"id": 0, "text": "A.", "section": "summary"}, {"id": 1, "text": "B.", "section": "summary"}]
+        with pytest.raises(member_profiles.VerificationIncomplete):
+            member_profiles.model_verdicts(claims, HAYES_TEXTS, "key")   # id 1 has no usable boolean
+        verdicts = member_profiles.model_verdicts(claims[:1], HAYES_TEXTS, "key")
+        assert verdicts == {0: (True, "not supported? The source states it, not this")}
+
+    def test_missing_verdict_fails_the_bio(self, hayes, monkeypatch):
+        monkeypatch.setattr(member_profiles, "_gemini_call", _ScriptedVerifier(omit=["Bournemouth East"]))
+        with pytest.raises(member_profiles.VerificationIncomplete):
+            member_profiles.verify_bio(_hayes_bio(), HAYES_INPUTS, "key")
+
+
+class TestReviewSafetyValve:
+    def test_mass_drop_is_not_published(self, app, fake, gemini, monkeypatch):
+        from cache_models import MemberBiography
+        _run(regenerate_bios=True)
+        before = MemberBiography.query.get(4046).bio_text
+        fake.interests[4046] = []
+        monkeypatch.setattr(member_profiles, "VERIFY_MODEL", "gemini-2.5-flash-lite")
+        monkeypatch.setattr(member_profiles, "model_verdicts",
+                            lambda claims, texts, key: {c["id"]: (False, "objects to wording") for c in claims})
+        stats = _run(regenerate_bios=True)
+        assert stats["bio_needs_review"] == 1 and stats["exit_code"] == 1
+        bio = MemberBiography.query.get(4046)
+        assert bio.bio_text == before and bio.last_error.startswith("needs_review")
+        assert refresh_members.REVIEW_LOG[4046]["report"]["needs_review"] is True
+
+    def test_threshold(self):
+        texts = {"background": "Studied at Hertford College.", "record": "Party: Labour"}
+        bio = "## Background\nHe studied at Hertford College.\nHe studied at Leeds College.\nHe studied at York College."
+        clean, dropped, kept = member_profiles.deterministic_check(bio, texts)
+        assert len(dropped) == 2 and kept == 1
+        assert len(dropped) > member_profiles.REVIEW_DROP_RATIO * (kept + len(dropped))

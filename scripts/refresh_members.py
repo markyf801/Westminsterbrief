@@ -632,8 +632,13 @@ def store_activity(activity: dict[int, dict], now: datetime) -> int:
     return written
 
 
+REVIEW_LOG: dict[int, dict] = {}   # member_id -> {draft, report} from this run, for --sample output
+
+
 def refresh_bio(profile, entry: dict | None, api_key: str | None, now: datetime, dry_run: bool) -> str:
-    """'generated' | 'unchanged' | 'would_generate' | 'skipped' | 'failed'. Raises StopRun on 401/403/429.
+    """'generated' | 'unchanged' | 'would_generate' | 'skipped' | 'failed' | 'needs_review'.
+
+    Raises StopRun on 401/403/429.
 
     entry is this member's Wikidata lookup (fetch_wikidata). With no Wikipedia article the bio
     falls back to Wikidata statements plus Parliament's own records.
@@ -689,6 +694,18 @@ def refresh_bio(profile, entry: dict | None, api_key: str | None, now: datetime,
         existing.last_error = f"{exc.__class__.__name__}: {exc}"[:500]
         db.session.commit()
         return "failed"
+    REVIEW_LOG[profile.member_id] = {"draft": draft, "report": report}
+    if report.get("needs_review"):
+        # Dropping this many claims points at the verifier, not the bio: keep what is published
+        # (or publish nothing) and leave it for a human to look at.
+        existing.last_error = (f"needs_review: verification dropped {report['dropped_claims']} of "
+                               f"{report['checked_claims']} claims; not published")[:500]
+        db.session.commit()
+        print(f"  [review] {profile.member_id} {profile.name}: dropped {report['dropped_claims']} of "
+              f"{report['checked_claims']} claims — not published", flush=True)
+        for d in report["dropped"][:10]:
+            print(f"     ({d.get('section')}) {d.get('sentence')} — {d.get('reason')}", flush=True)
+        return "needs_review"
     existing.bio_text = text
     existing.model_used = BIO_MODEL
     existing.prompt_version = PROMPT_VERSION
@@ -760,6 +777,15 @@ def print_sample_report(picks: list[tuple[int, str]]) -> None:
         print(f"[sample] {mid} {display_name(p.name, p.house, n.personal_name if n else None)} — {label}; "
               f"wiki_status={p.wiki_status}; name source={n.source if n else None}/"
               f"{n.confidence if n else None}", flush=True)
+        held = REVIEW_LOG.get(mid)
+        if held and held["report"].get("needs_review"):
+            v = held["report"]
+            print(f"[sample] NEEDS REVIEW — draft NOT published. checked={v['checked_claims']} "
+                  f"verified={v['verified_claims']} dropped={v['dropped_claims']}", flush=True)
+            print(held["draft"], flush=True)
+            for d in v.get("dropped") or []:
+                print(f"  [dropped] ({d.get('section')}) {d.get('sentence')} — {d.get('reason')}", flush=True)
+            continue
         if b is None or not b.bio_text:
             print(f"[sample] NO BIO. last_error={b.last_error if b else None}", flush=True)
             continue
@@ -800,7 +826,8 @@ def run(member_ids: list[int] | None = None, limit: int | None = None, dry_run: 
     today = today or now.date()
     stats = {"listed": 0, "inserted": 0, "updated": 0, "unchanged": 0, "detail_failed": 0,
              "failed": 0, "departed": 0, "activity": 0, "bio_generated": 0, "bio_unchanged": 0,
-             "bio_would_generate": 0, "bio_skipped": 0, "bio_failed": 0, "names": None, "stopped": None}
+             "bio_would_generate": 0, "bio_skipped": 0, "bio_failed": 0, "bio_needs_review": 0,
+             "names": None, "stopped": None}
 
     try:
         if member_ids:
@@ -871,11 +898,11 @@ def run(member_ids: list[int] | None = None, limit: int | None = None, dry_run: 
         print(f"[members] STOPPED: {exc} — check the key / wait before re-running.", flush=True)
 
     attempted = stats["inserted"] + stats["updated"] + stats["unchanged"] + stats["failed"]
-    bio_attempted = stats["bio_generated"] + stats["bio_failed"]
+    bio_attempted = stats["bio_generated"] + stats["bio_failed"] + stats["bio_needs_review"]
     names = stats["names"] or {}
     mostly_failing = (
         (attempted and (stats["failed"] + stats["detail_failed"]) * 2 > attempted)
-        or (bio_attempted and stats["bio_failed"] * 2 > bio_attempted)
+        or (bio_attempted and (stats["bio_failed"] + stats["bio_needs_review"]) * 2 > bio_attempted)
         or (names.get("checked") and names.get("wiki_error", 0) * 2 > names["checked"])
     )
     stats["exit_code"] = 1 if (stats["stopped"] or mostly_failing) else 0

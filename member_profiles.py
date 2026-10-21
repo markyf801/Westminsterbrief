@@ -645,7 +645,7 @@ _INSTITUTION_WORDS = (
     "Union|Society|Foundation|Company|Corporation|Ltd|Limited|plc|PLC|Bank|Party|Committee|"
     "Department|Ministry|Office|Commission|Agency|Authority|Board|Church|Cathedral|Diocese|"
     "Chambers|Court|Inn|Group|Association|Federation|Institution|Service|Regiment|Army|Navy|"
-    "Force|Seminary|Conservatoire|Museum|Library|Charity|Centre|Center"
+    "Force|Seminary|Conservatoire|Museum|Library|Charity|Centre|Center|Award|Prize|Medal|Fellowship"
 )
 _INSTITUTION_RE = re.compile(
     r"(?:\b[A-Z][\w'’&.-]*\s+(?:(?:of|and|for|the|de|upon|on|in)\s+)?){0,6}\b(?:" + _INSTITUTION_WORDS + r")\b"
@@ -655,7 +655,7 @@ _YEAR_RE = re.compile(r"\b(?:1[89]|20)\d{2}\b")
 _STOP = {"of", "and", "for", "the", "de", "upon", "on", "in", "a", "an"}
 _FILLER_RE = re.compile(
     r"^(?:[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*){0,6}|She|He|They)\s+(?:is|was|has been|are)\s+(?:a|an)\s+"
-    r"(?:[a-z]+\s+){0,2}(?:politician|peer|life peer|parliamentarian|member of (?:the house of lords|parliament)"
+    r"(?:[a-z]+\s+){0,4}(?:politician|peer|life peer|parliamentarian|member of (?:the house of lords|parliament)"
     r"|mp|lord|baroness)(?:\s+and\s+(?:a|an\s+)?[a-z ]+)?\.?$",
     re.IGNORECASE,
 )
@@ -677,6 +677,9 @@ def _supported(phrase: str, source_sentences: list[str], source_norm: str) -> bo
     if p in source_norm:
         return True
     tokens = [t for t in p.split() if t not in _STOP]
+    if tokens and tokens[-1] == "party":
+        # "British Labour Party" ~ "Party: Labour": nationality adjectives aren't part of the name.
+        tokens = [t for t in tokens if t not in ("british", "uk")]
     return any(all(t in set(_norm(s).split()) for t in tokens) for s in source_sentences)
 
 
@@ -757,78 +760,169 @@ def _fill_empty_sections(lines: list[str], section_kept: dict) -> str:
     return "\n".join(line for i, line in enumerate(out) if line or (i and out[i - 1])).strip()
 
 
-def model_unsupported_claims(bio_text: str, texts: dict, api_key: str) -> list[dict]:
-    """Second opinion from the verification model: sentences not supported by the sources."""
-    prompt = f"""You are checking a draft profile of a UK parliamentarian against its sources, sentence by sentence.
+REVIEW_DROP_RATIO = 0.4   # dropping more than this share of claims signals a verifier problem, not a bad bio
 
-A sentence is UNSUPPORTED if any fact in it is not stated in the sources: a wrong or missing date, an institution the sources do not name, a place of work described as a place of study (or the reverse), a role the sources do not give, an opinion, or a generic statement such as "is a politician".
+_VERDICT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "verdicts": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "id": {"type": "INTEGER"},
+                    "supported": {"type": "BOOLEAN"},
+                    "reason": {"type": "STRING"},
+                },
+                "required": ["id", "supported"],
+            },
+        },
+    },
+    "required": ["verdicts"],
+}
+
+
+class VerificationIncomplete(RuntimeError):
+    """The verification model did not return a usable verdict for every claim."""
+
+
+def _parse_bio(text: str) -> list[dict]:
+    """Bio text → items: {'kind': 'heading'|'blank'|'line', ...}; lines carry sentences with ids."""
+    items, section, next_id = [], None, 0
+    for raw in (text or "").splitlines():
+        line = raw.rstrip()
+        heading = HEADING_RE.match(line)
+        if heading:
+            section = heading.group(1).strip().lower()
+            items.append({"kind": "heading", "text": line, "section": section})
+            continue
+        if not line.strip():
+            items.append({"kind": "blank"})
+            continue
+        bullet = BULLET_RE.match(line)
+        prefix = line[: line.index(bullet.group(1))] if bullet else ""
+        body = bullet.group(1) if bullet else line
+        sentences = []
+        for s in _sentences_of(body) or [body]:
+            sentences.append({"id": next_id, "text": s, "section": section})
+            next_id += 1
+        items.append({"kind": "line", "prefix": prefix, "sentences": sentences, "section": section})
+    return items
+
+
+def _rebuild(items: list[dict], drop_ids: set[int]) -> str:
+    lines, section_kept = [], {}
+    for it in items:
+        if it["kind"] == "heading":
+            section_kept[it["section"]] = 0
+            lines.append(it["text"])
+        elif it["kind"] == "blank":
+            lines.append("")
+        else:
+            keep = [s["text"] for s in it["sentences"] if s["id"] not in drop_ids]
+            if keep:
+                lines.append(it["prefix"] + " ".join(keep))
+                if it["section"] is not None:
+                    section_kept[it["section"]] = section_kept.get(it["section"], 0) + 1
+    return _fill_empty_sections(lines, section_kept)
+
+
+_SCOPE_LABEL = {"background": "BACKGROUND SOURCE", "record": "PARLIAMENT RECORD", "both": "EITHER SOURCE"}
+
+
+def _scope(section: str | None) -> str:
+    return "background" if section == "background" else "both" if section == "summary" else "record"
+
+
+def model_verdicts(claims: list[dict], texts: dict, api_key: str) -> dict[int, tuple[bool, str]]:
+    """Ask VERIFY_MODEL whether each claim is factually supported. Returns {id: (supported, reason)}.
+
+    Structured output (JSON schema) — the decision is ONLY the 'supported' boolean; the reason is
+    kept for the report. Raises VerificationIncomplete if any claim has no boolean verdict.
+    """
+    numbered = "\n".join(
+        f'{c["id"]}. [{_SCOPE_LABEL[_scope(c["section"])]}] {c["text"]}'
+        for c in claims)
+    prompt = f"""You are fact-checking claims from a profile of a UK parliamentarian against source material.
+
+For each numbered claim, decide whether its FACTS are supported by the source named in brackets.
+Judge only factual content: people, organisations and institutions, roles, numbers, dates and the
+relationships between them (for example who studied where, who worked where, who held which post when).
+Ignore wording, tense, sentence form, word order, capitalisation and paraphrase: a claim that says the
+same thing as the source in different words is SUPPORTED. A claim is supported if its facts are stated in,
+or directly implied by, the source. A dated role written as "since 2024" is supported by a source saying
+"2024-12–present".
+
+Mark supported=false only if a fact is missing from the source or contradicts it: a wrong or unstated date,
+an institution or organisation the source does not mention, a place of work described as a place of study
+(or the reverse), a role or award the source does not give, or an opinion about the member.
 
 --- BACKGROUND SOURCE ---
 {texts['background']}
 
---- PARLIAMENT AND ARCHIVE RECORD ---
+--- PARLIAMENT RECORD ---
 {texts['record']}
 
---- DRAFT ---
-{bio_text}
+--- CLAIMS ---
+{numbered}
 
-Return JSON only: {{"unsupported": [{{"text": "<the exact sentence or bullet from the draft>", "reason": "<short reason>"}}]}}. Return {{"unsupported": []}} if every sentence is supported."""
-    raw = _gemini_call(prompt, api_key, VERIFY_MODEL, json_mode=True)
-    data = json.loads(raw)
-    items = data.get("unsupported") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        raise ValueError("verification response has no 'unsupported' list")
-    return [i for i in items if isinstance(i, dict) and i.get("text")]
-
-
-def _drop_sentences(bio_text: str, targets: list[dict]) -> tuple[str, list[dict]]:
-    wanted = [(_norm(t["text"]), t) for t in targets if _norm(t["text"])]
-    out, dropped, section_kept, section = [], [], {}, None
-    for raw in bio_text.splitlines():
-        heading = HEADING_RE.match(raw)
-        if heading:
-            section = heading.group(1).strip().lower()
-            section_kept[section] = 0
-            out.append(raw)
-            continue
-        bullet = BULLET_RE.match(raw)
-        prefix = raw[: raw.index(bullet.group(1))] if bullet else ""
-        body = bullet.group(1) if bullet else raw
-        keep = []
-        for sentence in _sentences_of(body):
-            ns = _norm(sentence)
-            hit = next((t for w, t in wanted if ns and (ns == w or ns in w or (len(w) > 20 and w in ns))), None)
-            if hit is not None and NO_INFO.lower() not in sentence.lower():
-                dropped.append({"sentence": sentence, "section": section,
-                                "reason": "verification model: " + str(hit.get("reason") or "unsupported")})
-            else:
-                keep.append(sentence)
-        if keep:
-            out.append(prefix + " ".join(keep))
-            if section is not None:
-                section_kept[section] = section_kept.get(section, 0) + 1
-        elif not raw.strip():
-            out.append("")
-    return _fill_empty_sections(out, section_kept), dropped
+Return one verdict for every claim id: {{"verdicts": [{{"id": <id>, "supported": true|false, "reason": "<short reason if false>"}}]}}"""
+    raw = _gemini_call(prompt, api_key, VERIFY_MODEL, json_mode=True, schema=_VERDICT_SCHEMA)
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise VerificationIncomplete(f"verification response is not JSON: {exc}") from exc
+    verdicts: dict[int, tuple[bool, str]] = {}
+    for v in (data.get("verdicts") if isinstance(data, dict) else None) or []:
+        if isinstance(v, dict) and isinstance(v.get("id"), int) and isinstance(v.get("supported"), bool):
+            verdicts[v["id"]] = (v["supported"], str(v.get("reason") or ""))
+    missing = [c["id"] for c in claims if c["id"] not in verdicts]
+    if missing:
+        raise VerificationIncomplete(f"no verdict for {len(missing)} of {len(claims)} claims")
+    return verdicts
 
 
 def verify_bio(bio_text: str, inputs: dict, api_key: str | None) -> tuple[str, dict]:
-    """Deterministic checks, then (if VERIFY_MODEL is set) a model check. Returns (clean_text, report).
+    """Deterministic checks, then (if VERIFY_MODEL is set) a per-claim model check.
 
-    Raises if the model check cannot be completed — an unverified bio is not published.
+    Returns (clean_text, report). report['needs_review'] is True when more than REVIEW_DROP_RATIO
+    of checked claims were dropped — the caller must not publish that text. Raises if the model
+    check cannot be completed (an unverified bio is not published).
     """
     texts = bio_source_texts(inputs)
     clean, dropped, kept = deterministic_check(bio_text, texts)
     model_dropped: list[dict] = []
     if VERIFY_MODEL:
-        clean, model_dropped = _drop_sentences(clean, model_unsupported_claims(clean, texts, api_key))
+        items = _parse_bio(clean)
+        norms = {k: _norm(v) for k, v in
+                 {"background": texts["background"], "record": texts["record"],
+                  "both": texts["background"] + "\n" + texts["record"]}.items()}
+        claims = []
+        for it in items:
+            if it["kind"] != "line":
+                continue
+            for s in it["sentences"]:
+                ns = _norm(s["text"])
+                # Section defaults and sentences that appear verbatim in their source need no model.
+                if not ns or NO_INFO.lower() in s["text"].lower() or ns in norms[_scope(s["section"])]:
+                    continue
+                claims.append(s)
+        verdicts = model_verdicts(claims, texts, api_key) if claims else {}
+        drop_ids = {cid for cid, (ok, _) in verdicts.items() if ok is False}
+        by_id = {c["id"]: c for c in claims}
+        model_dropped = [{"sentence": by_id[i]["text"], "section": by_id[i]["section"],
+                          "reason": "verification model: " + (verdicts[i][1] or "unsupported")}
+                         for i in sorted(drop_ids)]
+        clean = _rebuild(items, drop_ids)
     all_dropped = dropped + model_dropped
+    checked = kept + len(dropped)
     report = {
         "method": "deterministic+model" if VERIFY_MODEL else "deterministic",
         "verify_model": VERIFY_MODEL,
-        "checked_claims": kept + len(dropped),
+        "checked_claims": checked,
         "verified_claims": kept - len(model_dropped),
         "dropped_claims": len(all_dropped),
+        "needs_review": bool(checked) and len(all_dropped) > REVIEW_DROP_RATIO * checked,
         "dropped": all_dropped,
     }
     return clean, report
@@ -836,11 +930,14 @@ def verify_bio(bio_text: str, inputs: dict, api_key: str | None) -> tuple[str, d
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
-def _gemini_call(prompt: str, api_key: str, model: str, json_mode: bool = False) -> str:
+def _gemini_call(prompt: str, api_key: str, model: str, json_mode: bool = False,
+                 schema: dict | None = None) -> str:
     """One Gemini generateContent call. Retries transient errors; GeminiPermanentError on 401/403/429."""
     config = {"temperature": 0 if json_mode else 0.2, "maxOutputTokens": 8192}
     if json_mode:
         config["responseMimeType"] = "application/json"
+    if schema:
+        config["responseSchema"] = schema
     payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": config}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     last_exc: Exception | None = None
