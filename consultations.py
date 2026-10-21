@@ -196,7 +196,7 @@ _ROOT_AREAS: dict[str, tuple[str, ...]] = {
     "/business-and-industry": ("business-and-industry",),
     "/transport": ("transport",),
     "/education": ("education",),
-    "/childcare-parenting": ("education",),
+    "/childcare-parenting": ("children-and-families",),
     "/entering-staying-uk": ("immigration-and-asylum",),
 }
 
@@ -246,7 +246,10 @@ _ORG_AREAS: dict[str, tuple[str, ...]] = {
 # link is better than a misleading one.
 _KEYWORDS: dict[str, tuple[str, ...]] = {
     "education": ("school", "schools", "pupils", "teachers", "university", "universities",
-                  "students", "childcare", "early years", "apprenticeships", "send"),
+                  "students", "apprenticeships", "send"),
+    # Owner decision 2026-10-20: childcare and family items have their own page.
+    "children-and-families": ("childcare", "early years", "nursery", "nurseries", "fostering",
+                              "adoption", "kinship care", "children's social care", "child poverty"),
     "health-and-social-care": ("nhs", "hospital", "hospitals", "patients", "social care",
                                "mental health", "medicines", "public health", "tobacco", "vaping"),
     "housing-and-planning": ("housing", "homes", "renters", "tenants", "landlords",
