@@ -38,6 +38,7 @@ each consumer service keeps the old password until redeployed.
    - `pq-cron-morning`
    - `pq-cron-afternoon`
    - `pq-cron-monday`
+   - `pq-cron-quickcheck` (once created)
    - `backup-cron-r2`
    - `member-cache-refresh`
    - `rediscovery-cron`
@@ -69,6 +70,21 @@ tagging runs inline at the end of every Hansard cron run.
 | `pq-cron-afternoon` | `0 14 * * 1-5` | 15:00 Mon–Fri | 14:00 Mon–Fri | Captures answers published mid-afternoon |
 | `pq-cron-monday` | `0 9 * * 1` | 10:00 Monday | 09:00 Monday | Post-weekend backlog catch-up |
 | `pq-cron-quickcheck` *(proposed, not created yet)* | `15,45 6-19 * * 1-5` | 07:15–20:45 | 06:15–19:45 | `--quick-check --service-name pq-quickcheck`: 3 count calls; exits in seconds if nothing new, else ingests only the windows that grew. Its counts feed `scripts/pq_publication_times.py`; narrow the hours once that report has 4+ sitting weeks |
+
+**`pq-cron-quickcheck` setup (not created yet).** Create it only after the PQ
+identity steps 2–4 in `docs/plans/pq-identity-phase3-sql.md` (code deployed,
+duplicates merged, unique indexes on `api_id` and `(tabled_date, lower(uin))`):
+the indexes are what make an overlap with a full sweep safe. Settings as the
+other PQ crons: branch `master`, Dockerfile Path `Dockerfile.cron`, restart
+policy Never, `SKIP_MIGRATIONS=1`, `DATABASE_URL` Variable Reference,
+`GEMINI_API_KEY` (tagging), `POSTMARK_SERVER_TOKEN` and `ADMIN_EMAIL` /
+`CRON_ALERT_EMAIL` (alerts). Start command
+`python scripts/ingest_pq_cron.py --quick-check --service-name pq-quickcheck`.
+First run: add `--dry-run` (counts and predicted inserts/updates, writes
+nothing), press Run Now, read the log, then remove it. Each run makes 3 count
+requests (`take=1`); a narrow pass adds 1–4 list pages plus one request per new
+question or new answer. It emails on the 2nd failed run in a row only. Skipped
+runs (another PQ run in progress) are recorded as `skipped`.
 
 **Timing rationale:** `/questions` queries `ha_pq` (local DB), not Parliament's
 API directly (refactored at commit `57e7273`). The early + morning pair means
