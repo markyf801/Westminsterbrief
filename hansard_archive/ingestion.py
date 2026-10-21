@@ -384,6 +384,9 @@ def classify_session(title: str, location: str, hrs_tag: str, house: str,
     Lords oral questions without an official label (older payloads) fall back to
     the opening phrase "To ask His Majesty's Government...". Only when there is
     no label: Questions for Short Debate open the same way but are debates.
+    The fallback beats the title keywords ("... Bill", "Amendment") but not the
+    structured signals (label, venue, HRS tag): a question about a bill is still
+    a question.
     """
     debate_type = _classify_from_overview(title, location, hrs_tag, debate_type_label)
     # Commons oral statements are tagged hs_2cStatement in the rolling record, but
@@ -393,10 +396,13 @@ def classify_session(title: str, location: str, hrs_tag: str, house: str,
             and debate_type == DEBATE_TYPE_DEBATE
             and _STATEMENT_OPENING_RE.match((first_speech or "").strip())):
         return DEBATE_TYPE_MINISTERIAL_STATEMENT
-    if (house == "Lords" and debate_type == DEBATE_TYPE_OTHER
+    if (house == "Lords"
+            and (first_speech or "").strip().lower().startswith("to ask his majesty")
             and not _type_from_debate_type_label(debate_type_label)
             and not any((title or "").lower().startswith(p) for p in _PROCEDURAL_TITLE_STARTS)
-            and (first_speech or "").strip().lower().startswith("to ask his majesty")):
+            # What the structured fields alone say (title blanked): OTHER means the
+            # current answer came only from title keywords, or from nothing.
+            and _classify_from_overview("", location, hrs_tag, debate_type_label) == DEBATE_TYPE_OTHER):
         return DEBATE_TYPE_ORAL_QUESTIONS
     return debate_type
 

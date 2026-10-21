@@ -1268,7 +1268,28 @@ _DB_SOURCE_FILTER = {
     'lords':           "s.house = 'Lords' AND s.debate_type != 'ministerial_statement'",
     'westminsterhall': "s.debate_type = 'westminster_hall'",
     'wms':             "s.debate_type = 'ministerial_statement'",
+    # Lords statements (mostly repeats of Commons statements) are classified as
+    # ministerial_statement too, so a one-House search needs a house-filtered bucket.
+    'wms_commons':     "s.house = 'Commons' AND s.debate_type = 'ministerial_statement'",
+    'wms_lords':       "s.house = 'Lords' AND s.debate_type = 'ministerial_statement'",
 }
+
+
+def research_sources_for_house(house_filter):
+    """Local-DB source buckets for the Research Tool's house filter."""
+    if house_filter == 'lords_only':
+        return ['lords', 'wms_lords']
+    if house_filter == 'commons_only':
+        return ['commons', 'westminsterhall', 'wms_commons']
+    return ['commons', 'westminsterhall', 'lords', 'wms']
+
+
+def minister_sources(sources, is_lord):
+    """The buckets a minister can appear in: Lords ministers speak only in the Lords."""
+    lords_buckets = ('lords', 'wms_lords')
+    if is_lord:
+        return [s for s in sources if s in lords_buckets or s == 'wms']
+    return [s for s in sources if s not in lords_buckets]
 
 
 def _session_to_source(house, debate_type):
@@ -2085,12 +2106,7 @@ def debates_topic():
         if not topic:
             error_message = "Please enter a topic to search."
         else:
-            if house_filter == 'lords_only':
-                sources = ['lords', 'wms']
-            elif house_filter == 'commons_only':
-                sources = ['commons', 'westminsterhall', 'wms']
-            else:
-                sources = ['commons', 'westminsterhall', 'lords', 'wms']
+            sources = research_sources_for_house(house_filter)
 
             # Use pre-expanded terms from preview UI if provided, otherwise expand with AI
             if preset_expanded:
@@ -2137,10 +2153,7 @@ def debates_topic():
                 for mp in minister_people:
                     if not mp.get('parliament_id'):
                         continue
-                    mp_sources = [s for s in sources if not (
-                        (mp.get('is_lord') and s not in ('lords', 'wms')) or
-                        (not mp.get('is_lord') and s == 'lords')
-                    )]
+                    mp_sources = minister_sources(sources, mp.get('is_lord'))
                     if not mp_sources:
                         continue
                     fut = executor.submit(

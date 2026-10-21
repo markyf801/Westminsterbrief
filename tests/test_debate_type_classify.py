@@ -121,6 +121,28 @@ def test_lords_opening_phrase_fallback_only_without_label():
     assert classify_session("Rail Fares", "Commons Chamber", "", "Commons", "", ask) == "other"
 
 
+@pytest.mark.parametrize("title", [
+    "Children’s Wellbeing and Schools Bill: Implementation",   # "bill" keyword -> debate
+    "Renters’ Rights Act: Amendment of Guidance",               # "amendment" keyword
+    "Water (Special Measures) Regulations 2025",                # made-SI title regex
+    "Motion of No Confidence: Polling",                         # "motion" keyword
+])
+def test_lords_question_without_label_beats_title_keywords(title):
+    ask = "To ask His Majesty’s Government what assessment they have made..."
+    assert classify_session(title, "Lords Chamber", "NewDebate", "Lords", "", ask) == "oral_questions"
+    # Without the opening phrase the title fallback still decides
+    assert classify_session(title, "Lords Chamber", "NewDebate", "Lords", "", "My Lords, I beg to move") != "oral_questions"
+
+
+def test_lords_question_fallback_never_overrides_structured_signals():
+    ask = "To ask His Majesty’s Government what assessment they have made..."
+    # Venue: a Grand Committee item opening this way is a Question for Short Debate
+    assert classify_session("Schools Bill", "Grand Committee", "NewDebate", "Lords", "", ask) == "committee_stage"
+    # Official label always wins
+    assert classify_session("Schools Bill", "Lords Chamber", "NewDebate", "Lords",
+                            "Second Reading", ask) == "debate"
+
+
 def test_fetch_session_full_keeps_label(monkeypatch):
     data = _load("lords_statement")
 

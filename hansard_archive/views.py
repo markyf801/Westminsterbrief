@@ -2635,11 +2635,18 @@ def _compute_party_policy_positions(
                         HansardSession.debate_type == DEBATE_TYPE_MINISTERIAL_STATEMENT,
                         HansardSession.id.in_(wms_tagged),
                     )
-                    .order_by(HansardSession.date.desc())
-                    .limit(2)
+                    # Commons first on a tie: a Lords repeat of the same statement
+                    # is dropped below, so the original is the one listed.
+                    .order_by(HansardSession.date.desc(), HansardSession.house.asc())
+                    .limit(6)
                     .all()
                 )
+                seen_titles: set = set()
                 for s in wms_rows:
+                    key = (s.date, (s.title or "").strip().lower())
+                    if key in seen_titles or len(wms) >= 2:
+                        continue
+                    seen_titles.add(key)
                     wms.append({
                         "title":      s.title,
                         "slug":       s.slug,
