@@ -482,3 +482,27 @@ def test_baseline_ignores_failed_runs(db, api, cron, monkeypatch):
                              notes=f"quick-check: ran tabled (tabled {YESTERDAY}..{TODAY} API=5 DB=4) | boom"))
     db.session.commit()
     assert cron._last_ok_api_counts("pq-quickcheck", None) == {("tabled", YESTERDAY, TODAY): 4}
+
+
+def test_dry_run_writes_nothing(db, api, cron, monkeypatch, capsys):
+    from hansard_archive.models import HaCronRun, HaPQ
+    _seed_in_sync(db, api)
+    api["tabled"].append(_value(3, "102", YESTERDAY))
+    api["individual"] = {3: {"questionText": "To ask the Secretary of State, the full text.",
+                             "answerIsHolding": False, "isWithdrawn": False}}
+
+    assert _run(cron, monkeypatch, "--dry-run") == 0
+
+    assert len(api["bulk_calls"]) == 1
+    assert HaPQ.query.filter_by(api_id=3).count() == 0
+    assert HaCronRun.query.count() == 0
+    db.session.rollback()
+    out = capsys.readouterr().out
+    assert "quick-check: something new (" in out and "inserted=1" in out
+
+
+def test_dry_run_needs_quick_check(cron, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["x", "--dry-run"])
+    with pytest.raises(SystemExit) as exc:
+        cron.main()
+    assert exc.value.code == 2

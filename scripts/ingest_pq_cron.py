@@ -16,6 +16,7 @@ Usage:
   python scripts/ingest_pq_cron.py --days 365 --service-name backfill --no-tag
   python scripts/ingest_pq_cron.py --days 1 --answered-days 120 --no-tag   # answer catch-up
   python scripts/ingest_pq_cron.py --quick-check --service-name pq-quickcheck  # frequent check
+  python scripts/ingest_pq_cron.py --quick-check --dry-run   # counts + predicted changes, no writes
 
 Two passes: questions TABLED in the last --days, then questions ANSWERED in the
 last --answered-days (default: same as --days). Answers usually arrive 1-4 weeks
@@ -365,7 +366,8 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
         res, abort = _run_pass(f"{kind.capitalize()} pass", d_from, d_to,
                                skip_answer_fetch=args.skip_answer_fetch,
                                date_field=kind,
-                               fetch_only_new_answers=True)
+                               fetch_only_new_answers=True,
+                               dry_run=args.dry_run)
         passes[kind] = res
         out["inserted"] += res["inserted"]
         out["updated"] += res["updated"]
@@ -378,6 +380,8 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
     new_rows = out["inserted"] + out["updated"]
     if out["abort"]:
         print("[pq-cron] Tagging skipped (ingest aborted)", flush=True)
+    elif args.dry_run:
+        print("[pq-cron] Tagging skipped (--dry-run)", flush=True)
     elif new_rows:
         out["tagged"], out["tag_errors"] = _run_tagger(args.no_tag, new_rows)
         out["errors"] += out["tag_errors"]
@@ -462,9 +466,14 @@ def main() -> None:
                              "(default: 4, so Monday still sees Friday)")
     parser.add_argument("--quick-answered-days", type=int, default=2,
                         help="Quick-check: answered days checked one by one, ending today (default: 2)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="With --quick-check: counts and predicted inserts/updates only; "
+                             "writes nothing (no ha_cron_run row, no tagging, no email)")
     args = parser.parse_args()
     if args.quick_tabled_days < 1 or args.quick_answered_days < 0:
         parser.error("--quick-tabled-days must be >= 1 and --quick-answered-days >= 0")
+    if args.dry_run and not args.quick_check:
+        parser.error("--dry-run is only supported with --quick-check")
 
     run_start = datetime.utcnow()
     today = date.today()
@@ -474,7 +483,7 @@ def main() -> None:
 
     print(
         f"[pq-cron] === START === service={args.service_name} "
-        f"mode={'quick-check' if args.quick_check else 'full'} "
+        f"mode={'quick-check' if args.quick_check else 'full'}{' (dry run)' if args.dry_run else ''} "
         f"window={date_from}->{today} ({days_window}d) "
         f"tagging={'disabled (--no-tag)' if args.no_tag else 'enabled'}",
         flush=True,
@@ -507,21 +516,24 @@ def main() -> None:
                 db.session.rollback()
                 print(f"[pq-cron] Could not query DB host: {_e}", flush=True)
 
-        run_record = HaCronRun(
-            service_name=args.service_name,
-            started_at=run_start,
-            days_window=days_window,
-            status="running",
-            notes=_QUICK_NOTE if args.quick_check else None,
-        )
-        db.session.add(run_record)
-        try:
-            db.session.commit()
-            run_record_id = run_record.id
-        except Exception:
-            db.session.rollback()
+        if args.dry_run:
+            print("[pq-cron] Dry run: no run record, nothing written", flush=True)
+        else:
+            run_record = HaCronRun(
+                service_name=args.service_name,
+                started_at=run_start,
+                days_window=days_window,
+                status="running",
+                notes=_QUICK_NOTE if args.quick_check else None,
+            )
+            db.session.add(run_record)
+            try:
+                db.session.commit()
+                run_record_id = run_record.id
+            except Exception:
+                db.session.rollback()
 
-        _prune_old_runs()
+            _prune_old_runs()
 
         try:
             if args.quick_check:
@@ -594,6 +606,9 @@ def main() -> None:
     if reasons and args.quick_check and not _quick_check_should_alert(prev_statuses):
         print("[pq-cron] Quick-check failure — alert held (emails on the 2nd failure in a row): "
               + "; ".join(reasons), flush=True)
+        reasons = []
+    if reasons and args.dry_run:
+        print("[pq-cron] Dry run — would alert: " + "; ".join(reasons), flush=True)
         reasons = []
     if reasons:
         alert_subject = f"PQ cron failure: {args.service_name} — {total_errors} error(s)"
