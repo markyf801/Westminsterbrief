@@ -415,3 +415,42 @@ def test_count_call_retried_once_on_5xx(db, api, cron, monkeypatch):
     assert _run(cron, monkeypatch) == 1
 
     assert len(api["count_calls"]) == 2           # first call + one retry
+
+
+def test_new_question_found_when_db_has_more_rows_than_the_api(db, api, cron, monkeypatch):
+    """An extra row on our side (DB > API) must not hide a new question: the
+    API count rising since the last successful check triggers the pass."""
+    from hansard_archive.models import HaPQ
+    _seed_in_sync(db, api)
+    db.session.add(_pq(api_id=99, uin="199", tabled_date=YESTERDAY))   # not in the API
+    db.session.commit()
+
+    assert _run(cron, monkeypatch) == 0
+    assert _last_run().notes.startswith("quick-check: nothing new (")   # API=2 DB=3
+
+    api["tabled"].append(_value(3, "102", YESTERDAY))                    # API=3 DB=3
+    assert _run(cron, monkeypatch, "--skip-answer-fetch") == 0
+
+    assert len(api["bulk_calls"]) == 1
+    assert HaPQ.query.filter_by(api_id=3).count() == 1
+    assert _last_run().notes.startswith("quick-check: ran tabled ")
+
+
+def test_grown_rule(cron):
+    checks = [{"kind": "tabled", "from": YESTERDAY, "to": TODAY, "api": 5, "db": 6}]
+    assert cron._grown(checks, {}) == []
+    assert cron._grown(checks, {("tabled", YESTERDAY, TODAY): 5}) == []
+    assert cron._grown(checks, {("tabled", YESTERDAY, TODAY): 4}) == checks
+    assert cron._grown(checks, {("tabled", YESTERDAY - timedelta(days=1), TODAY): 4}) == []
+
+
+def test_baseline_ignores_failed_runs(db, api, cron, monkeypatch):
+    from hansard_archive.models import HaCronRun
+    db.session.add(HaCronRun(service_name="pq-quickcheck", started_at=datetime.utcnow() - timedelta(minutes=60),
+                             days_window=4, status="ok",
+                             notes=f"quick-check: nothing new (tabled {YESTERDAY}..{TODAY} API=4 DB=4)"))
+    db.session.add(HaCronRun(service_name="pq-quickcheck", started_at=datetime.utcnow() - timedelta(minutes=30),
+                             days_window=4, status="failed",
+                             notes=f"quick-check: ran tabled (tabled {YESTERDAY}..{TODAY} API=5 DB=4) | boom"))
+    db.session.commit()
+    assert cron._last_ok_api_counts("pq-quickcheck", None) == {("tabled", YESTERDAY, TODAY): 4}

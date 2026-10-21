@@ -30,10 +30,11 @@ counts only (take=1, totalResults): questions tabled in the last
 scripts/pq_publication_times.py reads to find when Parliament publishes
 (the API itself has dates only, no times). A window is ingested when the API
 count is above the matching ha_pq count (answers count only when their full
-text is stored — answer_needs_fetch_sql). Otherwise it logs one line and exits
-in a few seconds. It skips when another PQ run is in progress. Changes that
-leave every count the same (a corrected answer, a withdrawal) are left to the
-full sweeps.
+text is stored — answer_needs_fetch_sql), or above the API count the last
+successful check saw for the same window (so extra rows on our side can't hide
+new ones). Otherwise it logs one line and exits in a few seconds. It skips when
+another PQ run is in progress. Changes that leave every count the same (a
+corrected answer, a withdrawal) are left to the full sweeps.
 
 The --no-tag flag skips theme tagging. Use it for backfill runs — tagging
 ~70k rows inline would take 2-4 hours. Run tagging as a separate pass instead.
@@ -63,7 +64,7 @@ from hansard_archive.pq_ingestor import (
     WQ_API_BASE, PQIngestAborted, answer_needs_fetch_sql, ingest_pq_date_range,
 )
 from hansard_archive.models import HaCronRun, HaPQ
-from hansard_archive.pq_publication import format_counts
+from hansard_archive.pq_publication import format_counts, parse_counts
 from extensions import db
 
 _LOG_RETENTION_DAYS = 90
@@ -221,6 +222,38 @@ def _quick_counts(today: date, tabled_days: int, answered_days: int) -> list[dic
     return checks
 
 
+def _last_ok_api_counts(service_name: str, exclude_id: int | None) -> dict:
+    """{(kind, from, to): API count} from this service's newest successful
+    quick-check that recorded counts. A failed run never becomes the baseline,
+    so a narrow pass that failed is retried."""
+    try:
+        query = HaCronRun.query.filter(HaCronRun.service_name == service_name,
+                                       HaCronRun.status == "ok",
+                                       HaCronRun.notes.like(f"{_QUICK_NOTE}: %API=%"))
+        if exclude_id:
+            query = query.filter(HaCronRun.id != exclude_id)
+        run = query.order_by(HaCronRun.started_at.desc(), HaCronRun.id.desc()).first()
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[pq-cron] Warning: could not read the previous quick-check: {exc}", flush=True)
+        return {}
+    if run is None:
+        return {}
+    return {(o.kind, o.date_from, o.date_to): o.api
+            for o in parse_counts(run.notes, run.started_at)}
+
+
+def _grown(checks: list[dict], previous: dict) -> list[dict]:
+    """Windows to ingest: API above the DB, or above what the last successful
+    check saw (catches new items even when the DB count is ahead of the API)."""
+    out = []
+    for c in checks:
+        prev_api = previous.get((c["kind"], c["from"], c["to"]))
+        if c["api"] > c["db"] or (prev_api is not None and c["api"] > prev_api):
+            out.append(c)
+    return out
+
+
 def _running_query(exclude_id: int | None, quick_only: bool):
     cutoff = datetime.utcnow() - timedelta(minutes=_ACTIVE_RUN_MINUTES)
     query = HaCronRun.query.filter(HaCronRun.status == "running",
@@ -298,9 +331,14 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
         print(f"[pq-cron] {out['notes']}", flush=True)
         return out
 
+    previous = _last_ok_api_counts(args.service_name, run_record_id)
     checks = _quick_counts(today, args.quick_tabled_days, args.quick_answered_days)
     summary = format_counts(checks)
-    grown = [c for c in checks if c["api"] > c["db"]]
+    for c in checks:
+        if c["db"] > c["api"]:
+            print(f"[pq-cron] Note: ha_pq has more rows than the API for {c['kind']} "
+                  f"{c['from']}..{c['to']} (DB={c['db']} API={c['api']})", flush=True)
+    grown = _grown(checks, previous)
     if not grown:
         out["notes"] = f"{_QUICK_NOTE}: nothing new ({summary})"
         print(f"[pq-cron] {out['notes']}", flush=True)
