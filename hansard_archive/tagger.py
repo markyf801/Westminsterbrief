@@ -35,6 +35,7 @@ TAGGER_MODEL environment variable or the `model` argument.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -118,9 +119,18 @@ _TOPIC_MAX_WORDS = 8
 _TOPIC_MAX_CHARS = 80
 
 
+_TAG_RE = re.compile(r"<[^>]{0,200}>")
+
+
+def plain_text(s: str) -> str:
+    """Stored Hansard / PQ text can hold HTML entities (&amp;) and tags: plain text."""
+    s = html.unescape(html.unescape(s or ""))      # some rows are double-escaped
+    return " ".join(_TAG_RE.sub(" ", s).split())
+
+
 def normalise_specific_theme(theme: str) -> Optional[str]:
     """Lowercase, trim and canonicalise a free-text theme; None if it should be dropped."""
-    t = " ".join((theme or "").lower().split()).strip(" .,;:")
+    t = plain_text(theme).lower().strip(" .,;:")
     if not t:
         return None
     t = canonical_topic(t)
@@ -156,7 +166,7 @@ _EVIDENCE_MIN_WORDS = 2
 
 def normalise_for_evidence(s: str) -> str:
     """Lowercase, unify quotes and dashes, drop punctuation, collapse spaces."""
-    s = unicodedata.normalize("NFKC", s or "").translate(_CHAR_MAP).lower()
+    s = unicodedata.normalize("NFKC", plain_text(s)).translate(_CHAR_MAP).lower()
     s = s.replace("'", "")             # "women's" == "womens"
     return " ".join(_NON_ALNUM.sub(" ", s).split())
 
@@ -165,13 +175,14 @@ def evidence_in_source(quote: str, source_norm: str) -> bool:
     """
     True when the quote appears verbatim (normalised, on word boundaries) in the
     already-normalised source. A quote with an ellipsis must have every part in
-    the source. Quotes under two words prove nothing and fail.
+    the source, and every part must be 2+ words ("the ... campaign" proves
+    nothing). Quotes under two words fail.
     """
     if not isinstance(quote, str):
         return False
     parts = [normalise_for_evidence(p) for p in _ELLIPSIS.split(quote)]
     parts = [p for p in parts if p]
-    if not parts or sum(len(p.split()) for p in parts) < _EVIDENCE_MIN_WORDS:
+    if not parts or any(len(p.split()) < _EVIDENCE_MIN_WORDS for p in parts):
         return False
     haystack = f" {source_norm} "
     return all(f" {p} " in haystack for p in parts)
@@ -191,7 +202,9 @@ class TagOutcome:
 
     @property
     def ok(self) -> bool:
-        return bool(self.policy_areas or self.topics)
+        """Writable: at least one verified policy area (topics alone are not enough —
+        an item with no policy area drops off every policy page)."""
+        return bool(self.policy_areas)
 
 
 def verify_tags(raw: dict, source_text: str, outcome: Optional[TagOutcome] = None) -> TagOutcome:
@@ -386,7 +399,7 @@ def question_groups(contributions: list[tuple[str, str]]) -> list[list[tuple[str
 def _transcript(contributions: list[tuple[str, str]], max_chars: int) -> str:
     out, used = [], 0
     for name, text_ in contributions:
-        line = f"{name or 'Speaker'}: {' '.join((text_ or '').split())}"
+        line = f"{plain_text(name) or 'Speaker'}: {plain_text(text_)}"
         if used + len(line) > max_chars:
             line = line[: max(0, max_chars - used)]
         if line:
@@ -503,29 +516,31 @@ def build_grouped_prompt(si: SessionInput) -> tuple[str, list[str]]:
 
 
 def build_pq_prompt(pq: PQInput) -> tuple[str, str]:
-    q = (pq.question_text or "")[:_PQ_SINGLE_QUESTION_CHARS]
-    a = (pq.answer_text or "")[:_PQ_SINGLE_ANSWER_CHARS]
+    q = plain_text(pq.question_text)[:_PQ_SINGLE_QUESTION_CHARS]
+    a = plain_text(pq.answer_text)[:_PQ_SINGLE_ANSWER_CHARS]
+    heading = plain_text(pq.heading)
     answer_block = f"Answer (start):\n<<<\n{a}\n>>>" if a else ""
     prompt = _PQ_PROMPT.format(
-        scope=_SCOPE_BLOCK, heading=pq.heading or "(no heading)",
+        scope=_SCOPE_BLOCK, heading=heading or "(no heading)",
         answering_body=pq.answering_body or "unknown", chamber=pq.chamber or "Commons",
         tabled_date=pq.tabled_date or "unknown", question_text=q, answer_block=answer_block,
     )
-    return prompt, f"{pq.heading}\n{q}\n{a}"
+    return prompt, f"{heading}\n{q}\n{a}"
 
 
 def build_pq_batch_prompt(pqs: list[PQInput]) -> tuple[str, list[str]]:
     """(prompt, per-question source texts): heading + first 600 chars of the question."""
     blocks, sources = [], []
     for i, pq in enumerate(pqs):
-        q = (pq.question_text or "")[:_PQ_BATCH_QUESTION_CHARS]
+        q = plain_text(pq.question_text)[:_PQ_BATCH_QUESTION_CHARS]
+        heading = plain_text(pq.heading)
         blocks.append(
             f"[{i + 1}] UIN: {pq.uin}\n"
-            f"Heading: {pq.heading or '(none)'}\n"
+            f"Heading: {heading or '(none)'}\n"
             f"Department: {pq.answering_body or 'unknown'}\n"
             f"Question: {q}"
         )
-        sources.append(f"{pq.heading}\n{q}")
+        sources.append(f"{heading}\n{q}")
     prompt = _PQ_BATCH_PROMPT.format(scope=_SCOPE_BLOCK, n=len(pqs), questions="\n\n".join(blocks))
     return prompt, sources
 
@@ -567,6 +582,7 @@ _RESPONSE_SCHEMA = {
     "type": "OBJECT",
     "properties": _tag_fields(MAX_POLICY_AREAS, MAX_TOPICS),
     "required": ["policy_areas", "topics"],
+    "propertyOrdering": ["policy_areas", "topics"],
 }
 
 _GROUPED_RESPONSE_SCHEMA = {
@@ -578,6 +594,7 @@ _GROUPED_RESPONSE_SCHEMA = {
                 "type": "OBJECT",
                 "properties": {"group": {"type": "INTEGER"}, **_tag_fields(2, 3)},
                 "required": ["group", "policy_areas", "topics"],
+                "propertyOrdering": ["group", "policy_areas", "topics"],
             },
         },
     },
@@ -590,6 +607,8 @@ _BATCH_RESPONSE_SCHEMA = {
         "type": "OBJECT",
         "properties": {"uin": {"type": "STRING"}, **_tag_fields(MAX_POLICY_AREAS, MAX_TOPICS)},
         "required": ["uin", "policy_areas", "topics"],
+        # uin first, so the model commits to which question it is tagging
+        "propertyOrdering": ["uin", "policy_areas", "topics"],
     },
 }
 
@@ -632,13 +651,25 @@ def resolve_model(api_key: str, model: Optional[str] = None) -> str:
 
 
 class GeminiCallFailed(Exception):
-    """All retries failed (network, 5xx, rate limit or unparseable output)."""
+    """
+    The call failed. final=True means retrying cannot help (bad request — e.g.
+    a schema the API rejects —, unknown model, bad key): callers stop the run.
+    Otherwise all retries failed (network, 5xx, rate limit, unparseable output).
+    """
+
+    def __init__(self, message: str, final: bool = False):
+        super().__init__(message)
+        self.final = final
+
+
+_BODY_LOG_CHARS = 500
 
 
 def _gemini_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[object, dict]:
     """
     One structured-output call. Returns (parsed JSON, usage metadata).
-    Raises GeminiCallFailed after retries; auth errors raise at once.
+    400 / 401 / 403 fail at once (final) with the response body logged; 404 on
+    every API version is final too; 429, 5xx and network errors are retried.
     """
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -650,6 +681,7 @@ def _gemini_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[o
     }
     last_error = ""
     for attempt in range(_MAX_RETRIES + 1):
+        not_found = 0
         for version in ("v1beta", "v1"):
             url = (
                 f"https://generativelanguage.googleapis.com/{version}/models/"
@@ -661,18 +693,30 @@ def _gemini_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[o
                     body = r.json()
                     raw = body["candidates"][0]["content"]["parts"][0]["text"]
                     return json.loads(raw), body.get("usageMetadata") or {}
+                text_ = (r.text or "")[:_BODY_LOG_CHARS]
+                if r.status_code in (400, 401, 403):
+                    logger.error("Tagger: HTTP %d from Gemini (%s, model %s) — not retrying. Body: %s",
+                                 r.status_code, version, model, text_)
+                    raise GeminiCallFailed(f"HTTP {r.status_code}: {text_[:200]}", final=True)
+                if r.status_code == 404:
+                    not_found += 1
+                    last_error = f"HTTP 404 ({version}): {text_[:200]}"
+                    continue
                 if r.status_code == 429:
                     logger.warning("Tagger: rate limited (429), backing off")
-                    last_error = "429"
+                    last_error = "HTTP 429"
                     time.sleep(5 * (attempt + 1))
                     break
-                if r.status_code in (401, 403):
-                    logger.error("Tagger: auth error %d — check GEMINI_API_KEY", r.status_code)
-                    raise GeminiCallFailed(f"auth error {r.status_code}")
-                last_error = f"HTTP {r.status_code}"
+                last_error = f"HTTP {r.status_code}: {text_[:200]}"
+                logger.warning("Tagger: HTTP %d from Gemini, attempt %d/%d. Body: %s",
+                               r.status_code, attempt + 1, _MAX_RETRIES + 1, text_)
             except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError) as e:
                 last_error = str(e)[:200]
                 logger.warning("Tagger: attempt %d/%d failed: %s", attempt + 1, _MAX_RETRIES + 1, e)
+        if not_found == 2:
+            logger.error("Tagger: model %s not found on any API version — not retrying. %s",
+                         model, last_error)
+            raise GeminiCallFailed(last_error, final=True)
         if attempt < _MAX_RETRIES:
             time.sleep(2 ** attempt)
     raise GeminiCallFailed(last_error or "no response")
@@ -769,6 +813,8 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
             prompt, sources = build_pq_batch_prompt(batch)
             parsed, usage = _gemini_json(api_key, model, prompt, _BATCH_RESPONSE_SCHEMA)
         except GeminiCallFailed as e:
+            if e.final:
+                raise
             logger.warning("Tagger batch at %d failed (%s) — retrying individually", start, e)
             parsed, usage, sources = None, {}, []
         if isinstance(parsed, list) and len(parsed) == len(batch):
@@ -797,6 +843,8 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
             try:
                 single = tag_pq_input(batch[j], api_key, model)
             except GeminiCallFailed as e:
+                if e.final:
+                    raise
                 logger.warning("Tagger: single retry failed for PQ %s: %s", batch[j].ref, e)
                 continue
             if single is not None:
@@ -859,6 +907,13 @@ def write_pq_tags(pq_id: int, outcome: TagOutcome, replace: bool = False,
 # Public entry points (crons)
 # ---------------------------------------------------------------------------
 
+# Stop a run after this many API failures in a row and report it as errors,
+# so the cron's run record is "failed" and the alert email goes out.
+MAX_CONSECUTIVE_API_FAILURES = int(os.environ.get("TAGGER_MAX_API_FAILURES", "5"))
+# Give up on an item after this many attempts that verified no policy area.
+TAG_MAX_ATTEMPTS = int(os.environ.get("TAGGER_MAX_ATTEMPTS", "3"))
+
+
 def _api_key(api_key: Optional[str]) -> Optional[str]:
     if api_key:
         return api_key
@@ -869,10 +924,62 @@ def _api_key(api_key: Optional[str]) -> Optional[str]:
         return os.environ.get("GEMINI_API_KEY")
 
 
+# --- attempt tracking (ha_tag_attempt; optional until the migration has run) ---
+
+def _attempts_table_ready() -> bool:
+    try:
+        import sqlalchemy as sa
+        return sa.inspect(db.engine).has_table("ha_tag_attempt")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _given_up_ids(kind: str):
+    """Subquery of item ids that reached TAG_MAX_ATTEMPTS, or None without the table."""
+    if not _attempts_table_ready():
+        return None
+    from hansard_archive.models import HaTagAttempt
+    return (db.session.query(HaTagAttempt.item_id)
+            .filter(HaTagAttempt.item_kind == kind, HaTagAttempt.attempts >= TAG_MAX_ATTEMPTS))
+
+
+def given_up_count(kind: str) -> Optional[int]:
+    """How many items of this kind the tagger has stopped trying (None without the table)."""
+    q = _given_up_ids(kind)
+    return q.count() if q is not None else None
+
+
+def record_failed_attempt(kind: str, item_id: int, reason: str) -> None:
+    """Count one attempt that verified no policy area. Never raises."""
+    if not _attempts_table_ready():
+        return
+    from hansard_archive.models import HaTagAttempt
+    try:
+        row = db.session.get(HaTagAttempt, (kind, item_id))
+        if row is None:
+            row = HaTagAttempt(item_kind=kind, item_id=item_id, attempts=0)
+            db.session.add(row)
+        row.attempts = (row.attempts or 0) + 1
+        row.last_attempt_at = datetime.utcnow()
+        row.last_reason = (reason or "")[:300]
+        db.session.commit()
+    except Exception as e:  # noqa: BLE001
+        db.session.rollback()
+        logger.warning("Tagger: could not record attempt for %s %s: %s", kind, item_id, e)
+
+
+def _failure_reason(outcome: TagOutcome) -> str:
+    if not outcome.proposed_areas:
+        return "model proposed no policy area"
+    reasons = Counter(why for kind, _, why in outcome.dropped if kind == "policy_area")
+    return "policy areas dropped: " + ", ".join(f"{why} x{n}" for why, n in reasons.items())
+
+
 def tag_session(session_id: int, api_key: Optional[str] = None, model: Optional[str] = None) -> int:
     """
     Tag a single session. Skips if already tagged.
     Returns number of theme rows written (0 if skipped or failed).
+    Raises GeminiCallFailed when the API call fails (so callers can count it).
     Expects to run inside a Flask app context with an active DB session.
     """
     api_key = _api_key(api_key)
@@ -891,14 +998,11 @@ def tag_session(session_id: int, api_key: Optional[str] = None, model: Optional[
         logger.warning("Tagger: session %d has no contribution text — skipping", session_id)
         return 0
 
-    try:
-        outcome = tag_session_input(si, api_key, model)
-    except GeminiCallFailed as e:
-        logger.warning("Tagger: session %d (%r) — Gemini failed: %s", session_id, (session.title or "")[:50], e)
-        return 0
+    outcome = tag_session_input(si, api_key, model)
     if not outcome.ok:
-        logger.warning("Tagger: session %d — no tag survived the evidence check (%d dropped)",
-                       session_id, len(outcome.dropped))
+        reason = _failure_reason(outcome)
+        logger.warning("Tagger: session %d — nothing writable (%s)", session_id, reason)
+        record_failed_attempt("session", session_id, reason)
         return 0
     return write_session_tags(session_id, outcome)
 
@@ -910,14 +1014,17 @@ def tag_all_untagged(
     skip_types: tuple = ("other",),
 ) -> dict:
     """
-    Batch tag all untagged non-container sessions.
+    Batch tag untagged non-container sessions, newest first.
 
-    Excludes:
-      - is_container = True  (structural headers with duplicate contributions)
-      - debate_type IN skip_types  (default: 'other' — procedural/mixed sessions)
+    Excludes containers, debate_type IN skip_types (default 'other'), and
+    sessions that already had TAG_MAX_ATTEMPTS attempts with nothing writable.
+    `limit` caps the run (crons pass a cap so a large backlog — e.g. after a
+    reclassification — is worked through over several runs).
 
-    Returns summary dict: {total_eligible, tagged, failed, errors}.
-    Expects to run inside a Flask app context.
+    Returns {total_eligible, tagged, failed, errors, api_errors, aborted,
+    given_up}. API failures count as errors; after
+    MAX_CONSECUTIVE_API_FAILURES in a row the run stops and aborted holds the
+    reason. Expects to run inside a Flask app context.
     """
     api_key = _api_key(api_key)
     if not api_key:
@@ -931,6 +1038,9 @@ def tag_all_untagged(
         .filter(~HansardSession.id.in_(already_tagged_subq))
         .order_by(HansardSession.date.desc())
     )
+    given_up = _given_up_ids("session")
+    if given_up is not None:
+        query = query.filter(~HansardSession.id.in_(given_up.subquery()))
     if limit:
         query = query.limit(limit)
 
@@ -939,11 +1049,13 @@ def tag_all_untagged(
     if verbose:
         print(f"[tagger] {total_eligible} sessions to tag (limit={limit})", flush=True)
 
-    tagged = failed = errors = 0
+    tagged = failed = errors = api_errors = consecutive = 0
+    aborted = ""
     for i, session in enumerate(sessions):
         try:
             time.sleep(_INTER_REQUEST_DELAY)
             count = tag_session(session.id, api_key=api_key)
+            consecutive = 0
             if count > 0:
                 tagged += 1
                 if verbose:
@@ -953,6 +1065,16 @@ def tag_all_untagged(
                 failed += 1
                 if verbose:
                     print(f"[tagger] [{i+1}/{total_eligible}] FAIL {session.title[:60]!r}", flush=True)
+        except GeminiCallFailed as e:
+            errors += 1
+            api_errors += 1
+            consecutive += 1
+            print(f"[tagger] API ERROR session {session.id}: {e}", flush=True)
+            if e.final or consecutive >= MAX_CONSECUTIVE_API_FAILURES:
+                aborted = (f"stopped after {consecutive} consecutive API failure(s): {e}"
+                           if not e.final else f"stopped: {e}")
+                print(f"[tagger] {aborted}", flush=True)
+                break
         except Exception as e:
             errors += 1
             db.session.rollback()
@@ -960,13 +1082,19 @@ def tag_all_untagged(
             if verbose:
                 print(f"[tagger] ERROR session {session.id}: {e}", flush=True)
 
-    return {"total_eligible": total_eligible, "tagged": tagged, "failed": failed, "errors": errors}
+    n_given_up = given_up_count("session")
+    if verbose and n_given_up:
+        print(f"[tagger] {n_given_up} session(s) skipped after {TAG_MAX_ATTEMPTS} attempts "
+              "with nothing writable", flush=True)
+    return {"total_eligible": total_eligible, "tagged": tagged, "failed": failed, "errors": errors,
+            "api_errors": api_errors, "aborted": aborted, "given_up": n_given_up}
 
 
 def tag_pq(pq_id: int, api_key: Optional[str] = None, model: Optional[str] = None) -> int:
     """
     Tag a single Written Question. Skips if already tagged.
     Returns number of theme rows written (0 if skipped or failed).
+    Raises GeminiCallFailed when the API call fails.
     """
     api_key = _api_key(api_key)
     if not api_key:
@@ -980,12 +1108,9 @@ def tag_pq(pq_id: int, api_key: Optional[str] = None, model: Optional[str] = Non
     if not (pq.question_text or "").strip():
         logger.warning("Tagger: PQ %d has no question text — skipping", pq_id)
         return 0
-    try:
-        outcome = tag_pq_input(pq_input_from_db(pq), api_key, model)
-    except GeminiCallFailed as e:
-        logger.warning("Tagger: PQ %d (%r) — Gemini failed: %s", pq_id, (pq.heading or pq.uin)[:50], e)
-        return 0
+    outcome = tag_pq_input(pq_input_from_db(pq), api_key, model)
     if not outcome.ok:
+        record_failed_attempt("pq", pq_id, _failure_reason(outcome))
         return 0
     return write_pq_tags(pq_id, outcome)
 
@@ -996,10 +1121,14 @@ def tag_pq_all_untagged(
     verbose: bool = True,
 ) -> dict:
     """
-    Batch tag all untagged Written Questions (batches of 5, mapped by position).
+    Batch tag untagged Written Questions (batches of 5, mapped by position),
+    skipping questions that already had TAG_MAX_ATTEMPTS attempts with nothing
+    writable.
 
-    Returns summary dict: {total_eligible, tagged, failed, retried, errors}.
-    Expects to run inside a Flask app context.
+    Returns {total_eligible, tagged, failed, retried, errors, api_errors,
+    aborted, given_up}. Questions with no result after retries count as API
+    errors; the run stops after MAX_CONSECUTIVE_API_FAILURES of them in a row,
+    or at once on a final API error (bad request / key / model).
     """
     api_key = _api_key(api_key)
     if not api_key:
@@ -1012,6 +1141,9 @@ def tag_pq_all_untagged(
         .filter(HaPQ.question_text.isnot(None))
         .order_by(HaPQ.tabled_date.desc())
     )
+    given_up = _given_up_ids("pq")
+    if given_up is not None:
+        query = query.filter(~HaPQ.id.in_(given_up.subquery()))
     if limit:
         query = query.limit(limit)
     pqs = [pq for pq in query.all() if (pq.question_text or "").strip()]
@@ -1020,15 +1152,30 @@ def tag_pq_all_untagged(
         print(f"[pq-tagger] {total_eligible} PQs to tag in batches of {_PQ_BATCH_SIZE} "
               f"(limit={limit}, batch_delay={_PQ_BATCH_DELAY}s)", flush=True)
 
-    tagged = failed = errors = retried = 0
+    tagged = failed = errors = retried = api_errors = consecutive = 0
+    aborted = ""
     chunk = _PQ_BATCH_SIZE * 10
     for start in range(0, total_eligible, chunk):
         part = pqs[start:start + chunk]
-        outcomes = tag_pq_inputs([pq_input_from_db(pq) for pq in part], api_key)
+        try:
+            outcomes = tag_pq_inputs([pq_input_from_db(pq) for pq in part], api_key)
+        except GeminiCallFailed as e:          # final: retrying cannot help
+            errors += len(part)
+            api_errors += len(part)
+            aborted = f"stopped: {e}"
+            print(f"[pq-tagger] {aborted}", flush=True)
+            break
         for pq, outcome in zip(part, outcomes):
-            retried += bool(outcome is not None and outcome.retried)
-            if outcome is None or not outcome.ok:
+            if outcome is None:
+                errors += 1
+                api_errors += 1
+                consecutive += 1
+                continue
+            consecutive = 0
+            retried += bool(outcome.retried)
+            if not outcome.ok:
                 failed += 1
+                record_failed_attempt("pq", pq.id, _failure_reason(outcome))
                 continue
             try:
                 if write_pq_tags(pq.id, outcome) > 0:
@@ -1042,6 +1189,15 @@ def tag_pq_all_untagged(
         if verbose:
             print(f"[pq-tagger] Progress: {min(start + chunk, total_eligible)}/{total_eligible}"
                   f" — tagged={tagged} failed={failed} errors={errors}", flush=True)
+        if consecutive >= MAX_CONSECUTIVE_API_FAILURES:
+            aborted = f"stopped after {consecutive} consecutive questions with no API result"
+            print(f"[pq-tagger] {aborted}", flush=True)
+            break
 
+    n_given_up = given_up_count("pq")
+    if verbose and n_given_up:
+        print(f"[pq-tagger] {n_given_up} PQ(s) skipped after {TAG_MAX_ATTEMPTS} attempts "
+              "with nothing writable", flush=True)
     return {"total_eligible": total_eligible, "tagged": tagged, "failed": failed,
-            "retried": retried, "errors": errors}
+            "retried": retried, "errors": errors, "api_errors": api_errors,
+            "aborted": aborted, "given_up": n_given_up}

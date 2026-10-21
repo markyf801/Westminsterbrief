@@ -42,6 +42,11 @@ from extensions import db
 
 _LOG_RETENTION_DAYS = 90
 
+# Sessions tagged per run. A large backlog (e.g. after reclassify_debate_types.py
+# moves rows out of 'other') is worked through over several runs, newest first,
+# instead of one run spending an hour on it. Override with ARCHIVE_TAG_CAP.
+_TAG_CAP = int(os.environ.get("ARCHIVE_TAG_CAP", "200"))
+
 
 def _alert_email() -> str:
     return os.environ.get("CRON_ALERT_EMAIL") or os.environ.get("ADMIN_EMAIL", "")
@@ -99,6 +104,8 @@ def main() -> None:
     total_sessions = 0
     total_errors = 0
     total_tagged = 0
+    tag_notes = ""
+    tag_aborted = ""
     run_record_id: int | None = None
     fatal_error: str | None = None
 
@@ -143,14 +150,19 @@ def main() -> None:
                 print(f"[cron] No new sessions — running tagger for any missed sessions…", flush=True)
 
             db.session.rollback()  # clear any poisoned state from ingestion errors
-            tag_result = tag_all_untagged(verbose=True)
+            tag_result = tag_all_untagged(limit=_TAG_CAP, verbose=True)
             total_tagged = tag_result.get("tagged", 0)
             tag_errors = tag_result.get("errors", 0)
+            tag_aborted = tag_result.get("aborted") or ""
             total_errors += tag_errors
-            print(
-                f"[cron] Tagging done — {total_tagged} session(s) tagged, {tag_errors} error(s)",
-                flush=True,
+            tag_notes = (
+                f"tagging: eligible={tag_result.get('total_eligible', 0)} (cap {_TAG_CAP}) "
+                f"tagged={total_tagged} nothing_verified={tag_result.get('failed', 0)} "
+                f"api_errors={tag_result.get('api_errors', 0)} "
+                f"given_up={tag_result.get('given_up')}"
+                + (f" ABORTED: {tag_aborted}" if tag_aborted else "")
             )
+            print(f"[cron] Tagging done — {tag_notes}", flush=True)
 
         except Exception as exc:
             fatal_error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
@@ -171,8 +183,9 @@ def main() -> None:
                     record.sessions_tagged = total_tagged
                     record.errors = total_errors
                     record.status = final_status
-                    if fatal_error:
-                        record.notes = fatal_error[:2000]
+                    notes = "\n".join(n for n in (fatal_error, tag_notes) if n)
+                    if notes:
+                        record.notes = notes[:2000]
                     db.session.commit()
             except Exception as db_exc:
                 db.session.rollback()
@@ -190,6 +203,7 @@ def main() -> None:
     # --- Failure alerting (outside app_context so send_email works cleanly) ---
     should_alert = (
         fatal_error is not None                      # always alert on crash
+        or bool(tag_aborted)                         # tagging stopped: API failing
         or (is_morning_catchup and total_errors > 0) # morning catch-up: alert on any error
         or total_errors >= 3                         # other services: alert if 3+ errors
     )
@@ -201,6 +215,7 @@ def main() -> None:
             f"Window:    {start} → {today} ({args.days} days)\n"
             f"Ingested:  {total_sessions} sessions\n"
             f"Tagged:    {total_tagged} sessions\n"
+            f"Tagging:   {tag_notes or 'not run'}\n"
             f"Errors:    {total_errors}\n"
             f"Status:    {final_status}\n"
             f"Elapsed:   {elapsed:.1f}s\n"

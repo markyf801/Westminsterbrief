@@ -303,8 +303,149 @@ def test_api_failure_writes_nothing(app_db, monkeypatch):
     def boom(*a):
         raise tg.GeminiCallFailed("HTTP 500")
     monkeypatch.setattr(tg, "_gemini_json", boom)
-    assert tg.tag_session(s.id, api_key="key") == 0
+    with pytest.raises(tg.GeminiCallFailed):        # callers count it as an error
+        tg.tag_session(s.id, api_key="key")
     assert HansardSessionTheme.query.filter_by(session_id=s.id).count() == 0
+
+
+# ── HTML entities, ellipsis parts, writable rule ──────────────────────────────
+
+def test_html_entities_in_stored_text():
+    src = normalise_for_evidence("Pressures on A&amp;E admissions and &lt;b&gt;bed&lt;/b&gt; capacity")
+    assert evidence_in_source("A&E admissions", src)
+    assert evidence_in_source("bed capacity", src)
+    assert tg.normalise_specific_theme("A&amp;E waiting times") == "a&e waiting times"
+    assert "&amp;" not in tg._transcript([("Ms A (Lab)", "A&amp;E <p>delays</p>")], 1000)
+    prompt, source = build_pq_prompt(PQInput(uin="1", heading="A&amp;E", question_text="Q &amp; A"))
+    assert "&amp;" not in prompt and source.startswith("A&E")
+
+
+def test_every_ellipsis_part_needs_two_words():
+    src = normalise_for_evidence("the national campaign to end the scheme and the regional campaign")
+    assert not evidence_in_source("the ... campaign", src)
+    assert evidence_in_source("the national campaign ... the regional campaign", src)
+
+
+def test_topics_alone_are_not_writable():
+    out = verify_tags({"policy_areas": [], "topics": [
+        {"topic": "care plans", "evidence": "Education, Health and Care Plans"}]}, SRC)
+    assert out.topics == ["care plans"] and not out.ok
+
+
+def test_schemas_put_uin_and_areas_first():
+    assert tg._BATCH_RESPONSE_SCHEMA["items"]["propertyOrdering"][0] == "uin"
+    assert tg._RESPONSE_SCHEMA["propertyOrdering"] == ["policy_areas", "topics"]
+
+
+# ── API errors ────────────────────────────────────────────────────────────────
+
+class _Resp:
+    def __init__(self, status, text="", body=None):
+        self.status_code, self.text, self._body = status, text, body
+
+    def json(self):
+        return self._body
+
+
+def test_http_400_is_final_and_logs_body(monkeypatch, caplog):
+    calls = []
+
+    def post(url, json=None, timeout=None):
+        calls.append(url)
+        return _Resp(400, '{"error": {"message": "Invalid JSON payload: unknown field propertyOrdering"}}')
+    monkeypatch.setattr(tg.requests, "post", post)
+    with pytest.raises(tg.GeminiCallFailed) as exc:
+        tg._gemini_json("key", "m", "prompt", tg._RESPONSE_SCHEMA)
+    assert exc.value.final and len(calls) == 1
+    assert "unknown field propertyOrdering" in caplog.text
+
+
+def test_http_500_is_retried_then_not_final(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tg.requests, "post", lambda url, json=None, timeout=None: calls.append(1) or _Resp(500, "x"))
+    with pytest.raises(tg.GeminiCallFailed) as exc:
+        tg._gemini_json("key", "m", "prompt", tg._RESPONSE_SCHEMA)
+    assert not exc.value.final and len(calls) == 6      # 3 attempts x 2 API versions
+
+
+def _sessions(app_db, n):
+    from hansard_archive.models import HansardContribution, HansardSession
+    rows = [HansardSession(ext_id=f"A{i}", title=f"Item {i}", date=date(2026, 10, 1 + i), house="Commons",
+                           debate_type="debate", is_container=False, slug=f"item-a{i}") for i in range(n)]
+    app_db.session.add_all(rows)
+    app_db.session.flush()
+    for r in rows:
+        app_db.session.add(HansardContribution(session_id=r.id, member_name="A", speech_order=1,
+                                               speech_text="Hospice funding is in crisis."))
+    app_db.session.commit()
+    return rows
+
+
+def test_run_stops_after_consecutive_api_failures_and_counts_errors(app_db, monkeypatch):
+    _sessions(app_db, 8)
+    calls = []
+
+    def boom(*a):
+        calls.append(1)
+        raise tg.GeminiCallFailed("HTTP 503")
+    monkeypatch.setattr(tg, "_gemini_json", boom)
+    res = tg.tag_all_untagged(api_key="key", verbose=False)
+    assert len(calls) == tg.MAX_CONSECUTIVE_API_FAILURES
+    assert res["errors"] == res["api_errors"] == tg.MAX_CONSECUTIVE_API_FAILURES
+    assert "consecutive API failure" in res["aborted"]
+
+
+def test_final_api_error_stops_at_once(app_db, monkeypatch):
+    _sessions(app_db, 4)
+    calls = []
+
+    def bad_request(*a):
+        calls.append(1)
+        raise tg.GeminiCallFailed("HTTP 400: schema", final=True)
+    monkeypatch.setattr(tg, "_gemini_json", bad_request)
+    res = tg.tag_all_untagged(api_key="key", verbose=False)
+    assert len(calls) == 1 and res["errors"] == 1 and res["aborted"].startswith("stopped: HTTP 400")
+
+
+def test_items_are_given_up_after_max_attempts(app_db, monkeypatch):
+    from hansard_archive.models import HaTagAttempt
+    app_db.create_all()                       # includes ha_tag_attempt
+    HaTagAttempt.query.delete()
+    app_db.session.commit()
+    rows = _sessions(app_db, 2)
+    calls = []
+
+    def nothing_verified(*a):
+        calls.append(1)
+        return {"policy_areas": [{"area": "Economy", "evidence": "not in the text at all"}], "topics": []}, {}
+    monkeypatch.setattr(tg, "_gemini_json", nothing_verified)
+    for _ in range(tg.TAG_MAX_ATTEMPTS):
+        res = tg.tag_all_untagged(api_key="key", verbose=False)
+        assert res["failed"] == 2 and res["errors"] == 0
+    assert len(calls) == 2 * tg.TAG_MAX_ATTEMPTS
+    res = tg.tag_all_untagged(api_key="key", verbose=False)       # given up: not sent again
+    assert res["total_eligible"] == 0 and res["given_up"] == 2 and len(calls) == 2 * tg.TAG_MAX_ATTEMPTS
+    att = app_db.session.get(HaTagAttempt, ("session", rows[0].id))
+    assert att.attempts == tg.TAG_MAX_ATTEMPTS and "evidence not found" in att.last_reason
+    HaTagAttempt.query.delete()
+    app_db.session.commit()
+
+
+def test_pq_final_error_aborts_run(app_db, monkeypatch):
+    from hansard_archive.models import HaPQ, HaPQTheme
+    HaPQTheme.query.delete()
+    HaPQ.query.delete()
+    app_db.session.add_all([HaPQ(uin=f"U{i}", question_text="What about hospice funding in Kent?",
+                                 tabled_date=date(2026, 10, 1)) for i in range(3)])
+    app_db.session.commit()
+
+    def bad_request(*a):
+        raise tg.GeminiCallFailed("HTTP 400: schema", final=True)
+    monkeypatch.setattr(tg, "_gemini_json", bad_request)
+    res = tg.tag_pq_all_untagged(api_key="key", verbose=False)
+    assert res["errors"] == 3 and res["aborted"].startswith("stopped: HTTP 400")
+    HaPQ.query.delete()
+    app_db.session.commit()
 
 
 def test_question_groups_follow_hansard_name_forms():

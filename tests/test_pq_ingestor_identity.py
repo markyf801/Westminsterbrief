@@ -417,7 +417,8 @@ def _batch(db):
 
 def _result(uin, n):
     # Evidence quotes come from question n's own text, so they verify only there.
-    return {"uin": uin, "policy_areas": [],
+    return {"uin": uin,
+            "policy_areas": [{"area": "Transport", "evidence": f"support is there for topic {n}"}],
             "topics": [{"topic": f"topic {n}", "evidence": f"support is there for topic {n}"}]}
 
 

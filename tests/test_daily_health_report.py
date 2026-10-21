@@ -35,6 +35,7 @@ ALL_TABLES = [
     m.HansardSession, m.HaCronRun, m.HaPQ, m.HaBill, m.HaEdm, cache_models.CachedMember,
     m.HeadlineStat, m.UpcomingRelease, m.StatProducer,
     cache_models.MemberProfile, cache_models.MemberBiography, cache_models.MemberNameAudit,
+    m.HansardSessionTheme, m.HaPQTheme,
 ]
 
 # Created by hand on production (docs/plans/pq-identity-phase3-sql.md step 4).
@@ -92,6 +93,10 @@ def _seed_fresh(engine: sa.Engine, now: datetime, skip: tuple = ()) -> None:
              "is_answered": True, "answer_date": yesterday, "updated_at": recent, "ingested_at": recent}
             for i in range(20)
         ])
+        add("ha_pq_theme", [{"pq_id": i + 1, "theme": "Education, training and skills",
+                             "theme_type": "policy_area"} for i in range(20)])
+        add("ha_session_theme", [{"session_id": i + 1, "theme": "Transport", "theme_type": "policy_area"}
+                                 for i in range(2)])
         add("ha_bill", [{"parliament_bill_id": 1, "title": "Bill", "house_of_origin": "Commons",
                          "session": "2026-27", "parliament_url": "https://example.test/b",
                          "last_refreshed": now - timedelta(hours=1)}])
@@ -634,3 +639,22 @@ def test_calendar_lookback_spans_summer_recess():
     days, note = hc.fetch_sitting_days(getter, date(2026, 9, 1))
     assert note == "" and date(2026, 7, 20) in days["Commons"]
     assert seen == {"startDate": "2026-06-03", "endDate": "2026-09-01"}
+
+
+def test_tagging_coverage_warns_when_recent_items_are_untagged():
+    engine = _engine()
+    _seed_fresh(engine, TUESDAY, skip=("ha_pq_theme",))
+    results = _run_db(engine, TUESDAY)
+    pq = results["Tagging: recent written questions tagged"]
+    assert pq.status == hc.WARN and "0 of 20" in pq.detail
+    sessions = results["Tagging: recent debates tagged"]
+    assert sessions.status == hc.OK and "not judged" in sessions.detail   # only 2 sessions
+
+
+def test_tagging_coverage_ok_and_counts_attempts():
+    engine = _engine(ALL_TABLES + [m.HaTagAttempt])
+    _seed_fresh(engine, TUESDAY)
+    with engine.begin() as conn:
+        conn.execute(m.HaTagAttempt.__table__.insert(), [{"item_kind": "pq", "item_id": 99, "attempts": 3}])
+    pq = _run_db(engine, TUESDAY)["Tagging: recent written questions tagged"]
+    assert pq.status == hc.OK and "20 of 20" in pq.detail and "1 item(s) with failed" in pq.detail

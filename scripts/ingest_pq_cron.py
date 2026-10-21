@@ -108,11 +108,14 @@ def _run_pass(label: str, date_from: date, date_to: date, **kwargs) -> tuple[dic
     return counts, abort
 
 
-def _alert_reasons(passes: dict, tag_errors: int, fatal_error: str | None) -> list[str]:
+def _alert_reasons(passes: dict, tag_errors: int, fatal_error: str | None,
+                   tag_aborted: str = "") -> list[str]:
     """Why this run needs an alert email (empty list = no alert)."""
     reasons = []
     if fatal_error:
         reasons.append("fatal error")
+    if tag_aborted:
+        reasons.append(f"tagging {tag_aborted}")
     for label, counts in passes.items():
         for key in ("identity_mismatch", "failed", "page_errors"):
             if counts.get(key):
@@ -318,13 +321,14 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
     """Counts first; narrow passes only for windows that grew.
 
     Fills ``passes`` like the full sweep does. Returns {"inserted", "updated",
-    "tagged", "tag_errors", "errors", "abort", "skipped", "notes"}. Raises
+    "tagged", "tag_errors", "tag_aborted", "tag_notes", "errors", "abort",
+    "skipped", "notes"}. Raises
     QuickCheckError when a count request fails — deliberately no fallback to a
     full run: if the API is failing, a 7-day sweep only hammers it, and the next
     check is 30 minutes away.
     """
     out = {"inserted": 0, "updated": 0, "tagged": 0, "tag_errors": 0, "errors": 0,
-           "abort": None, "skipped": False}
+           "abort": None, "skipped": False, "tag_aborted": "", "tag_notes": ""}
 
     active = _running_query(run_record_id, quick_only=False).order_by(
         HaCronRun.started_at.desc()).first()
@@ -383,7 +387,7 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
     elif args.dry_run:
         print("[pq-cron] Tagging skipped (--dry-run)", flush=True)
     elif new_rows:
-        out["tagged"], out["tag_errors"] = _run_tagger(args.no_tag, new_rows)
+        out.update(_run_tagger(args.no_tag, new_rows))
         out["errors"] += out["tag_errors"]
 
     out["notes"] = (f"{_QUICK_NOTE}: ran {', '.join(ran)} "
@@ -393,11 +397,12 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
 
 # ── shared ───────────────────────────────────────────────────────────────────
 
-def _run_tagger(no_tag: bool, new_rows: int) -> tuple[int, int]:
-    """Theme-tag untagged PQs. Returns (tagged, errors)."""
+def _run_tagger(no_tag: bool, new_rows: int) -> dict:
+    """Theme-tag untagged PQs. Returns {"tagged", "tag_errors", "tag_aborted",
+    "tag_notes"}."""
     if no_tag:
         print("[pq-cron] Tagging skipped (--no-tag)", flush=True)
-        return 0, 0
+        return {"tagged": 0, "tag_errors": 0, "tag_aborted": "", "tag_notes": ""}
     from hansard_archive.tagger import tag_pq_all_untagged
     if new_rows > 0:
         print(f"[pq-cron] Tagging up to {new_rows} PQ(s)…", flush=True)
@@ -405,21 +410,30 @@ def _run_tagger(no_tag: bool, new_rows: int) -> tuple[int, int]:
         print("[pq-cron] No new/updated rows — running tagger for any missed PQs…", flush=True)
     tag_result = tag_pq_all_untagged(verbose=True)
     tagged = tag_result.get("tagged", 0)
-    tag_errors = tag_result.get("errors", 0)
-    print(f"[pq-cron] Tagging done — tagged={tagged} errors={tag_errors}", flush=True)
-    return tagged, tag_errors
+    tag_aborted = tag_result.get("aborted") or ""
+    tag_notes = (
+        f"tagging: eligible={tag_result.get('total_eligible', 0)} tagged={tagged} "
+        f"nothing_verified={tag_result.get('failed', 0)} "
+        f"api_errors={tag_result.get('api_errors', 0)} given_up={tag_result.get('given_up')}"
+        + (f" ABORTED: {tag_aborted}" if tag_aborted else "")
+    )
+    print(f"[pq-cron] Tagging done — {tag_notes}", flush=True)
+    return {"tagged": tagged, "tag_errors": tag_result.get("errors", 0),
+            "tag_aborted": tag_aborted, "tag_notes": tag_notes}
 
 
 def _run_full(args, date_from: date, today: date, answered_days: int, passes: dict) -> dict:
     """The scheduled sweep: tabled window, then answered window, then tagging.
-    Returns {"inserted", "updated", "tagged", "tag_errors", "errors", "abort"}."""
+    Returns {"inserted", "updated", "tagged", "tag_errors", "tag_aborted",
+    "tag_notes", "errors", "abort"}."""
     # --- Ingestion ---
     print(f"[pq-cron] Ingesting WQs {date_from} → {today}…", flush=True)
     result, abort = _run_pass("Tabled pass", date_from, today,
                               skip_answer_fetch=args.skip_answer_fetch)
     passes["tabled"] = result
     out = {"inserted": result["inserted"], "updated": result["updated"],
-           "errors": result["errors"], "tagged": 0, "tag_errors": 0}
+           "errors": result["errors"], "tagged": 0, "tag_errors": 0,
+           "tag_aborted": "", "tag_notes": ""}
 
     # --- Answers to older questions (tabled before the window) ---
     # Skipped after an abort: the API is down or identities disagree.
@@ -440,7 +454,7 @@ def _run_full(args, date_from: date, today: date, answered_days: int, passes: di
     if abort and not args.no_tag:
         print("[pq-cron] Tagging skipped (ingest aborted)", flush=True)
     else:
-        out["tagged"], out["tag_errors"] = _run_tagger(args.no_tag, out["inserted"] + out["updated"])
+        out.update(_run_tagger(args.no_tag, out["inserted"] + out["updated"]))
         out["errors"] += out["tag_errors"]
     return out
 
@@ -495,6 +509,8 @@ def main() -> None:
     total_errors = 0
     total_tagged = 0
     tag_errors = 0
+    tag_aborted = ""
+    tag_notes = ""
     passes: dict[str, dict] = {}
     run_record_id: int | None = None
     fatal_error: str | None = None
@@ -548,6 +564,8 @@ def main() -> None:
             total_updated = res["updated"]
             total_tagged = res["tagged"]
             tag_errors = res["tag_errors"]
+            tag_aborted = res["tag_aborted"]
+            tag_notes = res["tag_notes"]
             total_errors += res["errors"]
             if res["abort"]:
                 fatal_error = res["abort"]
@@ -582,7 +600,8 @@ def main() -> None:
                     record.status = recorded_status
                     # Counts first, so scripts/pq_publication_times.py can
                     # still read them when a narrow pass fails.
-                    record.notes = " | ".join(x for x in (notes, fatal_error) if x)[:2000] or None
+                    record.notes = " | ".join(
+                        x for x in (notes, tag_notes, fatal_error) if x)[:2000] or None
                     db.session.commit()
             except Exception as db_exc:
                 db.session.rollback()
@@ -602,7 +621,7 @@ def main() -> None:
     # alerts (missing or mis-matched questions); tagging errors alone at 3+.
     # A quick-check emails on the 2nd failure in a row only (a lasting problem
     # repeats every 30 minutes, so it still emails once per streak).
-    reasons = _alert_reasons(passes, tag_errors, fatal_error)
+    reasons = _alert_reasons(passes, tag_errors, fatal_error, tag_aborted)
     if reasons and args.quick_check and not _quick_check_should_alert(prev_statuses):
         print("[pq-cron] Quick-check failure — alert held (emails on the 2nd failure in a row): "
               + "; ".join(reasons), flush=True)
@@ -624,6 +643,7 @@ def main() -> None:
             f"Inserted:  {total_inserted}\n"
             f"Updated:   {total_updated}\n"
             f"Tagged:    {total_tagged}\n"
+            f"Tagging:   {tag_notes or 'not run'}\n"
             f"Errors:    {total_errors}\n"
             f"Status:    {final_status}\n"
             f"Elapsed:   {elapsed:.1f}s\n"

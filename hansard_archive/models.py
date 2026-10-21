@@ -246,6 +246,27 @@ class HaPQ(db.Model):
         return f"<HaPQ {self.uin} {self.tabled_date} {(self.heading or '')[:60]!r}>"
 
 
+class HaTagAttempt(db.Model):
+    """
+    Topic-tagging attempts that produced nothing writable (no policy area with
+    verbatim evidence). The crons skip an item after TAG_MAX_ATTEMPTS such
+    attempts instead of re-sending it on every run. API failures are not
+    counted (they are not the item's fault). Created on production by
+    migrations/tagging_support.py; the tagger works without it (no skipping).
+    """
+
+    __tablename__ = "ha_tag_attempt"
+
+    item_kind = db.Column(db.String(10), primary_key=True)    # "session" / "pq"
+    item_id = db.Column(db.Integer, primary_key=True)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    last_attempt_at = db.Column(db.DateTime, nullable=True)
+    last_reason = db.Column(db.String(300), nullable=True)
+
+    def __repr__(self):
+        return f"<HaTagAttempt {self.item_kind} {self.item_id} x{self.attempts}>"
+
+
 class HaPQTheme(db.Model):
     """AI-generated theme tags for a Written Question."""
 

@@ -1613,13 +1613,17 @@ def _specific_themes_for_slug(theme_col, type_col, theme_slug: str) -> list[str]
 
 
 def _stored_specific_names(theme_col, type_col, names) -> list[str]:
-    """Stored specific-topic strings equal (case-insensitively) to any of `names`."""
+    """
+    Stored specific-topic strings equal to any of `names`. Exact match (the
+    tagger has always stored topics lowercased), so the plain theme index is
+    used — no lower() on the column.
+    """
     names = sorted({n for n in names or () if n})
     if not names:
         return []
     rows = (
         db.session.query(theme_col)
-        .filter(type_col == THEME_TYPE_SPECIFIC, func.lower(theme_col).in_(names))
+        .filter(type_col == THEME_TYPE_SPECIFIC, theme_col.in_(names))
         .distinct()
         .all()
     )
