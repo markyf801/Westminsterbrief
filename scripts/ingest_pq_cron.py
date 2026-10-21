@@ -32,9 +32,9 @@ scripts/pq_publication_times.py reads to find when Parliament publishes
 count is above the matching ha_pq count (answers count only when their full
 text is stored — answer_needs_fetch_sql), or above the API count the last
 successful check saw for the same window (so extra rows on our side can't hide
-new ones). Otherwise it logs one line and exits in a few seconds. It skips when
-another PQ run is in progress. Changes that leave every count the same (a
-corrected answer, a withdrawal) are left to the full sweeps.
+new ones). Otherwise it logs one line and exits in a few seconds. It skips
+(status "skipped") when another PQ run is in progress. Changes that leave every
+count the same (a corrected answer, a withdrawal) are left to the full sweeps.
 
 The --no-tag flag skips theme tagging. Use it for backfill runs — tagging
 ~70k rows inline would take 2-4 hours. Run tagging as a separate pass instead.
@@ -74,7 +74,7 @@ _PASS_KEYS = ("inserted", "updated", "unchanged", "identity_mismatch",
 _QUICK_NOTE = "quick-check"     # HaCronRun.notes prefix for quick-check runs
 _QUICK_TIMEOUT = 30
 _QUICK_RETRIES = 2              # one retry on a transient error (CLAUDE.md)
-_ACTIVE_RUN_MINUTES = 60        # a "running" record older than this is treated as dead
+_ACTIVE_RUN_MINUTES = 120       # a "running" record older than this is treated as dead
 _FULL_WAIT_SECONDS = 15 * 60    # a full sweep waits this long for a running quick-check
 _FULL_WAIT_POLL = 30
 
@@ -291,9 +291,11 @@ def _wait_for_quick_check(exclude_id: int | None) -> None:
 
 
 def _previous_statuses(service_name: str, exclude_id: int | None, n: int = 2) -> list[str] | None:
-    """Statuses of this service's previous runs, newest first. None if unreadable."""
+    """Statuses of this service's previous finished runs (skipped ones left
+    out), newest first. None if unreadable."""
     try:
-        query = HaCronRun.query.filter(HaCronRun.service_name == service_name)
+        query = HaCronRun.query.filter(HaCronRun.service_name == service_name,
+                                       HaCronRun.status.in_(("ok", "failed")))
         if exclude_id:
             query = query.filter(HaCronRun.id != exclude_id)
         order = (HaCronRun.started_at.desc(), HaCronRun.id.desc())
@@ -315,17 +317,18 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
     """Counts first; narrow passes only for windows that grew.
 
     Fills ``passes`` like the full sweep does. Returns {"inserted", "updated",
-    "tagged", "tag_errors", "errors", "abort", "notes"}. Raises
+    "tagged", "tag_errors", "errors", "abort", "skipped", "notes"}. Raises
     QuickCheckError when a count request fails — deliberately no fallback to a
     full run: if the API is failing, a 7-day sweep only hammers it, and the next
     check is 30 minutes away.
     """
     out = {"inserted": 0, "updated": 0, "tagged": 0, "tag_errors": 0, "errors": 0,
-           "abort": None}
+           "abort": None, "skipped": False}
 
     active = _running_query(run_record_id, quick_only=False).order_by(
         HaCronRun.started_at.desc()).first()
     if active is not None:
+        out["skipped"] = True
         out["notes"] = (f"{_QUICK_NOTE}: skipped ({active.service_name} running since "
                         f"{active.started_at:%H:%M} UTC)")
         print(f"[pq-cron] {out['notes']}", flush=True)
@@ -487,6 +490,7 @@ def main() -> None:
     run_record_id: int | None = None
     fatal_error: str | None = None
     notes: str | None = None
+    skipped = False
     prev_statuses: list[str] | None = None
 
     with app.app_context():
@@ -524,6 +528,7 @@ def main() -> None:
                 prev_statuses = _previous_statuses(args.service_name, run_record_id)
                 res = _run_quick_check(args, today, run_record_id, passes)
                 notes = res["notes"]
+                skipped = res["skipped"]
             else:
                 _wait_for_quick_check(run_record_id)
                 res = _run_full(args, date_from, today, answered_days, passes)
@@ -547,6 +552,9 @@ def main() -> None:
         run_end = datetime.utcnow()
         elapsed = (run_end - run_start).total_seconds()
         final_status = "failed" if (total_errors > 0 or fatal_error) else "ok"
+        # A skipped quick-check checked nothing: not "ok", so it never counts
+        # as an archive update or a run that succeeded.
+        recorded_status = "skipped" if (skipped and final_status == "ok") else final_status
 
         if run_record_id:
             try:
@@ -559,7 +567,7 @@ def main() -> None:
                     record.sessions_ingested = total_inserted + total_updated
                     record.sessions_tagged = total_tagged
                     record.errors = total_errors
-                    record.status = final_status
+                    record.status = recorded_status
                     # Counts first, so scripts/pq_publication_times.py can
                     # still read them when a narrow pass fails.
                     record.notes = " | ".join(x for x in (notes, fatal_error) if x)[:2000] or None
@@ -569,7 +577,7 @@ def main() -> None:
                 print(f"[pq-cron] Warning: could not update run record: {db_exc}", flush=True)
 
         print(
-            f"[pq-cron] === END === status={final_status} "
+            f"[pq-cron] === END === status={recorded_status} "
             f"inserted={total_inserted} updated={total_updated} "
             f"tagged={total_tagged} errors={total_errors} "
             f"elapsed={elapsed:.1f}s",

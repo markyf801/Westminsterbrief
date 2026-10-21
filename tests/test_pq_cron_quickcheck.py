@@ -293,7 +293,35 @@ def test_skips_while_another_pq_run_is_running(db, api, cron, monkeypatch):
 
     assert _run(cron, monkeypatch) == 0
     assert api["count_calls"] == [] and api["bulk_calls"] == []
-    assert _last_run().notes.startswith("quick-check: skipped (pq-morning running")
+    run = _last_run()
+    assert run.status == "skipped"               # checked nothing: not an "ok" run
+    assert run.notes.startswith("quick-check: skipped (pq-morning running")
+
+
+def test_long_full_sweep_still_blocks(db, api, cron, monkeypatch):
+    from hansard_archive.models import HaCronRun
+    _seed_in_sync(db, api)
+    db.session.add(HaCronRun(service_name="pq-morning",
+                             started_at=datetime.utcnow() - timedelta(minutes=90),
+                             days_window=7, status="running"))
+    db.session.commit()
+
+    assert _run(cron, monkeypatch) == 0
+    assert api["count_calls"] == [] and _last_run().status == "skipped"
+
+
+def test_skipped_runs_do_not_reset_the_alert_streak(db, api, cron, monkeypatch):
+    from hansard_archive.models import HaCronRun
+    _seed_in_sync(db, api)
+    now = datetime.utcnow()
+    for minutes, status in ((60, "failed"), (30, "skipped")):
+        db.session.add(HaCronRun(service_name="pq-quickcheck", days_window=4, status=status,
+                                 started_at=now - timedelta(minutes=minutes)))
+    db.session.commit()
+    api["fail"] = True
+
+    assert _run(cron, monkeypatch) == 1
+    assert len(cron.alerts) == 1                 # failed, (skipped), failed: 2nd in a row
 
 
 def test_stale_running_record_does_not_block(db, api, cron, monkeypatch):
