@@ -30,9 +30,18 @@ Usage (Railway one-off against production, dry run first):
     python scripts/reclassify_debate_types.py --apply             # write changes
     python scripts/reclassify_debate_types.py --apply --include-manual-fixes
 
-After --apply, sessions that left 'other' have no topic tags yet; tag them with
-    python scripts/run_tagging.py
-(it tags every untagged non-container session that isn't 'other').
+Undo: --apply first creates ha_session_dtype_bak_YYYYMMDD_HHMMSS (id, old_type,
+new_type) and records every row it changes there, in the same transaction as
+the change; each change is also printed as "[undo] id,old,new". To undo (Mark's
+call, production SQL log):
+    UPDATE ha_session s SET debate_type = b.old_type
+    FROM ha_session_dtype_bak_... b WHERE s.id = b.id;
+
+After --apply, sessions that left 'other' have no topic tags yet. Do NOT tag
+them in one go: the archive cron tags at most ARCHIVE_TAG_CAP (default 200)
+untagged sessions per run, newest first, so the backlog clears over a day of
+runs. To speed it up, run capped chunks by hand outside cron windows:
+    python scripts/run_tagging.py --limit 200
 """
 
 import argparse
@@ -40,7 +49,7 @@ import collections
 import os
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -115,6 +124,22 @@ def manual_fix_reason(house: str, old: str, title: str, first_attributed_speech)
     return None
 
 
+def _create_undo_table(db) -> str:
+    from sqlalchemy import text
+    from sqlalchemy import inspect
+    base = f"ha_session_dtype_bak_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    existing = set(inspect(db.engine).get_table_names())
+    name, n = base, 1
+    while name in existing:
+        n += 1
+        name = f"{base}_{n}"
+    db.session.execute(text(
+        f"CREATE TABLE {name} (id INTEGER PRIMARY KEY, old_type VARCHAR(50), new_type VARCHAR(50))"))
+    db.session.commit()
+    print(f"[reclassify] undo table: {name}", flush=True)
+    return name
+
+
 def run(args) -> None:
     from flask_app import app
     from extensions import db
@@ -127,8 +152,11 @@ def run(args) -> None:
     manual_samples: dict = collections.defaultdict(list)
     include_manual = getattr(args, "include_manual_fixes", False)
     seen = fetch_errors = written = 0
+    undo_table = None
 
     with app.app_context():
+        if args.apply:
+            undo_table = _create_undo_table(db)
         q = db.session.query(HansardSession.id).filter(HansardSession.is_container.is_(False))
         if args.house:
             q = q.filter(HansardSession.house == args.house)
@@ -190,7 +218,12 @@ def run(args) -> None:
                     pending.append((s, new))
 
             if args.apply and pending:
+                from sqlalchemy import text
+                db.session.execute(
+                    text(f"INSERT INTO {undo_table} (id, old_type, new_type) VALUES (:id, :old, :new)"),
+                    [{"id": s.id, "old": s.debate_type, "new": new} for s, new in pending])
                 for s, new in pending:
+                    print(f"[undo] {s.id},{s.debate_type},{new}", flush=True)
                     s.debate_type = new
                 db.session.commit()
                 written += len(pending)

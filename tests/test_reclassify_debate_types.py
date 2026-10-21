@@ -122,6 +122,21 @@ def test_apply_writes_changes_and_skips_fetch_errors(seeded, script, monkeypatch
     }
 
 
+def test_apply_records_undo_rows(seeded, script, monkeypatch, capsys):
+    from sqlalchemy import inspect, text
+    from extensions import db
+    _fake_labels(monkeypatch, script)
+    script.run(_args(apply=True))
+    out = capsys.readouterr().out
+    assert "[undo] " in out and ",other,urgent_question" in out
+    with seeded.app_context():
+        name = sorted(n for n in inspect(db.engine).get_table_names()
+                      if n.startswith("ha_session_dtype_bak_"))[-1]
+        rows = db.session.execute(text(f"SELECT old_type, new_type FROM {name}")).fetchall()
+    assert sorted(tuple(r) for r in rows) == [("committee_stage", "debate"), ("other", "oral_questions"),
+                                              ("other", "urgent_question")]
+
+
 def test_apply_include_manual_fixes_changes_them_too(seeded, script, monkeypatch, capsys):
     _fake_labels(monkeypatch, script)
     script.run(_args(apply=True, include_manual_fixes=True))

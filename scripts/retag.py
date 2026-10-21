@@ -6,12 +6,22 @@ DRY RUN BY DEFAULT. A dry run counts the selected rows, prints a cost estimate,
 then tags a small sample (--sample, default 20) and prints each item's tags
 before and after. It writes nothing to the database.
 
---apply re-tags every selected row, replacing its tags (an item whose new tags
-all fail the evidence check keeps its old tags and is reported). Progress is
-saved to a state file after every committed chunk, so a stopped run continues
-where it left off when started again with the same arguments. The run stops
-with exit code 3 after --max-failures consecutive API failures (rate limit,
-outage, bad key), so a Railway one-off fails visibly instead of skipping rows.
+--apply re-tags every selected row, replacing its tags. Safety:
+  - --apply needs --backup or --no-backup. --backup first copies the whole
+    theme table(s) being changed into snapshot tables
+    (ha_session_theme_bak_YYYYMMDD_HHMMSS / ha_pq_theme_bak_...) with
+    CREATE TABLE ... AS SELECT; restoring is a manual SQL step (Mark's call).
+  - An item is only rewritten when the new tags include at least one verified
+    policy area; otherwise it keeps its old tags (reported as kept_old).
+  - Progress is checkpointed in ha_cron_run (service_name "retag-<kind>-<hash
+    of the arguments>", notes = JSON with the last id done) after every chunk,
+    so a stopped Railway one-off resumes when started again with the same
+    arguments. Nothing is kept on the container's disk.
+  - It pauses (does not write) during the scheduled cron windows listed in
+    CRON_WINDOWS_UTC, unless --ignore-cron-windows.
+  - It stops with exit code 3 after --max-failures consecutive API failures
+    (rate limit, outage), or at once on a final API error (bad request, key,
+    model), so the one-off fails visibly instead of skipping rows.
 
 Selection (default: everything the crons would tag):
     --what sessions|pqs|both      (default both)
@@ -24,10 +34,10 @@ Selection (default: everything the crons would tag):
 
 Examples (Railway one-off; dry run first, then a small apply, then everything):
     python scripts/retag.py --what sessions --since 2026-10-01
-    python scripts/retag.py --what pqs --limit 500 --apply --model gemini-2.5-flash
-    python scripts/retag.py --apply --model gemini-2.5-flash
+    python scripts/retag.py --what pqs --limit 500 --apply --backup --model gemini-2.5-flash
+    python scripts/retag.py --apply --backup --model gemini-2.5-flash
 
-Exit codes: 0 ok, 2 no GEMINI_API_KEY, 3 stopped after repeated API failures.
+Exit codes: 0 ok, 2 no GEMINI_API_KEY / bad arguments, 3 stopped after API failures.
 """
 
 from __future__ import annotations
@@ -38,21 +48,51 @@ import json
 import os
 import sys
 import time
-from datetime import date
-from pathlib import Path
+from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _CHUNK = 50
-_STATE_DIR = Path(os.environ.get("RETAG_STATE_DIR", "logs"))
 
 # Rough token model for the up-front estimate (chars/4 plus the fixed prompt).
 _EST_OUTPUT_TOKENS = {"session": 450, "pq": 120}
 _EST_THINKING_TOKENS = {"gemini-2.5-flash-lite": 0, "gemini-2.5-flash": 700, "gemini-2.5-pro": 1500}
 
+# Scheduled cron windows (UTC) from CLAUDE.md "Branches and workflow":
+# (weekdays or None for every day, start "HH:MM", end "HH:MM"). The hourly
+# archive daytime runs (first ~5 minutes of 11:00-23:00 Mon-Thu) are listed
+# hour by hour.
+CRON_WINDOWS_UTC: list[tuple[set[int] | None, str, str]] = [
+    (None, "03:00", "03:15"),                    # backup-cron-r2
+    (None, "04:30", "04:45"),                    # edm-cron
+    (None, "06:30", "07:15"),                    # bills-cron
+    ({0, 1, 2, 3, 4}, "08:30", "09:00"),         # PQ crons
+    ({0, 1, 2, 3, 4}, "09:30", "10:00"),
+    ({0, 1, 2, 3, 4}, "14:00", "14:30"),
+] + [({0, 1, 2, 3}, f"{h:02d}:00", f"{h:02d}:06") for h in range(11, 24)]
+
 
 class TooManyFailures(Exception):
     pass
+
+
+def cron_window(now: datetime) -> str | None:
+    """'HH:MM-HH:MM' when `now` (UTC) falls in a scheduled cron window, else None."""
+    hm = now.strftime("%H:%M")
+    for days, start, end in CRON_WINDOWS_UTC:
+        if (days is None or now.weekday() in days) and start <= hm < end:
+            return f"{start}-{end}"
+    return None
+
+
+def wait_outside_cron_windows(args, sleep=time.sleep, clock=datetime.utcnow) -> None:
+    if args.ignore_cron_windows:
+        return
+    window = cron_window(clock())
+    while window:
+        print(f"[retag] in cron window {window} UTC — pausing (no writes)", flush=True)
+        sleep(60)
+        window = cron_window(clock())
 
 
 # ---------------------------------------------------------------------------
@@ -135,29 +175,78 @@ def _avg_input_chars(kind: str, ids: list[int]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# State (resume)
+# Checkpoint in ha_cron_run (survives one-off containers)
 # ---------------------------------------------------------------------------
 
-def _state_path(kind: str, args) -> Path:
+def checkpoint_service(kind: str, args) -> str:
     key = json.dumps({k: getattr(args, k) for k in ("since", "until", "type", "house", "ids",
                                                     "include_other", "limit", "model")},
                      sort_keys=True)
-    digest = hashlib.sha1(key.encode()).hexdigest()[:10]
-    return Path(args.state_dir) / f"retag_{kind}_{digest}.json"
+    return f"retag-{kind}-{hashlib.sha1(key.encode()).hexdigest()[:10]}"
 
 
-def load_state(path: Path) -> dict:
+def load_checkpoint(service: str) -> dict:
+    """Last checkpoint for this exact selection, from the newest ha_cron_run row."""
+    from hansard_archive.models import HaCronRun
+    row = (HaCronRun.query.filter_by(service_name=service)
+           .order_by(HaCronRun.started_at.desc(), HaCronRun.id.desc()).first())
+    if row is None or not row.notes:
+        return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return json.loads(row.notes)
+    except ValueError:
         return {}
 
 
-def save_state(path: Path, state: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state), encoding="utf-8")
-    tmp.replace(path)
+def start_checkpoint(service: str, state: dict):
+    from extensions import db
+    from hansard_archive.models import HaCronRun
+    row = HaCronRun(service_name=service, started_at=datetime.utcnow(), days_window=0,
+                    status="running", notes=json.dumps(state))
+    db.session.add(row)
+    db.session.commit()
+    return row.id
+
+
+def save_checkpoint(run_id: int, state: dict, status: str = "running") -> None:
+    from extensions import db
+    from hansard_archive.models import HaCronRun
+    row = db.session.get(HaCronRun, run_id)
+    if row is None:
+        return
+    row.notes = json.dumps(state)
+    row.status = status
+    row.sessions_tagged = state.get("retagged", 0)
+    row.errors = state.get("failed", 0)
+    if status != "running":
+        row.finished_at = datetime.utcnow()
+    db.session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Backup
+# ---------------------------------------------------------------------------
+
+_THEME_TABLE = {"sessions": "ha_session_theme", "pqs": "ha_pq_theme"}
+
+
+def backup_table(kind: str, stamp: str | None = None) -> str:
+    """Copy the whole theme table to <table>_bak_<stamp> (CREATE TABLE AS SELECT). Returns its name."""
+    from sqlalchemy import text
+    from extensions import db
+    src = _THEME_TABLE[kind]
+    from sqlalchemy import inspect
+    base = f"{src}_bak_{stamp or datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    existing = set(inspect(db.engine).get_table_names())
+    name, n = base, 1
+    while name in existing:
+        n += 1
+        name = f"{base}_{n}"
+    db.session.execute(text(f"CREATE TABLE {name} AS SELECT * FROM {src}"))
+    n = db.session.execute(text(f"SELECT COUNT(*) FROM {name}")).scalar()
+    db.session.commit()
+    print(f"[retag] backup: copied {n:,} rows of {src} to {name}", flush=True)
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +269,8 @@ def tag_chunk(kind: str, ids: list[int], api_key: str, model: str, batch: int, f
               max_failures: int) -> list[tuple[int, str, object]]:
     """
     Tag a chunk without writing. Returns [(id, label, TagOutcome | None)].
-    Counts consecutive API failures in `failures['run']`; raises TooManyFailures.
+    Counts consecutive API failures in `failures['run']`; raises TooManyFailures
+    (also at once on a final API error).
     """
     from extensions import db
     from hansard_archive import tagger as tg
@@ -202,14 +292,17 @@ def tag_chunk(kind: str, ids: list[int], api_key: str, model: str, batch: int, f
                     failures["run"] += 1
                     failures["total"] += 1
                     print(f"[retag] session {sid}: API failure ({e})", flush=True)
-                    if failures["run"] >= max_failures:
+                    if e.final or failures["run"] >= max_failures:
                         raise TooManyFailures(str(e))
             out.append((sid, f"{s.date} {s.house} {s.debate_type} {(s.title or '')[:60]!r}", outcome))
             time.sleep(tg._INTER_REQUEST_DELAY)
         return out
 
     pqs = [p for p in (db.session.get(HaPQ, i) for i in ids) if p is not None]
-    outcomes = tg.tag_pq_inputs([tg.pq_input_from_db(p) for p in pqs], api_key, model, batch_size=batch)
+    try:
+        outcomes = tg.tag_pq_inputs([tg.pq_input_from_db(p) for p in pqs], api_key, model, batch_size=batch)
+    except tg.GeminiCallFailed as e:
+        raise TooManyFailures(str(e))
     for p, outcome in zip(pqs, outcomes):
         if outcome is None:
             failures["run"] += 1
@@ -229,7 +322,8 @@ def _print_before_after(kind: str, item_id: int, label: str, outcome) -> None:
     if outcome is None:
         print("     after : (API failure — unchanged)")
         return
-    print(f"     after : {outcome.policy_areas} | {outcome.topics}")
+    note = "" if outcome.ok else "   (no verified policy area: old tags kept)"
+    print(f"     after : {outcome.policy_areas} | {outcome.topics}{note}")
     dropped = [f"{k}:{v} ({why})" for k, v, why in outcome.dropped]
     if dropped:
         print(f"     dropped: {'; '.join(dropped[:6])}")
@@ -260,36 +354,48 @@ def run(kind: str, args, api_key: str) -> dict:
         db.session.rollback()
         return stats
 
-    state_path = _state_path(kind, args)
-    state = load_state(state_path)
+    service = checkpoint_service(kind, args)
+    state = load_checkpoint(service)
     done_upto = state.get("last_id", 0)
     todo = [i for i in ids if i > done_upto]
     stats["skipped_done"] = len(ids) - len(todo)
     if done_upto:
         print(f"[retag] resuming after id {done_upto} ({stats['skipped_done']:,} already done; "
-              f"state {state_path})", flush=True)
+              f"checkpoint ha_cron_run service_name={service})", flush=True)
+    if not todo:
+        return stats
+    if args.backup:
+        stats["backup_table"] = backup_table(kind)
+    run_id = start_checkpoint(service, {"last_id": done_upto, **stats})
 
     write = tg.write_session_tags if kind == "sessions" else tg.write_pq_tags
     shown = 0
-    for start in range(0, len(todo), _CHUNK):
-        chunk = todo[start:start + _CHUNK]
-        results = tag_chunk(kind, chunk, api_key, model, args.batch, failures, args.max_failures)
-        for item_id, label, outcome in results:
-            if shown < args.sample:
-                _print_before_after(kind, item_id, label, outcome)
-                shown += 1
-            if outcome is None:
-                stats["failed"] += 1
-            elif not outcome.ok:
-                stats["kept_old"] += 1
-            else:
-                write(item_id, outcome, replace=True)
-                stats["retagged"] += 1
-        db.session.commit()
-        save_state(state_path, {"last_id": chunk[-1], **stats})
-        print(f"[retag] {kind}: {stats['skipped_done'] + start + len(chunk):,}/{len(ids):,} — "
-              f"retagged={stats['retagged']} kept_old={stats['kept_old']} failed={stats['failed']}",
-              flush=True)
+    try:
+        for start in range(0, len(todo), _CHUNK):
+            chunk = todo[start:start + _CHUNK]
+            results = tag_chunk(kind, chunk, api_key, model, args.batch, failures, args.max_failures)
+            wait_outside_cron_windows(args)
+            for item_id, label, outcome in results:
+                if shown < args.sample:
+                    _print_before_after(kind, item_id, label, outcome)
+                    shown += 1
+                if outcome is None:
+                    stats["failed"] += 1
+                elif not outcome.ok:
+                    stats["kept_old"] += 1
+                else:
+                    write(item_id, outcome, replace=True)
+                    stats["retagged"] += 1
+            db.session.commit()
+            save_checkpoint(run_id, {"last_id": chunk[-1], **stats})
+            print(f"[retag] {kind}: {stats['skipped_done'] + start + len(chunk):,}/{len(ids):,} — "
+                  f"retagged={stats['retagged']} kept_old={stats['kept_old']} failed={stats['failed']}",
+                  flush=True)
+    except TooManyFailures:
+        db.session.rollback()
+        save_checkpoint(run_id, {**load_checkpoint(service), "stopped": "API failures"}, status="failed")
+        raise
+    save_checkpoint(run_id, {"last_id": todo[-1], **stats}, status="ok")
     return stats
 
 
@@ -307,10 +413,15 @@ def main(argv=None) -> int:
     ap.add_argument("--batch", type=int, default=5, help="Written Questions per API call")
     ap.add_argument("--sample", type=int, default=20, help="items shown before/after")
     ap.add_argument("--apply", action="store_true", help="write the new tags (default: dry run)")
+    ap.add_argument("--backup", action="store_true", help="snapshot the theme table(s) before --apply")
+    ap.add_argument("--no-backup", action="store_true", help="--apply without a snapshot (you made one)")
+    ap.add_argument("--ignore-cron-windows", action="store_true")
     ap.add_argument("--max-failures", type=int, default=5, help="stop after this many API failures in a row")
-    ap.add_argument("--state-dir", default=str(_STATE_DIR))
     args = ap.parse_args(argv)
 
+    if args.apply and args.backup == args.no_backup:
+        print("[retag] --apply needs exactly one of --backup or --no-backup")
+        return 2
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         print("[retag] GEMINI_API_KEY is not set")
@@ -324,7 +435,7 @@ def main(argv=None) -> int:
                 stats = run(kind, args, api_key)
                 print(f"[retag] {kind} done: {stats}", flush=True)
         except TooManyFailures as e:
-            print(f"[retag] STOPPED after {args.max_failures} consecutive API failures: {e}. "
+            print(f"[retag] STOPPED after API failures ({e}). "
                   "Progress is saved; run the same command again to resume.", flush=True)
             return 3
     return 0
