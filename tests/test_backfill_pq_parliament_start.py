@@ -2,9 +2,10 @@
 Tests for scripts/backfill_pq_parliament_start.py — mocked WQ API + in-memory SQLite.
 
 Covers: insert-only newest-first ingest with checkpoint, idempotent re-run,
-abort on would-update and identity mismatch (existing row untouched), failing
-individual fetch rolls the day back, 429 aborts, dry run writes nothing, capped
-tagging, refuses while the debates backfill runs.
+stored rows kept unchanged (even when the API differs), abort on identity
+mismatch, failing individual fetch rolls the day back, 429 aborts, dry run
+writes nothing, capped tagging, an untaggable PQ never blocks, resume ignores a
+run that died before saving, refuses while the debates backfill runs.
 
 Run: python -m pytest tests/test_backfill_pq_parliament_start.py -v
 """
@@ -21,6 +22,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
+import backfill_parliament_start as bps  # noqa: E402
 import backfill_pq_parliament_start as bpq  # noqa: E402
 from hansard_archive import pq_ingestor  # noqa: E402
 
@@ -118,6 +120,8 @@ def env(test_app, monkeypatch):
     monkeypatch.setattr(bpq.requests, "get", fake)
     monkeypatch.setattr(pq_ingestor.time, "sleep", lambda s: None)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    fake.gemini_up = True
+    monkeypatch.setattr(bps, "gemini_healthy", lambda api_key: fake.gemini_up)
     with test_app.app_context():
         _db.create_all()
         yield fake
@@ -125,25 +129,27 @@ def env(test_app, monkeypatch):
         _db.drop_all()
 
 
-@pytest.fixture
-def fake_tagger(monkeypatch):
-    """Stands in for tag_pq_all_untagged: tags the newest untagged PQs up to limit."""
+def _tagger(monkeypatch, bad=()):
+    """Stands in for tagger.tag_pq; PQs whose api_id is in `bad` cannot be tagged."""
     from extensions import db as _db
     from hansard_archive.models import HaPQ, HaPQTheme
     calls = []
 
-    def tag(limit=None, api_key=None, verbose=True):
-        calls.append(limit)
-        tagged_ids = _db.session.query(HaPQTheme.pq_id)
-        rows = (HaPQ.query.filter(~HaPQ.id.in_(tagged_ids))
-                .order_by(HaPQ.tabled_date.desc()).limit(limit).all())
-        for pq in rows:
-            _db.session.add(HaPQTheme(pq_id=pq.id, theme="Education", theme_type="policy_area"))
+    def tag(pq_id, api_key=None):
+        calls.append(pq_id)
+        if _db.session.get(HaPQ, pq_id).api_id in bad:
+            return 0
+        _db.session.add(HaPQTheme(pq_id=pq_id, theme="Education", theme_type="policy_area"))
         _db.session.commit()
-        return {"tagged": len(rows)}
+        return 1
 
-    monkeypatch.setattr(bpq, "tag_pq_all_untagged", tag)
+    monkeypatch.setattr(bpq, "tag_pq", tag)
     return calls
+
+
+@pytest.fixture
+def fake_tagger(monkeypatch):
+    return _tagger(monkeypatch)
 
 
 def _run(*argv, now=SATURDAY_NOON):
@@ -201,16 +207,16 @@ def test_resume_after_max_days(env):
     assert len(_rows()) == 4
 
 
-def test_would_update_aborts_and_leaves_row_untouched(env):
+def test_stored_row_is_kept_even_when_the_api_differs(env, capsys):
     from extensions import db as _db
     from hansard_archive.models import HaPQ
     pid = _existing(answer_text="<p>An older answer.</p>")
-    assert _run("--no-tag") == bpq.EXIT_CONFLICT
-    assert _db.session.get(HaPQ, pid).answer_text == "<p>An older answer.</p>"
-    # The page was rolled back: the other 3 Dec question was not kept either.
-    assert HaPQ.query.count() == 1
-    _, state = _checkpoint()
-    assert state["frontier"] is None and "would change" in state["stop_reason"]
+    before = _db.session.get(HaPQ, pid).updated_at
+    assert _run("--no-tag") == bpq.EXIT_OK
+    row = _db.session.get(HaPQ, pid)
+    assert row.answer_text == "<p>An older answer.</p>" and row.updated_at == before
+    assert HaPQ.query.count() == 4
+    assert "0 same, 1 differ from the API" in capsys.readouterr().out
 
 
 def test_identity_mismatch_aborts(env):
@@ -219,6 +225,10 @@ def test_identity_mismatch_aborts(env):
     pid = _existing(uin="99999")                  # same api_id, different uin
     assert _run("--no-tag") == bpq.EXIT_CONFLICT
     assert _db.session.get(HaPQ, pid).uin == "99999"
+    # The page was rolled back: the other 3 Dec question was not kept either.
+    assert HaPQ.query.count() == 1
+    _, state = _checkpoint()
+    assert state["frontier"] is None and "identity mismatch" in state["stop_reason"]
 
 
 def test_individual_fetch_failure_rolls_day_back(env):
@@ -245,15 +255,54 @@ def test_rate_limit_aborts(env):
     assert sum(1 for u in env.calls if u.endswith("/5003")) == 1
 
 
-def test_dry_run_writes_nothing_and_flags_conflicts(env, capsys):
+def test_dry_run_writes_nothing(env, capsys):
     from hansard_archive.models import HaCronRun, HaPQ
     _existing(heading="An old heading")
-    assert _run("--dry-run") == bpq.EXIT_CONFLICT
+    assert _run("--dry-run") == bpq.EXIT_OK
     assert HaPQ.query.count() == 1 and HaCronRun.query.count() == 0
     out = capsys.readouterr().out
     assert "would insert: 3" in out
-    assert "would UPDATE / identity mismatch: 1 / 0" in out
+    assert "0 same, 1 differ from the API" in out
     assert not any(u != BULK for u in env.calls)    # bulk records only
+
+
+def test_dry_run_flags_identity_mismatch(env):
+    _existing(uin="99999")
+    assert _run("--dry-run") == bpq.EXIT_CONFLICT
+
+
+def test_untaggable_pq_never_blocks(env, monkeypatch):
+    calls = _tagger(monkeypatch, bad={5003})
+    assert _run() == bpq.EXIT_OK
+    from hansard_archive.models import HaPQ, HaPQTheme
+    assert HaPQTheme.query.count() == 3
+    bad_id = HaPQ.query.filter_by(api_id=5003).one().id
+    for _ in range(3):
+        assert _run() == bpq.EXIT_OK
+    assert calls.count(bad_id) == 2                    # then skipped for good
+    _, state = _checkpoint()
+    assert state["tag_failures"] == {str(bad_id): 2}
+
+
+def test_gemini_outage_stops_tagging(env, monkeypatch):
+    monkeypatch.setattr(bps, "MAX_CONSECUTIVE_TAG_FAILURES", 2)
+    _tagger(monkeypatch, bad={5001, 5002, 5003, 5004})
+    env.gemini_up = False
+    assert _run() == bpq.EXIT_TAG_FAILED
+    _, state = _checkpoint()
+    assert state["tag_failures"] == {}
+
+
+def test_resume_ignores_a_run_that_died_before_saving(env):
+    from extensions import db as _db
+    from hansard_archive.models import HaCronRun
+    _run("--no-tag", "--max-days", "1")
+    _db.session.add(HaCronRun(service_name=bpq.SERVICE_NAME, started_at=datetime(2026, 10, 24, 12, 30),
+                              status="failed", notes=None))
+    _db.session.commit()
+    n = len(env.calls)
+    assert _run("--no-tag") == bpq.EXIT_OK
+    assert sum(1 for u in env.calls[n:] if u != BULK) == 2   # only 2 Dec's two questions
 
 
 def test_tagging_is_capped(env, fake_tagger):

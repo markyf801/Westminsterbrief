@@ -135,6 +135,8 @@ def env(test_app, monkeypatch):
     monkeypatch.setattr(ingestion.requests, "get", fake)
     monkeypatch.setattr(ingestion.time, "sleep", lambda s: None)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    fake.gemini_up = True                    # what the tagging health probe reports
+    monkeypatch.setattr(bps, "gemini_healthy", lambda api_key: fake.gemini_up)
     with test_app.app_context():
         _db.create_all()
         yield fake
@@ -271,10 +273,74 @@ def test_tagging_inline_with_cap_and_catch_up(env, fake_tagger):
     assert _counts() == (7, 14, 7)
 
 
-def test_repeated_tag_failures_abort(env, monkeypatch):
+def test_repeated_tag_failures_abort_only_when_gemini_is_down(env, monkeypatch):
     monkeypatch.setattr(bps, "tag_session", lambda sid, api_key=None: 0)
     monkeypatch.setattr(bps, "MAX_CONSECUTIVE_TAG_FAILURES", 2)
+    env.gemini_up = False
     assert _run() == bps.EXIT_TAG_FAILED
+    _, state = _checkpoint()
+    assert state["tag_failures"] == {}           # an API outage is not held against the items
+
+
+def _failing_tagger(monkeypatch, bad: set[int]):
+    from extensions import db as _db
+    from hansard_archive.models import HansardSessionTheme
+    calls = []
+
+    def tag(session_id, api_key=None):
+        calls.append(session_id)
+        if session_id in bad:
+            return 0
+        _db.session.add(HansardSessionTheme(session_id=session_id, theme="Education",
+                                            theme_type="policy_area"))
+        _db.session.commit()
+        return 1
+
+    monkeypatch.setattr(bps, "tag_session", tag)
+    return calls
+
+
+def test_untaggable_session_never_blocks_the_backfill(env, monkeypatch):
+    calls = _failing_tagger(monkeypatch, bad={1})     # the first session stored
+    assert _run() == bps.EXIT_OK
+    assert _counts() == (7, 14, 6)
+    _, state = _checkpoint()
+    assert state["tag_failures"] == {"1": 1}
+    assert calls.count(1) == 1                         # not retried within the run
+    # Later runs: one more counted attempt, then skipped for good — never exit 3.
+    assert _run("--tag-only") == bps.EXIT_OK
+    assert _run("--tag-only") == bps.EXIT_OK
+    assert calls.count(1) == 2
+    _, state = _checkpoint()
+    assert state["tag_failures"] == {"1": 2}
+
+
+def test_many_untaggable_in_a_row_continue_when_gemini_is_up(env, monkeypatch):
+    monkeypatch.setattr(bps, "MAX_CONSECUTIVE_TAG_FAILURES", 2)
+    _failing_tagger(monkeypatch, bad={1, 2, 3})
+    assert _run() == bps.EXIT_OK
+    assert _counts()[2] == 4
+    _, state = _checkpoint()
+    assert set(state["tag_failures"]) == {"1", "2", "3"}
+
+
+def test_too_many_skipped_items_stop_the_run(env, monkeypatch):
+    monkeypatch.setattr(bps, "MAX_SKIPPED_ITEMS", 1)
+    monkeypatch.setattr(bps, "TAG_MAX_ATTEMPTS", 1)
+    _failing_tagger(monkeypatch, bad={1, 2})
+    assert _run() == bps.EXIT_TAG_FAILED
+
+
+def test_resume_ignores_a_run_that_died_before_saving(env):
+    from extensions import db as _db
+    from hansard_archive.models import HaCronRun
+    _run("--no-tag", "--max-days", "1")
+    _db.session.add(HaCronRun(service_name=bps.SERVICE_NAME, started_at=datetime(2026, 10, 24, 12, 30),
+                              status="failed", notes=None))
+    _db.session.commit()
+    before = env.fetches()
+    assert _run("--no-tag") == bps.EXIT_OK
+    assert env.fetches() - before == 4                 # only 2 Dec re-walked, not 3 Dec
 
 
 def test_missing_gemini_key_refuses_before_ingest(env, monkeypatch):

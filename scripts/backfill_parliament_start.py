@@ -28,6 +28,10 @@ How it works
   ingest, and any untagged sessions left in the range are tagged first. The
   per-run cap ``--max-tag`` stops the run cleanly when reached, so a large
   untagged backlog never builds up for the hourly cron's unlimited tagger.
+  A session that cannot be tagged is not retried within a run, and after
+  TAG_MAX_ATTEMPTS counted failures (kept in the checkpoint) it is skipped for
+  good, so it never blocks the backfill. Failures only stop the run when a
+  Gemini health check confirms the API itself is failing (see TagBudget).
 - Cron windows: by default the run will not start a (day, house) or a tagging
   call inside, or within 20 minutes of, a production cron window (see
   _CRON_WINDOWS) and stops cleanly instead.
@@ -37,8 +41,8 @@ How it works
 
 Exit codes: 0 finished or stopped cleanly (cap / time / cron window) ·
 1 a day failed after retries, or a database error · 2 API refused (401/403/429)
-or GEMINI_API_KEY missing · 3 repeated tagging failures · 4 another backfill run
-looks active.
+or GEMINI_API_KEY missing · 3 tagging stopped (Gemini down, or too many
+untaggable sessions) · 4 another backfill run looks active.
 
 Usage
 -----
@@ -50,6 +54,7 @@ Usage
 
 Railway one-off: build from Dockerfile.cron, restart policy Never,
 SKIP_MIGRATIONS=1, DATABASE_URL (Variable Reference), GEMINI_API_KEY.
+Run order, checks and estimates: docs/ops/backfill-parliament-start.md.
 """
 
 from __future__ import annotations
@@ -79,6 +84,7 @@ from hansard_archive.models import (  # noqa: E402
     HansardSession,
     HansardSessionTheme,
 )
+from hansard_archive import tagger  # noqa: E402
 from hansard_archive.tagger import tag_session  # noqa: E402
 
 PARLIAMENT_FIRST_SITTING = date(2024, 7, 9)
@@ -95,6 +101,8 @@ DAY_RETRY_PAUSE = 60                 # seconds
 DAY_PAUSE = 2                        # seconds between days (polite pacing)
 TAG_PAUSE = 0.4                      # seconds between Gemini calls
 MAX_CONSECUTIVE_TAG_FAILURES = 5
+TAG_MAX_ATTEMPTS = 2                 # counted failures before the backfill skips an item
+MAX_SKIPPED_ITEMS = 200
 HEARTBEAT_STALE_MINUTES = 20
 HEARTBEAT_EVERY_SECONDS = 300
 CRON_LOOKAHEAD_MINUTES = 20
@@ -392,7 +400,8 @@ def _reset_db() -> None:
 # Tagging
 # ---------------------------------------------------------------------------
 
-def _untagged_ids(since: date, until: date, limit: int, house: str | None = None) -> list[int]:
+def _untagged_ids(since: date, until: date, limit: int, house: str | None = None,
+                  exclude=()) -> list[int]:
     tagged = db.session.query(HansardSessionTheme.session_id)
     has_text = db.session.query(HansardContribution.session_id)
     q = (db.session.query(HansardSession.id)
@@ -403,51 +412,124 @@ def _untagged_ids(since: date, until: date, limit: int, house: str | None = None
                  HansardSession.id.in_(has_text)))
     if house:
         q = q.filter(HansardSession.house == house)
+    if exclude:
+        q = q.filter(~HansardSession.id.in_(list(exclude)))
     return [r[0] for r in q.order_by(HansardSession.date.desc(), HansardSession.id).limit(limit).all()]
 
 
+_PROBE_FIELDS = dict(title="School funding", debate_type="debate", date="2025-01-15", house="Commons",
+                     text_excerpt="The Minister answered questions on school funding and the "
+                                  "recruitment of teachers in rural areas.")
+
+
+def gemini_healthy(api_key: str) -> bool:
+    """One known-good Gemini call: tells 'the API is failing' apart from
+    'these particular items cannot be tagged'."""
+    try:
+        prompt = tagger._PROMPT_TEMPLATE.format(**_PROBE_FIELDS)
+    except (AttributeError, KeyError, IndexError):
+        prompt = "Tag this UK parliamentary debate: " + _PROBE_FIELDS["text_excerpt"]
+    try:
+        return tagger._gemini_tag(api_key, prompt) is not None
+    except Exception:
+        return False
+
+
 class TagBudget:
-    def __init__(self, cap: int, api_key: str, sleep, window_check=lambda: None) -> None:
+    """
+    Tags items one at a time with a per-run cap, and never lets one item that
+    cannot be tagged block the backfill:
+
+    - an item that fails is not offered again in the same run (``excluded``);
+    - a failure counts against the item (``failures``, saved in the checkpoint)
+      only when Gemini is shown to be working — a later item succeeds, or a
+      health probe passes. After TAG_MAX_ATTEMPTS counted failures the backfill
+      skips the item for good;
+    - only a run of failures that the probe confirms as a Gemini/API problem
+      stops the run (RuntimeError); those items are not counted against;
+    - more than MAX_SKIPPED_ITEMS permanently skipped items stops the run so
+      someone looks at them.
+    """
+
+    def __init__(self, cap: int, api_key: str, sleep, window_check=lambda: None,
+                 tag_fn=None, probe=None, failures: dict | None = None, label="session") -> None:
         self.cap = cap
         self.used = 0
         self.api_key = api_key
         self.sleep = sleep
         self.window_check = window_check
-        self.consecutive_failures = 0
+        self.tag_fn = tag_fn or (lambda item_id: tag_session(item_id, api_key=self.api_key))
+        self.probe = probe or (lambda: gemini_healthy(self.api_key))
+        self.failures: dict[str, int] = dict(failures or {})
+        self.label = label
+        self.failed_this_run: set[int] = set()
+        self.streak: list[int] = []
         self.succeeded = 0
 
     @property
     def remaining(self) -> int:
         return max(0, self.cap - self.used)
 
-    def tag(self, session_ids: list[int]) -> int:
-        """Tag sessions until the budget runs out. Raises after repeated failures,
-        or WindowStop when a cron window is due."""
+    @property
+    def skipped(self) -> set[int]:
+        return {int(k) for k, n in self.failures.items() if n >= TAG_MAX_ATTEMPTS}
+
+    @property
+    def excluded(self) -> set[int]:
+        return self.skipped | self.failed_this_run
+
+    def _count_streak(self) -> None:
+        for item_id in self.streak:
+            key = str(item_id)
+            self.failures[key] = self.failures.get(key, 0) + 1
+        self.streak = []
+        if len(self.skipped) > MAX_SKIPPED_ITEMS:
+            raise RuntimeError(f"{len(self.skipped)} {self.label}s cannot be tagged "
+                               f"(limit {MAX_SKIPPED_ITEMS}) — look at them before continuing")
+
+    def settle(self) -> None:
+        """End of run: decide whether trailing failures were the items (probe passes)."""
+        if self.streak and self.probe():
+            try:
+                self._count_streak()
+            except RuntimeError as exc:
+                print(f"[backfill]   {exc}", flush=True)
+        self.streak = []
+
+    def tag(self, ids: list[int]) -> int:
+        """Tag items until the budget runs out. Raises RuntimeError on a confirmed
+        API failure, WindowStop when a cron window is due."""
         tagged = 0
-        for sid in session_ids:
+        for item_id in ids:
             if self.remaining <= 0:
                 break
+            if item_id in self.excluded:
+                continue
             window = self.window_check()
             if window:
                 raise WindowStop(window)
             self.sleep(TAG_PAUSE)
             self.used += 1
             try:
-                count = tag_session(sid, api_key=self.api_key)
+                count = self.tag_fn(item_id)
             except Exception as exc:
                 _reset_db()
-                print(f"[backfill]   tag error session {sid}: {exc}", flush=True)
+                print(f"[backfill]   tag error {self.label} {item_id}: {exc}", flush=True)
                 count = 0
             if count > 0:
                 tagged += 1
                 self.succeeded += 1
-                self.consecutive_failures = 0
-            else:
-                self.consecutive_failures += 1
-                print(f"[backfill]   tag FAIL session {sid}", flush=True)
-                if self.consecutive_failures >= MAX_CONSECUTIVE_TAG_FAILURES:
-                    raise RuntimeError(f"{self.consecutive_failures} tagging failures in a row "
-                                       "— check GEMINI_API_KEY / quota")
+                self._count_streak()            # Gemini works: earlier failures were the items
+                continue
+            print(f"[backfill]   tag FAIL {self.label} {item_id}", flush=True)
+            self.failed_this_run.add(item_id)
+            self.streak.append(item_id)
+            if len(self.streak) >= MAX_CONSECUTIVE_TAG_FAILURES:
+                if self.probe():
+                    self._count_streak()
+                else:
+                    raise RuntimeError(f"{len(self.streak)} tagging failures in a row and the "
+                                       "Gemini health check failed — check GEMINI_API_KEY / quota")
         return tagged
 
 
@@ -455,16 +537,38 @@ class TagBudget:
 # Checkpoint (ha_cron_run row, notes = JSON)
 # ---------------------------------------------------------------------------
 
-def _load_checkpoint() -> tuple[HaCronRun | None, dict]:
-    rec = (HaCronRun.query.filter_by(service_name=SERVICE_NAME)
-           .order_by(HaCronRun.started_at.desc(), HaCronRun.id.desc()).first())
-    if not rec or not rec.notes:
-        return rec, {}
-    try:
-        state = json.loads(rec.notes)
-    except ValueError:
-        return rec, {}
-    return rec, state if isinstance(state, dict) else {}
+def _has_frontier(state: dict) -> bool:
+    f = state.get("frontier")
+    return any(f.values()) if isinstance(f, dict) else bool(f)
+
+
+def load_state(service_name: str = SERVICE_NAME) -> tuple[HaCronRun | None, dict, dict]:
+    """
+    (latest run record, state to resume from, latest saved state).
+
+    The resume state is the newest record that saved a frontier — a run that
+    died before its first save (notes NULL) or never finished a day must not
+    send the next run back to --until. The latest saved state carries the
+    tagging-failure counts.
+    """
+    recs = (HaCronRun.query.filter_by(service_name=service_name)
+            .order_by(HaCronRun.started_at.desc(), HaCronRun.id.desc()).limit(200).all())
+    latest = recs[0] if recs else None
+    resume: dict = {}
+    newest: dict = {}
+    for rec in recs:
+        try:
+            state = json.loads(rec.notes) if rec.notes else None
+        except ValueError:
+            state = None
+        if not isinstance(state, dict):
+            continue
+        if not newest:
+            newest = state
+        if _has_frontier(state):
+            resume = state
+            break
+    return latest, resume, newest
 
 
 def run_active(service_name: str, now: datetime) -> datetime | None:
@@ -584,33 +688,8 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
     def window_check() -> str | None:
         return None if args.ignore_cron_windows else blocked_window(now())
 
-    budget = TagBudget(args.max_tag, api_key, sleep, window_check)
-
-    # --- tag-only mode ------------------------------------------------------
-    if args.tag_only:
-        if args.dry_run:
-            left = len(_untagged_ids(args.since, args.until, 1_000_000))
-            print(f"[backfill] === END TAG ONLY DRY RUN === untagged eligible={left} "
-                  f"(a run would tag up to {min(left, args.max_tag)})", flush=True)
-            return EXIT_OK
-        code = EXIT_OK
-        try:
-            ids = _untagged_ids(args.since, args.until, args.max_tag)
-            print(f"[backfill] {len(ids)} untagged eligible session(s) selected", flush=True)
-            budget.tag(ids)
-        except WindowStop as exc:
-            print(f"[backfill] STOP: cron window: {exc} — re-run later", flush=True)
-        except RuntimeError as exc:
-            print(f"[backfill] STOP: {exc}", flush=True)
-            code = EXIT_TAG_FAILED
-        stats.tagged = budget.succeeded
-        left = len(_untagged_ids(args.since, args.until, 1_000_000))
-        print(f"[backfill] === END TAG ONLY === exit={code} tagged={stats.tagged} "
-              f"still_untagged={left}", flush=True)
-        return code
-
-    # --- resume -------------------------------------------------------------
-    prev, state = _load_checkpoint()
+    # --- busy / resume --------------------------------------------------------
+    prev, resume_state, newest_state = load_state()
     for service in (SERVICE_NAME, PQ_SERVICE_NAME):
         beat = None if args.dry_run else run_active(service, now())
         if beat:
@@ -624,34 +703,83 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
         print(f"[backfill] previous run id={prev.id} never finished — marked failed (interrupted)",
               flush=True)
 
+    budget = TagBudget(args.max_tag, api_key, sleep, window_check,
+                       failures=newest_state.get("tag_failures") or {})
+    if budget.skipped:
+        print(f"[backfill] {len(budget.skipped)} session(s) skipped by tagging after "
+              f"{TAG_MAX_ATTEMPTS} failures (ids in the checkpoint)", flush=True)
+
     frontier: dict[str, date | None] = {h: None for h in houses}
-    if not args.no_resume and state.get("until") == args.until.isoformat():
+    same_range = resume_state.get("until") == args.until.isoformat()
+    if not args.no_resume and same_range:
         for h in houses:
-            v = (state.get("frontier") or {}).get(h)
+            v = (resume_state.get("frontier") or {}).get(h)
             frontier[h] = date.fromisoformat(v) if v else None
-        print(f"[backfill] resuming: frontier {state.get('frontier')}", flush=True)
-    elif state and not args.no_resume:
-        print(f"[backfill] saved checkpoint is for until={state.get('until')}, not {args.until} — "
-              "starting fresh", flush=True)
+        print(f"[backfill] resuming: frontier {resume_state.get('frontier')}", flush=True)
+    elif resume_state and not args.no_resume:
+        print(f"[backfill] saved checkpoint is for until={resume_state.get('until')}, not "
+              f"{args.until} — starting fresh", flush=True)
 
     def next_day(h: str) -> date:
         return (frontier[h] - timedelta(days=1)) if frontier[h] else args.until
 
+    def frontier_json() -> dict:
+        return {h: (frontier[h].isoformat() if frontier[h] else None) for h in houses}
+
     run_rec: HaCronRun | None = None
-    state = {"since": args.since.isoformat(), "until": args.until.isoformat(),
-             "frontier": {h: (frontier[h].isoformat() if frontier[h] else None) for h in houses}}
+    if args.tag_only and same_range:
+        state = dict(resume_state)               # carry the frontier through a tag-only run
+    else:
+        state = {"since": args.since.isoformat(), "until": args.until.isoformat(),
+                 "frontier": frontier_json()}
     if not args.dry_run:
         run_rec = HaCronRun(service_name=SERVICE_NAME, started_at=now(), days_window=0,
                             status="running")
         db.session.add(run_rec)
         db.session.commit()
+        state["tag_failures"] = budget.failures
+        _save_checkpoint(run_rec, state, stats)     # first save at once: resumable from here
+
+    # --- tag-only mode ------------------------------------------------------
+    if args.tag_only:
+        if args.dry_run:
+            left = len(_untagged_ids(args.since, args.until, 1_000_000, exclude=budget.excluded))
+            print(f"[backfill] === END TAG ONLY DRY RUN === untagged eligible={left} "
+                  f"(a run would tag up to {min(left, args.max_tag)})", flush=True)
+            return EXIT_OK
+        code, reason = EXIT_OK, "tag-only finished"
+        try:
+            ids = _untagged_ids(args.since, args.until, args.max_tag, exclude=budget.excluded)
+            print(f"[backfill] {len(ids)} untagged eligible session(s) selected", flush=True)
+            budget.tag(ids)
+        except WindowStop as exc:
+            reason = f"cron window: {exc} — re-run later"
+        except RuntimeError as exc:
+            code, reason = EXIT_TAG_FAILED, str(exc)
+        if code == EXIT_OK:
+            budget.settle()
+        stats.tagged = budget.succeeded
+        state["tag_failures"] = budget.failures
+        state["stop_reason"] = reason
+        try:
+            _save_checkpoint(run_rec, state, stats, status="ok" if code == EXIT_OK else "failed")
+        except Exception as exc:
+            print(f"[backfill] could not save final checkpoint: {exc}", flush=True)
+            code = code or EXIT_FAILED
+        left = len(_untagged_ids(args.since, args.until, 1_000_000, exclude=budget.excluded))
+        print(f"[backfill] === END TAG ONLY === exit={code} reason: {reason} tagged={stats.tagged} "
+              f"still_untagged={left} skipped={len(budget.skipped)}", flush=True)
+        return code
 
     def finish(code: int, reason: str) -> int:
         stats.stop_reason = reason
         stats.tagged = budget.succeeded
-        stats.frontier = {h: (frontier[h].isoformat() if frontier[h] else None) for h in houses}
+        stats.frontier = frontier_json()
+        if code != EXIT_TAG_FAILED:
+            budget.settle()
         if run_rec is not None:
             state["frontier"] = stats.frontier
+            state["tag_failures"] = budget.failures
             state["stop_reason"] = reason
             try:
                 _save_checkpoint(run_rec, state, stats, status="ok" if code == EXIT_OK else "failed")
@@ -669,6 +797,7 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
         print(f"[backfill]   contributions:           {stats.contributions}", flush=True)
         print(f"[backfill]   speech text (MB):        {stats.chars / 1_000_000:.1f}", flush=True)
         print(f"[backfill]   tagged:                  {stats.tagged}", flush=True)
+        print(f"[backfill]   tagging skipped (bad):   {len(budget.skipped)}", flush=True)
         print(f"[backfill]   frontier:                {stats.frontier}", flush=True)
         if resume_at >= args.since:
             print(f"[backfill]   next run starts at:      {resume_at}", flush=True)
@@ -680,7 +809,8 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
     last_beat = [time.monotonic()]
 
     def save_progress() -> None:
-        state["frontier"] = {h: (frontier[h].isoformat() if frontier[h] else None) for h in houses}
+        state["frontier"] = frontier_json()
+        state["tag_failures"] = budget.failures
         stats.tagged = budget.succeeded
         _save_checkpoint(run_rec, state, stats)
         last_beat[0] = time.monotonic()
@@ -696,7 +826,8 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
     # --- catch-up tagging for days already done --------------------------------
     if tagging:
         try:
-            leftover = _untagged_ids(args.since, args.until, budget.remaining)
+            leftover = _untagged_ids(args.since, args.until, budget.remaining,
+                                     exclude=budget.excluded)
             if leftover:
                 print(f"[backfill] tagging {len(leftover)} untagged session(s) left from earlier runs",
                       flush=True)
@@ -743,7 +874,8 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
             tagged_now = 0
             if tagging and res.sitting:
                 try:
-                    tagged_now = budget.tag(_untagged_ids(day, day, budget.remaining, house=h))
+                    tagged_now = budget.tag(_untagged_ids(day, day, budget.remaining, house=h,
+                                                          exclude=budget.excluded))
                 except WindowStop as exc:
                     return finish(EXIT_OK, f"cron window: {exc} — re-run later")
                 except RuntimeError as exc:
