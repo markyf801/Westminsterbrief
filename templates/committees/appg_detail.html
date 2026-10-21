@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}{{ a.short_name }} APPG — officers and secretariat — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ a.title }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": {{ a.title|tojson }},
+  "alternateName": {{ (a.short_name ~ ' APPG')|tojson }},
+  "description": {{ (a.purpose or meta_desc)|tojson }},
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  {% if a.source_url %}"isBasedOn": "{{ a.source_url }}",{% endif %}
+  {% if a.website %}"sameAs": {{ a.website|tojson }},{% endif %}
+  "member": [
+    {% for o in officers %}{"@type": "OrganizationRole", "roleName": {{ o.role|tojson }}, "member": {"@type": "Person", "name": {{ o.name|tojson }}{% if o.party %}, "affiliation": {"@type": "Organization", "name": {{ o.party|tojson }}}{% endif %}}}{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.ap-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.ap-meta-text { font-size: 13px; color: #5a6878; }
+.ap-official { font-size: 13px; color: #4a7fa5; text-decoration: none; font-weight: 500; }
+.ap-official:hover { text-decoration: underline; }
+.ap-box { background: #fff; border: 1px solid #dde3ed; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+.ap-box h2 { font-size: 15px; font-weight: 700; color: #1a2332; margin: 0 0 10px; }
+.ap-text { font-size: 14px; line-height: 1.6; color: #2d3748; margin: 0 0 8px; }
+.ap-table-wrap { overflow-x: auto; }
+.ap-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ap-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #8a96a4; padding: 6px 8px; border-bottom: 2px solid #dde3ed; }
+.ap-table td { padding: 7px 8px; border-bottom: 1px solid #eef1f5; vertical-align: top; color: #2d3748; }
+.ap-table a { color: #1a2332; text-decoration: none; font-weight: 600; }
+.ap-table a:hover { text-decoration: underline; }
+.ap-chair { font-weight: 700; color: #1a2332; }
+.ap-note { font-size: 12px; color: #8a96a4; margin: 10px 0 0; }
+.ap-related { display: flex; flex-wrap: wrap; gap: 6px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <a href="/appgs">APPGs</a><span class="ac-breadcrumb-sep">›</span>
+        <span>{{ a.short_name }}</span>
+    </nav>
+
+    <div class="ac-header">
+        <span class="archive-tag archive-tag-topic ac-tag-large">All-Party Parliamentary Group{% if a.category %} · {{ a.category }}{% endif %}</span>
+        <h1 class="ac-title">{{ a.title }}</h1>
+        <div class="ap-meta">
+            {% if not a.is_current %}<span class="archive-dtype-badge archive-dtype-other">No longer on the register</span>{% endif %}
+            {% if edition %}<span class="ap-meta-text">Register as at {{ edition }} ·</span>{% endif %}
+            {% if a.source_url %}<a class="ap-official" href="{{ a.source_url }}" target="_blank" rel="noopener">View register entry on parliament.uk ↗</a>{% endif %}
+        </div>
+    </div>
+
+    {% if a.purpose %}
+    <section class="ap-box">
+        <h2>Purpose</h2>
+        <p class="ap-text">{{ a.purpose }}</p>
+    </section>
+    {% endif %}
+
+    <section class="ap-box">
+        <h2>Officers ({{ officers|length }})</h2>
+        {% if officers %}
+        <div class="ap-table-wrap">
+        <table class="ap-table">
+            <thead><tr><th>Role</th><th>Name</th><th>Party</th></tr></thead>
+            <tbody>
+            {% for o in officers %}
+            <tr>
+                <td class="{% if o.is_chair %}ap-chair{% endif %}">{{ o.role }}</td>
+                <td>{% if o.url %}<a href="{{ o.url }}"{% if o.url.startswith('http') %} target="_blank" rel="noopener"{% endif %}>{{ o.name }}</a>{% else %}{{ o.name }}{% endif %}</td>
+                <td>{{ o.party }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <p class="ap-note">Names as published in the register. Linked names were matched to a current MP or peer automatically.</p>
+        {% else %}
+        <p class="ap-note" style="margin:0;">No officers listed.</p>
+        {% endif %}
+    </section>
+
+    <section class="ap-box">
+        <h2>Secretariat and contact</h2>
+        {% if a.secretariat %}<p class="ap-text"><strong>Secretariat:</strong> {{ a.secretariat }}</p>{% else %}<p class="ap-text">No secretariat registered.</p>{% endif %}
+        {% if a.registered_contact_name %}<p class="ap-text"><strong>Registered contact:</strong> {{ a.registered_contact_name }}</p>{% endif %}
+        {% if a.website %}<p class="ap-text"><strong>Group’s website:</strong> <a href="{{ a.website }}" target="_blank" rel="noopener nofollow">{{ a.website }}</a></p>{% endif %}
+        {% if a.agm_date %}<p class="ap-text"><strong>Inaugural or most recent AGM:</strong> {{ a.agm_date.day }} {{ a.agm_date.strftime('%B %Y') }}</p>{% endif %}
+        <p class="ap-note">Contact details, including the group’s public enquiry point, are in the <a href="{{ a.source_url or register_url }}" target="_blank" rel="noopener">official register entry</a>.</p>
+    </section>
+
+    {% if benefits %}
+    <section class="ap-box">
+        <h2>Registered benefits ({{ benefits|length }})</h2>
+        <div class="ap-table-wrap">
+        <table class="ap-table">
+            <thead><tr><th>Source</th><th>Description</th><th>Value (£)</th><th>Received</th><th>Registered</th></tr></thead>
+            <tbody>
+            {% for b in benefits %}
+            <tr>
+                <td>{{ b.source }}<div class="ap-note" style="margin:0;">{{ b.kind }}</div></td>
+                <td>{{ b.description }}</td>
+                <td style="white-space:nowrap;">{{ b.value }}</td>
+                <td style="white-space:nowrap;">{{ b.received }}</td>
+                <td style="white-space:nowrap;">{{ b.registered }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <p class="ap-note">As published in the register, where values are shown in bands of £1,500.</p>
+    </section>
+    {% endif %}
+
+    {% if topics %}
+    <section class="ap-box">
+        <h2>Related on Westminster Brief</h2>
+        <div class="ap-related">
+            {% for t in topics %}<a href="/brief/{{ t.slug }}" class="archive-tag archive-tag-policy">{{ t.label }}</a>{% endfor %}
+        </div>
+        <p class="ap-note">Matched on keywords — check relevance before use. See also <a href="/committees?topic={{ topics[0].slug }}">committees</a> and <a href="/appgs?topic={{ topics[0].slug }}">other APPGs</a> on {{ topics[0].label|lower }}.</p>
+    </section>
+    {% endif %}
+
+    <p><a href="/appgs" class="ap-official">‹ All APPGs</a></p>
+
+    <p class="ah-source-note">
+        From the <a href="{{ register_url }}" target="_blank" rel="noopener">Register of All-Party Parliamentary Groups</a>,
+        published by the House of Commons and licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        APPGs are not official committees of Parliament.
+    </p>
+
+</div>
+</div>
+{% endblock %}
