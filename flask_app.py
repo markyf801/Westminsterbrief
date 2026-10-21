@@ -1356,12 +1356,33 @@ _BLOCKED_UA_SUBSTRINGS = ['aionbot'] + [
 ]
 
 
+# Same operator came back from new Oracle Cloud addresses (141.148.133.111,
+# 161.153.75.208). Cloudflare blocks the whole network (AS31898); this covers
+# requests sent straight to the Railway address, which skip Cloudflare.
+# Override with BLOCKED_IP_NETWORKS (comma-separated CIDRs).
+_BLOCKED_IP_NETWORKS = [
+    ipaddress.ip_network(s.strip(), strict=False)
+    for s in os.environ.get('BLOCKED_IP_NETWORKS', '141.148.0.0/16,161.153.0.0/16').split(',')
+    if s.strip()
+]
+
+
+def _ip_is_blocked(value):
+    try:
+        ip = ipaddress.ip_address((value or '').strip())
+    except ValueError:
+        return False
+    return any(ip in net for net in _BLOCKED_IP_NETWORKS)
+
+
 @app.before_request
 def _block_abusive_crawlers():
     if request.path in ('/robots.txt', '/ping'):
         return None
     ua = (request.headers.get('User-Agent') or '').lower()
     if any(s in ua for s in _BLOCKED_UA_SUBSTRINGS):
+        return ('Forbidden', 403)
+    if _ip_is_blocked(request.remote_addr) or _ip_is_blocked(request.headers.get('CF-Connecting-IP')):
         return ('Forbidden', 403)
     return None
 
