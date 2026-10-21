@@ -129,15 +129,15 @@ counted in `errors`, producer NOT stamped (re-attempted next run). Respects
 Decision H — discovery only, no data-file extraction. Known open: DSIT's GOV.UK
 query 422s (Issue A, `docs/ideas-backlog.md`).
 
-### Early Day Motions (`scripts/ingest_edms.py`) — not yet set up
+### Early Day Motions (`scripts/ingest_edms.py`) — live since 2026-10-20
 
-Proposed service `edm-cron`, schedule `30 6 * * *` (daily 06:30 UTC), start
+Service `edm-cron`, schedule `30 4 * * *` (daily 04:30 UTC), start
 command `python scripts/ingest_edms.py`, `SKIP_MIGRATIONS=1`. Lists every EDM
 in the current session and re-fetches only new or changed ones plus those
 tabled in the last 90 days. Logs a row in `ha_cron_run` (`service_name=edm-cron`);
 exits 1 if most API requests fail. Needs `migrations/edm_tables.py --execute`
-and a one-shot `--backfill` first. Pages are hidden until `FEATURE_EDMS=live`
-on the web service.
+and a one-shot `--backfill` first (both done 2026-10-20: 4,230 EDMs). `FEATURE_EDMS=live`
+is set on the web service.
 
 ### Daily health report (`scripts/daily_health_report.py`) — not yet set up
 
