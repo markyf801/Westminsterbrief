@@ -1015,6 +1015,8 @@ def _build_sitemap_core_xml() -> str:
                      max_d.isoformat() if max_d else ""))
 
     # Specific theme pages — only themes with 5+ sessions (per spec)
+    from hansard_archive.topic_canon import canonical_topic as _canonical_topic
+    seen_theme_slugs: set = set()
     for (theme, _, max_d) in (db.session
                               .query(HansardSessionTheme.theme,
                                      sqlfunc.count(HansardSessionTheme.session_id),
@@ -1024,7 +1026,12 @@ def _build_sitemap_core_xml() -> str:
                               .group_by(HansardSessionTheme.theme)
                               .having(sqlfunc.count(HansardSessionTheme.session_id) >= 5)
                               .all()):
-        urls.append((f"{BASE}/archive/theme/{_slugify_theme(theme)}",
+        # Alias spellings ("send", "send provision") share their canonical topic's page.
+        slug = _slugify_theme(_canonical_topic(theme))
+        if slug in seen_theme_slugs:
+            continue
+        seen_theme_slugs.add(slug)
+        urls.append((f"{BASE}/archive/theme/{slug}",
                      max_d.isoformat() if max_d else ""))
 
     # Session detail pages — non-container sessions with a slug

@@ -81,7 +81,9 @@ def _is_postgres() -> bool:
 # matches are computed at ingest time (ha_edm.related_topics).
 _TOPIC_KEYWORDS = {
     "education": ("school", "schools", "pupils", "teachers", "university",
-                  "universities", "students", "education", "childcare"),
+                  "universities", "students", "education"),
+    "children-and-families": ("childcare", "early years", "nursery", "nurseries",
+                              "foster", "fostering", "adoption", "child poverty"),
     "health-and-social-care": ("nhs", "hospital", "hospitals", "hospice", "hospices",
                                "cancer", "patients", "social care", "mental health", "dementia"),
     "housing-and-planning": ("housing", "homes", "renters", "tenants", "homelessness", "planning"),

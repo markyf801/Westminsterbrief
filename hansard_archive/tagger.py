@@ -28,6 +28,7 @@ import requests
 
 from extensions import db
 from hansard_archive.policy_areas import HANSARD_POLICY_NAMES as _HANSARD_POLICY_NAMES
+from hansard_archive.topic_canon import canonical_topic
 from hansard_archive.models import (
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
@@ -59,14 +60,8 @@ POLICY_AREAS = _HANSARD_POLICY_NAMES
 # only an acronym or only a policy-area word becomes its own tiny, misleading page.
 # ---------------------------------------------------------------------------
 
-# Whole-theme acronym expansions. Stored themes are lowercased, and "SEND"
-# lowercased is the verb "send".
-_THEME_ALIASES = {
-    "send": "special educational needs",
-    "sen": "special educational needs",
-    "sen/d": "special educational needs",
-    "senco": "special educational needs coordinators",
-}
+# Spelling variants and acronyms ("SEND" lowercases to the verb "send") are
+# mapped to one canonical topic by topic_canon, so each topic has one page.
 
 # One-word themes that just restate a policy area. The prompt already says not
 # to repeat policy-area names, but the model does ("housing", "immigration").
@@ -83,7 +78,7 @@ def normalise_specific_theme(theme: str) -> Optional[str]:
     t = " ".join((theme or "").lower().split())
     if not t:
         return None
-    t = _THEME_ALIASES.get(t, t)
+    t = canonical_topic(t)
     if t in _GENERIC_THEMES:
         return None
     return t

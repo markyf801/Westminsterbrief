@@ -54,6 +54,7 @@ from hansard_archive.models import (
     UpcomingRelease,
 )
 from hansard_archive import policy_areas as _pa
+from hansard_archive import topic_canon as _tc
 from hansard_archive.slugs import slugify_theme
 from hansard_archive.stats_queries import get_headline_stat
 
@@ -1552,6 +1553,33 @@ def _specific_themes_for_slug(theme_col, type_col, theme_slug: str) -> list[str]
     return found
 
 
+def _stored_specific_names(theme_col, type_col, names) -> list[str]:
+    """Stored specific-topic strings equal (case-insensitively) to any of `names`."""
+    names = sorted({n for n in names or () if n})
+    if not names:
+        return []
+    rows = (
+        db.session.query(theme_col)
+        .filter(type_col == THEME_TYPE_SPECIFIC, func.lower(theme_col).in_(names))
+        .distinct()
+        .all()
+    )
+    return sorted({r[0] for r in rows})
+
+
+def _topic_names_for_slug(theme_col, type_col, theme_slug: str) -> list[str]:
+    """
+    Stored specific-topic strings for a /brief/<slug> topic page: exact slug
+    matches plus, when the slug is a canonical topic in topic_canon, every stored
+    spelling of that topic and of its child topics ("send", "send funding" ...).
+    """
+    found = set(_specific_themes_for_slug(theme_col, type_col, theme_slug))
+    canon = _tc.canonical_for_slug(theme_slug)
+    if canon:
+        found |= set(_stored_specific_names(theme_col, type_col, _tc.topic_family_names(canon)))
+    return sorted(found)
+
+
 def _build_pq_items(pqs: list) -> list:
     """Template-ready dicts for written questions on a topic brief page."""
     return [
@@ -1599,11 +1627,12 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     else:
         # -- 2. Fallback: specific topic match on sessions and PQs
         theme_type_used = THEME_TYPE_SPECIFIC
-        session_names   = _specific_themes_for_slug(
+        session_names   = _topic_names_for_slug(
             HansardSessionTheme.theme, HansardSessionTheme.theme_type, theme_slug)
-        pq_names        = _specific_themes_for_slug(
+        pq_names        = _topic_names_for_slug(
             HaPQTheme.theme, HaPQTheme.theme_type, theme_slug)
-        theme_name      = (session_names or pq_names or [None])[0]
+        theme_name      = (_tc.canonical_for_slug(theme_slug)
+                           or (session_names or pq_names or [None])[0])
 
     session_total = pq_total = 0
     session_stmt = pq_stmt = None

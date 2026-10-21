@@ -251,6 +251,13 @@ def app():
             + [HaPQTheme(pq_id=p.id, theme='Transport', theme_type=THEME_TYPE_POLICY_AREA)
                for p in transport_pqs]
         )
+        # SEND rows stored before topic canonicalisation: only the acronym
+        # spellings exist, never "special educational needs" itself.
+        send_pqs = HaPQ.query.filter(HaPQ.uin.in_(['SCHB00', 'SCHB01'])).order_by(HaPQ.uin).all()
+        _db.session.add_all([
+            HaPQTheme(pq_id=send_pqs[0].id, theme='send', theme_type=THEME_TYPE_SPECIFIC),
+            HaPQTheme(pq_id=send_pqs[1].id, theme='send funding', theme_type=THEME_TYPE_SPECIFIC),
+        ])
         _db.session.commit()
 
     yield test_app
@@ -413,8 +420,34 @@ class TestBriefRoutes:
     def test_alias_targets_are_real_pages(self):
         from hansard_archive import policy_areas
         for target in policy_areas.BRIEF_SLUG_ALIASES.values():
-            assert policy_areas.by_slug(target) or target == 'special-educational-needs'
+            assert policy_areas.by_slug(target)
         assert not set(policy_areas.BRIEF_SLUG_ALIASES) & policy_areas.valid_slugs()
+
+    def test_send_redirect_target_lists_rows_stored_only_as_acronyms(self, client):
+        """/brief/send -> /brief/special-educational-needs, which must not 404
+        when the archive only holds 'send' / 'send funding' tags."""
+        r = client.get('/brief/send')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith('/brief/special-educational-needs')
+        r = client.get('/brief/special-educational-needs')
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert 'href="/archive/pq/SCHB00"' in html      # tagged 'send'
+        assert 'href="/archive/pq/SCHB01"' in html      # tagged 'send funding' (child topic)
+        assert '2 written questions on this topic' in html
+
+    def test_child_topic_page_and_alias_redirect(self, client):
+        r = client.get('/brief/send-funding')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith('/brief/special-educational-needs-funding')
+        html = client.get('/brief/special-educational-needs-funding').get_data(as_text=True)
+        assert 'href="/archive/pq/SCHB01"' in html
+        assert 'href="/archive/pq/SCHB00"' not in html  # parent-only row stays on the parent
+
+    def test_education_page_is_education_only_and_children_has_its_own(self):
+        from hansard_archive import policy_areas
+        assert policy_areas.hansard_names_for_slug('education') == ['Education, training and skills']
+        assert policy_areas.hansard_names_for_slug('children-and-families') == ['Children and families']
 
     def test_pq_only_topic_lists_written_questions(self, client):
         r = client.get('/brief/chagos-islands')

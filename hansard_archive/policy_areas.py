@@ -1,7 +1,7 @@
 """
 hansard_archive/policy_areas.py
 
-Single source of truth for the 23 Westminster Brief policy areas —
+Single source of truth for the Westminster Brief policy areas —
 URL slugs, UI display labels, and the canonical Hansard DB policy-area
 names stored in ha_session_theme.theme (theme_type='policy_area').
 
@@ -10,7 +10,7 @@ cases (e.g. "education" vs "education-training-and-skills") because the
 URL slugs were chosen for brevity and readability independently of the
 GOV.UK taxonomy strings.  slugify_theme() in slugs.py remains the primitive
 for generating slugs from arbitrary strings; this module is the authority
-for the 23 known policy areas only.
+for the known policy areas only.
 
 Usage::
 
@@ -20,8 +20,8 @@ Usage::
         print(pa.slug, pa.label)
 
     pa = policy_areas.by_slug("economy")   # PolicyArea | None
-    names = policy_areas.hansard_names_for_slug("education")
-    # ["Education, training and skills", "Children and families"]
+    names = policy_areas.hansard_names_for_slug("international-affairs")
+    # ["International development", "Foreign affairs and diplomacy"]
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class PolicyArea:
-    """Represents one of the 23 Westminster Brief policy areas."""
+    """Represents one of the Westminster Brief policy areas."""
 
     slug: str
     """URL slug used in /brief/<slug> and /stats/<slug>."""
@@ -45,13 +45,14 @@ class PolicyArea:
     Canonical policy-area strings stored in ha_session_theme.theme.
 
     Usually a single-element tuple, but some brief slugs aggregate two
-    Hansard policy areas (e.g. "education" covers both "Education, training
-    and skills" and "Children and families").
+    Hansard policy areas (e.g. "international-affairs" covers both
+    "International development" and "Foreign affairs and diplomacy").
     """
 
 
 # ---------------------------------------------------------------------------
-# The 23 policy areas — ordered for the /stats index display.
+# The policy areas (23 original + Children and families, 2026-10-20) —
+# ordered for the /stats index display.
 # Slugs are locked: changing them would break indexed URLs.
 # ---------------------------------------------------------------------------
 
@@ -71,9 +72,14 @@ _POLICY_AREAS: list[PolicyArea] = [
     PolicyArea("business-and-industry",
                "Business and industry",
                ("Business and industry",)),
+    # Education covers "Education, training and skills" only (owner decision,
+    # 2026-10-20): childcare and family items have their own page below.
     PolicyArea("education",
                "Education",
-               ("Education, training and skills", "Children and families")),
+               ("Education, training and skills",)),
+    PolicyArea("children-and-families",
+               "Children and families",
+               ("Children and families",)),
     PolicyArea("health-and-social-care",
                "Health and social care",
                ("Health and social care",)),
@@ -130,7 +136,7 @@ _POLICY_AREAS: list[PolicyArea] = [
 # ---------------------------------------------------------------------------
 # Canonical Hansard policy area names — the controlled vocabulary used in
 # ha_session_theme.theme (theme_type='policy_area') and enforced as a Gemini
-# enum in the tagger.  This list differs slightly from the 23 brief/stats
+# enum in the tagger.  This list differs slightly from the brief/stats
 # page slugs above: "Local government" and "Trade" are valid tagger outputs
 # but have no dedicated brief or stats page (they fall under broader pages).
 # ---------------------------------------------------------------------------
@@ -162,17 +168,104 @@ HANSARD_POLICY_NAMES: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
+# One-line scope note per Hansard policy area, with exclusions. Shown to the
+# tagger model next to each enum value so it picks by subject, not by word
+# overlap ("Hares" is not welfare; an e-petition debate is not about Parliament).
+# Every HANSARD_POLICY_NAMES entry must have a note (tests enforce it).
+# ---------------------------------------------------------------------------
+
+POLICY_AREA_SCOPE: dict[str, str] = {
+    "Business and industry":
+        "companies, industrial sectors, manufacturing, retail, hospitality, consumer "
+        "protection, insolvency, post offices and banking access. Not tax policy "
+        "(Finance and taxation) or workers' rights (Employment and labour market).",
+    "Children and families":
+        "childcare, early years, child poverty programmes, children's social care, "
+        "fostering, adoption, family law, parenthood and young carers. Not schools "
+        "or SEND (Education, training and skills).",
+    "Crime, justice and law":
+        "policing, crime, courts, prisons, probation, sentencing, victims, legal aid "
+        "and law reform. Not immigration enforcement (Immigration and borders) or "
+        "national security threats from states (Defence / Foreign affairs).",
+    "Defence and armed forces":
+        "armed forces, military equipment, defence spending, veterans, bases and "
+        "deployments. Not diplomacy or sanctions (Foreign affairs and diplomacy).",
+    "Economy":
+        "macroeconomy, growth, inflation, interest rates, cost of living, productivity "
+        "and public finances overall. Not specific taxes (Finance and taxation).",
+    "Education, training and skills":
+        "schools, SEND, further and higher education, apprenticeships, skills, exams "
+        "and teachers. Not childcare or early years (Children and families).",
+    "Employment and labour market":
+        "jobs, unemployment, workers' rights, pay, trade unions, flexible working and "
+        "workplace safety. Not benefits (Welfare and benefits).",
+    "Energy":
+        "energy supply and prices, electricity grid, oil and gas, nuclear, renewables, "
+        "energy efficiency and fuel poverty. Not climate or pollution in general (Environment).",
+    "Environment":
+        "climate change, pollution, water and sewage, nature and wildlife, animal "
+        "welfare, farming, fisheries, food and rural affairs. Not energy supply (Energy).",
+    "Finance and taxation":
+        "taxes, tax reliefs, national insurance, budgets, financial services and "
+        "regulation, pensions tax. Not benefit levels (Welfare and benefits).",
+    "Foreign affairs and diplomacy":
+        "relations with other countries and the EU, treaties, sanctions, conflicts "
+        "abroad, overseas territories and consular cases. Not aid spending "
+        "(International development) or the armed forces (Defence and armed forces).",
+    "Government and public administration":
+        "how government is run: departments, civil service, public appointments, "
+        "procurement, public bodies, data and digital government. Not Parliament "
+        "itself or elections (Parliament and constitution).",
+    "Health and social care":
+        "NHS, hospitals, medicines, public health, mental health, adult social care "
+        "and care workers. Not disability benefits (Welfare and benefits).",
+    "Housing and planning":
+        "housebuilding, social and private rented housing, homelessness, rough "
+        "sleeping, building safety, planning system and leasehold.",
+    "Immigration and borders":
+        "visas, asylum, refugees, small boats, deportation, border control and "
+        "citizenship. Not foreign relations generally (Foreign affairs and diplomacy).",
+    "International development":
+        "overseas aid, humanitarian relief, global health and poverty abroad. Not "
+        "diplomacy or trade (Foreign affairs and diplomacy, Trade).",
+    "Local government":
+        "councils, local government finance and reorganisation, devolution deals, "
+        "mayors, local services such as bins, libraries and potholes.",
+    "Parliament and constitution":
+        "Parliament's own procedures and standards, elections, voting, party "
+        "funding, devolution settlements and the constitution. Only when that is the "
+        "subject: a petition, debate or question ABOUT another subject is not this area.",
+    "Science and technology":
+        "research funding, science, AI, digital and telecoms, broadband, online "
+        "safety and space. Not general business support (Business and industry).",
+    "Society and culture":
+        "arts, culture, heritage, media and broadcasting, sport, charities, faith, "
+        "equalities and community cohesion.",
+    "Trade":
+        "international trade deals, tariffs, exports and imports, trade remedies. Not "
+        "domestic retail (Business and industry).",
+    "Transport":
+        "roads, rail, buses, aviation, maritime, cycling, road safety and transport "
+        "infrastructure.",
+    "Welfare and benefits":
+        "social security benefits: universal credit, PIP, state pension, pension "
+        "credit, carer's allowance, child benefit. Not animal welfare (Environment) "
+        "and not 'welfare' meaning wellbeing.",
+}
+
+# ---------------------------------------------------------------------------
 # /brief/<slug> aliases — slugs that would otherwise hit an exact free-text
 # "specific" tag and show a thin, misleading page. 301 to the canonical page.
-#   - Acronyms that lowercase into ordinary words: SEND -> "send".
 #   - One-word policy synonyms the tagger emits as specific tags ("housing",
 #     "health"), which the topic page then treats as a tiny separate topic.
+#   - Alias spellings of specific topics (SEND -> "send" ->
+#     special-educational-needs) come from topic_canon.TOPIC_FAMILIES, whose
+#     canonical page also lists rows stored under the alias, so the target is
+#     never empty when the alias page had content.
 # Only add a slug here when the target page is the obviously right home for it.
 # ---------------------------------------------------------------------------
 
 BRIEF_SLUG_ALIASES: dict[str, str] = {
-    "send":        "special-educational-needs",
-    "sen":         "special-educational-needs",
     "housing":     "housing-and-planning",
     "health":      "health-and-social-care",
     "defence":     "defence-and-national-security",
@@ -184,7 +277,13 @@ BRIEF_SLUG_ALIASES: dict[str, str] = {
 
 def brief_alias(slug: str) -> Optional[str]:
     """Canonical /brief slug that `slug` should redirect to, or None."""
-    return BRIEF_SLUG_ALIASES.get(slug)
+    if slug in BRIEF_SLUG_ALIASES:
+        return BRIEF_SLUG_ALIASES[slug]
+    from hansard_archive.topic_canon import alias_slug_target
+    target = alias_slug_target(slug)
+    if target and target not in _BY_SLUG and slug not in _BY_SLUG:
+        return target
+    return None
 
 
 # Fast-lookup indexes built once at import time.
@@ -197,7 +296,7 @@ _BY_LABEL: dict[str, PolicyArea] = {pa.label: pa for pa in _POLICY_AREAS}
 # ---------------------------------------------------------------------------
 
 def all_areas() -> list[PolicyArea]:
-    """All 23 policy areas in canonical display order."""
+    """All policy areas in canonical display order."""
     return _POLICY_AREAS
 
 
@@ -239,8 +338,8 @@ def hansard_names_for_slug(slug: str) -> list[str]:
 
     These are the strings stored in ha_session_theme.theme
     (theme_type='policy_area').  One brief slug may cover multiple
-    Hansard names — e.g. 'education' covers both 'Education, training
-    and skills' and 'Children and families'.
+    Hansard names — e.g. 'international-affairs' covers both
+    'International development' and 'Foreign affairs and diplomacy'.
 
     Returns [] for unknown slugs.
     """
