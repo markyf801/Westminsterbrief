@@ -285,12 +285,30 @@ def test_untaggable_pq_never_blocks(env, monkeypatch):
 
 
 def test_gemini_outage_stops_tagging(env, monkeypatch):
+    from hansard_archive import tagger
     monkeypatch.setattr(bps, "MAX_CONSECUTIVE_TAG_FAILURES", 2)
-    _tagger(monkeypatch, bad={5001, 5002, 5003, 5004})
+
+    def down(pq_id, api_key=None):
+        raise tagger.GeminiCallFailed("HTTP 503")
+
+    monkeypatch.setattr(bpq, "tag_pq", down)
     env.gemini_up = False
     assert _run() == bpq.EXIT_TAG_FAILED
     _, state = _checkpoint()
     assert state["tag_failures"] == {}
+
+
+def test_pqs_the_crons_gave_up_on_are_skipped(env, monkeypatch):
+    from extensions import db as _db
+    from hansard_archive import tagger
+    from hansard_archive.models import HaPQ, HaTagAttempt
+    calls = _tagger(monkeypatch)
+    _run("--no-tag")
+    bad = HaPQ.query.filter_by(api_id=5003).one().id
+    _db.session.add(HaTagAttempt(item_kind="pq", item_id=bad, attempts=tagger.TAG_MAX_ATTEMPTS))
+    _db.session.commit()
+    assert _run() == bpq.EXIT_OK
+    assert bad not in calls and len(calls) == 3
 
 
 def test_resume_ignores_a_run_that_died_before_saving(env):

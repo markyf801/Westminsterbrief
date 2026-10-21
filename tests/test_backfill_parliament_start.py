@@ -23,7 +23,9 @@ PROJECT_ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import backfill_parliament_start as bps  # noqa: E402
-from hansard_archive import ingestion  # noqa: E402
+from hansard_archive import ingestion, tagger  # noqa: E402
+
+REAL_GEMINI_HEALTHY = bps.gemini_healthy
 
 # A Saturday, so the cron-window guard never fires unless a test asks for it.
 SATURDAY_NOON = datetime(2026, 10, 24, 12, 0)
@@ -273,13 +275,91 @@ def test_tagging_inline_with_cap_and_catch_up(env, fake_tagger):
     assert _counts() == (7, 14, 7)
 
 
-def test_repeated_tag_failures_abort_only_when_gemini_is_down(env, monkeypatch):
-    monkeypatch.setattr(bps, "tag_session", lambda sid, api_key=None: 0)
+def _api_error(final=False):
+    def tag(session_id, api_key=None):
+        raise tagger.GeminiCallFailed("HTTP 503: unavailable", final=final)
+    return tag
+
+
+def test_repeated_api_errors_stop_only_when_gemini_is_down(env, monkeypatch):
+    monkeypatch.setattr(bps, "tag_session", _api_error())
     monkeypatch.setattr(bps, "MAX_CONSECUTIVE_TAG_FAILURES", 2)
     env.gemini_up = False
     assert _run() == bps.EXIT_TAG_FAILED
     _, state = _checkpoint()
     assert state["tag_failures"] == {}           # an API outage is not held against the items
+    assert state["frontier"]["Commons"] == "2024-12-03"   # the ingested day is kept
+
+
+def test_api_errors_with_gemini_up_count_against_the_items(env, monkeypatch):
+    monkeypatch.setattr(bps, "tag_session", _api_error())
+    monkeypatch.setattr(bps, "MAX_CONSECUTIVE_TAG_FAILURES", 2)
+    assert _run() == bps.EXIT_OK                 # health check passes: carry on
+    _, state = _checkpoint()
+    assert set(state["tag_failures"]) == {str(i) for i in range(1, 8)}
+
+
+def test_final_api_error_stops_at_once_and_counts_nothing(env, monkeypatch):
+    calls = []
+
+    def tag(session_id, api_key=None):
+        calls.append(session_id)
+        raise tagger.GeminiCallFailed("HTTP 400: bad schema", final=True)
+
+    monkeypatch.setattr(bps, "tag_session", tag)
+    assert _run() == bps.EXIT_TAG_FAILED
+    assert len(calls) == 1
+    _, state = _checkpoint()
+    assert state["tag_failures"] == {} and "rejected" in state["stop_reason"]
+
+
+def test_items_the_crons_gave_up_on_are_skipped(env, monkeypatch):
+    from extensions import db as _db
+    from hansard_archive.models import HaTagAttempt
+    calls = _failing_tagger(monkeypatch, bad=set())
+    _db.session.add(HaTagAttempt(item_kind="session", item_id=1, attempts=tagger.TAG_MAX_ATTEMPTS))
+    _db.session.commit()
+    assert _run() == bps.EXIT_OK
+    assert 1 not in calls and len(calls) == 6
+
+
+def test_missing_tagger_helper_fails_loudly(env, monkeypatch):
+    monkeypatch.delattr(tagger, "_gemini_json")
+    assert _run() == bps.EXIT_TAG_FAILED
+    assert env.calls == []                        # stopped before any ingest
+
+
+class _GeminiResp:
+    def __init__(self, status, body=None):
+        self.status_code = status
+        self._body = body or {}
+        self.text = json.dumps(self._body)
+
+    def json(self):
+        return self._body
+
+
+@pytest.mark.parametrize("status,healthy", [(200, True), (503, False), (400, False)])
+def test_real_health_check_with_http_mocked(monkeypatch, status, healthy):
+    """The real gemini_healthy -> tagger._gemini_json path; only HTTP is faked."""
+    posts = []
+    ok_body = {"candidates": [{"content": {"parts": [{"text": json.dumps(
+        {"policy_areas": [], "topics": []})}]}}], "usageMetadata": {}}
+
+    def post(url, json=None, timeout=None):
+        posts.append(url)
+        return _GeminiResp(status, ok_body if status == 200 else {"error": "x"})
+
+    monkeypatch.setattr(tagger.requests, "post", post)
+    monkeypatch.setattr(tagger.time, "sleep", lambda s: None)
+    monkeypatch.setenv("TAGGER_MODEL", "gemini-2.5-flash-lite")
+    assert bps.gemini_healthy("test-key") is healthy
+    assert posts and "gemini-2.5-flash-lite:generateContent" in posts[0]
+    sent = []
+    monkeypatch.setattr(tagger.requests, "post",
+                        lambda url, json=None, timeout=None: sent.append(json) or post(url))
+    bps.gemini_healthy("test-key")
+    assert sent[0]["generationConfig"]["responseSchema"] == tagger._RESPONSE_SCHEMA
 
 
 def _failing_tagger(monkeypatch, bad: set[int]):
@@ -444,3 +524,21 @@ def test_stale_running_record_is_closed(env):
     _db.session.commit()
     assert _run("--no-tag") == bps.EXIT_OK
     assert _db.session.get(HaCronRun, old.id).status == "failed"
+
+
+def test_real_tagger_with_gemini_working_never_blocks(env, monkeypatch):
+    """Real tag_session and health check; only Gemini's HTTP is faked. Gemini
+    answers but verifies nothing for any session: the run still completes."""
+    monkeypatch.setattr(bps, "gemini_healthy", REAL_GEMINI_HEALTHY)
+    body = {"candidates": [{"content": {"parts": [{"text": json.dumps(
+        {"policy_areas": [], "topics": []})}]}}], "usageMetadata": {}}
+    monkeypatch.setattr(tagger.requests, "post",
+                        lambda url, json=None, timeout=None: _GeminiResp(200, body))
+    monkeypatch.setattr(tagger.time, "sleep", lambda s: None)
+    monkeypatch.setenv("TAGGER_MODEL", "gemini-2.5-flash-lite")
+    for _ in range(3):
+        assert _run() == bps.EXIT_OK
+    _, state = _checkpoint()
+    assert state["stop_reason"] == "range complete"
+    assert _counts()[0] == 7
+    assert all(n == bps.TAG_MAX_ATTEMPTS for n in state["tag_failures"].values())

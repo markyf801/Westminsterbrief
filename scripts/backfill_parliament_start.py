@@ -417,42 +417,76 @@ def _untagged_ids(since: date, until: date, limit: int, house: str | None = None
     return [r[0] for r in q.order_by(HansardSession.date.desc(), HansardSession.id).limit(limit).all()]
 
 
-_PROBE_FIELDS = dict(title="School funding", debate_type="debate", date="2025-01-15", house="Commons",
-                     text_excerpt="The Minister answered questions on school funding and the "
-                                  "recruitment of teachers in rural areas.")
+# What this script needs from hansard_archive.tagger. Checked before a run
+# starts, so a renamed helper fails loudly instead of looking like an outage.
+_TAGGER_API = ("_gemini_json", "_RESPONSE_SCHEMA", "resolve_model", "GeminiCallFailed",
+               "_given_up_ids", "tag_session", "tag_pq")
+
+_PROBE_PROMPT = (
+    "Tag this UK parliamentary debate. Session title: School funding. House: Commons.\n"
+    "Transcript: The Minister answered questions on school funding and the recruitment "
+    "of teachers in rural areas."
+)
+
+
+def check_tagger_api() -> str | None:
+    """None if the tagger has everything this script calls, else what is missing."""
+    missing = [name for name in _TAGGER_API if not hasattr(tagger, name)]
+    return ", ".join(missing) if missing else None
 
 
 def gemini_healthy(api_key: str) -> bool:
-    """One known-good Gemini call: tells 'the API is failing' apart from
-    'these particular items cannot be tagged'."""
+    """
+    One small Gemini call through the tagger's own path (_gemini_json with the
+    production response schema). Tells 'the API is failing' apart from 'these
+    particular items cannot be tagged'. Only an API failure counts as down —
+    a missing helper is a bug and raises (check_tagger_api runs first).
+    """
     try:
-        prompt = tagger._PROMPT_TEMPLATE.format(**_PROBE_FIELDS)
-    except (AttributeError, KeyError, IndexError):
-        prompt = "Tag this UK parliamentary debate: " + _PROBE_FIELDS["text_excerpt"]
-    try:
-        return tagger._gemini_tag(api_key, prompt) is not None
-    except Exception:
+        model = tagger.resolve_model(api_key)
+        tagger._gemini_json(api_key, model, _PROBE_PROMPT, tagger._RESPONSE_SCHEMA)
+        return True
+    except tagger.GeminiCallFailed as exc:
+        print(f"[backfill]   Gemini health check failed: {exc}", flush=True)
         return False
+
+
+def _given_up(kind: str) -> set[int]:
+    """Items the crons' tagger has stopped trying (ha_tag_attempt), if that table exists."""
+    q = tagger._given_up_ids(kind)
+    return {r[0] for r in q.all()} if q is not None else set()
+
+
+class TaggingStopped(RuntimeError):
+    """Tagging cannot continue (Gemini failing / rejecting requests, or too many bad items)."""
 
 
 class TagBudget:
     """
     Tags items one at a time with a per-run cap, and never lets one item that
-    cannot be tagged block the backfill:
+    cannot be tagged block the backfill.
 
-    - an item that fails is not offered again in the same run (``excluded``);
-    - a failure counts against the item (``failures``, saved in the checkpoint)
-      only when Gemini is shown to be working — a later item succeeds, or a
-      health probe passes. After TAG_MAX_ATTEMPTS counted failures the backfill
-      skips the item for good;
-    - only a run of failures that the probe confirms as a Gemini/API problem
-      stops the run (RuntimeError); those items are not counted against;
+    The tagger returns 0 when Gemini answered but nothing was writable (it also
+    counts that in ha_tag_attempt), and raises GeminiCallFailed when the call
+    itself failed:
+
+    - 0 → the item's fault: counted against it now (``failures``, kept in the
+      checkpoint) and not offered again this run; after TAG_MAX_ATTEMPTS the
+      backfill skips it for good. Items the crons gave up on (ha_tag_attempt)
+      are skipped too.
+    - GeminiCallFailed(final=True) (bad request / key / model) → stop the run at
+      once; not held against the item.
+    - other GeminiCallFailed / unexpected errors → the item is not retried this
+      run. After MAX_CONSECUTIVE_TAG_FAILURES in a row a health check decides:
+      Gemini working → the items were the problem (counted, carry on); Gemini
+      failing → stop the run, nothing counted.
     - more than MAX_SKIPPED_ITEMS permanently skipped items stops the run so
       someone looks at them.
     """
 
     def __init__(self, cap: int, api_key: str, sleep, window_check=lambda: None,
-                 tag_fn=None, probe=None, failures: dict | None = None, label="session") -> None:
+                 tag_fn=None, probe=None, failures: dict | None = None, label="session",
+                 kind="session") -> None:
         self.cap = cap
         self.used = 0
         self.api_key = api_key
@@ -462,9 +496,11 @@ class TagBudget:
         self.probe = probe or (lambda: gemini_healthy(self.api_key))
         self.failures: dict[str, int] = dict(failures or {})
         self.label = label
+        self.kind = kind
         self.failed_this_run: set[int] = set()
         self.streak: list[int] = []
         self.succeeded = 0
+        self._given_up: set[int] | None = None
 
     @property
     def remaining(self) -> int:
@@ -475,30 +511,35 @@ class TagBudget:
         return {int(k) for k, n in self.failures.items() if n >= TAG_MAX_ATTEMPTS}
 
     @property
-    def excluded(self) -> set[int]:
-        return self.skipped | self.failed_this_run
+    def given_up(self) -> set[int]:
+        if self._given_up is None:
+            self._given_up = _given_up(self.kind) if self.api_key else set()
+        return self._given_up
 
-    def _count_streak(self) -> None:
-        for item_id in self.streak:
+    @property
+    def excluded(self) -> set[int]:
+        return self.skipped | self.given_up | self.failed_this_run
+
+    def _count(self, item_ids) -> None:
+        for item_id in item_ids:
             key = str(item_id)
             self.failures[key] = self.failures.get(key, 0) + 1
-        self.streak = []
         if len(self.skipped) > MAX_SKIPPED_ITEMS:
-            raise RuntimeError(f"{len(self.skipped)} {self.label}s cannot be tagged "
-                               f"(limit {MAX_SKIPPED_ITEMS}) — look at them before continuing")
+            raise TaggingStopped(f"{len(self.skipped)} {self.label}s cannot be tagged "
+                                 f"(limit {MAX_SKIPPED_ITEMS}) — look at them before continuing")
 
     def settle(self) -> None:
-        """End of run: decide whether trailing failures were the items (probe passes)."""
+        """End of run: decide whether trailing API-type failures were the items."""
         if self.streak and self.probe():
             try:
-                self._count_streak()
-            except RuntimeError as exc:
+                self._count(self.streak)
+            except TaggingStopped as exc:
                 print(f"[backfill]   {exc}", flush=True)
         self.streak = []
 
     def tag(self, ids: list[int]) -> int:
-        """Tag items until the budget runs out. Raises RuntimeError on a confirmed
-        API failure, WindowStop when a cron window is due."""
+        """Tag items until the budget runs out. Raises TaggingStopped, or
+        WindowStop when a cron window is due."""
         tagged = 0
         for item_id in ids:
             if self.remaining <= 0:
@@ -512,24 +553,34 @@ class TagBudget:
             self.used += 1
             try:
                 count = self.tag_fn(item_id)
+            except tagger.GeminiCallFailed as exc:
+                if exc.final:
+                    raise TaggingStopped(f"Gemini rejected the request ({exc}) — check "
+                                         "GEMINI_API_KEY / TAGGER_MODEL; nothing counted") from exc
+                print(f"[backfill]   tag API error {self.label} {item_id}: {exc}", flush=True)
+                count = None
             except Exception as exc:
                 _reset_db()
                 print(f"[backfill]   tag error {self.label} {item_id}: {exc}", flush=True)
-                count = 0
-            if count > 0:
+                count = None
+            if count:
                 tagged += 1
                 self.succeeded += 1
-                self._count_streak()            # Gemini works: earlier failures were the items
+                self._count(self.streak)        # Gemini works: the earlier errors were the items
+                self.streak = []
                 continue
-            print(f"[backfill]   tag FAIL {self.label} {item_id}", flush=True)
             self.failed_this_run.add(item_id)
+            if count == 0:                      # Gemini answered; nothing writable
+                print(f"[backfill]   tag: nothing writable for {self.label} {item_id}", flush=True)
+                self._count([item_id])
+                continue
             self.streak.append(item_id)
             if len(self.streak) >= MAX_CONSECUTIVE_TAG_FAILURES:
-                if self.probe():
-                    self._count_streak()
-                else:
-                    raise RuntimeError(f"{len(self.streak)} tagging failures in a row and the "
-                                       "Gemini health check failed — check GEMINI_API_KEY / quota")
+                if not self.probe():
+                    raise TaggingStopped(f"{len(self.streak)} tagging API errors in a row and the "
+                                         "Gemini health check failed — check GEMINI_API_KEY / quota")
+                self._count(self.streak)
+                self.streak = []
         return tagged
 
 
@@ -672,6 +723,12 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
         if not api_key:
             print("[backfill] GEMINI_API_KEY not set — set it or pass --no-tag", flush=True)
             return EXIT_REFUSED
+    if api_key:
+        missing = check_tagger_api()
+        if missing:
+            print(f"[backfill] hansard_archive.tagger is missing {missing} — this script needs "
+                  "updating before it can tag", flush=True)
+            return EXIT_TAG_FAILED
     if args.no_tag and not args.dry_run:
         print("[backfill] WARNING: --no-tag. The hourly archive cron tags EVERY untagged session "
               "with no cap, so it will pick these up on its next run.", flush=True)

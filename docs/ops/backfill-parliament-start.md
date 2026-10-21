@@ -8,6 +8,11 @@ the current Parliament (Tue 9 July 2024):
 - `scripts/backfill_pq_parliament_start.py` — Written Questions (9 Jul 2024 →
   5 May 2025). Insert-only: a stored question is never changed.
 
+Items the tagger cannot tag never block a run: they are counted (in the
+checkpoint, and in `ha_tag_attempt` by the tagger) and skipped after a few
+attempts; items the crons already gave up on are skipped too. Only a Gemini
+failure stops tagging.
+
 Both walk newest-first (the archive stays contiguous), keep their checkpoint in
 `ha_cron_run` (re-running carries on where the last run stopped), stop cleanly
 before production cron windows, and refuse to run at the same time as each other.
@@ -80,5 +85,7 @@ before deleting the service.
 0 done or stopped cleanly (cap, time, cron window) · 1 a day failed after
 retries, or a database error — re-run · 2 API refused (401/403/429) or
 `GEMINI_API_KEY` missing — wait / fix, do not retry at once · 3 tagging stopped:
-Gemini failing (health check failed) or too many untaggable items · 4 the other
+Gemini rejected the request (bad key / model / schema), Gemini failing (health
+check failed), too many untaggable items, or the tagger is missing a helper the
+script calls · 4 the other
 backfill is running · 5 (PQs) identity mismatch — investigate.

@@ -69,6 +69,7 @@ from backfill_parliament_start import (  # noqa: E402
     _reset_db,
     _save_checkpoint,
     blocked_window,
+    check_tagger_api,
     load_state,
     run_active,
 )
@@ -243,6 +244,7 @@ def _untagged_pq_ids(since: date, until: date, limit: int, exclude=()) -> list[i
     tagged = db.session.query(HaPQTheme.pq_id)
     q = (db.session.query(HaPQ.id)
          .filter(HaPQ.tabled_date >= since, HaPQ.tabled_date <= until,
+                 HaPQ.question_text.isnot(None),
                  ~HaPQ.id.in_(tagged)))
     if exclude:
         q = q.filter(~HaPQ.id.in_(list(exclude)))
@@ -284,6 +286,11 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
         if not api_key:
             print("[pq-backfill] GEMINI_API_KEY not set — set it or pass --no-tag", flush=True)
             return EXIT_REFUSED
+        missing = check_tagger_api()
+        if missing:
+            print(f"[pq-backfill] hansard_archive.tagger is missing {missing} — this script needs "
+                  "updating before it can tag", flush=True)
+            return EXIT_TAG_FAILED
 
     floor = db.session.query(func.min(HaPQ.tabled_date)).scalar()
     mode = "DRY RUN" if args.dry_run else "INGEST"
@@ -305,7 +312,7 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
     prev, resume_state, newest_state = load_state(SERVICE_NAME)
     budget = TagBudget(args.max_tag, api_key, sleep, window_check,
                        tag_fn=lambda pq_id: tag_pq(pq_id, api_key=api_key),
-                       failures=newest_state.get("tag_failures") or {}, label="PQ")
+                       failures=newest_state.get("tag_failures") or {}, label="PQ", kind="pq")
 
     frontier: date | None = None
     if (not args.no_resume and resume_state.get("until") == args.until.isoformat()
