@@ -404,20 +404,32 @@ def test_answered_pass_picks_up_late_answer(db, fake_api):
 
 def _batch(db):
     from hansard_archive.models import HaPQ
-    rows = [HaPQ(uin="6978", api_id=1, question_text="Fish?", tabled_date=date(2026, 6, 4)),
-            HaPQ(uin="6978", api_id=2, question_text="Trains?", tabled_date=date(2025, 6, 2)),
-            HaPQ(uin="7000", api_id=3, question_text="Schools?", tabled_date=date(2026, 6, 3))]
+    rows = [HaPQ(uin="6978", api_id=1, question_text="What support is there for topic 1 fishing?",
+                 tabled_date=date(2026, 6, 4)),
+            HaPQ(uin="6978", api_id=2, question_text="What support is there for topic 2 trains?",
+                 tabled_date=date(2025, 6, 2)),
+            HaPQ(uin="7000", api_id=3, question_text="What support is there for topic 3 schools?",
+                 tabled_date=date(2026, 6, 3))]
     db.session.add_all(rows)
     db.session.commit()
     return rows
 
 
-def _run_tagger(monkeypatch, batch_result, individual=None):
+def _result(uin, n):
+    # Evidence quotes come from question n's own text, so they verify only there.
+    return {"uin": uin, "policy_areas": [],
+            "topics": [{"topic": f"topic {n}", "evidence": f"support is there for topic {n}"}]}
+
+
+def _run_tagger(monkeypatch, batch_result):
     import hansard_archive.tagger as tg
     calls = []
     monkeypatch.setattr(tg.time, "sleep", lambda s: None)
-    monkeypatch.setattr(tg, "_gemini_tag_batch", lambda key, prompt: batch_result)
-    monkeypatch.setattr(tg, "tag_pq", lambda pq_id, api_key=None: calls.append(pq_id) or 1)
+    monkeypatch.setattr(tg, "_detect_model", lambda key: "test-model")
+    monkeypatch.setattr(tg, "_gemini_json", lambda key, model, prompt, schema: (batch_result, {}))
+    # Single-question retries are recorded and return nothing verified
+    monkeypatch.setattr(tg, "tag_pq_input",
+                        lambda pq, api_key, model=None: calls.append(int(pq.ref)) or tg.TagOutcome())
     res = tg.tag_pq_all_untagged(api_key="test-key", verbose=False)
     return res, calls
 
@@ -430,7 +442,7 @@ def _themes(pq_id):
 def test_tagger_maps_results_by_position(db, monkeypatch):
     rows = _batch(db)   # tagger orders by tabled_date desc: 6978(2026), 7000, 6978(2025)
     ordered = sorted(rows, key=lambda r: r.tabled_date, reverse=True)
-    result = [{"uin": r.uin, "policy_areas": [], "themes": [f"topic {r.api_id}"]} for r in ordered]
+    result = [_result(r.uin, r.api_id) for r in ordered]
 
     res, retried = _run_tagger(monkeypatch, result)
 
@@ -442,7 +454,7 @@ def test_tagger_maps_results_by_position(db, monkeypatch):
 def test_tagger_retries_when_echoed_uin_disagrees(db, monkeypatch):
     rows = _batch(db)
     ordered = sorted(rows, key=lambda r: r.tabled_date, reverse=True)
-    result = [{"uin": r.uin, "policy_areas": [], "themes": [f"topic {r.api_id}"]} for r in ordered]
+    result = [_result(r.uin, r.api_id) for r in ordered]
     result[0], result[1] = result[1], result[0]   # model swapped two answers
 
     res, retried = _run_tagger(monkeypatch, result)
@@ -452,9 +464,23 @@ def test_tagger_retries_when_echoed_uin_disagrees(db, monkeypatch):
     assert _themes(ordered[0].id) == set() and _themes(ordered[1].id) == set()
 
 
+def test_tagger_rejects_evidence_from_another_question(db, monkeypatch):
+    """Same UIN at two positions: a result whose quote belongs to the other
+    question fails the evidence check and is retried, not written."""
+    rows = _batch(db)
+    ordered = sorted(rows, key=lambda r: r.tabled_date, reverse=True)
+    result = [_result(r.uin, r.api_id) for r in ordered]
+    result[0] = _result(ordered[0].uin, ordered[2].api_id)   # right UIN, other question's words
+
+    res, retried = _run_tagger(monkeypatch, result)
+
+    assert retried == [ordered[0].id]
+    assert _themes(ordered[0].id) == set()
+
+
 def test_tagger_retries_all_when_result_count_differs(db, monkeypatch):
     rows = _batch(db)
-    res, retried = _run_tagger(monkeypatch, [{"uin": "7000", "policy_areas": [], "themes": ["x"]}])
+    res, retried = _run_tagger(monkeypatch, [_result("7000", 3)])
     assert sorted(retried) == sorted(r.id for r in rows)
 
 
