@@ -236,7 +236,7 @@ def _last_pq_update():
         run = (
             HaCronRun.query
             .filter(
-                HaCronRun.service_name.in_(['pq-morning', 'pq-afternoon', 'pq-monday']),
+                HaCronRun.service_name.in_(['pq-morning', 'pq-afternoon', 'pq-monday', 'pq-quickcheck']),
                 HaCronRun.status == 'ok',
             )
             .order_by(HaCronRun.finished_at.desc())
