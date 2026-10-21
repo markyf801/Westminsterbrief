@@ -17,6 +17,7 @@ directly. Until then:
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 from hansard_archive.models import HeadlineStat, StatObservation
@@ -29,7 +30,12 @@ def get_headline_stat(theme_slug: str) -> HeadlineStat | None:
 
     Used on /brief/<slug> (teaser line) and /stats/<slug> (full card).
     Will be superseded by get_latest_observation() once ingestion migrates.
+
+    Hidden unless SHOW_HEADLINE_STATS=1: stored values were wrong (bulletin
+    extraction bug, 2026-10-21) until the fixed refresh has run and been checked.
     """
+    if os.environ.get("SHOW_HEADLINE_STATS") != "1":
+        return None
     return (
         HeadlineStat.query
         .filter_by(theme_slug=theme_slug)
