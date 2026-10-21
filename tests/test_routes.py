@@ -372,6 +372,29 @@ class TestArchiveRoutes:
         assert 'href="/archive/debate/1-january-2026/test-session"' in html
         assert 'Debates on the same topic' not in html
 
+    def test_pq_page_main_policy_area_is_the_most_central(self, app, client):
+        """Main area = first stored by the tagger (tagged_at order), not A-Z."""
+        from datetime import datetime
+        from extensions import db as _db
+        from hansard_archive.models import HaPQ, HaPQTheme
+        from hansard_archive.tagger import TagOutcome, write_pq_tags
+        with app.app_context():
+            pq = HaPQ(uin='ORDER1', heading='Rail and growth', question_text='About rail.',
+                      tabled_date=date(2026, 3, 2), is_answered=True)
+            _db.session.add(pq)
+            _db.session.commit()
+            write_pq_tags(pq.id, TagOutcome(policy_areas=['Transport', 'Economy']),
+                          now=datetime(2026, 3, 2, 9, 0))
+            pq_id = pq.id
+        try:
+            html = client.get('/archive/pq/ORDER1').get_data(as_text=True)
+            assert 'In the same policy area (Transport)' in html     # not "Economy" (A-Z first)
+        finally:
+            with app.app_context():
+                HaPQTheme.query.filter_by(pq_id=pq_id).delete()
+                HaPQ.query.filter_by(id=pq_id).delete()
+                _db.session.commit()
+
     def test_pq_display_heading_fallback(self):
         from hansard_archive.views import _pq_display_heading
         assert _pq_display_heading('Bus services', 'x') == 'Bus services'

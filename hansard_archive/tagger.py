@@ -884,7 +884,12 @@ def write_session_tags(session_id: int, outcome: TagOutcome, replace: bool = Fal
 
 def write_pq_tags(pq_id: int, outcome: TagOutcome, replace: bool = False,
                   now: Optional[datetime] = None) -> int:
-    """Store verified tags for a Written Question. Commits."""
+    """
+    Store verified tags for a Written Question. Commits. ha_pq_theme has no row
+    id, so centrality order is kept in tagged_at: each row is 1 ms after the
+    previous one, most central policy area first (views order by tagged_at).
+    """
+    from datetime import timedelta
     now = now or datetime.utcnow()
     if replace:
         HaPQTheme.query.filter_by(pq_id=pq_id).delete(synchronize_session=False)
@@ -896,7 +901,8 @@ def write_pq_tags(pq_id: int, outcome: TagOutcome, replace: bool = False,
             continue
         seen.add(theme)
         db.session.merge(HaPQTheme(pq_id=pq_id, theme=theme, theme_type=theme_type,
-                                   tagged_at=now, model_used=outcome.model))
+                                   tagged_at=now + timedelta(milliseconds=count),
+                                   model_used=outcome.model))
         count += 1
     if count or replace:
         db.session.commit()

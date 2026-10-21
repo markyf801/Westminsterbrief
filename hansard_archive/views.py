@@ -24,7 +24,7 @@ import os
 import re
 import time
 from collections import defaultdict
-from datetime import date as date_type, timedelta
+from datetime import date as date_type, datetime, timedelta
 from io import BytesIO
 from urllib.parse import urlencode
 
@@ -2409,8 +2409,11 @@ def pq_detail(uin: str):
 
     themes = HaPQTheme.query.filter_by(pq_id=pq.id).all()
     policy_areas = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA})
-    # ha_pq_theme has no row id; tagged_at ties, so the stored order is unknown.
-    policy_ranked = policy_areas
+    # Most central first: the tagger stores areas 1 ms apart in centrality order
+    # (write_pq_tags). Older rows share one tagged_at and fall back to A-Z.
+    policy_ranked = [t.theme for t in sorted(
+        (t for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA),
+        key=lambda t: (t.tagged_at or datetime.min, t.theme))]
     specific_topics = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_SPECIFIC})
 
     # Enrich asking and answering members with party + constituency from cached_member
