@@ -557,7 +557,9 @@ Escalation = stop, report specifics, recommend Opus if useful, wait for directio
 - **Pre-push import check can connect to production.** `python -c "from flask_app import app"` opens a live Postgres connection when `.env` holds a production `DATABASE_URL`, which conflicts with INC-005. Candidate fix (untested): `DATABASE_URL=sqlite:///local_check.db python -c "from flask_app import app; print('OK')"`. Test before changing the checklist.
 - **Committee written evidence likely incomplete** (first ingestion, Apr 2026) — a full re-ingest from `/admin` may still be needed; check current counts first.
 - **DSIT GOV.UK discovery query 422s** (Issue A, `docs/ideas-backlog.md`) — expect `errors=1` on re-discovery runs until fixed.
-- `SECRET_KEY` in `flask_app.py` is a placeholder — must be overridden by env var on Railway.
+- **`SECRET_KEY` must be set on Railway.** There is no fixed fallback (this repo is public, so one would let anyone forge an admin session); without it each process makes a random key and logins don't survive restarts or cross gunicorn workers. Never add `os.environ.get('SOME_SECRET', 'default')` fallbacks for secrets.
+- **Links we build use `SITE_URL`** (default `https://westminsterbrief.co.uk`), never the request host: `ProxyFix` trusts `X-Forwarded-Host`, which a visitor can forge.
+- **`/admin` and the direct Railway address.** Cloudflare's IP restriction doesn't cover `*.up.railway.app`. Optional `ADMIN_EDGE_SECRET`: when set, `/admin*` 404s unless the `X-Admin-Edge` header (added by a Cloudflare Transform Rule) matches.
 - Root clutter (`railway.backup.toml`, `nixpacks.backup.toml`, one-off scripts) — safe to tidy eventually.
 
 ---
