@@ -144,3 +144,9 @@ def test_reset_link_ignores_forged_host(client, monkeypatch):
     client.post('/forgot-password', data={'email': 'reset-test@example.com'},
                 headers={'X-Forwarded-Host': 'evil.example'})
     assert sent['reset_url'].startswith('https://westminsterbrief.co.uk/reset-password/')
+
+
+def test_huge_request_body_refused(client):
+    r = client.post('/api/expand_topic', data=b'x' * (33 * 1024 * 1024),
+                    content_type='application/json')
+    assert r.status_code == 413

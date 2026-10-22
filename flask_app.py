@@ -97,6 +97,8 @@ if not _secret_key:
     print('WARNING: SECRET_KEY is not set; using a random per-process key. Set SECRET_KEY in Railway.', flush=True)
 app.config['SECRET_KEY'] = _secret_key
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)
+# Refuse request bodies over 32 MB (the largest real one is an admin CSV upload).
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 # Public address for links we build ourselves (emails, the www redirect).
 SITE_URL = os.environ.get('SITE_URL', 'https://westminsterbrief.co.uk').strip().rstrip('/')
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'intelligence.db'))
