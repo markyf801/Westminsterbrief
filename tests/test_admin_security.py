@@ -123,3 +123,24 @@ def test_feedback_email_escapes_visitor_text(client, monkeypatch):
     client.post('/feedback', data={'name': '<b>x</b>', 'message': '<a href="http://evil">click</a>'})
     assert '<a href' not in sent['html'] and '<b>x</b>' not in sent['html']
     assert '&lt;a href=' in sent['html']
+
+
+def test_www_redirect_uses_fixed_site(client):
+    r = client.get('/about?x=1', headers={'Host': 'www.westminsterbrief.co.uk'})
+    assert r.status_code == 301
+    assert r.headers['Location'] == 'https://westminsterbrief.co.uk/about?x=1'
+    r = client.get('/about', headers={'X-Forwarded-Host': 'www.evil.example'})
+    assert 'evil.example' not in r.headers.get('Location', '')
+
+
+def test_reset_link_ignores_forged_host(client, monkeypatch):
+    monkeypatch.setenv('FEATURE_AUTH', 'live')
+    sent = {}
+    monkeypatch.setattr(fa, 'send_template_email', lambda **kw: sent.update(kw))
+    with fa.app.app_context():
+        if not fa.User.query.filter_by(email='reset-test@example.com').first():
+            fa.db.session.add(fa.User(email='reset-test@example.com', password_hash='x'))
+            fa.db.session.commit()
+    client.post('/forgot-password', data={'email': 'reset-test@example.com'},
+                headers={'X-Forwarded-Host': 'evil.example'})
+    assert sent['reset_url'].startswith('https://westminsterbrief.co.uk/reset-password/')

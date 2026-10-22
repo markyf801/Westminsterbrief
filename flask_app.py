@@ -97,6 +97,8 @@ if not _secret_key:
     print('WARNING: SECRET_KEY is not set; using a random per-process key. Set SECRET_KEY in Railway.', flush=True)
 app.config['SECRET_KEY'] = _secret_key
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)
+# Public address for links we build ourselves (emails, the www redirect).
+SITE_URL = os.environ.get('SITE_URL', 'https://westminsterbrief.co.uk').strip().rstrip('/')
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'intelligence.db'))
 if _db_url.startswith('postgres://'):
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
@@ -1291,9 +1293,14 @@ def feedback():
 
 @app.before_request
 def redirect_www():
-    """301: www.westminsterbrief.co.uk/* → westminsterbrief.co.uk/*"""
-    if request.host.startswith('www.'):
-        return redirect(request.url.replace('://www.', '://', 1), code=301)
+    """301: www.westminsterbrief.co.uk/* → westminsterbrief.co.uk/*
+
+    The target is built from SITE_URL, not the request's host: the host can come
+    from an X-Forwarded-Host header, so a request saying "www.evil.example"
+    must not produce a redirect to evil.example (which a cache could keep)."""
+    if request.host == 'www.' + urlparse(SITE_URL).netloc:
+        qs = ('?' + request.query_string.decode()) if request.query_string else ''
+        return redirect(SITE_URL + request.path + qs, code=301)
 
 
 @app.before_request
@@ -1463,7 +1470,9 @@ def forgot_password():
             user.reset_token = token
             user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
             db.session.commit()
-            reset_url = url_for('reset_password', token=token, _external=True)
+            # SITE_URL, not the request's host, which a forged header could set
+            # to an attacker's site and so send them the reset token.
+            reset_url = SITE_URL + url_for('reset_password', token=token)
             send_template_email(
                 to=user.email,
                 subject='Reset your Westminster Brief password',
