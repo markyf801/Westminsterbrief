@@ -343,6 +343,14 @@ Order: `migrations/committees_appgs_tables.py --execute` → one-shot
 `FEATURE_COMMITTEES=beta`, then `live`, on the web service. Both log a row in
 `ha_cron_run` and exit 1 if most requests fail; `--dry-run` writes nothing.
 
+APPG edition discovery: www.parliament.uk (the register's index page) answers
+Railway with HTTP 403 (Cloudflare bot protection; it works from a home connection).
+When that happens the script probes `publications.parliament.uk/pa/cm/cmallparty/<YYMMDD>/contents.htm`
+for weekdays after the stored edition (Mondays first, ≤ 30 requests, 0.5 s apart,
+stops on 403/429). `--edition YYMMDD` skips discovery. If only the edition check
+fails and the stored edition is under 12 weeks old, the run is logged as `failed` in
+`ha_cron_run` but exits 0 (no weekly Railway failure email); otherwise it exits 1.
+
 ### Other
 
 - `backup-cron-r2` — daily pg_dump to Cloudflare R2

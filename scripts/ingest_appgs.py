@@ -19,7 +19,12 @@ Usage:
     python scripts/ingest_appgs.py --dry-run          # fetch + parse + match, predict new/update, write nothing
 
 How a run works:
-1. Find the latest edition from the register's "Registers published in <year>" page.
+1. Find the latest edition from the register's "Registers published in <year>" page
+   on www.parliament.uk. That site sits behind Cloudflare bot checks and refuses
+   (HTTP 403) requests from cloud servers such as Railway, so if it fails, probe
+   publications.parliament.uk/.../<YYMMDD>/contents.htm for weekdays after the
+   stored edition (Mondays first; at most 30 requests, 0.5s apart, stop on 403/429).
+   --edition skips discovery entirely.
 2. Read its contents page (one link per group), then each group page (paced 0.5s).
 3. Parse title, purpose, category, officers, registered contact (name only),
    secretariat, website, AGM date and registrable benefits.
@@ -34,7 +39,10 @@ point's name) are deliberately not stored: the page links to the official
 register instead.
 
 Exits 1 if most page fetches fail or the run hits a fatal error. Logs a row in
-ha_cron_run (service_name appg-cron).
+ha_cron_run (service_name appg-cron). Exception: if only the edition check fails
+and the stored edition is under 12 weeks old, the run is logged as failed but exits
+0, so a blocked check doesn't send a Railway failure email every week; once the
+stored edition is older than that (or nothing is stored yet) it exits 1.
 
 Railway (proposed): cron service `appg-cron`, schedule `30 2 * * 2` (Tuesdays
 02:30 UTC; a no-op unless a new edition is out, otherwise ~10 min), start command
@@ -52,7 +60,7 @@ import sys
 import time
 import traceback
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -78,9 +86,20 @@ PAGE_DELAY = 0.5
 API_DELAY = 0.25
 MAX_RETRIES = 3
 _NOT_FOUND_MARKER = "Page cannot be found"
+# Edition discovery fallback: probe publications.parliament.uk for recent edition codes
+# when the www.parliament.uk index can't be read (it sits behind Cloudflare bot checks).
+PROBE_MAX = 30            # contents.htm requests per run, at most
+PROBE_DELAY = 0.5
+PROBE_LOOKBACK_DAYS = 120  # first load: how far back to look for an edition
+STALE_AFTER_DAYS = 84      # stored edition this old + discovery failing -> exit 1 (Railway alerts)
 
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────
+
+def _is_blocked(resp) -> bool:
+    """403, or Cloudflare's 'Just a moment...' challenge (cf-mitigated: challenge)."""
+    return resp.status_code == 403 or str(resp.headers.get("cf-mitigated", "")).lower() == "challenge"
+
 
 class Fetcher:
     """Paced GETs with retry/backoff; counts outcomes for the exit-code rule."""
@@ -88,6 +107,7 @@ class Fetcher:
     def __init__(self, sleep=time.sleep):
         self.ok = 0
         self.failed = 0
+        self.probes = 0
         self._sleep = sleep
 
     def _get(self, url: str, params: dict | None, delay: float):
@@ -98,7 +118,8 @@ class Fetcher:
                 if resp.status_code == 200:
                     return resp
                 if resp.status_code not in (429, 500, 502, 503, 504):
-                    logger.warning("GET %s -> HTTP %d (not retried)", url, resp.status_code)
+                    logger.warning("GET %s -> HTTP %d (not retried)%s", url, resp.status_code,
+                                   " - blocked by Parliament's bot protection" if _is_blocked(resp) else "")
                     return None
                 reason = f"HTTP {resp.status_code}"
             except requests.RequestException as exc:
@@ -118,6 +139,27 @@ class Fetcher:
             return None
         self.ok += 1
         return text
+
+    def probe(self, url: str) -> str:
+        """One GET, no retries: 'found' | 'missing' | 'blocked' | 'rate_limited' | 'error'."""
+        self.probes += 1
+        self._sleep(PROBE_DELAY)
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException:
+            return "error"
+        if resp.status_code == 429:
+            return "rate_limited"
+        if _is_blocked(resp):
+            return "blocked"
+        if resp.status_code == 404:
+            return "missing"
+        if resp.status_code != 200:
+            return "error"
+        text = resp.content.decode("utf-8", errors="replace")
+        if _NOT_FOUND_MARKER in text[:20000] or not parse_contents(text):
+            return "missing"
+        return "found"
 
     def json(self, url: str, params: dict) -> dict | None:
         resp = self._get(url, params, API_DELAY)
@@ -159,6 +201,60 @@ def find_latest_edition(fetch: Fetcher) -> str | None:
         if found:
             break
     return max(found) if found else None
+
+
+def candidate_editions(today: date, after: date | None = None,
+                       lookback_days: int = PROBE_LOOKBACK_DAYS) -> list[str]:
+    """Weekday edition codes in (after, today], Mondays first, then Tuesdays, then the rest; newest first.
+
+    Editions so far have come out on a Monday (a Tuesday after a bank holiday)."""
+    start = today - timedelta(days=lookback_days)
+    if after is not None:
+        start = max(start, after + timedelta(days=1))
+    days = [start + timedelta(days=n) for n in range((today - start).days + 1)]
+    days = [d for d in days if d.weekday() < 5]
+    days.sort(key=lambda d: (min(d.weekday(), 2), -d.toordinal()))
+    return [d.strftime("%y%m%d") for d in days]
+
+
+def probe_latest_edition(fetch: Fetcher, today: date, after: date | None = None,
+                         max_probes: int = PROBE_MAX) -> tuple[str | None, str | None]:
+    """Find the newest edition by trying publications.parliament.uk/.../<YYMMDD>/contents.htm.
+
+    Returns (code or None, problem or None). problem is None only when every candidate
+    date was checked, so "no code, no problem" means there really is no newer edition."""
+    best, errors = None, 0
+    candidates = candidate_editions(today, after)
+    for code in candidates:
+        if best and code <= best:
+            continue
+        if fetch.probes >= max_probes:
+            return best, f"stopped after {max_probes} probes without checking every recent date"
+        outcome = fetch.probe(EDITION_BASE.format(edition=code) + "contents.htm")
+        if outcome == "found":
+            best = code
+        elif outcome == "blocked":
+            return best, "publications.parliament.uk refused the request (HTTP 403 / bot protection)"
+        elif outcome == "rate_limited":
+            return best, "publications.parliament.uk rate-limited us (HTTP 429); stopped"
+        elif outcome == "error":
+            errors += 1
+            if errors >= 3:
+                return best, "publications.parliament.uk is not responding"
+    return best, None
+
+
+def discover_edition(fetch: Fetcher, today: date, stored: date | None) -> tuple[str | None, str, str | None]:
+    """(code, how, problem): the register index first, then probing. how is 'index' | 'probe' | 'none'."""
+    code = find_latest_edition(fetch)
+    if code:
+        return code, "index", None
+    print("[appg-ingest] Register index unavailable; probing publications.parliament.uk for recent editions",
+          flush=True)
+    code, problem = probe_latest_edition(fetch, today, after=stored)
+    if code:
+        return code, "probe", None
+    return None, "none", problem
 
 
 # ── Parsing ───────────────────────────────────────────────────────────────────
@@ -505,20 +601,30 @@ def ingest(edition: str | None = None, force: bool = False, limit: int | None = 
     fetch = fetch or Fetcher()
     now = now or datetime.utcnow()
     t0 = time.time()
-    s = {"edition": edition, "skipped": False, "groups_listed": 0, "parsed": 0, "parse_failed": 0,
+    stored = db.session.query(db.func.max(Appg.register_edition)).scalar()
+    s = {"edition": edition, "found_by": "manual" if edition else None, "discovery_problem": None,
+         "stored_edition": stored, "skipped": False, "groups_listed": 0, "parsed": 0, "parse_failed": 0,
          "new": 0, "updated": 0, "unchanged": 0, "retired": 0, "officers": 0,
          "matched_high": 0, "matched_medium": 0, "matched_low": 0, "unmatched": 0,
          "unmatched_names": [], "dry_run": dry_run}
 
-    edition = edition or find_latest_edition(fetch)
-    s["edition"] = edition
     if not edition:
-        print("[appg-ingest] Could not find the latest register edition", flush=True)
+        edition, s["found_by"], s["discovery_problem"] = discover_edition(fetch, now.date(), stored)
+        s["edition"] = edition
+    if not edition and s["discovery_problem"] is None and stored:
+        print(f"[appg-ingest] Register index unavailable, but every date since the stored edition ({stored}) "
+              "was checked: no new edition; nothing to do", flush=True)
+        s["skipped"] = True
+        s.update(requests_ok=fetch.ok, requests_failed=fetch.failed, elapsed_s=round(time.time() - t0, 1))
+        return s
+    if not edition:
+        print("[appg-ingest] Could not find the latest register edition: "
+              f"{s['discovery_problem'] or f'none published in the last {PROBE_LOOKBACK_DAYS} days'}. "
+              "Check the register page in a browser and rerun with --edition YYMMDD.", flush=True)
         s.update(requests_ok=fetch.ok, requests_failed=max(fetch.failed, 1), elapsed_s=round(time.time() - t0, 1))
         return s
     ed_date = edition_date(edition)
-    stored = db.session.query(db.func.max(Appg.register_edition)).scalar()
-    print(f"[appg-ingest] latest edition {edition} ({ed_date}); stored {stored or 'none'}"
+    print(f"[appg-ingest] latest edition {edition} ({ed_date}, found by {s['found_by']}); stored {stored or 'none'}"
           f"{' | DRY RUN' if dry_run else ''}", flush=True)
     if stored and stored >= ed_date and not force:
         print("[appg-ingest] No new edition; nothing to do (use --force to re-ingest)", flush=True)
@@ -530,6 +636,11 @@ def ingest(edition: str | None = None, force: bool = False, limit: int | None = 
     contents = fetch.html(base + "contents.htm")
     groups = parse_contents(contents) if contents else []
     s["groups_listed"] = len(groups)
+    if not groups:
+        print(f"[appg-ingest] Could not read the contents page for edition {edition} ({base}contents.htm)",
+              flush=True)
+        s.update(requests_ok=fetch.ok, requests_failed=max(fetch.failed, 1), elapsed_s=round(time.time() - t0, 1))
+        return s
     if limit is not None:
         groups = groups[:limit]
 
@@ -603,6 +714,14 @@ def mostly_failed(s: dict) -> bool:
     return s["requests_failed"] > s["requests_ok"] or s["groups_listed"] == 0
 
 
+def quiet_failure(s: dict, today: date) -> bool:
+    """Edition discovery failed but the stored edition is still recent: record the failure in
+    ha_cron_run, exit 0 so the weekly cron doesn't trigger a Railway failure email every week."""
+    stored = s.get("stored_edition")
+    return (s.get("found_by") == "none" and stored is not None
+            and (today - stored).days <= STALE_AFTER_DAYS)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Ingest the Register of All-Party Parliamentary Groups")
@@ -616,7 +735,7 @@ def main() -> None:
         parser.error("--edition must look like 261012")
 
     from flask_app import app
-    exit_code = 0
+    exit_code, quiet = 0, False
     with app.app_context():
         print(f"[appg-ingest] DB: {db.engine.url.render_as_string(hide_password=True)}", flush=True)
         run = None
@@ -629,14 +748,22 @@ def main() -> None:
             summary = ingest(edition=args.edition, force=args.force or bool(args.edition),
                              limit=args.limit, dry_run=args.dry_run)
             _print_summary(summary)
-            exit_code = 1 if mostly_failed(summary) else 0
+            failed = mostly_failed(summary)
+            quiet = failed and quiet_failure(summary, date.today())
+            if quiet:
+                print(f"[appg-ingest] WARNING: edition check failed; stored edition {summary['stored_edition']} is "
+                      f"under {STALE_AFTER_DAYS} days old, so exiting 0 (recorded as failed in ha_cron_run)",
+                      flush=True)
+            exit_code = 1 if failed and not quiet else 0
             if run:
                 run.sessions_ingested = summary["new"] + summary["updated"]
                 run.errors = summary["parse_failed"] + summary["requests_failed"]
                 run.notes = (f"edition={summary['edition']} skipped={summary['skipped']} "
                              f"groups={summary['groups_listed']} new={summary['new']} "
                              f"updated={summary['updated']} retired={summary['retired']} "
-                             f"officers={summary['officers']} unmatched={summary['unmatched']}")
+                             f"officers={summary['officers']} unmatched={summary['unmatched']} "
+                             f"found_by={summary['found_by']}"
+                             + (f" problem={summary['discovery_problem']}" if summary["discovery_problem"] else ""))
         except Exception as exc:
             db.session.rollback()
             print(f"[appg-ingest] FATAL {type(exc).__name__}: {exc}\n{traceback.format_exc()}", flush=True)
@@ -645,7 +772,7 @@ def main() -> None:
                 run.notes = f"fatal: {type(exc).__name__}: {exc}"[:2000]
         if run:
             run.finished_at = datetime.utcnow()
-            run.status = "failed" if exit_code else "ok"
+            run.status = "failed" if exit_code or quiet else "ok"
             db.session.commit()
     sys.exit(exit_code)
 

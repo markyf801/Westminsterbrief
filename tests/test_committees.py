@@ -694,6 +694,115 @@ class TestAppgIngest:
         assert s["edition"] is None and ingest_appgs.mostly_failed(s)
 
 
+# ── APPG edition discovery when www.parliament.uk refuses us ─────────────────
+
+PROBE_NOW = datetime(2026, 10, 22, 12, 0)          # a Thursday; latest edition 261012 (Monday)
+SOFT_404 = b"<html><body><h1>Page cannot be found</h1></body></html>"   # Parliament serves this as 200
+
+
+def _blocked_index_fake(pages: dict, calls: list, other=(200, SOFT_404)):
+    """www.parliament.uk answers with Cloudflare's challenge; publications.parliament.uk serves `pages`."""
+    def get(url, params=None, headers=None, timeout=None):
+        calls.append(url)
+        r = MagicMock()
+        r.headers = {}
+        if url == ingest_appgs.REGISTER_INDEX_URL:
+            r.status_code, r.content = 403, b"<title>Just a moment...</title>"
+            r.headers = {"cf-mitigated": "challenge"}
+            return r
+        for key, body in pages.items():
+            if url.endswith(key):
+                r.status_code, r.content = 200, body.encode("utf-8")
+                return r
+        r.status_code, r.content = other
+        if other[0] == 403:
+            r.headers = {"cf-mitigated": "challenge"}
+        return r
+    return get
+
+
+def _run_blocked(pages, calls=None, other=(200, SOFT_404), **kwargs):
+    calls = calls if calls is not None else []
+    with patch("ingest_appgs.requests.get", side_effect=_blocked_index_fake(pages, calls, other)):
+        return ingest_appgs.ingest(fetch=ingest_appgs.Fetcher(sleep=_no_sleep), index=_member_index(),
+                                   now=PROBE_NOW, **kwargs)
+
+
+def _probes(calls):
+    return [c for c in calls if c.endswith("/contents.htm")]
+
+
+class TestAppgEditionDiscovery:
+    def test_candidates_mondays_first_and_after_stored(self):
+        today = date(2026, 10, 22)
+        c = ingest_appgs.candidate_editions(today)
+        assert c[:3] == ["261019", "261012", "261005"]                     # Mondays, newest first
+        assert all(ingest_appgs.edition_date(x).weekday() < 5 for x in c)  # no weekends
+        assert ingest_appgs.candidate_editions(today, after=date(2026, 10, 12)) == [
+            "261019", "261020", "261013", "261022", "261021", "261016", "261015", "261014"]
+        assert ingest_appgs.candidate_editions(today, after=today) == []
+
+    def test_index_403_then_probing_finds_edition(self, ingest_app):
+        calls = []
+        pages = {k: v for k, v in _register_pages().items() if k.startswith("261012/")}
+        s = _run_blocked(pages, calls)
+        assert s["edition"] == "261012" and s["found_by"] == "probe" and s["new"] == 2
+        assert not ingest_appgs.mostly_failed(s)
+        probes = _probes(calls)
+        # 261019 (missing), 261012 (found), the 7 weekdays newer than 261012, then the real contents fetch
+        assert [p.split("/")[-2] for p in probes] == [
+            "261019", "261012", "261020", "261013", "261022", "261021", "261016", "261015", "261014", "261012"]
+
+    def test_newer_tuesday_edition_beats_older_monday(self, ingest_app):
+        tue = {k.replace("261012/", "260901/"): v for k, v in _register_pages().items() if k.startswith("261012/")}
+        mon = {"260824/contents.htm": CONTENTS}
+        fetch = ingest_appgs.Fetcher(sleep=_no_sleep)
+        with patch("ingest_appgs.requests.get", side_effect=_blocked_index_fake({**mon, **tue}, [])):
+            code, problem = ingest_appgs.probe_latest_edition(fetch, date(2026, 9, 3), after=date(2026, 8, 1))
+        assert (code, problem) == ("260901", None)   # 31 Aug was a bank holiday
+
+    def test_nothing_found_is_a_clear_failure(self, ingest_app, capsys):
+        calls = []
+        s = _run_blocked({}, calls)
+        assert s["edition"] is None and s["found_by"] == "none" and ingest_appgs.mostly_failed(s)
+        assert "stopped after 30 probes" in s["discovery_problem"]
+        assert len(_probes(calls)) == ingest_appgs.PROBE_MAX
+        assert "--edition YYMMDD" in capsys.readouterr().out
+
+    def test_publications_also_blocked_stops_at_once(self, ingest_app):
+        calls = []
+        s = _run_blocked({}, calls, other=(403, b"<title>Just a moment...</title>"))
+        assert s["edition"] is None and "403" in s["discovery_problem"]
+        assert len(_probes(calls)) == 1
+
+    def test_429_stops_probing(self, ingest_app):
+        calls = []
+        s = _run_blocked({}, calls, other=(429, b""))
+        assert s["edition"] is None and "429" in s["discovery_problem"] and len(_probes(calls)) == 1
+
+    def test_stored_edition_and_no_newer_one_is_a_quiet_skip(self, ingest_app):
+        pages = {k: v for k, v in _register_pages().items() if k.startswith("261012/")}
+        _run_blocked(pages)
+        calls = []
+        s = _run_blocked({}, calls)   # 261012 stored; every weekday after it is checked and missing
+        assert s["skipped"] and not ingest_appgs.mostly_failed(s)
+        assert len(_probes(calls)) == 8
+
+    def test_quiet_failure_only_while_stored_edition_is_recent(self):
+        failed = {"found_by": "none", "stored_edition": date(2026, 10, 12)}
+        assert ingest_appgs.quiet_failure(failed, date(2026, 11, 3))
+        assert not ingest_appgs.quiet_failure(failed, date(2027, 1, 20))           # > 12 weeks old
+        assert not ingest_appgs.quiet_failure({**failed, "stored_edition": None}, date(2026, 11, 3))
+        assert not ingest_appgs.quiet_failure({**failed, "found_by": "index"}, date(2026, 11, 3))
+
+    def test_manual_edition_skips_discovery(self, ingest_app):
+        calls = []
+        pages = {k: v for k, v in _register_pages().items() if k.startswith("261012/")}
+        s = _run_blocked(pages, calls, edition="261012", force=True)
+        assert s["found_by"] == "manual" and s["new"] == 2
+        assert ingest_appgs.REGISTER_INDEX_URL not in calls and len(_probes(calls)) == 1
+
+
 # ── Migration ─────────────────────────────────────────────────────────────────
 
 class TestMigration:
