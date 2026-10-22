@@ -1152,6 +1152,66 @@ def _lookup_wms_member(member_id):
     return result
 
 
+def _wms_date_range(date_range):
+    """'YYYYMMDD..YYYYMMDD' (may have a query prefix) -> ('YYYY-MM-DD', 'YYYY-MM-DD'); '' when absent."""
+    from_date = to_date = ''
+    if date_range and '..' in date_range:
+        raw = date_range.split('..')
+        raw_from = re.sub(r'^\D+', '', raw[0].strip())
+        raw_to   = re.sub(r'^\D+', '', raw[1].strip())
+        if len(raw_from) == 8:
+            from_date = f"{raw_from[:4]}-{raw_from[4:6]}-{raw_from[6:]}"
+        if len(raw_to) == 8:
+            to_date = f"{raw_to[:4]}-{raw_to[4:6]}-{raw_to[6:]}"
+    return from_date, to_date
+
+
+def _wms_query_stems(query):
+    """Keyword stems for the WMS relevance post-filter (words over 3 letters, plural s dropped)."""
+    stems = set()
+    for w in query.lower().split():
+        if len(w) > 3:
+            stems.add(w[:-1] if w.endswith('s') and len(w) > 4 else w)
+    return stems
+
+
+def _wms_stems_match(stems, text):
+    """At least half of the query stems must appear in the statement title + text."""
+    if not stems:
+        return True
+    combined = text.lower()
+    hits = sum(1 for stem in stems if stem in combined)
+    return hits >= max(1, len(stems) // 2)
+
+
+def fetch_db_wms(query, date_range, num=20):
+    """Written ministerial statements from our own table (ha_written_statement),
+    same row shape and relevance rule as fetch_parliament_wms(). Returns None when
+    the table is missing or empty, so callers can fall back to the live API."""
+    import written_statements as _ws
+    from datetime import date as _date
+
+    if not _ws.has_statements():
+        return None
+    from_date, to_date = _wms_date_range(date_range)
+    try:
+        start = _date.fromisoformat(from_date) if from_date else None
+        end = _date.fromisoformat(to_date) if to_date else None
+    except ValueError:
+        start = end = None
+    stems = _wms_query_stems(query)
+    link_to_site = _ws.written_statements_enabled()
+    matches = [ws for ws in _ws.candidates_for_words(sorted(stems), start, end)
+               if _wms_stems_match(stems, (ws.title or '') + ' ' + (ws.text_plain or ''))]
+    matches.sort(key=lambda ws: (ws.date_made, ws.id), reverse=True)
+    rows = []
+    for ws in matches[:num]:
+        row = _ws.prep_row(ws, link_to_site)
+        row['speaker_party'] = _normalise_party(row['speaker_party'])
+        rows.append(row)
+    return rows
+
+
 def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
     """Fetch Written Ministerial Statements from Parliament Q&S API.
     No API key required. Returns normalised row schema.
@@ -1163,16 +1223,7 @@ def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
     """
     import logging as _wms_log
 
-    # Parse YYYYMMDD..YYYYMMDD → YYYY-MM-DD (date_range may have query prefix)
-    from_date = to_date = ''
-    if date_range and '..' in date_range:
-        raw = date_range.split('..')
-        raw_from = re.sub(r'^\D+', '', raw[0].strip())
-        raw_to   = re.sub(r'^\D+', '', raw[1].strip())
-        if len(raw_from) == 8:
-            from_date = f"{raw_from[:4]}-{raw_from[4:6]}-{raw_from[6:]}"
-        if len(raw_to) == 8:
-            to_date = f"{raw_to[:4]}-{raw_to[4:6]}-{raw_to[6:]}"
+    from_date, to_date = _wms_date_range(date_range)
 
     cache_key = f"parl_wms:{query}:{date_range}:{dept_id}"
     cached = CachedSearch.get(cache_key, 'wms', ttl_hours=6)
@@ -1202,11 +1253,7 @@ def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
         _wms_log.warning(f"[parl_wms] exception: {e}")
         return []
 
-    # Keyword stems for post-filter relevance check
-    query_stems = set()
-    for w in query.lower().split():
-        if len(w) > 3:
-            query_stems.add(w[:-1] if w.endswith('s') and len(w) > 4 else w)
+    query_stems = _wms_query_stems(query)
 
     # Batch member lookups (one per unique ID)
     unique_ids = {r['value']['memberId'] for r in raw_results
@@ -1220,13 +1267,8 @@ def fetch_parliament_wms(query, date_range, dept_id=None, num=80):
         title = v.get('title', '')
         text  = v.get('text', '')
 
-        # Post-filter: require at least half of query stems to appear in title+text
-        if query_stems:
-            combined = (title + ' ' + text).lower()
-            hits = sum(1 for stem in query_stems if stem in combined)
-            min_hits = max(1, len(query_stems) // 2)
-            if hits < min_hits:
-                continue
+        if not _wms_stems_match(query_stems, title + ' ' + text):
+            continue
 
         member_id = v.get('memberId')
         speaker_name, speaker_party = _lookup_wms_member(member_id) if member_id else ('', '')
@@ -4019,11 +4061,17 @@ def _prep_parl_wqs(topic, start_date, end_date):
 
 
 def _prep_parl_statements(topic, date_range):
-    """Written ministerial statements for topic — called directly in the top-level executor."""
+    """Written ministerial statements for topic — called directly in the top-level executor.
+    Reads our own ha_written_statement table; the live Parliament API is only a
+    fallback while that table is missing or empty."""
     try:
-        rows = fetch_parliament_wms(topic, date_range, dept_id=None, num=20)
+        rows = fetch_db_wms(topic, date_range, num=20)
+        if rows is None:
+            rows = fetch_parliament_wms(topic, date_range, dept_id=None, num=20)
         return [r for r in rows if not r.get('_error')]
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.warning(f"[debate_prep] statements failed: {type(e).__name__}: {e}")
         return []
 
 

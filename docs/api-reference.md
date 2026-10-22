@@ -366,6 +366,14 @@ See the comprehensive **WQ API constraints** in `docs/wq-api-constraints.md`. No
 }
 ```
 
+### Confirmed 2026-10-22 (used by `scripts/ingest_written_statements.py`)
+
+- List: `totalResults` + `results[].value`, newest first; `skip`/`take` paging (100 per page works, ~10–15s per page). The list `text` is cut to ~250 characters of tag-stripped text and `member` is null unless `expandMember=true`.
+- Full text: `GET /api/writtenstatements/statements/{id}?expandMember=true` → `value.text` (HTML), `value.member` (`name`, `party`, `partyAbbreviation`). Also `/{date}/{uin}`.
+- Other fields: `id` (stable), `uin` (HCWS…/HLWS…, restarts each session — use date + UIN), `memberRole`, `answeringBodyId`/`answeringBodyName` (names can carry trailing spaces), `house` (`Commons`/`Lords`/`Bicameral`), `noticeNumber` (Commons order; 0 in the Lords), `attachments[]` (`url` — may contain spaces —, `title`, `fileType`, `fileSizeBytes`), `linkedStatements[]` (`linkedStatementId`, `linkType` = `JointStatement` / `CorrectedStatement` / `CorrectedAnswer`, `linkDate`; can be null). A statement made in both Houses is two records linked by `JointStatement`.
+- `sessionStatus=Any` returns earlier sessions (the default gave the same counts in testing; the ingester sends it anyway).
+- Public page: `https://questions-statements.parliament.uk/written-statements/detail/{YYYY-MM-DD}/{UIN}`.
+
 ### Known gotchas
 
 - `searchTerm` does OR-word matching, not phrase matching. "student loans" matches any statement containing either "student" or "loans". Post-filter by keyword stems client-side for precision.
