@@ -591,7 +591,8 @@ ministers = resp.json()["details"]["ordered_ministers"]
 - `details.ordered_ministers` uses the `title` key for the minister's name (confusingly, not `name`).
 - The `role` field gives their full title.
 - GOV.UK minister names need normalisation before name-matching against Hansard/TWFY data — remove titles, normalise unicode.
-- **File-cache for 30 days** (in `minister_cache.json`) — reshuffles are infrequent.
+- Stored in our `gov_minister` table by `scripts/refresh_ministers.py` (daily cron), merged with the Members API's `/api/Posts/GovernmentPosts?departmentId=N` (member ids and Parliament post names). `/government/ministers` alone embeds every department's `ordered_ministers` with their `role_appointments` (`details.current`), so one request is enough. The old `minister_cache.json` file cache is only a fallback while that table is empty.
+- Members API: `/api/Posts/GovernmentPosts` with no `departmentId` returns only the ~28 Cabinet-level posts; pass `departmentId` (ids from `/api/Posts/Departments/Government`) for junior ministers and whips. In Oct 2026 it was missing the Financial Secretary to the Treasury, which GOV.UK listed.
 
 ---
 

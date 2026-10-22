@@ -41,6 +41,7 @@ each consumer service keeps the old password until redeployed.
    - `pq-cron-quickcheck` (once created)
    - `backup-cron-r2`
    - `member-cache-refresh`
+   - `minister-refresh` (once created)
    - `rediscovery-cron`
    - `health-report` (once set up)
 3. Verify Flask picked up the new credential: hit `/health` and confirm `status=ok`
@@ -155,6 +156,39 @@ tabled in the last 90 days. Logs a row in `ha_cron_run` (`service_name=edm-cron`
 exits 1 if most API requests fail. Needs `migrations/edm_tables.py --execute`
 and a one-shot `--backfill` first (both done 2026-10-20: 4,230 EDMs). `FEATURE_EDMS=live`
 is set on the web service.
+
+### Ministers (`scripts/refresh_ministers.py`) — to be created
+
+Feeds `gov_minister`, which the Research Tool's department/minister pickers,
+its minister flags and the PQ pages' answering-minister roles read (via
+`ministers.py`) instead of the old `minister_cache.json` (ephemeral disk,
+refetched from GOV.UK after every deploy). About 30 polite requests: Parliament
+Members API government posts per department (member ids, post names, start
+dates) merged with GOV.UK's ministers page (portfolio titles, and anyone
+Parliament is missing). Any failed request, or a result that is implausibly
+small (under 60 people / 15 departments, or under 70% of the people already
+stored), writes nothing and exits 1 — the previous list stays. Logs a row in
+`ha_cron_run` (`service_name=minister-refresh`). Until the table has rows the
+site keeps using the old file-cached fetch, so the code can deploy first.
+
+| Setting | Value |
+|---|---|
+| Service name | `minister-refresh` |
+| Source | this repo, branch `master` |
+| Dockerfile Path | `Dockerfile.cron` |
+| Start command | `python scripts/refresh_ministers.py` |
+| Cron schedule | `15 6 * * *` (daily 06:15 UTC; runs in under a minute, before bills at 06:30) |
+| Restart policy | Never |
+| `SKIP_MIGRATIONS` | `1` |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+
+Order: one-shot `python migrations/gov_minister_table.py` (dry run) then
+`--execute` → one-shot `python scripts/refresh_ministers.py --dry-run` (check
+the people/department counts and the `[warn] no Parliament member id` lines) →
+run once without `--dry-run` → create the cron. After a reshuffle, run it once
+by hand rather than waiting for 06:15 (GOV.UK updates the same day; Parliament's
+post list can lag a few days — GOV.UK-only appointments are added meanwhile).
+`/admin` shows the table's age and counts.
 
 ### Daily health report (`scripts/daily_health_report.py`) — not yet set up
 
