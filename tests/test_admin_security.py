@@ -111,3 +111,15 @@ def test_ai_endpoints_are_rate_limited(monkeypatch):
     assert codes[20] == 429
     codes = [c.post('/stakeholder_search', data={}, environ_base=env).status_code for _ in range(11)]
     assert codes[-1] == 429
+
+
+def test_feedback_email_escapes_visitor_text(client, monkeypatch):
+    sent = {}
+
+    def fake_send(to, subject, html_body, text_body):
+        sent['html'] = html_body
+        return True
+    monkeypatch.setattr(fa, 'send_email', fake_send)
+    client.post('/feedback', data={'name': '<b>x</b>', 'message': '<a href="http://evil">click</a>'})
+    assert '<a href' not in sent['html'] and '<b>x</b>' not in sent['html']
+    assert '&lt;a href=' in sent['html']

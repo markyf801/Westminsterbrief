@@ -1267,12 +1267,14 @@ def feedback():
             if name:
                 subject += f' from {name}'
 
+            # Escape visitor text so it can't inject links or markup into our inbox.
+            from html import escape as _esc
             html_body  = f"""
 <p><strong>Category:</strong> {cat_label}</p>
-<p><strong>Name:</strong> {name or '(not provided)'}</p>
-<p><strong>Email:</strong> {email or '(not provided)'}</p>
+<p><strong>Name:</strong> {_esc(name) or '(not provided)'}</p>
+<p><strong>Email:</strong> {_esc(email) or '(not provided)'}</p>
 <hr>
-<p>{message.replace(chr(10), '<br>')}</p>
+<p>{_esc(message).replace(chr(10), '<br>')}</p>
 """
             text_body = f"Category: {cat_label}\nName: {name or '(not provided)'}\nEmail: {email or '(not provided)'}\n\n{message}"
 
