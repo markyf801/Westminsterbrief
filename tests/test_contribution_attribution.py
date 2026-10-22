@@ -156,3 +156,124 @@ def test_refresh_speech_text_still_updates_aligned_sessions(app_db, monkeypatch)
 
     assert updated == len(fresh)
     assert [r.speech_text for r in _stored(HansardContribution, s.id)] == [c["speech_text"] for c in fresh]
+
+
+# ---------------------------------------------------------------------------
+# scripts/repair_shifted_contributions.py
+# ---------------------------------------------------------------------------
+
+def _shifted_rows(data: dict) -> list[dict]:
+    """What production holds today: legacy speakers, texts moved up one row by
+    the old positional refresh (the last row keeps its own text)."""
+    legacy = _legacy_rows(data)
+    fresh = [c for c in _flatten_items(data, [0]) if c["member_name"]]
+    return [dict(r, speech_text=fresh[i]["speech_text"] if i < len(fresh) else r["speech_text"])
+            for i, r in enumerate(legacy)]
+
+
+@pytest.fixture
+def repair(app_db, monkeypatch):
+    app, db, HansardSession, HansardContribution = app_db
+    data = _data()
+    script = _load_script("repair_shifted_contributions")
+    monkeypatch.setattr(script, "fetch_session_json", lambda ext_id: data)
+    monkeypatch.setattr(script, "_DELAY", 0)
+    fresh = [c for c in _flatten_items(data, [0]) if c["member_name"]]
+    sessions = {
+        "SHIFT": _add_session(db, HansardSession, HansardContribution, "SHIFT", _shifted_rows(data),
+                              orders=[3, 4, 5, 7, 8, 9, 10]),
+        "OK": _add_session(db, HansardSession, HansardContribution, "OK", fresh),
+        "LEGACY": _add_session(db, HansardSession, HansardContribution, "LEGACY", _legacy_rows(data)),
+    }
+    return script, db, HansardContribution, sessions, data
+
+
+def _args(**kw):
+    import argparse
+    base = dict(execute=False, house=None, since=None, until=None, ext_id=None, limit=None,
+                samples=1, list_max=10)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _snapshot(HansardContribution, session_id):
+    return [(r.id, r.member_id, r.speech_text) for r in _stored(HansardContribution, session_id)]
+
+
+def test_shifted_rows_reproduce_the_live_symptom():
+    rows = _shifted_rows(_data())
+    assert rows[0]["member_name"] == "Lord Balfe"
+    assert rows[0]["speech_text"].startswith("My Lords, on behalf of my noble friend Lord Balfe")
+    deech = next(r for r in rows if r["member_name"] == "Baroness Deech (CB)")
+    assert deech["speech_text"].startswith("I always listen to the noble Baroness")
+
+
+def test_repair_dry_run_classifies_and_writes_nothing(repair):
+    script, db, HC, sessions, data = repair
+    before = {k: _snapshot(HC, s.id) for k, s in sessions.items()}
+    result = script.run(_args())
+    assert result["counts"] == {"shifted": 1, "ok": 1, "legacy_unshifted": 1}
+    assert result["updated"] == 5 and result["deleted"] == 1  # last row already had its own text
+    assert result["undo_table"] is None
+    assert {k: _snapshot(HC, s.id) for k, s in sessions.items()} == before
+
+
+def test_repair_execute_fixes_shifted_session_only_and_can_be_undone(repair):
+    from sqlalchemy import text
+    script, db, HC, sessions, data = repair
+    before = {k: _snapshot(HC, s.id) for k, s in sessions.items()}
+    result = script.run(_args(execute=True))
+    assert result["updated"] == 5 and result["deleted"] == 1  # last row already had its own text
+
+    pairs = _hansard_pairs(data)
+    fixed = _stored(HC, sessions["SHIFT"].id)
+    assert [r.member_id for r in fixed] == [1879, 4912, 1879, 4912, 3756, 4912]
+    for r in fixed:
+        assert pairs[r.speech_text] == r.member_id
+    # Each speaker keeps their own row id (links to a contribution stay with that peer).
+    kept_ids = [rid for rid, mid, _ in before["SHIFT"][1:]]
+    assert [r.id for r in fixed] == kept_ids
+    assert _snapshot(HC, sessions["OK"].id) == before["OK"]
+    assert _snapshot(HC, sessions["LEGACY"].id) == before["LEGACY"]
+
+    # Second run finds nothing left to do.
+    again = script.run(_args())
+    assert again["counts"].get("shifted", 0) == 0 and again["counts"]["ok"] == 2
+
+    # The documented undo restores the session exactly.
+    bak = result["undo_table"]
+    db.session.execute(text(
+        f"UPDATE ha_contribution SET speech_text = b.old_text FROM {bak} b "
+        f"WHERE b.action = 'update' AND ha_contribution.id = b.contribution_id"))
+    db.session.execute(text(
+        f"INSERT INTO ha_contribution (id, session_id, member_id, member_name, party, speech_text, "
+        f"speech_order) SELECT contribution_id, session_id, member_id, member_name, party, old_text, "
+        f"speech_order FROM {bak} WHERE action = 'delete'"))
+    db.session.commit()
+    assert _snapshot(HC, sessions["SHIFT"].id) == before["SHIFT"]
+
+
+def test_repair_stops_on_429(repair, monkeypatch):
+    script, db, HC, sessions, data = repair
+
+    def _limited(ext_id):
+        raise script.RateLimited(ext_id)
+
+    monkeypatch.setattr(script, "fetch_session_json", _limited)
+    before = _snapshot(HC, sessions["SHIFT"].id)
+    result = script.run(_args(execute=True))
+    assert result["stopped"] and "429" in result["stopped"]
+    assert result["counts"] == {}
+    assert _snapshot(HC, sessions["SHIFT"].id) == before
+
+
+def test_repair_leaves_unrecognised_sessions_alone(repair):
+    script, db, HC, sessions, data = repair
+    other = [dict(r, member_id=9999) for r in _shifted_rows(data)]
+    from hansard_archive.models import HansardSession
+    s = _add_session(db, HansardSession, HC, "ODD", other)
+    before = _snapshot(HC, s.id)
+    result = script.run(_args(execute=True, ext_id=["ODD"]))
+    assert result["counts"] == {"mismatch": 1}
+    assert _snapshot(HC, s.id) == before
+
