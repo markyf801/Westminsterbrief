@@ -245,7 +245,8 @@ if __name__ == '__main__':
 
     _app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
     _app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    _app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'migrations-dev-key')
+    # No fixed fallback for secrets (public repo); this CLI app never serves requests anyway.
+    _app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or os.urandom(16).hex()
     db.init_app(_app)
 
     if args.sync_vocab:
