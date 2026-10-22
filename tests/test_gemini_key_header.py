@@ -43,3 +43,11 @@ def test_tagger_model_lookup():
     with patch('hansard_archive.tagger.requests.get', return_value=_ok()) as get:
         tagger._detect_model(KEY)
     _assert_calls_clean(get)
+
+
+def test_tagger_generate():
+    from hansard_archive import tagger
+    ok = _ok('{"policy_areas": [], "topics": []}')
+    with patch('hansard_archive.tagger.requests.post', return_value=ok) as post:
+        tagger._gemini_json(KEY, 'gemini-2.5-flash-lite', 'prompt', tagger._RESPONSE_SCHEMA)
+    _assert_calls_clean(post)

@@ -350,7 +350,7 @@ class _Resp:
 def test_http_400_is_final_and_logs_body(monkeypatch, caplog):
     calls = []
 
-    def post(url, json=None, timeout=None):
+    def post(url, headers=None, json=None, timeout=None):
         calls.append(url)
         return _Resp(400, '{"error": {"message": "Invalid JSON payload: unknown field propertyOrdering"}}')
     monkeypatch.setattr(tg.requests, "post", post)
@@ -362,7 +362,7 @@ def test_http_400_is_final_and_logs_body(monkeypatch, caplog):
 
 def test_http_500_is_retried_then_not_final(monkeypatch):
     calls = []
-    monkeypatch.setattr(tg.requests, "post", lambda url, json=None, timeout=None: calls.append(1) or _Resp(500, "x"))
+    monkeypatch.setattr(tg.requests, "post", lambda url, headers=None, json=None, timeout=None: calls.append(1) or _Resp(500, "x"))
     with pytest.raises(tg.GeminiCallFailed) as exc:
         tg._gemini_json("key", "m", "prompt", tg._RESPONSE_SCHEMA)
     assert not exc.value.final and len(calls) == 6      # 3 attempts x 2 API versions
@@ -476,7 +476,7 @@ _BLOCKED = {"candidates": [{"finishReason": "SAFETY", "safetyRatings": [
 def test_empty_200_is_not_an_api_failure(monkeypatch, caplog):
     calls = []
     monkeypatch.setattr(tg.requests, "post",
-                        lambda url, json=None, timeout=None: calls.append(1) or _Resp(200, "", _BLOCKED))
+                        lambda url, headers=None, json=None, timeout=None: calls.append(1) or _Resp(200, "", _BLOCKED))
     with pytest.raises(tg.GeminiEmptyResponse) as exc:
         tg._gemini_json("key", "m", "prompt", tg._RESPONSE_SCHEMA)
     assert len(calls) == 1                                      # not retried

@@ -346,7 +346,7 @@ def test_real_health_check_with_http_mocked(monkeypatch, status, healthy):
     ok_body = {"candidates": [{"content": {"parts": [{"text": json.dumps(
         {"policy_areas": [], "topics": []})}]}}], "usageMetadata": {}}
 
-    def post(url, json=None, timeout=None):
+    def post(url, headers=None, json=None, timeout=None):
         posts.append(url)
         return _GeminiResp(status, ok_body if status == 200 else {"error": "x"})
 
@@ -357,7 +357,7 @@ def test_real_health_check_with_http_mocked(monkeypatch, status, healthy):
     assert posts and "gemini-2.5-flash-lite:generateContent" in posts[0]
     sent = []
     monkeypatch.setattr(tagger.requests, "post",
-                        lambda url, json=None, timeout=None: sent.append(json) or post(url))
+                        lambda url, headers=None, json=None, timeout=None: sent.append(json) or post(url))
     bps.gemini_healthy("test-key")
     assert sent[0]["generationConfig"]["responseSchema"] == tagger._RESPONSE_SCHEMA
 
@@ -541,7 +541,7 @@ def test_real_tagger_with_gemini_working_never_blocks(env, monkeypatch):
     body = {"candidates": [{"content": {"parts": [{"text": json.dumps(
         {"policy_areas": [], "topics": []})}]}}], "usageMetadata": {}}
     monkeypatch.setattr(tagger.requests, "post",
-                        lambda url, json=None, timeout=None: _GeminiResp(200, body))
+                        lambda url, headers=None, json=None, timeout=None: _GeminiResp(200, body))
     monkeypatch.setattr(tagger.time, "sleep", lambda s: None)
     monkeypatch.setenv("TAGGER_MODEL", "gemini-2.5-flash-lite")
     for _ in range(3):
