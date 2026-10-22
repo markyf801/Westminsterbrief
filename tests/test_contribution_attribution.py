@@ -277,3 +277,36 @@ def test_repair_leaves_unrecognised_sessions_alone(repair):
     assert result["counts"] == {"mismatch": 1}
     assert _snapshot(HC, s.id) == before
 
+
+# ---------------------------------------------------------------------------
+# Display names (hansard_archive.views._parse_attribution)
+# Live on 22 Oct 2026: /archive/mp/4958 was titled "Con" and /archive/mp/4912
+# "Baroness in Waiting/Government Whip".
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, name, role, party", [
+    # Peers styled "The ..." — bracket is the party, not a proxy name
+    ("The Earl of Effingham (Con)", "The Earl of Effingham", "", None),
+    ("The Lord Bishop of Leeds", "The Lord Bishop of Leeds", "", None),
+    # Lords office holders: "Role (Peer) (Party)"
+    ("Baroness in Waiting/Government Whip (Baroness Blake of Leeds) (Lab)",
+     "Baroness Blake of Leeds", "Baroness in Waiting/Government Whip", "Lab"),
+    ("The Parliamentary Under-Secretary of State, Department for Education "
+     "(Baroness Smith of Malvern) (Lab)",
+     "Baroness Smith of Malvern",
+     "The Parliamentary Under-Secretary of State, Department for Education", "Lab"),
+    ("The Deputy Speaker (Lord Bassam of Brighton) (Lab)",
+     "Lord Bassam of Brighton", "The Deputy Speaker", "Lab"),
+    # Unchanged formats
+    ("The Lord Speaker (Lord Forsyth of Drumlean)", "Lord Forsyth of Drumlean", "The Lord Speaker", None),
+    ("The Secretary of State for Education (Bridget Phillipson)",
+     "Bridget Phillipson", "The Secretary of State for Education", None),
+    ("Alice Macdonald (Norwich North) (Lab/Co-op)", "Alice Macdonald", "", "Lab/Co-op"),
+    ("Mr Gagan Mohindra (South West Hertfordshire) (Con)", "Gagan Mohindra", "", "Con"),
+    ("Baroness Deech (CB)", "Baroness Deech", "", None),
+    ("Lord Balfe", "Lord Balfe", "", None),
+])
+def test_parse_attribution(raw, name, role, party):
+    from hansard_archive.views import _parse_attribution
+    got = _parse_attribution(raw)
+    assert (got["name"], got["role"], got["party"]) == (name, role, party)
