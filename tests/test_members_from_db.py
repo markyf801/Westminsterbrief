@@ -1113,7 +1113,18 @@ class TestVerifierRegression:
         for claim in HAYES_SUPPORTED + ["None declared."]:
             assert claim in clean
         assert report["dropped_claims"] == 0 and not report["needs_review"]
-        assert "None declared." not in verifier.seen          # verbatim in source: no model call needed
+        # Short sentences depend on context ("None declared." is only right in the right block), so
+        # they go to the model; long sentences found word for word in the sources do not.
+        assert "None declared." in verifier.seen
+
+    def test_long_verbatim_sentence_skips_the_model(self, hayes, monkeypatch):
+        verifier = _ScriptedVerifier()
+        monkeypatch.setattr(member_profiles, "_gemini_call", verifier)
+        bio = _hayes_bio().replace("## Committee memberships\n",
+                                   "## Committee memberships\n- Public Accounts Commission (2024-12–present)\n")
+        clean, report = member_profiles.verify_bio(bio, HAYES_INPUTS, "key")
+        assert "Public Accounts Commission (2024-12–present)" in clean
+        assert not any(t.startswith("Public Accounts Commission") for t in verifier.seen)
 
     def test_genuinely_unsupported_claims_are_dropped(self, hayes, monkeypatch):
         verifier = _ScriptedVerifier(unsupported=["Bournemouth West"])

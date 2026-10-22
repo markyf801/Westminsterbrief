@@ -43,7 +43,7 @@ PARLIAMENT_IMAGE_PREFIX = "https://members-api.parliament.uk/"
 BIO_MODEL = os.environ.get("MEMBER_BIO_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
 _verify = os.environ.get("MEMBER_BIO_VERIFY_MODEL", "gemini-2.5-flash-lite").strip()
 VERIFY_MODEL = None if _verify.lower() in ("", "off", "none") else _verify
-PROMPT_VERSION = "2026-10-v3"
+PROMPT_VERSION = "2026-10-v4"
 AI_LABEL = "AI-generated — check the official record"
 
 _GEMINI_TIMEOUT = 90
@@ -447,13 +447,46 @@ def search_members(term: str, limit: int = 15) -> list[dict]:
 
 # ── Biography prompt, hash and generation ─────────────────────────────────────
 
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+           "October", "November", "December")
+_ISO_DAY_RE = re.compile(r"\b((?:19|20)\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b")
+
+
+def month_year(value: str | None) -> str:
+    """'2023-06-12' or '2023-06' → 'June 2023'; '2023' stays '2023'; anything else ''."""
+    m = re.match(r"((?:19|20)\d{2})(?:-(0[1-9]|1[0-2]))?", value or "")
+    if not m:
+        return ""
+    return f"{_MONTHS[int(m.group(2)) - 1]} {m.group(1)}" if m.group(2) else m.group(1)
+
+
+def long_date(value: str | None) -> str:
+    """'2024-07-04' → '4 July 2024' (unparseable values are returned unchanged)."""
+    m = _ISO_DAY_RE.fullmatch(value or "")
+    return f"{int(m.group(3))} {_MONTHS[int(m.group(2)) - 1]} {m.group(1)}" if m else (value or "")
+
+
+def humanise_iso_dates(text: str) -> str:
+    """Rewrite unambiguous ISO dates (YYYY-MM-DD) as '4 July 2024' so drafts and sources compare."""
+    return _ISO_DAY_RE.sub(lambda m: long_date(m.group(0)), text or "")
+
+
 def _posts_lines(posts) -> list[str]:
+    """'  - Treasury Committee (June 2023–May 2024)'; no end date → '(June 2023–present)'.
+
+    Dates are written the way a draft would write them, so the draft and its sources match.
+    """
     lines = []
     for p in sorted(posts or [], key=lambda x: x.get("start") or "", reverse=True):
-        start = (p.get("start") or "")[:7]
-        end = (p.get("end") or "")[:7] or "present"
-        if p.get("name"):
-            lines.append(f"  - {p['name']} ({start}–{end})")
+        start = month_year(p.get("start"))
+        end = month_year(p.get("end")) or "present"
+        if not p.get("name"):
+            continue
+        if start:
+            when = f"{start}–{end}"
+        else:
+            when = "current" if end == "present" else f"until {end}"
+        lines.append(f"  - {p['name']} ({when})")
     return lines
 
 
@@ -510,7 +543,7 @@ def bio_inputs(profile: MemberProfile, wiki_text: str, wiki_url: str | None,
         "house": profile.house,
         "party": profile.party,
         "membership_from": profile.membership_from,
-        "membership_start": profile.membership_start.isoformat() if profile.membership_start else None,
+        "membership_start": long_date(profile.membership_start.isoformat()) if profile.membership_start else None,
         "house_memberships": _posts_lines(profile.house_memberships),
         "representations": _posts_lines(profile.representations),
         "government_posts": _posts_lines(profile.government_posts),
@@ -575,8 +608,10 @@ def bio_source_texts(inputs: dict) -> dict:
         _block("Constituencies represented", inputs.get("representations"), "None recorded."),
         _block("Government roles", inputs.get("government_posts"), "None recorded."),
         _block("Opposition roles", inputs.get("opposition_posts"), "None recorded."),
-        _block("Committee memberships (current and historical)", inputs.get("committees"), "None recorded."),
-        _block("Registered interests", [f"  • {i}" for i in interests], "None declared."),
+        _block("Committee memberships (current and historical; 'present' means current)",
+               inputs.get("committees"), "None recorded."),
+        _block("Registered interests ([category] then the entry)", [f"  • {i}" for i in interests],
+               "None declared."),
         _block("Policy areas of debates they spoke in (last 12 months, most frequent first)",
                [f"  - {t}" for t in inputs.get("debate_subjects") or []], "None in the archive."),
         _block("Departments their written questions were addressed to (last 12 months, most frequent first)",
@@ -591,7 +626,7 @@ def bio_source_texts(inputs: dict) -> dict:
         ])
     else:
         background = "No background source was found for this member."
-    return {"background": background, "record": record}
+    return {"background": humanise_iso_dates(background), "record": humanise_iso_dates(record)}
 
 
 def bio_prompt(inputs: dict) -> str:
@@ -623,7 +658,7 @@ Ministerial and shadow roles with dates, keeping government and opposition roles
 Select and other committees with dates, including past ones. If none, say so.
 
 ## Registered interests
-A brief factual summary of declared interests by category. If none are declared, say so.
+A brief factual summary of declared interests: one "-" bullet per category, starting with the category name and a colon, then the entries in that category in a sentence (for example "- Employment and earnings: payments from ... for ..."). If none are declared, say so.
 
 ## Subjects of recent parliamentary activity
 Which subjects their recent debates and written questions have concerned, using only the policy areas and departments listed. Describe what they did, not what they think.
@@ -633,7 +668,9 @@ Two or three factual sentences giving orientation to this member's parliamentary
 
 Rules:
 - Every sentence must state a specific fact found in the sources. No filler or statements of the obvious (for example "She is a politician.", "He is a member of the House of Lords.", "is a politician and teacher").
-- Never combine facts from different sources into one sentence or list.
+- Never combine facts from the BACKGROUND SOURCE and the Parliament data in one sentence or list.
+- Write dates as the sources write them (for example "June 2023", "June 2023 to May 2024", "since June 2023").
+- Formatting: plain sentences and "-" bullets only, under the headings above. No numbered lists, no bold or italics, no other headings or labels on lines of their own.
 - No speculation, no adjectives about the member or their views (for example "prominent", "passionate", "respected"), no views, positions, sympathies, motives or likely future behaviour, no advice.
 - Plain UK English."""
 
@@ -660,14 +697,27 @@ _FILLER_RE = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"“(])")
+# A full stop after an initial or a common abbreviation does not end a sentence ("J. Smith", "St. Albans").
+_ABBREV_END_RE = re.compile(r"(?:^|[\s(])(?:[A-Z]|St|Dr|Mr|Mrs|Ms|Rt|Hon|Revd|Rev|Prof|Cllr|Lt|Col|Capt|Gen|Sgt|No)\.$")
 NO_INFO = "No information in the sources used."
 
 
 def _sentences_of(text: str) -> list[str]:
     out = []
     for line in (text or "").splitlines():
-        out.extend(s for s in _SENTENCE_SPLIT_RE.split(line) if s.strip())
-    return out
+        current = ""
+        for piece in _SENTENCE_SPLIT_RE.split(line):
+            current = f"{current} {piece}" if current else piece
+            if not _ABBREV_END_RE.search(current):
+                out.append(current)
+                current = ""
+        if current:
+            out.append(current)
+    return [s for s in out if s.strip()]
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"[*_`]", "", text or "").strip()
 
 
 def _supported(phrase: str, source_sentences: list[str], source_norm: str) -> bool:
@@ -684,66 +734,99 @@ def _supported(phrase: str, source_sentences: list[str], source_norm: str) -> bo
 
 
 def is_filler(sentence: str) -> bool:
-    plain = re.sub(r"[*_`]", "", sentence).strip().lstrip("-•* ").strip()
+    plain = _plain(sentence).lstrip("-•* ").strip()
     return bool(_FILLER_RE.match(plain))
 
 
-def _claims(sentence: str) -> list[str]:
-    plain = re.sub(r"[*_`]", "", sentence)
-    return [m.group(0).strip() for m in _INSTITUTION_RE.finditer(plain)] + _YEAR_RE.findall(plain)
+def _institutions(sentence: str) -> list[str]:
+    return [m.group(0).strip() for m in _INSTITUTION_RE.finditer(_plain(sentence))]
 
 
-def deterministic_check(bio_text: str, texts: dict) -> tuple[str, list[dict], int]:
-    """Drop filler and any sentence naming an institution or year absent from its section's source.
+def _years(sentence: str) -> list[str]:
+    return _YEAR_RE.findall(_plain(sentence))
 
-    Background is checked against the background source; Summary against both; every other
-    section against the Parliament/archive record. Returns (clean_text, dropped, kept_count).
+
+# ── Parsing a draft into checkable sentences ──────────────────────────────────
+
+# "1. ", "**1. ", "- 2) " at the start of a line: numbering, not part of any claim.
+_NUMBERED_RE = re.compile(r"^(\s*)(?:[-*•]\s+)?(\*\*|__)?\(?\d{1,2}[.)]\s+")
+# A heading on a line of its own: a short phrase ending in a colon, with no digits (so no dates).
+_LABEL_RE = re.compile(r"^[^.!?:\d]{1,80}:$")
+
+
+def _is_label(body: str) -> bool:
+    """A category heading on a line of its own ("**Employment and earnings:**", "Shareholdings:").
+
+    Anything else, bold or not, is treated as a claim and checked.
     """
-    sources = {
-        "background": texts["background"],
-        "record": texts["record"],
-        "both": texts["background"] + "\n" + texts["record"],
-    }
-    prepared = {k: (_sentences_of(v), _norm(v)) for k, v in sources.items()}
-    out_lines, dropped, kept = [], [], 0
-    section = None
-    section_kept: dict = {}
-    for raw in (bio_text or "").splitlines():
-        line = raw.rstrip()
+    return bool(_LABEL_RE.match(_plain(body)))
+
+
+def _parse_bio(text: str) -> list[dict]:
+    """Bio text → items: {'kind': 'heading'|'blank'|'label'|'line', ...}.
+
+    Lines carry their sentences with ids; only those are claims. Numbering is turned into a "-"
+    bullet first, so "**1." is never a sentence of its own. Category labels on their own line are
+    not claims: they are kept (as a plain line) only if something under them survives (_rebuild).
+    Lines with no letters (a stray "**3.**", "---") are not claims and are dropped.
+    """
+    items, section, next_id = [], None, 0
+    for raw in (text or "").splitlines():
+        line = _NUMBERED_RE.sub(lambda m: f"{m.group(1)}- {m.group(2) or ''}", raw.rstrip(), count=1)
         heading = HEADING_RE.match(line)
         if heading:
             section = heading.group(1).strip().lower()
-            section_kept[section] = 0
-            out_lines.append(line)
+            items.append({"kind": "heading", "text": line, "section": section})
             continue
         if not line.strip():
-            out_lines.append("")
+            items.append({"kind": "blank"})
             continue
-        scope = "background" if section == "background" else "both" if section == "summary" else "record"
-        sents, norm = prepared[scope]
         bullet = BULLET_RE.match(line)
         prefix = line[: line.index(bullet.group(1))] if bullet else ""
         body = bullet.group(1) if bullet else line
-        kept_parts = []
-        for sentence in _sentences_of(body) or [body]:
-            if NO_INFO.lower() in sentence.lower():
-                kept_parts.append(sentence)
-                continue
-            if is_filler(sentence):
-                dropped.append({"sentence": sentence, "reason": "filler", "section": section})
-                continue
-            missing = [c for c in _claims(sentence) if not _supported(c, sents, norm)]
-            if missing:
-                dropped.append({"sentence": sentence, "section": section,
-                                "reason": "not in source: " + ", ".join(missing)})
-                continue
-            kept_parts.append(sentence)
-            kept += 1
-        if kept_parts:
-            out_lines.append(prefix + " ".join(kept_parts))
-            if section is not None:
-                section_kept[section] = section_kept.get(section, 0) + 1
-    return _fill_empty_sections(out_lines, section_kept), dropped, kept
+        if not re.search(r"[A-Za-z]", _plain(body)):
+            continue
+        if _is_label(body):
+            items.append({"kind": "label", "text": body.strip(), "section": section})
+            continue
+        sentences = []
+        for s in _sentences_of(body) or [body]:
+            sentences.append({"id": next_id, "text": s, "section": section})
+            next_id += 1
+        items.append({"kind": "line", "prefix": prefix, "sentences": sentences, "section": section})
+    return items
+
+
+def _claim_sentences(items: list[dict]) -> list[dict]:
+    """Every sentence that states something (the 'No information' section default does not)."""
+    return [s for it in items if it["kind"] == "line" for s in it["sentences"]
+            if NO_INFO.lower() not in s["text"].lower()]
+
+
+def _rebuild(items: list[dict], drop_ids: set[int]) -> str:
+    kept_text = {}
+    for i, it in enumerate(items):
+        if it["kind"] == "line":
+            keep = [s["text"] for s in it["sentences"] if s["id"] not in drop_ids]
+            if keep:
+                kept_text[i] = it["prefix"] + " ".join(keep)
+    lines, section_kept = [], {}
+    for i, it in enumerate(items):
+        if it["kind"] == "heading":
+            section_kept[it["section"]] = 0
+            lines.append(it["text"])
+        elif it["kind"] == "blank":
+            lines.append("")
+        elif it["kind"] == "label":
+            end = next((j for j in range(i + 1, len(items)) if items[j]["kind"] in ("heading", "label")),
+                       len(items))
+            if any(j in kept_text for j in range(i + 1, end)):
+                lines.append(it["text"])
+        elif i in kept_text:
+            lines.append(kept_text[i])
+            if it["section"] is not None:
+                section_kept[it["section"]] = section_kept.get(it["section"], 0) + 1
+    return _fill_empty_sections(lines, section_kept)
 
 
 def _fill_empty_sections(lines: list[str], section_kept: dict) -> str:
@@ -760,7 +843,58 @@ def _fill_empty_sections(lines: list[str], section_kept: dict) -> str:
     return "\n".join(line for i, line in enumerate(out) if line or (i and out[i - 1])).strip()
 
 
+# ── Deterministic checks ──────────────────────────────────────────────────────
+
+def _scope(section: str | None) -> str:
+    return "background" if section == "background" else "both" if section == "summary" else "record"
+
+
+def _deterministic_drops(items: list[dict], texts: dict) -> tuple[list[dict], int]:
+    """(dropped, kept_count) for filler and named institutions / years absent from the sources.
+
+    Institutions must appear in their section's source (Background → background source; Summary →
+    either; other sections → the Parliament record), so a workplace in the register can't become
+    a school. Years may come from either source except in the Parliament-data sections, where
+    Parliament's dates are the ones that count.
+    """
+    sources = {
+        "background": texts["background"],
+        "record": texts["record"],
+        "both": texts["background"] + "\n" + texts["record"],
+    }
+    prepared = {k: (_sentences_of(v), _norm(v)) for k, v in sources.items()}
+    dropped, kept = [], 0
+    for s in _claim_sentences(items):
+        scope = _scope(s["section"])
+        if is_filler(s["text"]):
+            dropped.append({"id": s["id"], "sentence": s["text"], "reason": "filler", "section": s["section"]})
+            continue
+        year_scope = "record" if scope == "record" else "both"
+        missing = ([c for c in _institutions(s["text"]) if not _supported(c, *prepared[scope])]
+                   + [y for y in _years(s["text"]) if not _supported(y, *prepared[year_scope])])
+        if missing:
+            dropped.append({"id": s["id"], "sentence": s["text"], "section": s["section"],
+                            "reason": "not in source: " + ", ".join(missing)})
+            continue
+        kept += 1
+    return dropped, kept
+
+
+def deterministic_check(bio_text: str, texts: dict) -> tuple[str, list[dict], int]:
+    """Drop filler and any sentence naming an institution or year absent from its source.
+
+    Returns (clean_text, dropped, kept_count).
+    """
+    items = _parse_bio(bio_text)
+    dropped, kept = _deterministic_drops(items, texts)
+    clean = _rebuild(items, {d["id"] for d in dropped})
+    return clean, [{k: v for k, v in d.items() if k != "id"} for d in dropped], kept
+
+
+# ── Model check ───────────────────────────────────────────────────────────────
+
 REVIEW_DROP_RATIO = 0.4   # dropping more than this share of claims signals a verifier problem, not a bad bio
+VERBATIM_MIN_WORDS = 4    # shorter sentences ("None declared.") still go to the model: they depend on context
 
 _VERDICT_SCHEMA = {
     "type": "OBJECT",
@@ -786,76 +920,36 @@ class VerificationIncomplete(RuntimeError):
     """The verification model did not return a usable verdict for every claim."""
 
 
-def _parse_bio(text: str) -> list[dict]:
-    """Bio text → items: {'kind': 'heading'|'blank'|'line', ...}; lines carry sentences with ids."""
-    items, section, next_id = [], None, 0
-    for raw in (text or "").splitlines():
-        line = raw.rstrip()
-        heading = HEADING_RE.match(line)
-        if heading:
-            section = heading.group(1).strip().lower()
-            items.append({"kind": "heading", "text": line, "section": section})
-            continue
-        if not line.strip():
-            items.append({"kind": "blank"})
-            continue
-        bullet = BULLET_RE.match(line)
-        prefix = line[: line.index(bullet.group(1))] if bullet else ""
-        body = bullet.group(1) if bullet else line
-        sentences = []
-        for s in _sentences_of(body) or [body]:
-            sentences.append({"id": next_id, "text": s, "section": section})
-            next_id += 1
-        items.append({"kind": "line", "prefix": prefix, "sentences": sentences, "section": section})
-    return items
+def _claim_line(claim: dict) -> str:
+    section = (claim.get("section") or "profile").upper()
+    return f'{claim["id"]}. [{section}] {humanise_iso_dates(_plain(claim["text"]))}'
 
 
-def _rebuild(items: list[dict], drop_ids: set[int]) -> str:
-    lines, section_kept = [], {}
-    for it in items:
-        if it["kind"] == "heading":
-            section_kept[it["section"]] = 0
-            lines.append(it["text"])
-        elif it["kind"] == "blank":
-            lines.append("")
-        else:
-            keep = [s["text"] for s in it["sentences"] if s["id"] not in drop_ids]
-            if keep:
-                lines.append(it["prefix"] + " ".join(keep))
-                if it["section"] is not None:
-                    section_kept[it["section"]] = section_kept.get(it["section"], 0) + 1
-    return _fill_empty_sections(lines, section_kept)
+def verification_prompt(claims: list[dict], texts: dict) -> str:
+    """The prompt for VERIFY_MODEL: judge whether the sources SUPPORT each claim, not its wording."""
+    numbered = "\n".join(_claim_line(c) for c in claims)
+    return f"""You are checking claims from a draft profile of a UK parliamentarian against its sources. Your job is to catch factual errors, not to police wording.
 
+For each numbered claim, decide whether every fact in it is SUPPORTED by the sources below TAKEN TOGETHER. A claim is supported when each fact in it (people, organisations, roles, seats, parties, committees, interests, dates, numbers, and how they relate) is stated in the sources or follows directly from them.
 
-_SCOPE_LABEL = {"background": "BACKGROUND SOURCE", "record": "PARLIAMENT RECORD", "both": "EITHER SOURCE"}
+These are SUPPORTED — do not mark them false:
+- Facts combined from different lines, paragraphs or blocks of the sources. For example "Jane Doe is a Labour MP for Anytown" is supported by "Party: Labour" and "Seat / peerage: MP for Anytown" on separate lines.
+- A claim that summarises or lists several source entries (for example several registered interests or committees in one sentence).
+- Different wording, paraphrase, tense, word order or sentence form; a shorter or fuller name for clearly the same body.
+- Equivalent dates: "2023-06", "June 2023" and "Jun 2023" are the same month; "since June 2023" or "from 2023" matches "June 2023–present"; "2023 to 2024" matches "June 2023–May 2024".
+- "Currently", "is a member of", "serves on" or "since" for an entry marked "present" or "current" (no end date).
+- A statement that nothing is recorded for a category (for example "No constituencies represented are recorded", "None declared.", "He has held no government roles") when that block of the sources says "None recorded." or "None declared.".
 
+Mark supported=false when any fact in the claim:
+- is not in any source: an invented school, university, employer, award, role, committee, interest or event;
+- contradicts the sources: a wrong date, year, number, name, party, seat, committee or category;
+- attributes a role, post or interest to the wrong person or body, or describes a place of work as a place of study (or the reverse);
+- describes an entry as current when the source gives it an end date, or as past when it is marked "present";
+- comes from the BACKGROUND SOURCE and conflicts with the PARLIAMENT RECORD — for party, seat, membership dates, posts, committees and interests the PARLIAMENT RECORD is correct;
+- is a statement that nothing is recorded when the matching block does list entries;
+- is an opinion, view or characterisation of the member.
 
-def _scope(section: str | None) -> str:
-    return "background" if section == "background" else "both" if section == "summary" else "record"
-
-
-def model_verdicts(claims: list[dict], texts: dict, api_key: str) -> dict[int, tuple[bool, str]]:
-    """Ask VERIFY_MODEL whether each claim is factually supported. Returns {id: (supported, reason)}.
-
-    Structured output (JSON schema) — the decision is ONLY the 'supported' boolean; the reason is
-    kept for the report. Raises VerificationIncomplete if any claim has no boolean verdict.
-    """
-    numbered = "\n".join(
-        f'{c["id"]}. [{_SCOPE_LABEL[_scope(c["section"])]}] {c["text"]}'
-        for c in claims)
-    prompt = f"""You are fact-checking claims from a profile of a UK parliamentarian against source material.
-
-For each numbered claim, decide whether its FACTS are supported by the source named in brackets.
-Judge only factual content: people, organisations and institutions, roles, numbers, dates and the
-relationships between them (for example who studied where, who worked where, who held which post when).
-Ignore wording, tense, sentence form, word order, capitalisation and paraphrase: a claim that says the
-same thing as the source in different words is SUPPORTED. A claim is supported if its facts are stated in,
-or directly implied by, the source. A dated role written as "since 2024" is supported by a source saying
-"2024-12–present".
-
-Mark supported=false only if a fact is missing from the source or contradicts it: a wrong or unstated date,
-an institution or organisation the source does not mention, a place of work described as a place of study
-(or the reverse), a role or award the source does not give, or an opinion about the member.
+The text in square brackets before each claim is the section of the profile it comes from; it is context only.
 
 --- BACKGROUND SOURCE ---
 {texts['background']}
@@ -866,20 +960,39 @@ an institution or organisation the source does not mention, a place of work desc
 --- CLAIMS ---
 {numbered}
 
-Return one verdict for every claim id: {{"verdicts": [{{"id": <id>, "supported": true|false, "reason": "<short reason if false>"}}]}}"""
-    raw = _gemini_call(prompt, api_key, VERIFY_MODEL, json_mode=True, schema=_VERDICT_SCHEMA)
+Return one verdict for every claim id: {{"verdicts": [{{"id": <id>, "supported": true|false, "reason": "<if false: the fact that is missing or wrong>"}}]}}"""
+
+
+def parse_verdicts(raw: str, claims: list[dict]) -> dict[int, tuple[bool, str]]:
+    """Model JSON → {id: (supported, reason)} for the claims asked about (other ids are ignored).
+
+    Only a real boolean counts; any claim without one raises VerificationIncomplete.
+    """
     try:
         data = json.loads(raw)
     except ValueError as exc:
         raise VerificationIncomplete(f"verification response is not JSON: {exc}") from exc
+    wanted = {c["id"] for c in claims}
     verdicts: dict[int, tuple[bool, str]] = {}
     for v in (data.get("verdicts") if isinstance(data, dict) else None) or []:
-        if isinstance(v, dict) and isinstance(v.get("id"), int) and isinstance(v.get("supported"), bool):
+        if (isinstance(v, dict) and v.get("id") in wanted and isinstance(v.get("id"), int)
+                and isinstance(v.get("supported"), bool)):
             verdicts[v["id"]] = (v["supported"], str(v.get("reason") or ""))
     missing = [c["id"] for c in claims if c["id"] not in verdicts]
     if missing:
         raise VerificationIncomplete(f"no verdict for {len(missing)} of {len(claims)} claims")
     return verdicts
+
+
+def model_verdicts(claims: list[dict], texts: dict, api_key: str) -> dict[int, tuple[bool, str]]:
+    """Ask VERIFY_MODEL whether each claim is supported by the sources. Returns {id: (supported, reason)}.
+
+    Structured output (JSON schema) — the decision is ONLY the 'supported' boolean; the reason is
+    kept for the report. Raises VerificationIncomplete if any claim has no boolean verdict.
+    """
+    raw = _gemini_call(verification_prompt(claims, texts), api_key, VERIFY_MODEL,
+                       json_mode=True, schema=_VERDICT_SCHEMA)
+    return parse_verdicts(raw, claims)
 
 
 def verify_bio(bio_text: str, inputs: dict, api_key: str | None) -> tuple[str, dict]:
@@ -890,31 +1003,27 @@ def verify_bio(bio_text: str, inputs: dict, api_key: str | None) -> tuple[str, d
     check cannot be completed (an unverified bio is not published).
     """
     texts = bio_source_texts(inputs)
-    clean, dropped, kept = deterministic_check(bio_text, texts)
+    items = _parse_bio(bio_text)
+    dropped, kept = _deterministic_drops(items, texts)
+    drop_ids = {d["id"] for d in dropped}
     model_dropped: list[dict] = []
     if VERIFY_MODEL:
-        items = _parse_bio(clean)
-        norms = {k: _norm(v) for k, v in
-                 {"background": texts["background"], "record": texts["record"],
-                  "both": texts["background"] + "\n" + texts["record"]}.items()}
+        source_norm = _norm(texts["background"] + "\n" + texts["record"])
         claims = []
-        for it in items:
-            if it["kind"] != "line":
+        for s in _claim_sentences(items):
+            ns = _norm(s["text"])
+            # Long sentences that appear word for word in the sources need no model.
+            if s["id"] in drop_ids or not ns or (len(ns.split()) >= VERBATIM_MIN_WORDS and ns in source_norm):
                 continue
-            for s in it["sentences"]:
-                ns = _norm(s["text"])
-                # Section defaults and sentences that appear verbatim in their source need no model.
-                if not ns or NO_INFO.lower() in s["text"].lower() or ns in norms[_scope(s["section"])]:
-                    continue
-                claims.append(s)
+            claims.append(s)
         verdicts = model_verdicts(claims, texts, api_key) if claims else {}
-        drop_ids = {cid for cid, (ok, _) in verdicts.items() if ok is False}
         by_id = {c["id"]: c for c in claims}
         model_dropped = [{"sentence": by_id[i]["text"], "section": by_id[i]["section"],
                           "reason": "verification model: " + (verdicts[i][1] or "unsupported")}
-                         for i in sorted(drop_ids)]
-        clean = _rebuild(items, drop_ids)
-    all_dropped = dropped + model_dropped
+                         for i in sorted(cid for cid, (ok, _) in verdicts.items() if ok is False)]
+        drop_ids |= {cid for cid, (ok, _) in verdicts.items() if ok is False}
+    clean = _rebuild(items, drop_ids)
+    all_dropped = [{k: v for k, v in d.items() if k != "id"} for d in dropped] + model_dropped
     checked = kept + len(dropped)
     report = {
         "method": "deterministic+model" if VERIFY_MODEL else "deterministic",
