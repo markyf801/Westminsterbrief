@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}{{ div.title }} — {{ div.house }} division {{ div.number or '' }}, {{ human_date }} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ div.title }} — House of {{ div.house }} vote, {{ human_date }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": {{ (div.title ~ ' — House of ' ~ div.house ~ ' division')|tojson }},
+  "description": {{ meta_desc|tojson }},
+  {% if div.date %}"datePublished": "{{ div.date.isoformat() }}",{% endif %}
+  {% if div.updated_at %}"dateModified": "{{ div.updated_at.date().isoformat() }}",{% endif %}
+  "isBasedOn": "{{ div.official_url }}",
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "about": {"@type": "Organization", "name": "House of {{ div.house }}"},
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.div-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.div-meta-text { font-size: 13px; color: #5a6878; }
+.div-official { font-size: 13px; color: #4a7fa5; text-decoration: none; font-weight: 500; }
+.div-official:hover { text-decoration: underline; }
+.div-box { background: #fff; border: 1px solid #dde3ed; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+.div-box h2 { font-size: 15px; font-weight: 700; color: #1a2332; margin: 0 0 10px; }
+.div-text { font-size: 15px; line-height: 1.6; color: #2d3748; margin: 0 0 8px; }
+.div-result { font-size: 16px; font-weight: 600; color: #1a2332; margin: 0 0 6px; }
+.div-counts { display: flex; gap: 24px; margin: 8px 0 4px; }
+.div-counts div { font-size: 13px; color: #5a6878; }
+.div-counts strong { display: block; font-size: 22px; color: #1a2332; }
+.div-lobbies { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 760px) { .div-lobbies { grid-template-columns: 1fr; } }
+.div-party { margin: 0 0 12px; }
+.div-party h3 { font-size: 13px; margin: 0 0 4px; color: #1a2332; }
+.div-party ul { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 16px; }
+.div-party li { font-size: 13px; color: #2d3748; padding: 1px 0; break-inside: avoid; }
+.div-party a { color: #1a2332; text-decoration: none; }
+.div-party a:hover { text-decoration: underline; }
+.div-tag { font-size: 11px; color: #8a96a4; }
+.div-note { font-size: 12px; color: #8a96a4; margin: 10px 0 0; }
+.div-related { display: flex; flex-wrap: wrap; gap: 6px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <a href="/divisions">Votes</a><span class="ac-breadcrumb-sep">›</span>
+        <span>{{ div.house }} division {{ div.number or '' }}</span>
+    </nav>
+
+    <div class="ac-header">
+        <span class="archive-tag archive-tag-topic ac-tag-large">House of {{ div.house }}{% if div.number %} · Division {{ div.number }}{% endif %}</span>
+        <h1 class="ac-title">{{ div.title }}</h1>
+        <div class="div-meta">
+            {% if div.is_deferred %}<span class="archive-dtype-badge archive-dtype-other">Deferred division</span>{% endif %}
+            {% if human_date %}<span class="div-meta-text">{{ human_date }}</span>{% endif %}
+            <a class="div-official" href="{{ div.official_url }}" target="_blank" rel="noopener">View on votes.parliament.uk ↗</a>
+        </div>
+    </div>
+
+    <section class="div-box">
+        <h2>Result</h2>
+        <p class="div-result">{{ result }}</p>
+        {% if div.outcome_text %}<p class="div-text">Hansard records: “{{ div.outcome_text }}”</p>{% endif %}
+        <div class="div-counts">
+            {% for l in lobbies %}<div><strong>{{ l.official_count }}</strong>{{ l.label }}</div>{% endfor %}
+        </div>
+        <p class="div-note">{{ teller_note }}{% if div.is_deferred %} Deferred divisions are held on a ballot paper, so there are no tellers.{% endif %}</p>
+    </section>
+
+    {% if div.motion_text %}
+    <section class="div-box">
+        <h2>The question</h2>
+        <p class="div-text">{{ div.motion_text }}</p>
+    </section>
+    {% endif %}
+
+    {% if debate or (div.hansard_debate_ext_id and div.hansard_debate_title) %}
+    <section class="div-box">
+        <h2>The debate</h2>
+        {% if debate %}
+        <p class="div-text">{% if debate.path %}<a href="{{ debate.path }}">{{ debate.title }}</a>{% else %}{{ debate.title }}{% endif %} — read the debate in the Westminster Brief Hansard archive.{% if debate.hansard_url %} <a class="div-official" href="{{ debate.hansard_url }}" target="_blank" rel="noopener">Hansard ↗</a>{% endif %}</p>
+        {% else %}
+        <p class="div-text">Held during the debate “{{ div.hansard_debate_title }}”. It is not in our Hansard archive yet.</p>
+        {% endif %}
+        {% if areas %}
+        <div class="div-related">{% for a in areas %}<a href="/brief/{{ a.slug }}" class="archive-tag archive-tag-policy">{{ a.label }}</a>{% endfor %}</div>
+        <p class="div-note">Policy areas from the tags on the debate. A guide only — check relevance before use.</p>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="div-box">
+        <h2>How members voted</h2>
+        <div class="div-lobbies">
+            {% for l in lobbies %}
+            <div>
+                <h2 style="font-size:14px;">{{ l.label }} ({{ l.listed }} listed)</h2>
+                {% for party, members in l.parties %}
+                <div class="div-party">
+                    <h3>{{ party }} ({{ members|length }})</h3>
+                    <ul>
+                        {% for m in members %}
+                        <li><a href="/divisions?member={{ m.member_id }}" title="All votes by {{ m.name }}">{{ m.name }}</a>{% if m.member_from and div.house == 'Commons' %} <span class="div-tag">{{ m.member_from }}</span>{% endif %}{% if m.is_teller %} <span class="div-tag">(teller)</span>{% endif %}{% if m.proxy_name %} <span class="div-tag">(proxy vote cast by {{ m.proxy_name }})</span>{% endif %}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% else %}
+                <p class="div-note" style="margin:0;">No members recorded.</p>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <p class="div-note">Select a name to see every vote by that member. Party and constituency are as Parliament recorded them when we downloaded the division. Members who did not vote are not listed: there are many reasons for not voting.</p>
+    </section>
+
+    <p><a href="/divisions" class="div-official">‹ All votes</a></p>
+
+    <p class="ah-source-note">
+        Division data from the
+        <a href="https://votes.parliament.uk" target="_blank" rel="noopener">UK Parliament votes service</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        {% if checked_date %}Last checked {{ checked_date }}.{% endif %}
+    </p>
+
+</div>
+</div>
+{% endblock %}

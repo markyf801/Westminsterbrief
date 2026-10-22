@@ -1,0 +1,22 @@
+{# Votes section for member_profile.html. Expects member_votes from divisions_member_votes(). #}
+<div class="box" style="margin-top:16px;" id="votes">
+    <h3 class="section-h" style="margin-top:0;">Votes</h3>
+    {% if member_votes.error %}
+    <p style="color:#8a96a4; font-size:13px;">Votes could not be loaded just now.</p>
+    {% elif member_votes.rows %}
+    <table class="career-table">
+        <thead><tr><th style="width:120px;">Date</th><th>Division</th><th style="width:130px;">Voted</th></tr></thead>
+        <tbody>
+        {% for v in member_votes.rows %}
+        <tr><td>{{ v.human_date }}</td><td><a href="{{ v.path }}">{{ v.title }}</a><div style="font-size:11.5px; color:#8a96a4;">{{ v.result }}</div></td><td>{{ v.vote }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <ul class="link-list">
+        <li><a href="{{ member_votes.all_url }}">All {{ '{:,}'.format(member_votes.total) }} recorded vote{{ 's' if member_votes.total != 1 else '' }} by this member</a></li>
+    </ul>
+    <p style="font-size:11.5px; color:#8a96a4;">Recorded divisions since July 2024 in our records. Many decisions are made without a vote, and not voting can have many reasons, so absence is not shown.</p>
+    {% else %}
+    <p style="color:#8a96a4; font-size:13px;">No recorded votes for this member in our records (we hold divisions since July 2024).</p>
+    {% endif %}
+</div>

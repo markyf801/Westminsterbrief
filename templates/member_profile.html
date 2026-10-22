@@ -150,6 +150,8 @@
     </ul>
 </div>
 
+{% if divisions_member_votes is defined %}{% set member_votes = divisions_member_votes(header.id) %}{% if member_votes is not none %}{% include "divisions/_member_votes.html" %}{% endif %}{% endif %}
+
 <div class="box" style="margin-top:16px;">
     <h3 class="section-h" style="margin-top:0;">Official record</h3>
     <ul class="link-list">
