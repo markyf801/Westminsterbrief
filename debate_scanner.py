@@ -126,13 +126,19 @@ PARTY_COLOURS_RESEARCH = {
 _MODEL_CACHE = {}
 _VERIFY_CACHE = {}
 
+
+def _gemini_headers(api_key):
+    # Key in a header, not the URL, so it can't leak into exception text or logs.
+    return {"x-goog-api-key": api_key}
+
+
 def get_working_model(api_key):
     if api_key in _MODEL_CACHE:
         return _MODEL_CACHE[api_key]
     result = 'models/gemini-2.5-flash-lite'
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-        resp = requests.get(url, timeout=5)
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        resp = requests.get(url, headers=_gemini_headers(api_key), timeout=5)
         if resp.status_code == 200:
             available = [m['name'] for m in resp.json().get('models', [])
                          if 'generateContent' in m.get('supportedGenerationMethods', [])]
@@ -530,7 +536,7 @@ def expand_search_query(topic, api_key):
         pass
     try:
         model_path = get_working_model(api_key)
-        ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={api_key}"
+        ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent"
         prompt = (
             f"You are a UK Parliamentary researcher. A user wants to search Hansard for: \"{topic}\"\n"
             "Give up to 5 additional search phrases that refer to THE SAME SPECIFIC POLICY OR TOPIC "
@@ -549,7 +555,7 @@ def expand_search_query(topic, api_key):
         )
         payload = {"contents": [{"parts": [{"text": prompt}]}],
                    "generationConfig": {"responseMimeType": "application/json"}}
-        resp = requests.post(ai_url, json=payload, timeout=15)
+        resp = requests.post(ai_url, headers=_gemini_headers(api_key), json=payload, timeout=15)
         raw = None
         if resp.status_code == 200:
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
@@ -2380,15 +2386,15 @@ def debates_topic():
                         f"DATA: {json.dumps(ai_payload)}"
                     )
                     model_path = get_working_model(GEMINI_API_KEY)
-                    ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={GEMINI_API_KEY}"
+                    ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent"
                     payload = {
                         "contents": [{"parts": [{"text": prompt}]}],
                         "generationConfig": {"responseMimeType": "application/json"}
                     }
-                    ai_resp = requests.post(ai_url, json=payload, timeout=90)
+                    ai_resp = requests.post(ai_url, headers=_gemini_headers(GEMINI_API_KEY), json=payload, timeout=90)
                     if ai_resp.status_code == 503:
                         time.sleep(2)
-                        ai_resp = requests.post(ai_url, json=payload, timeout=90)
+                        ai_resp = requests.post(ai_url, headers=_gemini_headers(GEMINI_API_KEY), json=payload, timeout=90)
                     if ai_resp.status_code == 200:
                         raw_text = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '{}')
                     else:
@@ -2669,8 +2675,9 @@ def debates_minister_analyze():
     )
 
     model_path = get_working_model(GEMINI_API_KEY)
-    ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent?key={GEMINI_API_KEY}"
-    ai_resp = requests.post(ai_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=120)
+    ai_url = f"https://generativelanguage.googleapis.com/v1beta/{model_path}:generateContent"
+    ai_resp = requests.post(ai_url, headers=_gemini_headers(GEMINI_API_KEY),
+                            json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=120)
 
     if ai_resp.status_code == 200:
         briefing_content = ai_resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
@@ -2865,13 +2872,13 @@ def generate_stakeholder_briefing(topic, org=None, hansard_rows=None, news=None,
     try:
         model_path = get_working_model(GEMINI_API_KEY)
         ai_url = (f'https://generativelanguage.googleapis.com/v1beta/{model_path}'
-                  f':generateContent?key={GEMINI_API_KEY}')
+                  ':generateContent')
         payload = {'contents': [{'parts': [{'text': prompt}]}],
                    'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 800}}
-        resp = requests.post(ai_url, json=payload, timeout=25)
+        resp = requests.post(ai_url, headers=_gemini_headers(GEMINI_API_KEY), json=payload, timeout=25)
         if resp.status_code == 503:
             time.sleep(3)
-            resp = requests.post(ai_url, json=payload, timeout=25)
+            resp = requests.post(ai_url, headers=_gemini_headers(GEMINI_API_KEY), json=payload, timeout=25)
         if resp.status_code == 200:
             raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
         else:
@@ -3888,13 +3895,13 @@ def _prep_one_pager(question_text, topic, question_date='', house='lords'):
         try:
             model_path = get_working_model(GEMINI_API_KEY)
             url = (f"https://generativelanguage.googleapis.com/v1beta/"
-                   f"{model_path}:generateContent?key={GEMINI_API_KEY}")
+                   f"{model_path}:generateContent")
             body = {"contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1400}}
-            resp = requests.post(url, json=body, timeout=30)
+            resp = requests.post(url, headers=_gemini_headers(GEMINI_API_KEY), json=body, timeout=30)
             if resp.status_code == 503:
                 time.sleep(2)
-                resp = requests.post(url, json=body, timeout=30)
+                resp = requests.post(url, headers=_gemini_headers(GEMINI_API_KEY), json=body, timeout=30)
             if resp.status_code == 200:
                 raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
                 result = _parse_ai_json(raw)

@@ -160,9 +160,9 @@ def _call_gemini_once(api_key: str, model: str, prompt: str) -> tuple[str | None
         },
     }
     for version in ("v1beta", "v1"):
-        url = f"{BASE_GEMINI}/{version}/models/{model}:generateContent?key={api_key}"
+        url = f"{BASE_GEMINI}/{version}/models/{model}:generateContent"
         try:
-            resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+            resp = requests.post(url, headers={"x-goog-api-key": api_key}, json=payload, timeout=REQUEST_TIMEOUT)
             if resp.status_code == 200:
                 raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 return raw, 200, None
