@@ -1,0 +1,91 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/115E0859-3219-42A8-AC48-BD09EC696208.json (Overview fields + first 11 Items, trimmed; fetched 2026-10-22)",
+ "Overview": {
+  "ExtId": "115E0859-3219-42A8-AC48-BD09EC696208",
+  "Title": "Plan 2 Student Loans: Repayment Terms",
+  "HRSTag": "NewDebate",
+  "Date": "2026-03-17T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Question",
+   "HRSTag": "hs_DebateType"
+  },
+  {
+   "ItemType": "Timestamp",
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "14:39:00",
+   "HRSTag": null
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Tabled by",
+   "HRSTag": "hs_TabledBy"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": 4302,
+   "AttributedTo": "Lord Balfe",
+   "Value": "To ask His Majesty’s Government what plans they have to ease the repayment terms of Plan 2 student loans.",
+   "HRSTag": "hs_TabledBy"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": 1879,
+   "AttributedTo": "Lord Lucas (Con)",
+   "Value": "My Lords, on behalf of my noble friend Lord Balfe, and with the agreement of the House, I beg leave to ask the Question standing in his name on the Order Paper.",
+   "HRSTag": "hs_para"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": 4912,
+   "AttributedTo": "Baroness in Waiting/Government Whip (Baroness Blake of Leeds) (Lab)",
+   "Value": "My Lords, before I answer the noble Lord’s Question, I thought it appropriate to start by mentioning the devastating news regarding the outbreak of meningitis in Kent at the weekend. Our thoughts are with the families, friends and loved ones of those who have died and with everyone who is currently unwell or affected by this terrible situation.\r\n\r\nIn response to the noble Lord’s Question, this is a complex system that remains open to review. The Prime Minister and Secretary of State for Education are looking at ways to make it fairer, and ranges of options will be considered, but we must consider how any change would be funded to be fiscally responsible. For graduates, we are working hard to tackle the cost of living by extending government-funded childcare, reducing energy bills, freezing rail fares and rolling out free breakfast clubs.",
+   "HRSTag": "hs_para"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"752\" class=\"column-number column-only\" data-column-number=\"752\"></span>",
+   "HRSTag": "hs_ColumnNumber"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": 1879,
+   "AttributedTo": "Lord Lucas (Con)",
+   "Value": "My Lords, I am grateful to the noble Baroness for that Answer, and I declare an interest as the father of a daughter who is currently accumulating these loans. Does the noble Baroness agree that, particularly for students whose courses are not of the quality required to generate returns of the order of the amount spent on them, and who have accumulated student loans, it would be a good idea to audit what universities are doing and why they are putting our children in this degree of debt?",
+   "HRSTag": "hs_para"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": 4912,
+   "AttributedTo": "Baroness Blake of Leeds (Lab)",
+   "Value": "In our manifesto we committed to raising teacher standards in higher education. Every student deserves the best possible quality from their investment. I am pleased to say that we are working closely with the education sector and providers to make sure that that quality is, first, across the board but also maintained.",
+   "HRSTag": "hs_para"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": 3756,
+   "AttributedTo": "Baroness Deech (CB)",
+   "Value": "Does the Minister agree that the situation has gone too far for tinkering? We need a fresh start. As I said yesterday, we need a Select Committee in this House on education. But does she agree that it is time for something radical, such as a graduate tax or complete exemption for those who repay their debt to society immediately—the students of medicine, teaching and nursing?",
+   "HRSTag": "hs_para"
+  },
+  {
+   "ItemType": "Contribution",
+   "MemberId": 4912,
+   "AttributedTo": "Baroness Blake of Leeds (Lab)",
+   "Value": "I always listen to the noble Baroness’s questions with interest. I do not think it would be right for me to pre-empt the ongoing discussions. I think there is a general recognition that something needs to change, but it has to be done in the spirit of fairness while maintaining access for all students and making sure, as I said at the outset, that it is fiscally responsible in a complex financial situation.",
+   "HRSTag": "hs_para"
+  }
+ ],
+ "ChildDebates": []
+}
