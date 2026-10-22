@@ -91,3 +91,12 @@ def test_health_hides_error_detail(client, monkeypatch):
     body = client.get('/health').get_data(as_text=True)
     assert 'secret-db' not in body
     assert 'FAIL: RuntimeError' in body
+
+
+def test_ai_briefing_is_escaped():
+    from flask import render_template
+    with fa.app.test_request_context('/'):
+        html = render_template('debate_briefing.html',
+                               briefing='## Record\n<script>alert(1)</script>', selected_count=1)
+    assert '<script>alert(1)</script>' not in html
+    assert '&lt;script&gt;alert(1)&lt;/script&gt;' in html

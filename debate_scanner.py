@@ -4086,7 +4086,7 @@ def debate_prep():
             question_text=request.form.get('question_text',''),
             media_start='', media_end='', house=_h, peer_info=None, one_pager=None,
             media_items=[], parl_sections={}, peer_contributions={},
-            error=f'Server error: {e}'), 200
+            error='Something went wrong preparing this briefing. Please try again.'), 200
 
 
 def _debate_prep_post():
