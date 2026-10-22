@@ -66,9 +66,17 @@ SELECT MIN(date) FROM ha_session;  SELECT MIN(tabled_date) FROM ha_pq;
 5. `python scripts/backfill_parliament_start.py --tag-only --max-tag 1000`
    — repeat until `still_untagged=0` (sessions that cannot be tagged are counted
    as `skipped`).
-6. `python scripts/backfill_pq_parliament_start.py --dry-run` — expect about
+6. Check the PQ unique indexes exist (`uq_ha_pq_api_id`, `uq_ha_pq_date_uin`;
+   the daily health report's "Written questions: duplicates + unique indexes"
+   line is OK, or
+   `docs/plans/pq-identity-phase3-sql.md` step 4). They stop a cron and the
+   backfill storing the same question twice; if a cron stores one first, the
+   backfill keeps the cron's row. Then
+   `python scripts/backfill_pq_parliament_start.py --dry-run` — expect about
    57,600 to insert and exit 0. Exit 5 means an identity mismatch: stop and look
-   at the listed rows.
+   at the listed rows. Records the API returns with no UIN, question text or
+   tabled date are skipped and listed as `unusable` (the crons can't store
+   them either).
 7. `python scripts/backfill_pq_parliament_start.py --max-days 3 --max-tag 1000`
 8. `python scripts/backfill_pq_parliament_start.py --max-days 30 --max-minutes 360 --max-tag 6000`
    — repeat until `range complete`.
@@ -77,7 +85,8 @@ SELECT MIN(date) FROM ha_session;  SELECT MIN(tabled_date) FROM ha_pq;
 
 When runs are allowed: the shared schedule in `hansard_archive/cron_windows.py`
 (20-minute lookahead) blocks weekday daytime whole (07:55–23:30 Mon–Thu,
-07:55–19:30 Fri), 02:55–03:30 and 04:25–07:45 every day, plus Sunday
+07:55–20:00 Fri, which also covers the proposed PQ quick-check's last run at
+19:45), 02:55–03:30 and 04:25–07:45 every day, plus Sunday
 01:55–02:20 / 02:55–03:50 and 03:55–05:00 on the 2nd of the month. In practice:
 weekday nights (Mon–Thu 23:30–02:55, then 03:30–04:25), Friday evening onwards
 and weekends (Sat/Sun 07:45 until the next early-morning window), about 60 hours
