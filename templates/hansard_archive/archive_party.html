@@ -241,7 +241,7 @@ body { background: #f0f2f5; }
         {% endfor %}
 
         {% if year_group.positions|length > 6 %}
-        <div class="pp-show-toggle" id="pp-toggle-{{ year_group.year }}" onclick="revealAllAreas('{{ year_group.year }}')">
+        <div class="pp-show-toggle" id="pp-toggle-{{ year_group.year }}" onclick="revealAllAreas({{ year_group.year | string | tojson | forceescape }})">
             Show all {{ year_group.positions|length }} policy areas ↓
         </div>
         {% endif %}
