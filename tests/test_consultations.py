@@ -199,6 +199,11 @@ class TestPolicyAreas:
 
     def test_single_keyword_does_not_link(self):
         assert consultations.assign_policy_areas("A note on schools", "", [], []) == []
+        childcare = consultations.assign_policy_areas(
+            "Childcare and early years funding", "", [_taxon("/childcare-parenting/childcare", "Childcare",
+                                                             "/childcare-parenting")], [])
+        assert childcare[0]["slug"] == "children-and-families"
+        assert "education" not in [a["slug"] for a in childcare]
         assert consultations.assign_policy_areas("Schools and pupils", "", [], [])[0]["slug"] == "education"
 
     def test_suppressed_taxon_and_limit(self):
@@ -414,7 +419,9 @@ class TestDetail:
         assert 'href="/brief/education"' in html
         assert 'href="/archive/debate/14-october-2026/school-funding-1"' in html
         assert "Old schools debate" not in html                       # outside the 12-month window
-        assert 'href="/archive/pq/12345"' in html                     # "Children and families" -> education
+        # "Children and families" has its own brief page now (owner decision 2026-10-20),
+        # so a PQ tagged only with it is not related to an education consultation.
+        assert 'href="/archive/pq/12345"' not in html
         assert 'href="/bill/childrens-wellbeing-and-schools-bill"' in html
 
     def test_closed_detail_has_no_how_to_respond(self, client):

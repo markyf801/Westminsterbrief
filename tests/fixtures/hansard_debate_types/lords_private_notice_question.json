@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/626807F0-4176-42B1-947A-E5AB593F810D.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "626807F0-4176-42B1-947A-E5AB593F810D",
+  "Title": "BBC Licence Fee: Streaming Services",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-19T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Private Notice Question"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "15:20:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Asked by"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": 994,
+   "AttributedTo": "Lord Hunt of Wirral",
+   "Value": "To ask His Majesty’s Government what plans they have, if any, to extend the scope of the BBC licence fee to households using streaming services; and what assessment they have made of the impact of any such change on (1) household bills, (2) consumer choice, (3) investment and (4) the creative indust"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 5466,
+   "AttributedTo": "The Parliamentary Under-Secretary of State, Department for Digital, Culture, Media and Sport (Baroness Mackenzie of Sherwood) (Lab)",
+   "Value": "My Lords, as noble Lords are aware, the ongoing charter review is considering how to secure the BBC’s long-term future, including by putting its funding model on a sustainable footing. As set out in the Green Paper, the Government are keeping an open mind on all options, including considering reform"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 994,
+   "AttributedTo": "Lord Hunt of Wirral (Con)",
+   "Value": "My Lords, yet again, we are seeing significant government policy being floated in the media before Parliament has been given any clarity at all. That was criticised previously and repeatedly under the previous Prime Minister. The Ministerial Code is clear that major policy announcements should be ma"
+  }
+ ],
+ "ChildDebates": []
+}

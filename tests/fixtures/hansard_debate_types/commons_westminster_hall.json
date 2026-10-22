@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/3106230F-3800-4389-AC51-FC191E58FA35.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "3106230F-3800-4389-AC51-FC191E58FA35",
+  "Title": " Underperforming NHS Trusts: Government Oversight",
+  "HRSTag": "hs_2cWestHallDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Westminster Hall",
+  "House": "Commons"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"160WH\" class=\"column-number column-only\" data-column-number=\"160WH\"></span>"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_76fChair",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "[Graham Stuart <em>in the Chair</em>]"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "14:30:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 5073,
+   "AttributedTo": "Marie Goldman (Chelmsford) (LD)",
+   "Value": "I beg to move,\r\n\r\nThat this House has considered Government oversight of underperforming NHS trusts.\r\n\r\nIt is a pleasure to serve under your chairmanship, Mr Stuart. I am the MP for Chelmsford in Essex, and my local trust is the Mid and South Essex NHS foundation trust. A few years ago, it was decid"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 4813,
+   "AttributedTo": "Mr Richard Holden (Basildon and Billericay) (Con)",
+   "Value": "The hon. Lady makes some important points. We share a hospital trust. Many of my constituents in Basildon and Billericay go to Broomfield hospital. Some of them go down to Basildon hospital in the constituency of the hon. Member for South Basildon and East Thurrock (James McMurdock), as well as the "
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 1482,
+   "AttributedTo": "Graham Stuart (in the Chair)",
+   "Value": "Very brief."
+  }
+ ],
+ "ChildDebates": []
+}

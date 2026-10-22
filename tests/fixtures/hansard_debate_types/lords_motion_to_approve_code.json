@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/AD3657C6-6E75-4B92-854E-2FE1AB78EF8A.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "AD3657C6-6E75-4B92-854E-2FE1AB78EF8A",
+  "Title": "Code of Practice on Access and Unfair Practices During the Recognition and Derecognition Process",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"245\" class=\"column-number column-only\" data-column-number=\"245\"></span>"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateHeading",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Modification of the Law (British Steel Limited Property Transfer) Regulations 2026"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Motions to Approve"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "15:51:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Moved by"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": 4959,
+   "AttributedTo": "Lord Leong",
+   "Value": "That the draft Code of Practice and Regulations laid before the House on 6 and 16 July be approved.\r\n\r\n<em>Relevant document: 11th Report from the Secondary Legislation Scrutiny Committee (special attention drawn to the instrument). Considered in Grand Committee on 13 October.</em>"
+  }
+ ],
+ "ChildDebates": []
+}

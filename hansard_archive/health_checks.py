@@ -115,6 +115,9 @@ CONFIG: dict = {
         "discovered_default": {"days": "mon-fri", "warn_hours": 26, "fail_hours": 50},
         "ignore": ["backfill", "manual"],
     },
+    # Share of recent items with at least one topic tag. Window ends yesterday so
+    # items ingested this morning (tagged by the same cron run) don't skew it.
+    "tagging": {"window_days": 7, "warn_pct": 90.0, "min_items": 20},
     "cron_recent_failures_hours": 24,     # failed runs in this window are listed in the detail
     "cron_stuck_hours": 3,                # latest run still "running" after this -> WARN
     "bills": {"warn_hours": 48, "fail_hours": 96},              # bills-cron daily 06:30
@@ -638,6 +641,47 @@ def check_cached_members(ctx: HealthContext) -> CheckResult:
     return res
 
 
+def _tagged_share(ctx: HealthContext, name: str, item_table: str, theme_table: str, fk: str,
+                  date_col: str, kind: str, extra_where) -> CheckResult:
+    if not ctx.has_table(item_table) or not ctx.has_table(theme_table):
+        return _skipped_table(name, theme_table if ctx.has_table(item_table) else item_table)
+    cfg = ctx.config["tagging"]
+    t, th = ctx.table(item_table), ctx.table(theme_table)
+    start = ctx.today - timedelta(days=cfg["window_days"])
+    tagged_expr = sa.exists(sa.select(th.c[fk]).where(th.c[fk] == t.c.id))
+    total, tagged = ctx.conn.execute(sa.select(
+        sa.func.count(),
+        sa.func.sum(sa.case((tagged_expr, 1), else_=0)),
+    ).where(t.c[date_col] >= start, t.c[date_col] < ctx.today, *extra_where(t))).one()
+    total, tagged = total or 0, tagged or 0
+    pct = (tagged / total * 100) if total else 100.0
+    detail = (f"{tagged} of {total} from {start.isoformat()} to yesterday have a tag ({pct:.1f}%), "
+              f"warn below {cfg['warn_pct']}%")
+    if ctx.has_table("ha_tag_attempt"):
+        a = ctx.table("ha_tag_attempt")
+        given_up = ctx.scalar(sa.select(sa.func.count()).select_from(a).where(a.c.item_kind == kind))
+        detail += f"; {given_up or 0} item(s) with failed tagging attempts recorded"
+    status = OK
+    if total >= cfg["min_items"] and pct < cfg["warn_pct"]:
+        status = WARN
+    elif total < cfg["min_items"]:
+        detail += f" (fewer than {cfg['min_items']} items: not judged)"
+    return CheckResult(name, status, detail)
+
+
+def check_tagging_coverage(ctx: HealthContext) -> list[CheckResult]:
+    """A silent tagging failure (API down, bad model, schema rejected) shows here."""
+    return [
+        _tagged_share(ctx, "Tagging: recent debates tagged", "ha_session", "ha_session_theme",
+                      "session_id", "date", "session",
+                      lambda t: (t.c.is_container.isnot(True),
+                                 sa.or_(t.c.debate_type.is_(None), t.c.debate_type != "other"))),
+        _tagged_share(ctx, "Tagging: recent written questions tagged", "ha_pq", "ha_pq_theme",
+                      "pq_id", "tabled_date", "pq",
+                      lambda t: (t.c.question_text.isnot(None),)),
+    ]
+
+
 def check_headline_stats(ctx: HealthContext) -> CheckResult:
     # last_success, not last_refreshed: stats_refresh bumps last_refreshed on failure too (SWR).
     res = _table_freshness(ctx, "Stats: headline refresh", "headline_stat", "headline_stats", "last_success")
@@ -683,6 +727,7 @@ DB_CHECKS: list[Callable[[HealthContext], CheckResult | list[CheckResult]]] = [
     check_pq_answers,
     check_pq_integrity,
     check_pq_headings_total,
+    check_tagging_coverage,
     check_bills,
     check_edms,
     check_edm_cron,

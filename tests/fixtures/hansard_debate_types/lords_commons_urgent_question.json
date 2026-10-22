@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/2062BAEE-D037-4F08-9A79-E39654805822.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "2062BAEE-D037-4F08-9A79-E39654805822",
+  "Title": "Prisoner Early Release Scheme",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Commons Urgent Question"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "15:52:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Procedure",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "The following Answer to an Urgent Question was given in the House of Commons on Tuesday 13 October."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "“This Government inherited a prison system on the brink of collapse. In July 2024, men’s prisons were operating at 99% capacity. At one point, fewer than 100 places were available across the male estate. Without intervention, we risked running out of prison places, leaving courts unable to sentence "
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"246\" class=\"column-number column-only\" data-column-number=\"246\"></span>"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "This Government have acted to increase capacity and to reform sentencing. We have committed to delivering 14,000 prison places by 2031 and have already delivered 3,200. The last Government added just 500 net places in their time in office. We have also accelerated the removal of foreign national off"
+  }
+ ],
+ "ChildDebates": []
+}

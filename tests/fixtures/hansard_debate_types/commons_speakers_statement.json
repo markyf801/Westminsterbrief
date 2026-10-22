@@ -1,0 +1,28 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/763DFF58-49E6-4B22-A2E5-871ACD95CB71.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "763DFF58-49E6-4B22-A2E5-871ACD95CB71",
+  "Title": "Speaker’s Statement",
+  "HRSTag": "hs_2DebBill",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Commons Chamber",
+  "House": "Commons"
+ },
+ "Items": [
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "00:00:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Para",
+   "MemberId": 467,
+   "AttributedTo": "Mr Speaker",
+   "Value": "Before we come to Prime Minister’s questions, colleagues will know that tomorrow marks the fifth anniversary of the death of Sir David Amess, a dear friend to me and to so many across this House. He served in this House for 38 years, proudly representing his Southend West constituency, where he was "
+  }
+ ],
+ "ChildDebates": []
+}

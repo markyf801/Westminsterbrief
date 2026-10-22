@@ -251,6 +251,13 @@ def app():
             + [HaPQTheme(pq_id=p.id, theme='Transport', theme_type=THEME_TYPE_POLICY_AREA)
                for p in transport_pqs]
         )
+        # SEND rows stored before topic canonicalisation: only the acronym
+        # spellings exist, never "special educational needs" itself.
+        send_pqs = HaPQ.query.filter(HaPQ.uin.in_(['SCHB00', 'SCHB01'])).order_by(HaPQ.uin).all()
+        _db.session.add_all([
+            HaPQTheme(pq_id=send_pqs[0].id, theme='send', theme_type=THEME_TYPE_SPECIFIC),
+            HaPQTheme(pq_id=send_pqs[1].id, theme='send funding', theme_type=THEME_TYPE_SPECIFIC),
+        ])
         _db.session.commit()
 
     yield test_app
@@ -295,6 +302,16 @@ class TestArchiveRoutes:
         r = client.get('/archive')
         assert r.status_code == 200
 
+    @pytest.mark.parametrize('dtype', ['oral_questions', 'pmqs', 'committee_stage', 'urgent_question'])
+    def test_archive_home_type_filters(self, client, dtype):
+        # The grouped Oral Questions / PMQs view raised UnboundLocalError (500)
+        # because a local `from collections import defaultdict` shadowed the
+        # module import for the whole function.
+        r = client.get(f'/archive?dtype={dtype}')
+        assert r.status_code == 200
+        r = client.get(f'/archive?dtype={dtype}&house=Lords')
+        assert r.status_code == 200
+
     def test_archive_search_empty(self, client):
         r = client.get('/archive/search?q=test')
         assert r.status_code == 200
@@ -325,8 +342,58 @@ class TestArchiveRoutes:
         i10 = html.index('href="/archive/pq/test010"')
         assert i2 < i1 < i10
         assert 'Department for Transport' in html
+        # The policy-area fill is labelled as a broader match, after the topic matches
+        i_broad = html.index('Written questions in the same policy area (Transport)')
+        assert i1 < i_broad < i10
+        assert 'Broader match: same policy area' in html
         # Outside the ±180-day window
         assert 'href="/archive/pq/test011"' not in html
+
+    def test_pq_page_related_by_shared_topic(self, client):
+        """PQ page: related items come from shared specific topics, not heading text."""
+        html = client.get('/archive/pq/TEST001').get_data(as_text=True)
+        assert 'Debates on the same topic' in html
+        assert 'href="/archive/debate/1-january-2026/test-session"' in html
+        assert 'Written Questions on the same topic' in html
+        assert 'href="/archive/pq/test002"' in html          # shares 'Bus services'
+        assert 'questions matched on shared topic tags' in html
+        # Free slots are filled from the main policy area, in a separately labelled section
+        assert html.index('href="/archive/pq/test002"') < html.index('In the same policy area (Transport)')
+
+    def test_pq_page_related_matches_across_topic_family(self, client):
+        """'send funding' (child) and 'send' (parent alias) are the same family."""
+        html = client.get('/archive/pq/SCHB01').get_data(as_text=True)
+        assert 'href="/archive/pq/schb00"' in html
+
+    def test_pq_page_policy_area_fallback_is_labelled(self, client):
+        html = client.get('/archive/pq/TEST010').get_data(as_text=True)   # policy area only
+        assert 'In the same policy area (Transport)' in html
+        assert 'Broader match: same policy area' in html
+        assert 'href="/archive/debate/1-january-2026/test-session"' in html
+        assert 'Debates on the same topic' not in html
+
+    def test_pq_page_main_policy_area_is_the_most_central(self, app, client):
+        """Main area = first stored by the tagger (tagged_at order), not A-Z."""
+        from datetime import datetime
+        from extensions import db as _db
+        from hansard_archive.models import HaPQ, HaPQTheme
+        from hansard_archive.tagger import TagOutcome, write_pq_tags
+        with app.app_context():
+            pq = HaPQ(uin='ORDER1', heading='Rail and growth', question_text='About rail.',
+                      tabled_date=date(2026, 3, 2), is_answered=True)
+            _db.session.add(pq)
+            _db.session.commit()
+            write_pq_tags(pq.id, TagOutcome(policy_areas=['Transport', 'Economy']),
+                          now=datetime(2026, 3, 2, 9, 0))
+            pq_id = pq.id
+        try:
+            html = client.get('/archive/pq/ORDER1').get_data(as_text=True)
+            assert 'In the same policy area (Transport)' in html     # not "Economy" (A-Z first)
+        finally:
+            with app.app_context():
+                HaPQTheme.query.filter_by(pq_id=pq_id).delete()
+                HaPQ.query.filter_by(id=pq_id).delete()
+                _db.session.commit()
 
     def test_pq_display_heading_fallback(self):
         from hansard_archive.views import _pq_display_heading
@@ -386,6 +453,51 @@ class TestBriefRoutes:
         r = client.get('/archive/theme/chagos-islands?page=1')
         assert r.status_code == 301
         assert r.headers['Location'].endswith('/brief/chagos-islands?page=1')
+
+    @pytest.mark.parametrize('slug, target', [
+        ('send', 'special-educational-needs'),       # acronym that lowercases to a verb
+        ('housing', 'housing-and-planning'),         # one-word policy synonym
+        ('immigration', 'immigration-and-asylum'),
+    ])
+    def test_ambiguous_brief_slugs_redirect(self, client, slug, target):
+        r = client.get(f'/brief/{slug}?page=3')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith(f'/brief/{target}')
+        r = client.get(f'/archive/theme/{slug}')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith(f'/brief/{target}')   # one hop, not two
+
+    def test_alias_targets_are_real_pages(self):
+        from hansard_archive import policy_areas
+        for target in policy_areas.BRIEF_SLUG_ALIASES.values():
+            assert policy_areas.by_slug(target)
+        assert not set(policy_areas.BRIEF_SLUG_ALIASES) & policy_areas.valid_slugs()
+
+    def test_send_redirect_target_lists_rows_stored_only_as_acronyms(self, client):
+        """/brief/send -> /brief/special-educational-needs, which must not 404
+        when the archive only holds 'send' / 'send funding' tags."""
+        r = client.get('/brief/send')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith('/brief/special-educational-needs')
+        r = client.get('/brief/special-educational-needs')
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert 'href="/archive/pq/schb00"' in html      # tagged 'send'
+        assert 'href="/archive/pq/schb01"' in html      # tagged 'send funding' (child topic)
+        assert '2 written questions on this topic' in html
+
+    def test_child_topic_page_and_alias_redirect(self, client):
+        r = client.get('/brief/send-funding')
+        assert r.status_code == 301
+        assert r.headers['Location'].endswith('/brief/special-educational-needs-funding')
+        html = client.get('/brief/special-educational-needs-funding').get_data(as_text=True)
+        assert 'href="/archive/pq/schb01"' in html
+        assert 'href="/archive/pq/schb00"' not in html  # parent-only row stays on the parent
+
+    def test_education_page_is_education_only_and_children_has_its_own(self):
+        from hansard_archive import policy_areas
+        assert policy_areas.hansard_names_for_slug('education') == ['Education, training and skills']
+        assert policy_areas.hansard_names_for_slug('children-and-families') == ['Children and families']
 
     def test_pq_only_topic_lists_written_questions(self, client):
         r = client.get('/brief/chagos-islands')

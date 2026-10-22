@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/B72B63B1-34C5-45C5-995C-041BC4321A8B.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "B72B63B1-34C5-45C5-995C-041BC4321A8B",
+  "Title": "UK and Poland:  Security and Defence Partnership",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Grand Committee",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Motion to Take Note"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "16:15:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Moved by"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_TabledBy",
+   "MemberId": 4949,
+   "AttributedTo": "Lord Johnson of Lainston",
+   "Value": "That the Grand Committee takes note of the Treaty between the UK and Poland on a Security and Defence Partnership.\r\n\r\n<em>Relevant document: 3rd Report of the International Agreements Committee</em>"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 4949,
+   "AttributedTo": "Lord Johnson of Lainston (Con)",
+   "Value": "My Lords, I am particularly delighted that we are having this debate on the day that President Zelensky is in London meeting the Prime Minister, I think while we are having this discussion. That only highlights the importance of agreements such as this.\r\n\r\nWe are going to scrutinise the UK-Poland Se"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "16:25:00"
+  }
+ ],
+ "ChildDebates": []
+}

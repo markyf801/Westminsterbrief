@@ -176,16 +176,20 @@ body { background: #f0f2f5; }
     </div>
 
     {# --- Related parliamentary activity panel --- #}
+    {# basis 'tags': shared specific topics (canonical families), main policy area as a
+       labelled broader fallback. basis 'text': heading text search (untagged questions). #}
     {% set has_debates = related.debates | length > 0 %}
     {% set has_pqs     = related.pqs     | length > 0 %}
     {% set has_bills   = related.bills   | length > 0 %}
-    {% if has_debates or has_pqs or has_bills %}
+    {% set has_broad   = (related.debates_broad | length > 0) or (related.pqs_broad | length > 0) %}
+    {% set by_tags     = related.basis == 'tags' %}
+    {% if has_debates or has_pqs or has_bills or has_broad %}
     <div class="rpa-panel">
         <h2 class="rpa-heading">Related parliamentary activity</h2>
 
         {% if has_debates %}
         <div class="rpa-section">
-            <h3 class="rpa-subheading">Debates</h3>
+            <h3 class="rpa-subheading">{% if by_tags %}Debates on the same topic{% else %}Debates{% endif %}</h3>
             <div class="rpa-list">
                 {% for r in related.debates %}
                 <a class="rpa-card" href="/archive/debate/{{ r.url_date }}/{{ r.slug }}">
@@ -200,13 +204,17 @@ body { background: #f0f2f5; }
                 </a>
                 {% endfor %}
             </div>
+            {% if by_tags and specific_topics %}
+            <a class="rpa-see-all" href="/brief/{{ specific_topics[0]|slugify }}">See everything on {{ specific_topics[0] }} →</a>
+            {% elif not by_tags %}
             <a class="rpa-see-all" href="/archive/search?q={{ related.query|urlencode }}">See all debates on this topic →</a>
+            {% endif %}
         </div>
         {% endif %}
 
         {% if has_pqs %}
         <div class="rpa-section">
-            <h3 class="rpa-subheading">Written Questions</h3>
+            <h3 class="rpa-subheading">{% if by_tags %}Written Questions on the same topic{% else %}Written Questions{% endif %}</h3>
             <div class="rpa-list">
                 {% for r in related.pqs %}
                 <a class="rpa-card" href="{{ r.url }}">
@@ -223,7 +231,40 @@ body { background: #f0f2f5; }
                 </a>
                 {% endfor %}
             </div>
+            {% if not by_tags %}
             <a class="rpa-see-all" href="/written-questions?q={{ related.query|urlencode }}">See all written questions on this topic →</a>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if has_broad %}
+        <div class="rpa-section" id="same-policy-area">
+            <h3 class="rpa-subheading">In the same policy area{% if related.broad_area %} ({{ related.broad_area }}){% endif %}</h3>
+            <p class="rpa-note">Broader match: same policy area, not necessarily the same topic.</p>
+            <div class="rpa-list">
+                {% for r in related.debates_broad %}
+                <a class="rpa-card" href="/archive/debate/{{ r.url_date }}/{{ r.slug }}">
+                    <div class="rpa-card-meta">
+                        <span class="topic-source-badge topic-source-{{ r.house|lower }}">{{ r.house }}</span>
+                        <span class="archive-dtype-badge archive-dtype-{{ r.debate_type }}">{{ r.debate_type_label }}</span>
+                        <span class="rpa-date">{{ r.human_date }}</span>
+                    </div>
+                    <span class="rpa-title">{{ r.title }}</span>
+                </a>
+                {% endfor %}
+                {% for r in related.pqs_broad %}
+                <a class="rpa-card" href="{{ r.url }}">
+                    <div class="rpa-card-meta">
+                        <span class="wq-status-badge wq-status-{% if r.is_answered %}answered{% else %}unanswered{% endif %}">
+                            {% if r.is_answered %}ANSWERED{% else %}UNANSWERED{% endif %}
+                        </span>
+                        <span class="archive-dept-badge">{{ r.answering_body }}</span>
+                        <span class="rpa-date">{{ r.human_date }}</span>
+                    </div>
+                    <span class="rpa-title">{{ r.heading }}</span>
+                </a>
+                {% endfor %}
+            </div>
         </div>
         {% endif %}
 
@@ -250,6 +291,8 @@ body { background: #f0f2f5; }
             </div>
         </div>
         {% endif %}
+
+        <p class="rpa-note">{% if by_tags %}Debates and questions matched on shared topic tags, which are AI-generated{% if has_bills %}; bills on the question heading{% endif %}.{% else %}Matched on the question heading text.{% endif %}</p>
 
         {% if policy_areas %}
         <div class="rpa-footer">

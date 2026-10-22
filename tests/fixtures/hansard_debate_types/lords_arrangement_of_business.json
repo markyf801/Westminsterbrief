@@ -1,0 +1,35 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/417B01D0-59C5-4DDA-9FF4-37C89EA8CF33.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "417B01D0-59C5-4DDA-9FF4-37C89EA8CF33",
+  "Title": "Arrangement of Business",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-14T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Announcement"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "20:05:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_para",
+   "MemberId": 5022,
+   "AttributedTo": "Baroness in Waiting/Government Whip (Baroness Ramsey of Wall Heath) (Lab)",
+   "Value": "My Lords, before we start the next debate, I remind noble Lords of the speaking time of six minutes."
+  }
+ ],
+ "ChildDebates": []
+}

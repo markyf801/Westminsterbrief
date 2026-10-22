@@ -1,0 +1,56 @@
+{
+ "_source": "https://hansard-api.parliament.uk/debates/debate/2AF97D25-0ED2-4ED8-ACCF-08FD69EA3E94.json (trimmed; Open Parliament Licence v3.0)",
+ "Overview": {
+  "ExtId": "2AF97D25-0ED2-4ED8-ACCF-08FD69EA3E94",
+  "Title": "Public Office (Accountability) Bill",
+  "HRSTag": "NewDebate",
+  "Date": "2026-10-19T00:00:00",
+  "Location": "Lords Chamber",
+  "House": "Lords"
+ },
+ "Items": [
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ColumnNumber",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "<span id=\"546\" class=\"column-number column-only\" data-column-number=\"546\"></span>"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_DebateType",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Committee (2nd Day) (Continued)"
+  },
+  {
+   "ItemType": "Timestamp",
+   "HRSTag": null,
+   "MemberId": null,
+   "AttributedTo": "",
+   "Value": "20:37:00"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_ClauseHeading",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Clause 12: Offence of misleading the public"
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_Procedure",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Amendment 70 not moved."
+  },
+  {
+   "ItemType": "Contribution",
+   "HRSTag": "hs_AmendmentHeading",
+   "MemberId": null,
+   "AttributedTo": null,
+   "Value": "Amendment 71"
+  }
+ ],
+ "ChildDebates": []
+}

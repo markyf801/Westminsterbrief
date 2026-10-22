@@ -53,6 +53,7 @@ from hansard_archive.models import (
     DEBATE_TYPE_PETITION,
     DEBATE_TYPE_PMQS,
     DEBATE_TYPE_STATUTORY_INSTRUMENT,
+    DEBATE_TYPE_URGENT_QUESTION,
     DEBATE_TYPE_WESTMINSTER_HALL,
     HansardContribution,
     HansardSession,
@@ -185,6 +186,9 @@ _PROCEDURAL_TITLE_STARTS = (
     "retirement of a member",
     "retirements of members",
     "lord speaker's statement",
+    "lord speaker’s statement",
+    "speaker's statement",       # Commons Speaker's statements are not ministerial statements
+    "speaker’s statement",
     "standing orders",
     "clerk of the parliaments",
     "leave of absence",
@@ -199,12 +203,85 @@ _PROCEDURAL_TITLE_STARTS = (
 # have "(Amendment)" in their formal title.
 _MADE_SI_RE = re.compile(r"\b(regulations|orders?|rules)\s+\d{4}\b", re.IGNORECASE)
 
+# Lords sessions all carry HRSTag "NewDebate", so the Overview says nothing about
+# their type. Each Lords session's first item is an hs_DebateType line holding
+# the official business label Hansard prints above the debate ("Question",
+# "Statement", "Commons Urgent Question", "Motion to Take Note", "Committee (2nd
+# Day)", ...). It is the authoritative type signal for the Lords. Commons
+# sessions don't have one; their Overview HRSTag carries the type instead.
+# Matched on the lowercased label with any "(2nd Day)" / "(Continued)" removed.
+_DEBATE_TYPE_LABEL_EXACT = {
+    "question":                     DEBATE_TYPE_ORAL_QUESTIONS,
+    "commons urgent question":      DEBATE_TYPE_URGENT_QUESTION,
+    "private notice question":      DEBATE_TYPE_URGENT_QUESTION,
+    "urgent question":              DEBATE_TYPE_URGENT_QUESTION,
+    "statement":                    DEBATE_TYPE_MINISTERIAL_STATEMENT,
+    "commons statement":            DEBATE_TYPE_MINISTERIAL_STATEMENT,
+    "question for short debate":    DEBATE_TYPE_DEBATE,
+    "motion to take note":          DEBATE_TYPE_DEBATE,
+    "motion":                       DEBATE_TYPE_DEBATE,
+    "debate":                       DEBATE_TYPE_DEBATE,
+    "announcement":                 DEBATE_TYPE_OTHER,
+    "motion on standing orders":    DEBATE_TYPE_OTHER,
+}
+# Prefix rules, checked in order. Bill committee days (chamber or Grand Committee)
+# are committee stage; other bill stages are debates; approval / regret motions on
+# laid instruments (SIs, codes of practice) are delegated legislation.
+_DEBATE_TYPE_LABEL_PREFIXES = (
+    ("committee",                    DEBATE_TYPE_COMMITTEE_STAGE),
+    ("motion to approve",            DEBATE_TYPE_STATUTORY_INSTRUMENT),
+    ("motions to approve",           DEBATE_TYPE_STATUTORY_INSTRUMENT),
+    ("motion to regret",             DEBATE_TYPE_STATUTORY_INSTRUMENT),
+    ("motion to consider",           DEBATE_TYPE_STATUTORY_INSTRUMENT),
+    ("motions to consider",          DEBATE_TYPE_STATUTORY_INSTRUMENT),
+    ("motion to annul",              DEBATE_TYPE_STATUTORY_INSTRUMENT),
+    ("first reading",                DEBATE_TYPE_DEBATE),
+    ("second reading",               DEBATE_TYPE_DEBATE),
+    ("third reading",                DEBATE_TYPE_DEBATE),
+    ("report",                       DEBATE_TYPE_DEBATE),
+    ("commons amendments",           DEBATE_TYPE_DEBATE),
+    ("commons reasons",              DEBATE_TYPE_DEBATE),
+    ("consideration of commons",     DEBATE_TYPE_DEBATE),
+    ("returned from the commons",    DEBATE_TYPE_DEBATE),
+)
+_LABEL_QUALIFIER_RE = re.compile(r"\s*\([^)]*\)")
+# "With permission, I will make a statement on..." / "With your permission, Madam
+# Deputy Speaker, ... I will make a statement" — the oral statement formula.
+_STATEMENT_OPENING_RE = re.compile(r"with (your )?permission\b.{0,160}?\bmake a statement\b",
+                                   re.IGNORECASE | re.DOTALL)
 
-def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
+
+def _official_debate_type_label(data: dict) -> str:
+    """
+    The session's official business label: the first hs_DebateType item's text
+    ("Question", "Statement", ...), or "" when there is none (most Commons sessions).
+    """
+    for item in data.get("Items") or []:
+        if (item.get("HRSTag") or "").lower() == "hs_debatetype":
+            return _clean_html(item.get("Value") or "").strip()
+    return ""
+
+
+def _type_from_debate_type_label(label: str) -> Optional[str]:
+    """Map an official hs_DebateType label to our type, or None if unrecognised."""
+    key = _LABEL_QUALIFIER_RE.sub("", (label or "").lower()).strip()
+    if not key:
+        return None
+    if key in _DEBATE_TYPE_LABEL_EXACT:
+        return _DEBATE_TYPE_LABEL_EXACT[key]
+    for prefix, debate_type in _DEBATE_TYPE_LABEL_PREFIXES:
+        if key.startswith(prefix):
+            return debate_type
+    return None
+
+
+def _classify_from_overview(title: str, location: str, hrs_tag: str,
+                            debate_type_label: str = "") -> str:
     """
     Classify debate type using Overview fields, with hrs_tag as primary source of truth.
 
-    Precedence: procedural override → location (venue) → hrs_tag (structured) → title (fallback only).
+    Precedence: procedural override → official hs_DebateType label (Lords) →
+    location (venue) → hrs_tag (structured) → title (fallback only).
     Title matching is a last resort because blank or unusual titles produce
     silent misclassification (e.g. hs_3cOppositionDay → statutory_instrument).
     """
@@ -215,6 +292,12 @@ def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
     # --- Procedural title override — always 'other' regardless of venue ---
     if any(t.startswith(p) for p in _PROCEDURAL_TITLE_STARTS):
         return DEBATE_TYPE_OTHER
+
+    # --- Official business label — beats location, so a take-note debate or a
+    #     Question for Short Debate held in Grand Committee isn't "committee stage" ---
+    from_label = _type_from_debate_type_label(debate_type_label)
+    if from_label:
+        return from_label
 
     # --- Location is authoritative for venue-specific types ---
     if "westminster hall" in loc:
@@ -236,8 +319,10 @@ def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
             return DEBATE_TYPE_PMQS
         return DEBATE_TYPE_ORAL_QUESTIONS
 
-    if tag == "hs_2curgenquestion":
-        return DEBATE_TYPE_ORAL_QUESTIONS
+    # The real tag is hs_2cUrgentQuestion; the misspelt form never matched, so
+    # Commons urgent questions fell through to 'other' (and were never tagged).
+    if tag in ("hs_2curgentquestion", "hs_2curgenquestion"):
+        return DEBATE_TYPE_URGENT_QUESTION
 
     if tag == "hs_2cstatement":
         # "Lord Mandelson: Response to Humble Address" is a debate on an address motion
@@ -288,6 +373,38 @@ def _classify_from_overview(title: str, location: str, hrs_tag: str) -> str:
         return DEBATE_TYPE_DEBATE
 
     return DEBATE_TYPE_OTHER
+
+
+def classify_session(title: str, location: str, hrs_tag: str, house: str,
+                     debate_type_label: str = "", first_speech: str = "") -> str:
+    """
+    Debate type for one session. Used at ingest time and by
+    scripts/reclassify_debate_types.py, so both give the same answer.
+
+    Lords oral questions without an official label (older payloads) fall back to
+    the opening phrase "To ask His Majesty's Government...". Only when there is
+    no label: Questions for Short Debate open the same way but are debates.
+    The fallback beats the title keywords ("... Bill", "Amendment") but not the
+    structured signals (label, venue, HRS tag): a question about a bill is still
+    a question.
+    """
+    debate_type = _classify_from_overview(title, location, hrs_tag, debate_type_label)
+    # Commons oral statements are tagged hs_2cStatement in the rolling record, but
+    # the final record can re-tag them with the generic hs_2DebBill. The minister's
+    # opening formula identifies them either way.
+    if (house == "Commons" and (hrs_tag or "").lower() == "hs_2debbill"
+            and debate_type == DEBATE_TYPE_DEBATE
+            and _STATEMENT_OPENING_RE.match((first_speech or "").strip())):
+        return DEBATE_TYPE_MINISTERIAL_STATEMENT
+    if (house == "Lords"
+            and (first_speech or "").strip().lower().startswith("to ask his majesty")
+            and not _type_from_debate_type_label(debate_type_label)
+            and not any((title or "").lower().startswith(p) for p in _PROCEDURAL_TITLE_STARTS)
+            # What the structured fields alone say (title blanked): OTHER means the
+            # current answer came only from title keywords, or from nothing.
+            and _classify_from_overview("", location, hrs_tag, debate_type_label) == DEBATE_TYPE_OTHER):
+        return DEBATE_TYPE_ORAL_QUESTIONS
+    return debate_type
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +630,11 @@ def _fetch_session_full(ext_id: str) -> tuple[dict, list[dict], list[str]]:
         return {}, [], []
 
     data = resp.json()
-    overview = data.get("Overview") or {}
+    overview = dict(data.get("Overview") or {})
+    # _flatten_items drops hs_DebateType items, so keep the official label here
+    # for _classify_from_overview (key is ours, not the API's).
+    if overview:
+        overview["_DebateTypeLabel"] = _official_debate_type_label(data)
     contributions = _flatten_items(data, [0])
 
     # Extract child ExtIds for BFS — handles Grand Committee wrapper pattern where
@@ -697,16 +818,11 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             title = (overview.get("Title") or "").strip()
             location = overview.get("Location") or ""
             hrs_tag = overview.get("HRSTag") or ""
-            debate_type = _classify_from_overview(title, location, hrs_tag)
-
-            # Lords oral questions: the structural classifier has no reliable HRS signal
-            # for Lords OQs, so they land in 'other'. Override using the opening-phrase
-            # signal: every Lords OQ starts "To ask His Majesty's Government..." —
-            # this is constitutionally mandated phrasing, not a heuristic.
-            if house == "Lords" and contributions:
-                first_text = (contributions[0].get("speech_text") or "").strip().lower()
-                if first_text.startswith("to ask his majesty"):
-                    debate_type = DEBATE_TYPE_ORAL_QUESTIONS
+            debate_type = classify_session(
+                title, location, hrs_tag, house,
+                debate_type_label=overview.get("_DebateTypeLabel") or "",
+                first_speech=(contributions[0].get("speech_text") if contributions else ""),
+            )
 
             hansard_url = _build_hansard_url(house, sitting_date, ext_id, title)
 
