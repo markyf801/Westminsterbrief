@@ -23,7 +23,24 @@ testing in April 2026.
 | `take` / `skip` | integer | Pagination. Works. |
 | `questionStatus` | `NotAnswered` / `AnsweredOnly` / `AllQuestions` | Alternative to `answered`. Works. |
 
+| `answeredWhenFrom` / `answeredWhenTo` | date | Questions whose `dateAnswered` is in the range. Verified Oct 2026. |
+| `correctedWhenFrom` / `correctedWhenTo` | date | Questions whose answer was corrected in the range (`dateAnswerCorrected`). Verified 22 Oct 2026: ~9 corrections in 11 days. |
+
 Wrong names that the API (correctly) ignores: `tabledStartDate`, `tabledEndDate`, `isAnswered`.
+
+## Holding answers and corrections (verified live, 22 Oct 2026)
+
+- **Holding answer:** `answerIsHolding=true`, `dateAnswered` = `dateHoldingAnswer`.
+  When the real answer arrives, `answerIsHolding` becomes false,
+  `dateHoldingAnswer` keeps the holding date and `dateAnswered` becomes the
+  real answer's date — **the same date when both land on the same day**, so a
+  date comparison alone misses the change.
+- **Correction:** `answerIsCorrection=true`, `dateAnswerCorrected` set,
+  `correctingMemberId` set, `answerText` is the corrected text,
+  `originalAnswerText` the old one. **`dateAnswered` keeps the original date**,
+  so an "answered in the last N days" window never finds a correction to an
+  older answer — use `correctedWhenFrom`/`correctedWhenTo`.
+- The bulk list endpoint includes all these fields (text cut at 258 chars).
 
 ## Examples
 
