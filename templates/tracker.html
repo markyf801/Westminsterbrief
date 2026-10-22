@@ -18,7 +18,12 @@
     <div class="info-box">
         Select a department, then click Search. AI groups the questions by policy theme automatically. Tick the themes you want, then click <strong>Generate Word Briefing</strong> to export with optional AI political context.
     </div>
-    
+    {% if pq_updated_label %}
+    <p class="wq-freshness" style="font-size:13px; color:#5a6878; margin:8px 0 0;">
+        Updated from Parliament at {{ pq_updated_label }}. A question answered since then may still show here.
+    </p>
+    {% endif %}
+
     <form method="POST" id="trackerForm" onsubmit="showLoading()">
         <div class="form-row" style="align-items: flex-end;">
             <div class="form-group">
@@ -53,7 +58,7 @@
 
         <div style="display:flex; align-items:center; justify-content:space-between; margin-top:16px; flex-wrap:wrap; gap:8px;">
             <div class="info-box" style="margin:0; flex:1;">
-                Questions tabled: <strong>{{ sorted_grouped_results.values()|list|first|attr('display_date') }}</strong>
+                Questions tabled: <strong>{{ (sorted_grouped_results.values()|list|first).display_date }}</strong>
             </div>
             <div style="display:flex; gap:6px;">
                 <button id="btn-theme-view" class="view-toggle active-toggle" onclick="setView('theme')">By Theme</button>
@@ -148,16 +153,11 @@
         </div>
     {% else %}
         <div class="box" style="margin-top: 25px; text-align: center; padding: 40px;">
-            {% if api_failed %}
-                <p style="color: #d9534f; font-size: 16px; font-weight: bold;">Parliament API did not respond.</p>
-                <p style="color: #888; font-size: 14px; margin-top: 8px;">This is a temporary issue with Parliament's servers. Try again in a few minutes.</p>
-            {% else %}
-                <p style="color: #666; font-size: 16px; font-weight: bold;">No unanswered questions found.</p>
-                <p style="color: #888; font-size: 14px; margin-top: 8px;">
-                    Checked the last 5 sitting days — no unanswered questions for this department were found.
-                    Parliament may be in recess, or all recent questions have already been answered.
-                </p>
-            {% endif %}
+            <p style="color: #666; font-size: 16px; font-weight: bold;">No unanswered questions found.</p>
+            <p style="color: #888; font-size: 14px; margin-top: 8px;">
+                Checked the last 5 days — no unanswered questions for this department were found.
+                Parliament may be in recess, or all recent questions have already been answered.
+            </p>
         </div>
     {% endif %}
 {% endif %}
@@ -165,7 +165,7 @@
 <div id="exportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: white; padding: 30px; border-radius: 8px; width: 500px; max-width: 90%; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
         <h3 style="margin-top: 0; color: #1a4a6e; border-bottom: 2px solid #eee; padding-bottom: 10px;">Enhance Word Briefing</h3>
-        <p style="color: #555; font-size: 14px; margin-bottom: 20px;">Select how you want to enhance the downloaded document. <em>Note: Adding AI or History options will cause the download to take 10-15 seconds.</em></p>
+        <p style="color: #555; font-size: 14px; margin-bottom: 20px;">Select how you want to enhance the downloaded document. <em>Note: Adding AI political context can make the download take 10-15 seconds.</em></p>
         
         <form id="downloadForm" action="/download_tracker_word" method="POST">
             <input type="hidden" name="export_data" id="export_data">

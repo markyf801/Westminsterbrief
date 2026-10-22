@@ -1,8 +1,16 @@
-import requests, os, json, re, concurrent.futures, io
+import io
+import json
+import os
+import re
+
+import requests
 from flask import Blueprint, render_template, request, send_file
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from sqlalchemy import func
 from cache_models import CachedMember
-from extensions import limiter
+from extensions import db, limiter
+from hansard_archive.models import HaCronRun, HaPQ, HaPQDeadline
+from hansard_archive.pq_publication import to_uk
 
 try:
     import docx
@@ -21,7 +29,6 @@ DEPARTMENTS = {
     "HM Treasury": "14", "Home Office": "1", "Ministry of Defence": "11", "Ministry of Justice": "54",
     "Department for Science, Innovation and Technology": "216", "Cabinet Office": "53"
 }
-MEMBER_CACHE = {}
 
 def add_hyperlink(paragraph, url, text):
     part = paragraph.part
@@ -156,74 +163,113 @@ def _categorise_questions(questions: list[dict], dept_id: str, date_str: str, ge
     return categories
 
 
-def get_member_name(member_id):
-    if not member_id: return "Unknown Member"
-    if member_id in MEMBER_CACHE: return MEMBER_CACHE[member_id]
-
-    # Check DB cache first
-    cached = CachedMember.get(member_id)
-    if cached:
-        MEMBER_CACHE[member_id] = cached.name
-        return cached.name
-
-    try:
-        url = f"https://members-api.parliament.uk/api/Members/{member_id}"
-        resp = requests.get(url, timeout=3)
-        if resp.status_code == 200:
-            data = resp.json().get('value', {})
-            name = data.get('nameDisplayAs', 'Unknown Member')
-            party = (data.get('latestParty') or {}).get('name', '')
-            membership = data.get('latestHouseMembership') or {}
-            constituency = membership.get('membershipFrom', '')
-            house = "Lords" if membership.get('house') == 2 else "Commons"
-            image_url = data.get('thumbnailUrl', '')
-            CachedMember.store(member_id, name, party, constituency, house, image_url)
-            MEMBER_CACHE[member_id] = name
-            return name
-    except: pass
-    return "Unknown Member"
-
-WQ_URL = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
+# Today's PQs reads only our own database (ha_pq, ha_pq_deadline,
+# cached_member, ha_cron_run): no Parliament API calls on page view.
+LOOKBACK_DAYS = 5   # walk back this many days (from yesterday) for a sitting day
 
 
-def _fetch_unanswered_wqs(dept_id: str, target_date: str) -> list:
-    """Fetch all unanswered WQs for dept_id on target_date (YYYY-MM-DD).
+def question_type(house: str | None, is_named_day: bool | None) -> str:
+    """Badge type: LORDS (14 calendar day deadline), NAMED_DAY (date set by
+    the MP, min 2 sitting days) or ORDINARY (conventional 7 sitting days)."""
+    if house == 'Lords':
+        return 'LORDS'
+    if is_named_day:
+        return 'NAMED_DAY'
+    return 'ORDINARY'
 
-    Uses correct API params verified against the OpenAPI spec April 2026.
-    See CLAUDE.md "WQ API constraints" for full parameter reference.
-    answeringBodies is safe with a date anchor (~2s response); without one it
-    causes full-table scans and timeouts.
-    """
-    params = {
-        'tabledWhenFrom': target_date,
-        'tabledWhenTo': target_date,
-        'answered': 'Unanswered',
-        'take': 1000,
-    }
+
+def _human_date(d: date) -> str:
+    return f"{d.day} {d.strftime('%B %Y')}"
+
+
+def _unanswered_filters(dept_id: str) -> list:
+    conds = [HaPQ.is_answered.is_(False), HaPQ.is_withdrawn.is_(False)]
     if dept_id:
-        params['answeringBodies'] = int(dept_id)
+        conds.append(HaPQ.answering_body_id == int(dept_id))
+    return conds
 
-    resp = requests.get(WQ_URL, params=params, timeout=30)
-    if resp.status_code != 200:
-        return []
 
-    payload = resp.json()
-    results = payload.get('results') or []
-    total = payload.get('totalResults', 0)
+def _latest_sitting_day(dept_id: str, today: date) -> date | None:
+    """Most recent day from yesterday back LOOKBACK_DAYS with unanswered
+    questions for the department (handles weekends, bank holidays, recess)."""
+    return (db.session.query(func.max(HaPQ.tabled_date))
+            .filter(HaPQ.tabled_date >= today - timedelta(days=LOOKBACK_DAYS),
+                    HaPQ.tabled_date <= today - timedelta(days=1),
+                    *_unanswered_filters(dept_id))
+            .scalar())
 
-    # Paginate on heavy days (post-recess returns can exceed 1000 for large depts)
-    skip = 1000
-    while len(results) < total and skip < 5000:
-        page = requests.get(WQ_URL, params={**params, 'skip': skip}, timeout=30)
-        if page.status_code != 200:
-            break
-        batch = page.json().get('results') or []
-        if not batch:
-            break
-        results.extend(batch)
-        skip += 1000
 
-    return results
+def _unanswered_pqs(dept_id: str, day: date) -> list[HaPQ]:
+    return (HaPQ.query
+            .filter(HaPQ.tabled_date == day, *_unanswered_filters(dept_id))
+            .order_by(HaPQ.answering_body, HaPQ.id)
+            .all())
+
+
+def _deadlines(api_ids: list[int]) -> dict[int, HaPQDeadline]:
+    """{api_id: deadline row}. Empty (logged) if ha_pq_deadline is unreadable,
+    e.g. before migrations/pq_deadline_table.py has run: the page still works,
+    just without due dates and named-day badges."""
+    if not api_ids:
+        return {}
+    try:
+        rows = HaPQDeadline.query.filter(HaPQDeadline.api_id.in_(api_ids)).all()
+    except Exception as e:
+        db.session.rollback()
+        print(f"[tracker] ha_pq_deadline unreadable, due dates skipped: {str(e)[:120]}")
+        return {}
+    return {r.api_id: r for r in rows}
+
+
+def _members(member_ids: set[int]) -> dict[int, CachedMember]:
+    if not member_ids:
+        return {}
+    rows = CachedMember.query.filter(CachedMember.member_id.in_(list(member_ids))).all()
+    return {m.member_id: m for m in rows}
+
+
+def _pq_updated_label(now_utc: datetime | None = None) -> str | None:
+    """'09:42 today' / '14:05 on 21 October' (UK time) for the newest PQ cron
+    run that finished successfully; None if there is none or it can't be read."""
+    try:
+        finished = (db.session.query(func.max(HaCronRun.finished_at))
+                    .filter(HaCronRun.service_name.like('pq-%'),
+                            HaCronRun.status == 'ok')
+                    .scalar())
+    except Exception as e:
+        db.session.rollback()
+        print(f"[tracker] could not read ha_cron_run: {str(e)[:120]}")
+        return None
+    if finished is None:
+        return None
+    at = to_uk(finished)
+    today_uk = to_uk(now_utc or datetime.utcnow()).date()
+    if at.date() == today_uk:
+        return f"{at:%H:%M} today"
+    return f"{at:%H:%M} on {at.day} {at:%B}"
+
+
+def _result_row(pq: HaPQ, member: CachedMember | None, deadline: HaPQDeadline | None) -> dict:
+    tabled = pq.tabled_date.isoformat()
+    due = deadline.date_for_answer if deadline else None
+    return {
+        'dept': pq.answering_body,
+        'uin': str(pq.uin),
+        'member': (member.name if member and member.name else None)
+                  or pq.asking_member or "Unknown Member",
+        'member_id': pq.asking_mnis_id,
+        'party': member.party if member else '',
+        'constituency': member.constituency if member else '',
+        'house': pq.chamber or 'Commons',
+        'text': pq.question_text or '',
+        'raw_date': tabled,
+        'date_asked': _human_date(pq.tabled_date),
+        'due_date': tabled,
+        'date_for_answer': due.isoformat() if due else '',
+        'question_type': question_type(pq.chamber, deadline.is_named_day if deadline else None),
+        'is_answered': False,
+        'status': 'UNANSWERED',
+    }
 
 
 @tracker_bp.route('/tracker', methods=['GET', 'POST'])
@@ -233,71 +279,22 @@ def morning_tracker():
     error_message = None
     selected_dept = ""
     sitting_day_used = None
-    api_failed = False
 
     if request.method == 'POST':
         selected_dept = request.form.get('department', '').strip()
+        if selected_dept not in DEPARTMENTS.values():
+            selected_dept = ""
         results = []
 
         try:
-            # Walk back up to 5 days to find the most recent sitting day that has
-            # unanswered questions for this department. Handles weekends, bank
-            # holidays, and recess gracefully without arbitrary date-window hacks.
-            data = []
-            for days_back in range(1, 6):
-                target_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
-                data = _fetch_unanswered_wqs(selected_dept, target_date)
-                if data:
-                    sitting_day_used = target_date
-                    break
-
-            m_ids = {(item.get('value') or {}).get('askingMemberId')
-                     for item in data if (item.get('value') or {}).get('askingMemberId')}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-                executor.map(get_member_name, m_ids)
-
-            for item in data:
-                val = item.get('value') or {}
-                member_id = val.get('askingMemberId')
-                tabled_date_str = (val.get('dateTabled') or '').split('T')[0]
-                try:
-                    date_obj = datetime.fromisoformat(tabled_date_str)
-                    f_date = f"{date_obj.day} {date_obj.strftime('%B %Y')}"
-                except Exception:
-                    f_date = "N/A"
-
-                # Derive question type from API fields (verified against live data Apr 2026):
-                #   house == 'Lords' → LORDS (14 calendar day deadline)
-                #   isNamedDay == True → NAMED_DAY (deadline set by MP, min 2 sitting days)
-                #   otherwise → ORDINARY (conventional 7 sitting day deadline)
-                if val.get('house') == 'Lords':
-                    question_type = 'LORDS'
-                elif val.get('isNamedDay'):
-                    question_type = 'NAMED_DAY'
-                else:
-                    question_type = 'ORDINARY'
-
-                date_for_answer = (val.get('dateForAnswer') or '').split('T')[0]
-
-                member_name = get_member_name(member_id)
-                _cm = CachedMember.get(member_id) if member_id else None
-                results.append({
-                    'dept': val.get('answeringBodyName'),
-                    'uin': str(val.get('uin')),
-                    'member': member_name,
-                    'member_id': member_id,
-                    'party': _cm.party if _cm else '',
-                    'constituency': _cm.constituency if _cm else '',
-                    'house': val.get('house', 'Commons'),
-                    'text': val.get('questionText', '').replace('<p>', '').replace('</p>', ''),
-                    'raw_date': tabled_date_str,
-                    'date_asked': f_date,
-                    'due_date': tabled_date_str or 'TBC',
-                    'date_for_answer': date_for_answer,
-                    'question_type': question_type,
-                    'is_answered': False,
-                    'status': 'UNANSWERED',
-                })
+            day = _latest_sitting_day(selected_dept, datetime.now().date())
+            pqs = _unanswered_pqs(selected_dept, day) if day else []
+            if pqs:
+                sitting_day_used = day.isoformat()
+            members = _members({pq.asking_mnis_id for pq in pqs if pq.asking_mnis_id})
+            deadlines = _deadlines([pq.api_id for pq in pqs if pq.api_id])
+            results = [_result_row(pq, members.get(pq.asking_mnis_id), deadlines.get(pq.api_id))
+                       for pq in pqs]
 
             categories = _categorise_questions(results, selected_dept, sitting_day_used, api_key) if results else {}
 
@@ -317,11 +314,10 @@ def morning_tracker():
                 for date_key in sorted(temp_group.keys(), reverse=True):
                     sorted_grouped_results[date_key] = temp_group[date_key]
 
-        except requests.exceptions.Timeout:
-            error_message = "Parliament API timed out -- try again in a moment."
-            api_failed = True
         except Exception as e:
-            error_message = f"Search error: {str(e)}"
+            db.session.rollback()
+            print(f"[tracker] search error: {type(e).__name__}: {str(e)[:200]}")
+            error_message = "Something went wrong loading the questions. Please try again in a moment."
 
     return render_template(
         'tracker.html',
@@ -331,8 +327,29 @@ def morning_tracker():
         selected_dept=selected_dept,
         is_post=(request.method == 'POST'),
         sitting_day_used=sitting_day_used,
-        api_failed=api_failed,
+        pq_updated_label=_pq_updated_label(),
     )
+
+HISTORY_DAYS = 90
+HISTORY_PER_MEMBER = 50
+
+
+def _member_history(member_ids: set[int], since: date, dept_id: str) -> dict[int, list]:
+    """{member id: newest HISTORY_PER_MEMBER of their questions tabled since
+    `since` (rows of uin, tabled_date, question_text)}, in one ha_pq query."""
+    if not member_ids:
+        return {}
+    q = (db.session.query(HaPQ.asking_mnis_id, HaPQ.uin, HaPQ.tabled_date, HaPQ.question_text)
+         .filter(HaPQ.asking_mnis_id.in_(list(member_ids)), HaPQ.tabled_date >= since))
+    if dept_id:
+        q = q.filter(HaPQ.answering_body_id == int(dept_id))
+    out: dict[int, list] = {}
+    for row in q.order_by(HaPQ.tabled_date.desc(), HaPQ.id.desc()):
+        rows = out.setdefault(row.asking_mnis_id, [])
+        if len(rows) < HISTORY_PER_MEMBER:
+            rows.append(row)
+    return out
+
 
 @tracker_bp.route('/download_tracker_word', methods=['POST'])
 def download_tracker_word():
@@ -343,9 +360,23 @@ def download_tracker_word():
     include_history = request.form.get('include_history') == 'true'
     include_ai_context = request.form.get('include_ai_context') == 'true'
     selected_dept = request.form.get('selected_dept', '').strip()
+    if selected_dept not in DEPARTMENTS.values():
+        selected_dept = ""
 
-    if not export_data_str: return "No data provided to download.", 400
+    if not export_data_str:
+        return "No data provided to download.", 400
     export_data = json.loads(export_data_str)
+
+    history = {}
+    if include_history:
+        member_ids = {int(q['member_id']) for section in export_data for q in section['questions']
+                      if str(q.get('member_id') or '').isdigit()}
+        try:
+            history = _member_history(member_ids, datetime.now().date() - timedelta(days=HISTORY_DAYS),
+                                      selected_dept)
+        except Exception as e:
+            db.session.rollback()
+            print(f"[tracker] history query error: {str(e)[:120]}")
     
     ai_context_dict = {}
     if include_ai_context and api_key:
@@ -382,7 +413,6 @@ def download_tracker_word():
 
     doc = Document()
     doc.add_heading("Today's PQs (Enhanced Briefing)", 0)
-    three_months_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
     ignore_words = {"school", "schools", "education", "student", "students", "university", "universities", "college", "health", "nhs", "funding", "fund", "policy", "department", "support", "review", "system", "provision", "england"}
 
@@ -422,54 +452,40 @@ def download_tracker_word():
                     ai_run.font.size = Pt(10)
                     _set_indent(ai_p, 0.2)
 
-            if include_history and q.get('member_id') and str(q['member_id']).isdigit():
-                try:
-                    hist_params = {'askingMemberId': int(q['member_id']), 'tabledWhenFrom': three_months_ago, 'take': 50}
-                    if selected_dept:
-                        hist_params['answeringBodies'] = int(selected_dept)
+            if include_history and str(q.get('member_id') or '').isdigit():
+                similar_questions_data = []
+                keywords = [w.lower() for w in re.findall(r'\w+', theme)
+                            if len(w) > 3 and w.lower() not in ignore_words and w.lower() != 'uncategorized']
+                if not keywords:
+                    keywords = [w.lower() for w in re.findall(r'\w+', q['text'])
+                                if len(w) > 4 and w.lower() not in ignore_words]
 
-                    hist_resp = requests.get(
-                        "https://questions-statements-api.parliament.uk/api/writtenquestions/questions",
-                        params=hist_params, timeout=10
-                    )
+                for h in history.get(int(q['member_id']), []):
+                    h_uin = str(h.uin)
+                    h_date = h.tabled_date.isoformat()
+                    if h_uin == str(q['uin']) and h_date == q.get('due_date'):
+                        continue
+                    h_text = h.question_text or ''
+                    if keywords and any(kw in h_text.lower() for kw in keywords):
+                        h_link = f"https://questions-statements.parliament.uk/written-questions/detail/{h_date}/{h_uin}"
+                        similar_questions_data.append({'uin': h_uin, 'date': h_date, 'text': h_text, 'link': h_link})
 
-                    if hist_resp.status_code == 200:
-                        similar_questions_data = []
-                        keywords = [w.lower() for w in re.findall(r'\w+', theme)
-                                    if len(w) > 3 and w.lower() not in ignore_words and w.lower() != 'uncategorized']
-                        if not keywords:
-                            keywords = [w.lower() for w in re.findall(r'\w+', q['text'])
-                                        if len(w) > 4 and w.lower() not in ignore_words]
+                if similar_questions_data:
+                    hp = doc.add_paragraph()
+                    hist_run = hp.add_run(f"↳ See previous responses by {q['member']} on this topic (last 3 months):")
+                    hist_run.bold = True
+                    hist_run.font.size = Pt(10)
+                    _set_indent(hp, 0.2)
 
-                        for h_item in hist_resp.json().get('results', []):
-                            h_val = h_item.get('value', {})
-                            h_uin = str(h_val.get('uin'))
-                            if h_uin == q['uin']:
-                                continue
-                            h_text = h_val.get('questionText', '').replace('<p>', '').replace('</p>', '')
-                            if keywords and any(kw in h_text.lower() for kw in keywords):
-                                h_date = (h_val.get('dateTabled') or '').split('T')[0]
-                                h_link = f"https://questions-statements.parliament.uk/written-questions/detail/{h_date}/{h_uin}"
-                                similar_questions_data.append({'uin': h_uin, 'date': h_date, 'text': h_text, 'link': h_link})
+                    for sq in similar_questions_data:
+                        sq_p = doc.add_paragraph()
+                        sq_p.add_run(f'[UIN: {sq["uin"]} | {_fmt_date(sq["date"])}]  "{sq["text"]}"')
+                        sq_p.paragraph_format.left_indent = Inches(0.4)
+                        sq_p.paragraph_format.first_line_indent = Inches(-0.15)
 
-                        if similar_questions_data:
-                            hp = doc.add_paragraph()
-                            hist_run = hp.add_run(f"↳ See previous responses by {q['member']} on this topic (last 3 months):")
-                            hist_run.bold = True
-                            hist_run.font.size = Pt(10)
-                            _set_indent(hp, 0.2)
-
-                            for sq in similar_questions_data:
-                                sq_p = doc.add_paragraph()
-                                sq_p.add_run(f'[UIN: {sq["uin"]} | {_fmt_date(sq["date"])}]  "{sq["text"]}"')
-                                sq_p.paragraph_format.left_indent = Inches(0.4)
-                                sq_p.paragraph_format.first_line_indent = Inches(-0.15)
-
-                                link_p = doc.add_paragraph()
-                                add_hyperlink(link_p, sq['link'], "View question →")
-                                link_p.paragraph_format.left_indent = Inches(0.4)
-                except Exception as e:
-                    print(f"History fetch error: {e}")
+                        link_p = doc.add_paragraph()
+                        add_hyperlink(link_p, sq['link'], "View question →")
+                        link_p.paragraph_format.left_indent = Inches(0.4)
 
             doc.add_paragraph()
             
