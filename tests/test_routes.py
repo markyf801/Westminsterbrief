@@ -355,15 +355,15 @@ class TestArchiveRoutes:
         assert 'Debates on the same topic' in html
         assert 'href="/archive/debate/1-january-2026/test-session"' in html
         assert 'Written Questions on the same topic' in html
-        assert 'href="/archive/pq/TEST002"' in html          # shares 'Bus services'
+        assert 'href="/archive/pq/test002"' in html          # shares 'Bus services'
         assert 'questions matched on shared topic tags' in html
         # Free slots are filled from the main policy area, in a separately labelled section
-        assert html.index('href="/archive/pq/TEST002"') < html.index('In the same policy area (Transport)')
+        assert html.index('href="/archive/pq/test002"') < html.index('In the same policy area (Transport)')
 
     def test_pq_page_related_matches_across_topic_family(self, client):
         """'send funding' (child) and 'send' (parent alias) are the same family."""
         html = client.get('/archive/pq/SCHB01').get_data(as_text=True)
-        assert 'href="/archive/pq/SCHB00"' in html
+        assert 'href="/archive/pq/schb00"' in html
 
     def test_pq_page_policy_area_fallback_is_labelled(self, client):
         html = client.get('/archive/pq/TEST010').get_data(as_text=True)   # policy area only
@@ -482,8 +482,8 @@ class TestBriefRoutes:
         r = client.get('/brief/special-educational-needs')
         html = r.get_data(as_text=True)
         assert r.status_code == 200
-        assert 'href="/archive/pq/SCHB00"' in html      # tagged 'send'
-        assert 'href="/archive/pq/SCHB01"' in html      # tagged 'send funding' (child topic)
+        assert 'href="/archive/pq/schb00"' in html      # tagged 'send'
+        assert 'href="/archive/pq/schb01"' in html      # tagged 'send funding' (child topic)
         assert '2 written questions on this topic' in html
 
     def test_child_topic_page_and_alias_redirect(self, client):
@@ -491,8 +491,8 @@ class TestBriefRoutes:
         assert r.status_code == 301
         assert r.headers['Location'].endswith('/brief/special-educational-needs-funding')
         html = client.get('/brief/special-educational-needs-funding').get_data(as_text=True)
-        assert 'href="/archive/pq/SCHB01"' in html
-        assert 'href="/archive/pq/SCHB00"' not in html  # parent-only row stays on the parent
+        assert 'href="/archive/pq/schb01"' in html
+        assert 'href="/archive/pq/schb00"' not in html  # parent-only row stays on the parent
 
     def test_education_page_is_education_only_and_children_has_its_own(self):
         from hansard_archive import policy_areas
