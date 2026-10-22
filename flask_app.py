@@ -1,4 +1,5 @@
 import os
+import hmac
 import ipaddress
 import secrets
 import socket
@@ -10,6 +11,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from extensions import db, limiter
+from client_ip import client_ip
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 from email_service import send_template_email, send_email
@@ -1926,7 +1928,35 @@ TOTP_SECRET = os.environ.get('TOTP_SECRET', '').strip()
 _committee_ingest_status = {'running': False, 'message': None, 'started_at': None}
 
 def _admin_log(action):
-    app.logger.info('ADMIN | ip=%s | %s', request.remote_addr, action)
+    app.logger.info('ADMIN | ip=%s | %s', client_ip(), action)
+
+
+def _same_secret(given: str, expected: str) -> bool:
+    """Constant-time comparison, so response timing can't reveal the secret."""
+    return hmac.compare_digest((given or '').encode(), (expected or '').encode())
+
+
+# Highest authenticator time-step already used to log in. A code is accepted
+# only once, so one seen over someone's shoulder can't be replayed in the
+# 90 seconds it stays valid. Per process; with several gunicorn workers a code
+# could still be reused once on each other worker.
+_totp_last_used = {'counter': -1}
+
+
+def _totp_code_ok(code: str) -> bool:
+    import pyotp
+    code = (code or '').strip()
+    if not code:
+        return False
+    totp = pyotp.TOTP(TOTP_SECRET)
+    now = totp.timecode(datetime.now(timezone.utc))
+    for counter in (now - 1, now, now + 1):
+        if _same_secret(code, totp.generate_otp(counter)):
+            if counter <= _totp_last_used['counter']:
+                return False
+            _totp_last_used['counter'] = counter
+            return True
+    return False
 
 
 @app.route('/admin/logout')
@@ -1938,8 +1968,6 @@ def admin_logout():
 @app.route('/admin', methods=['GET', 'POST'])
 @limiter.limit("15 per minute", error_message="Too many attempts — wait a minute and try again.")
 def admin_panel():
-    import pyotp
-
     # Session already authenticated and not expired
     if session.get('admin_authenticated'):
         pass  # fall through to admin page
@@ -1949,15 +1977,16 @@ def admin_panel():
 
         if not ADMIN_TOKEN:
             return render_template('admin_login.html', error="ADMIN_TOKEN is not set in environment variables.")
-        if token != ADMIN_TOKEN:
+        if not _same_secret(token, ADMIN_TOKEN):
+            if token:
+                _admin_log('failed token attempt')
             return render_template('admin_login.html', error="Invalid token." if token else None)
 
         # Token correct — check TOTP second factor
         if TOTP_SECRET:
             if not totp_code:
                 return render_template('admin_login.html', token=token, need_totp=True, error=None)
-            totp = pyotp.TOTP(TOTP_SECRET)
-            if not totp.verify(totp_code, valid_window=1):
+            if not _totp_code_ok(totp_code):
                 _admin_log('failed TOTP attempt')
                 return render_template('admin_login.html', token=token, need_totp=True,
                                        error="Invalid authenticator code. Codes expire every 30 seconds — try again.")
