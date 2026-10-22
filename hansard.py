@@ -361,7 +361,9 @@ def _pq_result(pq) -> dict:
     if pq.answering_mnis_id:
         ans_cached = CachedMember.get(pq.answering_mnis_id)
         if ans_cached:
-            answering_role = ans_cached.ministerial_role
+            from ministers import pq_answering_role
+            answering_role = pq_answering_role(pq.answering_mnis_id, pq.answering_body,
+                                               pq.answer_date, fallback=ans_cached.ministerial_role)
 
     return {
         'uin':                    pq.uin,

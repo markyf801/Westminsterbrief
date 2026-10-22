@@ -37,6 +37,7 @@ from sqlalchemy.orm import load_only
 
 from cache_models import CachedMember
 from extensions import db
+from ministers import pq_answering_role
 from hansard_archive.models import (
     HaBill,
     HaBillPublication,
@@ -2322,8 +2323,10 @@ def pq_detail(uin: str):
         cached = CachedMember.get(pq.answering_mnis_id)
         if cached:
             answering_party = cached.party
-            if cached.ministerial_role:
-                answering_role = cached.ministerial_role
+            post = pq_answering_role(pq.answering_mnis_id, pq.answering_body, pq.answer_date,
+                                     fallback=cached.ministerial_role)
+            if post:
+                answering_role = post
             elif cached.house == "Lords":
                 answering_role = "Life Peer"
             elif cached.constituency:
