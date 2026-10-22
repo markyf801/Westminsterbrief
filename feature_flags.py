@@ -23,6 +23,13 @@ def feature_enabled(flag_name: str, current_user=None) -> bool:
         return True
 
     if state == 'beta':
+        # The site owner, logged into /admin (token + TOTP), can preview beta features.
+        try:
+            from flask import has_request_context, session
+            if has_request_context() and session.get('admin_authenticated'):
+                return True
+        except Exception:
+            pass
         is_auth = getattr(current_user, 'is_authenticated', False)
         if not is_auth:
             return False
