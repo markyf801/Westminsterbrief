@@ -26,7 +26,8 @@ Phases
                 Generated with MEMBER_BIO_MODEL (default gemini-2.5-flash), then verified:
                 deterministic checks (filler; every named institution/year must appear
                 in that section's source) plus a MEMBER_BIO_VERIFY_MODEL check (default
-                gemini-2.5-flash-lite). Unsupported sentences are dropped and the report
+                gemini-2.5-flash-lite) of whether the sources taken together support each
+                claim. Unsupported sentences are dropped and the report
                 stored in member_biography.verification. Only members whose input hash
                 changed (or with no bio) are regenerated.
 
