@@ -219,6 +219,43 @@ def test_stored_row_is_kept_even_when_the_api_differs(env, capsys):
     assert "0 same, 1 differ from the API" in capsys.readouterr().out
 
 
+def _unique_indexes():
+    """The hand-made production indexes (docs/plans/pq-identity-phase3-sql.md)."""
+    from extensions import db as _db
+    _db.session.execute(_db.text("CREATE UNIQUE INDEX uq_t_api_id ON ha_pq (api_id)"))
+    _db.session.execute(_db.text(
+        "CREATE UNIQUE INDEX uq_t_date_uin ON ha_pq (tabled_date, lower(uin))"))
+    _db.session.commit()
+
+
+def test_row_stored_meanwhile_by_another_run_is_kept_not_failed(env, monkeypatch, capsys):
+    """A cron stores 5004 between our lookup and our insert: the unique index
+    rejects the insert; the backfill looks again, keeps the stored row, and
+    finishes the day without a retry."""
+    from extensions import db as _db
+    from hansard_archive.models import HaPQ
+    _unique_indexes()
+    pid = _existing()
+    before = _db.session.get(HaPQ, pid).updated_at
+    real = pq_ingestor.find_existing_pq
+    blind = {"left": 2}          # the wrapper's lookup and upsert_pq's own lookup
+
+    def racing(api_id, tabled_date, uin):
+        if api_id == 5004 and blind["left"]:
+            blind["left"] -= 1
+            return None, None, ""
+        return real(api_id, tabled_date, uin)
+
+    monkeypatch.setattr(pq_ingestor, "find_existing_pq", racing)
+    assert _run("--no-tag") == bpq.EXIT_OK
+    assert HaPQ.query.count() == 4
+    row = _db.session.get(HaPQ, pid)
+    assert row.updated_at == before
+    out = capsys.readouterr().out
+    assert "stored by another run meanwhile" in out and "attempt 1/" not in out
+    assert "0 same, 1 differ from the API" in out   # counted once, as stored
+
+
 def test_identity_mismatch_aborts(env):
     from extensions import db as _db
     from hansard_archive.models import HaPQ

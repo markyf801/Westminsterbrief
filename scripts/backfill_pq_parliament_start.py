@@ -60,7 +60,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import requests  # noqa: E402
 from sqlalchemy import func  # noqa: E402
-from sqlalchemy.exc import OperationalError  # noqa: E402
+from sqlalchemy.exc import IntegrityError, OperationalError  # noqa: E402
 
 import backfill_parliament_start as debates_backfill  # noqa: E402
 from backfill_parliament_start import (  # noqa: E402
@@ -155,12 +155,34 @@ def make_insert_only_upsert(orig_upsert, stats: RunStats, day: date):
     stored under a consistent identity is reported 'unchanged' and left alone.
     New questions and identity disagreements go to the real upsert_pq — it
     inserts the first and writes nothing for the second (identity_mismatch).
+
+    If another run (a PQ cron's answered pass, say) stores the same question
+    between our lookup and our insert, the unique indexes on api_id and
+    (tabled_date, lower(uin)) reject the insert. That is not a failure: the
+    insert's own savepoint is rolled back and the question is looked up again,
+    so it is then handled as stored (kept) or as an identity mismatch.
     """
-    def upsert(fields: dict, *, text_complete: bool = True, dry_run: bool = False):
+    def insert_new(fields: dict, text_complete: bool, retried: bool):
+        try:
+            with db.session.begin_nested():
+                return orig_upsert(fields, text_complete=text_complete)
+        except IntegrityError:
+            if retried:
+                raise
+            print(f"[pq-backfill]   {day} api_id={fields.get('api_id')} uin={fields.get('uin')} "
+                  "was stored by another run meanwhile — looking it up again", flush=True)
+            return upsert(fields, text_complete=text_complete, _retried=True)
+
+    def upsert(fields: dict, *, text_complete: bool = True, dry_run: bool = False,
+               _retried: bool = False):
         existing, matched_by, ambiguous = pq_ingestor.find_existing_pq(
             fields.get("api_id"), fields.get("tabled_date"), fields.get("uin"))
-        if existing is None or ambiguous:
+        if ambiguous:
             return orig_upsert(fields, text_complete=text_complete, dry_run=dry_run)
+        if existing is None:
+            if dry_run:
+                return orig_upsert(fields, text_complete=text_complete, dry_run=True)
+            return insert_new(fields, text_complete, _retried)
         if matched_by == "api_id":
             consistent = (pq_ingestor._same_uin(existing.uin, fields["uin"])
                           and existing.tabled_date == fields["tabled_date"])
