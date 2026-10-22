@@ -85,7 +85,7 @@ Beta-only pushes (branch `beta`, not yet merged to master) are not logged here.
 | 2026-06-06 | `3cc992f` | Fix: restore `ManifestoChunk` import in `hansard_archive/views.py` — every `/archive/party/<slug>` page was 500ing (NameError; usage present, import dropped by the fb21bcd revert + partial re-merge). Verified on beta: Labour renders 775 manifesto excerpts across 24 policy areas. | Claude Code |
 | 2026-10-21 | `4d6157d` | Batch: consultations + committees/APPGs (flags off), headline stats hidden + extraction fix, members verifier fix, health report, AionBot block. Pushed 09:50 but never built (Railway outage). _(entries 2026-06-07 to 2026-10-20 not logged here; see git log)_ | Claude Code |
 | 2026-10-22 | `6bd68aa` | Oracle Cloud IP block; lowercase written-question URLs (canonical/sitemap/links); never fall back to a fixed SECRET_KEY. Built 10:44 UTC after Railway's build pause. Secrets rotated the same morning (Railway security incident): shared variables + references. | Claude Code |
-| 2026-10-22 | _this push_ | TheyWorkForYou removed (minister ids and My Alerts from our DB); PQ cron `--quick-check` (service created separately, dry run first). | Claude Code |
+| 2026-10-22 | `db9b485`+ | TheyWorkForYou removed (minister ids and My Alerts from our DB); PQ cron `--quick-check` (service created separately, dry run first). Then: /admin session can preview beta features. | Claude Code |
 
 ---
 
