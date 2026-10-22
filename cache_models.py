@@ -355,3 +355,34 @@ class MemberNameAudit(db.Model):
     run_at  = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     counts  = db.Column(db.JSON)     # matched, missing, changed, conflicts, wiki_not_found, ...
     gaps    = db.Column(db.JSON)     # [{member_id, name, issue, detail}]
+
+
+class GovMinister(db.Model):
+    """One row per current minister per department (a joint post gives one row
+    in each department). Rebuilt daily by scripts/refresh_ministers.py from the
+    Parliament Members API (government posts, with member ids) merged with
+    GOV.UK's ministers page (portfolio titles, and anyone Parliament is missing).
+
+    The Research Tool's department/minister pickers, minister flags and PQ
+    answering-minister roles read from here (ministers.py) instead of calling
+    GOV.UK or Parliament on page view. On production the table is created by
+    migrations/gov_minister_table.py (the web service runs with SKIP_MIGRATIONS=1).
+    """
+    __tablename__ = 'gov_minister'
+
+    id               = db.Column(db.Integer, primary_key=True)
+    department       = db.Column(db.String(200), nullable=False, index=True)  # Parliament's name
+    govuk_department = db.Column(db.String(200))                             # GOV.UK's name, if matched
+    role_title       = db.Column(db.String(500), nullable=False)  # Parliament post name, else GOV.UK role
+    govuk_role_title = db.Column(db.String(500))                  # GOV.UK portfolio title(s)
+    member_name      = db.Column(db.String(300), nullable=False)  # display name, honorifics stripped
+    govuk_name       = db.Column(db.String(300))                  # GOV.UK person title as given
+    name_norm        = db.Column(db.String(300), nullable=False, index=True)
+    mnis_id          = db.Column(db.Integer, index=True)          # Parliament member id, null if unmatched
+    house            = db.Column(db.String(20))                   # 'Commons' | 'Lords'
+    rank             = db.Column(db.Integer, nullable=False, default=0)  # order within the department
+    is_cabinet       = db.Column(db.Boolean, nullable=False, default=False)
+    start_date       = db.Column(db.Date)                         # when the current appointment began
+    source           = db.Column(db.String(20), nullable=False)   # 'parliament+govuk' | 'parliament' | 'govuk'
+    source_url       = db.Column(db.String(500))
+    fetched_at       = db.Column(db.DateTime, nullable=False)
