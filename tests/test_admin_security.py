@@ -150,3 +150,27 @@ def test_huge_request_body_refused(client):
     r = client.post('/api/expand_topic', data=b'x' * (33 * 1024 * 1024),
                     content_type='application/json')
     assert r.status_code == 413
+
+
+@pytest.mark.parametrize('addrs,ok', [
+    (['93.184.216.34'], True),
+    (['93.184.216.34', 'fd12::5'], False),      # public A record + Railway-private AAAA
+    (['100.64.1.1'], False),                    # carrier-grade NAT
+    (['169.254.169.254'], False),               # cloud metadata
+    (['::ffff:127.0.0.1'], False),
+    (['10.1.2.3'], False),
+])
+def test_external_url_check(monkeypatch, addrs, ok):
+    import socket
+    fake = [(socket.AF_INET6 if ':' in a else socket.AF_INET, 1, 6, '', (a, 443)) for a in addrs]
+    monkeypatch.setattr(fa.socket, 'getaddrinfo', lambda *a, **k: fake)
+    if ok:
+        assert fa._validate_external_url('https://example.org/feed')
+    else:
+        with pytest.raises(ValueError):
+            fa._validate_external_url('https://example.org/feed')
+
+
+def test_external_url_check_rejects_bad_scheme():
+    with pytest.raises(ValueError):
+        fa._validate_external_url('file:///etc/passwd')

@@ -25,16 +25,13 @@ from newsapi import NewsApiClient
 from google import genai
 from atproto import Client as BskyClient
 
-_PRIVATE_NETS = [
-    ipaddress.ip_network(n) for n in [
-        '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
-        '127.0.0.0/8', '169.254.0.0/16', '::1/128', 'fc00::/7',
-    ]
-]
-
 def _validate_external_url(url: str) -> str:
     """Raise ValueError if url is not a safe external http/https URL.
-    Blocks SSRF by rejecting private/loopback IP ranges."""
+    Blocks SSRF: every address the hostname resolves to (IPv4 and IPv6) must be
+    a public internet address, so private, loopback, link-local, carrier-grade
+    NAT and Railway's private network (fd12::/16) are all refused.
+    Note: this checks at save time; the later fetch resolves again and follows
+    redirects, so it is not a complete defence on its own."""
     if not url or len(url) > 500:
         raise ValueError('URL missing or too long')
     parsed = urlparse(url)
@@ -43,11 +40,15 @@ def _validate_external_url(url: str) -> str:
     if not parsed.hostname:
         raise ValueError('URL has no hostname')
     try:
-        ip = ipaddress.ip_address(socket.gethostbyname(parsed.hostname))
-        if any(ip in net for net in _PRIVATE_NETS):
-            raise ValueError(f'URL resolves to private IP {ip}')
-    except socket.gaierror:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, ValueError):
         raise ValueError(f'Cannot resolve hostname {parsed.hostname!r}')
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split('%')[0])
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if not ip.is_global:
+            raise ValueError(f'URL resolves to non-public IP {ip}')
     return url
 
 
