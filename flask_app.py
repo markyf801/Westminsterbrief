@@ -495,6 +495,9 @@ def _run_startup_migrations():
             _conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_ha_pq_api_id ON ha_pq (api_id)"
             ))
+            _conn.execute(text(  # migrations/pq_answer_corrected_date.py
+                "ALTER TABLE ha_pq ADD COLUMN IF NOT EXISTS answer_corrected_date DATE"
+            ))
             _conn.commit()
         _mig_log('ha_pq cols done')
     except Exception as _e:

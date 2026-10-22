@@ -218,6 +218,10 @@ class HaPQ(db.Model):
 
     tabled_date  = db.Column(db.Date, nullable=False, index=True)
     answer_date  = db.Column(db.Date)
+    # Parliament's dateAnswerCorrected: the minister corrected the answer on
+    # this date (answer_date stays the original). Added by
+    # migrations/pq_answer_corrected_date.py.
+    answer_corrected_date = db.Column(db.Date)
     is_answered  = db.Column(db.Boolean, default=False, nullable=False, index=True)
     is_holding   = db.Column(db.Boolean, default=False, nullable=False)
     is_withdrawn = db.Column(db.Boolean, default=False, nullable=False)
