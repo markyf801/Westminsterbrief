@@ -1,4 +1,5 @@
 import os
+import hmac
 import ipaddress
 import secrets
 import socket
@@ -10,6 +11,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from sqlalchemy import text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from extensions import db, limiter
+from client_ip import client_ip
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 from email_service import send_template_email, send_email
@@ -23,16 +25,13 @@ from newsapi import NewsApiClient
 from google import genai
 from atproto import Client as BskyClient
 
-_PRIVATE_NETS = [
-    ipaddress.ip_network(n) for n in [
-        '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
-        '127.0.0.0/8', '169.254.0.0/16', '::1/128', 'fc00::/7',
-    ]
-]
-
 def _validate_external_url(url: str) -> str:
     """Raise ValueError if url is not a safe external http/https URL.
-    Blocks SSRF by rejecting private/loopback IP ranges."""
+    Blocks SSRF: every address the hostname resolves to (IPv4 and IPv6) must be
+    a public internet address, so private, loopback, link-local, carrier-grade
+    NAT and Railway's private network (fd12::/16) are all refused.
+    Note: this checks at save time; the later fetch resolves again and follows
+    redirects, so it is not a complete defence on its own."""
     if not url or len(url) > 500:
         raise ValueError('URL missing or too long')
     parsed = urlparse(url)
@@ -41,11 +40,15 @@ def _validate_external_url(url: str) -> str:
     if not parsed.hostname:
         raise ValueError('URL has no hostname')
     try:
-        ip = ipaddress.ip_address(socket.gethostbyname(parsed.hostname))
-        if any(ip in net for net in _PRIVATE_NETS):
-            raise ValueError(f'URL resolves to private IP {ip}')
-    except socket.gaierror:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, ValueError):
         raise ValueError(f'Cannot resolve hostname {parsed.hostname!r}')
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split('%')[0])
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if not ip.is_global:
+            raise ValueError(f'URL resolves to non-public IP {ip}')
     return url
 
 
@@ -95,6 +98,10 @@ if not _secret_key:
     print('WARNING: SECRET_KEY is not set; using a random per-process key. Set SECRET_KEY in Railway.', flush=True)
 app.config['SECRET_KEY'] = _secret_key
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)
+# Refuse request bodies over 32 MB (the largest real one is an admin CSV upload).
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
+# Public address for links we build ourselves (emails, the www redirect).
+SITE_URL = os.environ.get('SITE_URL', 'https://westminsterbrief.co.uk').strip().rstrip('/')
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'intelligence.db'))
 if _db_url.startswith('postgres://'):
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
@@ -736,12 +743,8 @@ def _run_startup_migrations():
             _mig_log('StatObservation backfill: nothing to do')
     except Exception as _e:
         app.logger.warning('StatObservation backfill failed: %s', _e)
-    if not User.query.filter_by(email='joe@university.ac.uk').first():
-        joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
-        joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
-        db.session.add(joe)
-        db.session.commit()
-    _mig_log('user seed done')
+    # (A demo user with a published password used to be created here. Removed:
+    # this repo is public, so it would be an open login once accounts go live.)
 
     # Seed education stakeholder orgs (run once — skipped if any orgs already exist)
     _mig_log('checking StakeholderOrg count')
@@ -883,6 +886,13 @@ def home():
         print(f'[HOME ERROR] {_e}', flush=True)
         raise
 
+def _health_fail(e):
+    # /health is public: report only the error type; the detail (which can
+    # name hosts or SQL) goes to the logs.
+    app.logger.warning('[HEALTH] %s: %s', type(e).__name__, e)
+    return f'FAIL: {type(e).__name__}'
+
+
 @app.route('/health')
 def health():
     checks = {}
@@ -892,14 +902,14 @@ def health():
         db.session.execute(text('SELECT 1'))
         checks['database'] = 'ok'
     except Exception as e:
-        checks['database'] = f'FAIL: {e}'
+        checks['database'] = _health_fail(e)
 
     # Cache table
     try:
         CachedSearch.query.count()
         checks['cache_table'] = 'ok'
     except Exception as e:
-        checks['cache_table'] = f'FAIL: {e}'
+        checks['cache_table'] = _health_fail(e)
 
     # Gemini API
     gemini_key = os.environ.get('GEMINI_API_KEY')
@@ -919,7 +929,7 @@ def health():
         else:
             checks['backup'] = 'WARN: no backup record found'
     except Exception as e:
-        checks['backup'] = f'FAIL: {e}'
+        checks['backup'] = _health_fail(e)
 
     # Committee evidence freshness — weekly cron, stale after 8 days (192h)
     try:
@@ -933,7 +943,7 @@ def health():
         else:
             checks['committee_evidence'] = 'WARN: no run record yet'
     except Exception as e:
-        checks['committee_evidence'] = f'FAIL: {e}'
+        checks['committee_evidence'] = _health_fail(e)
 
     # Git version
     checks['version'] = os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:7]
@@ -1258,12 +1268,14 @@ def feedback():
             if name:
                 subject += f' from {name}'
 
+            # Escape visitor text so it can't inject links or markup into our inbox.
+            from html import escape as _esc
             html_body  = f"""
 <p><strong>Category:</strong> {cat_label}</p>
-<p><strong>Name:</strong> {name or '(not provided)'}</p>
-<p><strong>Email:</strong> {email or '(not provided)'}</p>
+<p><strong>Name:</strong> {_esc(name) or '(not provided)'}</p>
+<p><strong>Email:</strong> {_esc(email) or '(not provided)'}</p>
 <hr>
-<p>{message.replace(chr(10), '<br>')}</p>
+<p>{_esc(message).replace(chr(10), '<br>')}</p>
 """
             text_body = f"Category: {cat_label}\nName: {name or '(not provided)'}\nEmail: {email or '(not provided)'}\n\n{message}"
 
@@ -1280,9 +1292,14 @@ def feedback():
 
 @app.before_request
 def redirect_www():
-    """301: www.westminsterbrief.co.uk/* → westminsterbrief.co.uk/*"""
-    if request.host.startswith('www.'):
-        return redirect(request.url.replace('://www.', '://', 1), code=301)
+    """301: www.westminsterbrief.co.uk/* → westminsterbrief.co.uk/*
+
+    The target is built from SITE_URL, not the request's host: the host can come
+    from an X-Forwarded-Host header, so a request saying "www.evil.example"
+    must not produce a redirect to evil.example (which a cache could keep)."""
+    if request.host == 'www.' + urlparse(SITE_URL).netloc:
+        qs = ('?' + request.query_string.decode()) if request.query_string else ''
+        return redirect(SITE_URL + request.path + qs, code=301)
 
 
 @app.before_request
@@ -1380,6 +1397,23 @@ def _enforce_feature_flags():
             abort(404)
 
 
+# Cloudflare restricts /admin to the owner's IP, but the direct Railway address
+# skips Cloudflare. When ADMIN_EDGE_SECRET is set, /admin answers only requests
+# carrying it in the X-Admin-Edge header, which a Cloudflare Transform Rule
+# adds; everything else gets a 404. Unset = no check (the default).
+ADMIN_EDGE_SECRET = os.environ.get('ADMIN_EDGE_SECRET', '').strip()
+
+
+@app.before_request
+def _admin_only_via_cloudflare():
+    if not ADMIN_EDGE_SECRET:
+        return None
+    if request.path == '/admin' or request.path.startswith('/admin/'):
+        if not _same_secret(request.headers.get('X-Admin-Edge', ''), ADMIN_EDGE_SECRET):
+            abort(404)
+    return None
+
+
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute; 20 per hour", methods=["POST"])
 def login():
@@ -1435,7 +1469,9 @@ def forgot_password():
             user.reset_token = token
             user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
             db.session.commit()
-            reset_url = url_for('reset_password', token=token, _external=True)
+            # SITE_URL, not the request's host, which a forged header could set
+            # to an attacker's site and so send them the reset token.
+            reset_url = SITE_URL + url_for('reset_password', token=token)
             send_template_email(
                 to=user.email,
                 subject='Reset your Westminster Brief password',
@@ -1926,7 +1962,35 @@ TOTP_SECRET = os.environ.get('TOTP_SECRET', '').strip()
 _committee_ingest_status = {'running': False, 'message': None, 'started_at': None}
 
 def _admin_log(action):
-    app.logger.info('ADMIN | ip=%s | %s', request.remote_addr, action)
+    app.logger.info('ADMIN | ip=%s | %s', client_ip(), action)
+
+
+def _same_secret(given: str, expected: str) -> bool:
+    """Constant-time comparison, so response timing can't reveal the secret."""
+    return hmac.compare_digest((given or '').encode(), (expected or '').encode())
+
+
+# Highest authenticator time-step already used to log in. A code is accepted
+# only once, so one seen over someone's shoulder can't be replayed in the
+# 90 seconds it stays valid. Per process; with several gunicorn workers a code
+# could still be reused once on each other worker.
+_totp_last_used = {'counter': -1}
+
+
+def _totp_code_ok(code: str) -> bool:
+    import pyotp
+    code = (code or '').strip()
+    if not code:
+        return False
+    totp = pyotp.TOTP(TOTP_SECRET)
+    now = totp.timecode(datetime.now(timezone.utc))
+    for counter in (now - 1, now, now + 1):
+        if _same_secret(code, totp.generate_otp(counter)):
+            if counter <= _totp_last_used['counter']:
+                return False
+            _totp_last_used['counter'] = counter
+            return True
+    return False
 
 
 @app.route('/admin/logout')
@@ -1938,8 +2002,6 @@ def admin_logout():
 @app.route('/admin', methods=['GET', 'POST'])
 @limiter.limit("15 per minute", error_message="Too many attempts — wait a minute and try again.")
 def admin_panel():
-    import pyotp
-
     # Session already authenticated and not expired
     if session.get('admin_authenticated'):
         pass  # fall through to admin page
@@ -1949,15 +2011,16 @@ def admin_panel():
 
         if not ADMIN_TOKEN:
             return render_template('admin_login.html', error="ADMIN_TOKEN is not set in environment variables.")
-        if token != ADMIN_TOKEN:
+        if not _same_secret(token, ADMIN_TOKEN):
+            if token:
+                _admin_log('failed token attempt')
             return render_template('admin_login.html', error="Invalid token." if token else None)
 
         # Token correct — check TOTP second factor
         if TOTP_SECRET:
             if not totp_code:
                 return render_template('admin_login.html', token=token, need_totp=True, error=None)
-            totp = pyotp.TOTP(TOTP_SECRET)
-            if not totp.verify(totp_code, valid_window=1):
+            if not _totp_code_ok(totp_code):
                 _admin_log('failed TOTP attempt')
                 return render_template('admin_login.html', token=token, need_totp=True,
                                        error="Invalid authenticator code. Codes expire every 30 seconds — try again.")

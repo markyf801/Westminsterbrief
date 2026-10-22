@@ -142,7 +142,8 @@ def _detect_model(api_key: str) -> str:
         return _MODEL_CACHE[api_key]
     try:
         resp = requests.get(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            headers={"x-goog-api-key": api_key},  # not in the URL, so it can't leak into logs
             timeout=5,
         )
         if resp.status_code == 200:
@@ -180,10 +181,10 @@ def _gemini_tag(api_key: str, prompt: str) -> Optional[dict]:
         for version in ("v1beta", "v1"):
             url = (
                 f"https://generativelanguage.googleapis.com/{version}/models/"
-                f"{model}:generateContent?key={api_key}"
+                f"{model}:generateContent"
             )
             try:
-                r = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
+                r = requests.post(url, headers={"x-goog-api-key": api_key}, json=payload, timeout=_REQUEST_TIMEOUT)
                 if r.status_code == 200:
                     raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
                     # Schema enforcement means this should always parse cleanly
@@ -231,10 +232,10 @@ def _gemini_tag_batch(api_key: str, prompt: str) -> Optional[list]:
         for version in ("v1beta", "v1"):
             url = (
                 f"https://generativelanguage.googleapis.com/{version}/models/"
-                f"{model}:generateContent?key={api_key}"
+                f"{model}:generateContent"
             )
             try:
-                r = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT)
+                r = requests.post(url, headers={"x-goog-api-key": api_key}, json=payload, timeout=_REQUEST_TIMEOUT)
                 if r.status_code == 200:
                     raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
                     parsed = json.loads(raw)

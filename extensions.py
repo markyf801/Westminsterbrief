@@ -1,6 +1,8 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
+
+from client_ip import client_ip
 
 db = SQLAlchemy()
-limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
+# Keyed on the visitor's real address, not a shared Cloudflare server's.
+limiter = Limiter(key_func=client_ip, storage_uri="memory://")

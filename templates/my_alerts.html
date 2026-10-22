@@ -51,7 +51,7 @@
                     {% if sh.website %}<span style="color:#888; font-size:11px; margin-left:6px;">🌐</span>{% endif %}
                     {% if sh.rss_url %}<span style="color:#888; font-size:11px; margin-left:4px;">📡</span>{% endif %}
                 </div>
-                <form method="POST" action="/delete_stakeholder/{{ sh.id }}" onsubmit="return confirm('Remove {{ sh.name }}?');" style="margin:0;">
+                <form method="POST" action="/delete_stakeholder/{{ sh.id }}" onsubmit="return confirm({{ ('Remove ' ~ sh.name ~ '?') | tojson | forceescape }});" style="margin:0;">
                     <button type="submit" style="background:none; border:1px solid #ff7675; color:#d63031; padding:2px 7px; border-radius:4px; cursor:pointer; font-size:11px;">✕</button>
                 </form>
             </div>

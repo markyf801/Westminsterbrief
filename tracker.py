@@ -78,7 +78,8 @@ def _gemini_generate(api_key, prompt):
     if api_key not in _GEMINI_MODEL_CACHE:
         try:
             resp = requests.get(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key},  # not in the URL, so it can't leak into logs
                 timeout=5
             )
             if resp.status_code == 200:
@@ -102,9 +103,9 @@ def _gemini_generate(api_key, prompt):
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     for version in ('v1', 'v1beta'):
-        url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent"
         try:
-            r = requests.post(url, json=payload, timeout=90)
+            r = requests.post(url, headers={"x-goog-api-key": api_key}, json=payload, timeout=90)
             if r.status_code == 200:
                 return r.json()['candidates'][0]['content']['parts'][0]['text']
             if r.status_code not in (404, 400):

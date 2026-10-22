@@ -40,6 +40,17 @@ This document captures everything that must be true before flipping `FEATURE_AUT
 
 ---
 
+## Security (from the 22 Oct 2026 audit)
+
+- [ ] Old demo account `joe@university.ac.uk` deleted from the production `user` table. Its password was published in this repo; the code that created it is gone, but the row may still exist.
+- [ ] `/stakeholder_add`: admin-only (it writes to the shared directory everyone sees), website checked with `_validate_external_url`, and the `.lstrip('https://')` bug fixed (it strips letters, not the prefix).
+- [ ] Feed fetches (`_discover_rss`, `fetch_org_rss`): check the address right before fetching and don't follow redirects to private addresses.
+- [ ] Rate limits on `/register` and `/run_manual_scan` (NewsAPI + Gemini per topic); a cap on topics per user.
+- [ ] CSRF tokens on account forms (SameSite=Lax cookies already stop cross-site posts in current browsers).
+- [ ] Shared rate-limit storage across gunicorn workers (`memory://` counts each worker separately).
+
+---
+
 ## Infrastructure and email
 
 - [ ] `EMAIL_TEST_MODE=false` confirmed on Railway and real emails delivering successfully (welcome, password reset, deletion confirmation, data export)
