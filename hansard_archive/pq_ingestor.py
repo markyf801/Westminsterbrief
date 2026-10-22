@@ -23,7 +23,10 @@ with None, and updated_at moves only when something actually changed.
 No answered filter — fetches all statuses. A tabled-date window does NOT catch
 answers that arrive after the window has moved on (answers typically come 1-4
 weeks after tabling), so the cron also calls this with date_field="answered"
-(Parliament's answeredWhenFrom/answeredWhenTo filter) for recent answers.
+(Parliament's answeredWhenFrom/answeredWhenTo filter) for recent answers, and
+with date_field="corrected" (correctedWhenFrom/correctedWhenTo) for answers
+corrected recently: a correction keeps the original dateAnswered and sets
+dateAnswerCorrected, so neither of the other windows finds an older one.
 """
 
 import logging
@@ -80,11 +83,13 @@ _REFRESH_IF_PRESENT = (
     "asking_member", "asking_mnis_id",
     "answering_member", "answering_mnis_id",
     "answering_body", "answering_body_id",
-    "is_holding", "is_withdrawn",
+    "is_holding", "is_withdrawn", "answer_corrected_date",
 )
 # Belong with the stored answer text; only a complete record may change them
 # once an answer is stored (see _planned_changes).
-_ANSWER_META = ("answer_date", "is_holding")
+_ANSWER_META = ("answer_date", "is_holding", "answer_corrected_date")
+
+_DATE_FIELDS = ("tabled", "answered", "corrected")   # Parliament's <x>WhenFrom/<x>WhenTo
 
 
 class PQIngestAborted(RuntimeError):
@@ -188,6 +193,7 @@ def _extract_pq_fields(value: dict) -> dict | None:
         "answering_body_id": value.get("answeringBodyId") or None,
         "tabled_date":  _parse_date(value.get("dateTabled")),
         "answer_date":  _parse_date(value.get("dateAnswered")),
+        "answer_corrected_date": _parse_date(value.get("dateAnswerCorrected")),
         "is_answered":  bool(answer_text),
         "is_holding":   _opt_bool(value.get("answerIsHolding")),
         "is_withdrawn": _opt_bool(value.get("isWithdrawn")),
@@ -242,11 +248,12 @@ def _planned_changes(existing: HaPQ, fields: dict, matched_by: str,
     if matched_by == "date_uin" and fields.get("api_id") and not existing.api_id:
         consider("api_id", fields["api_id"])
 
-    # Without the full record, leave the answer's date and holding flag alone
-    # while an answer is stored: they must change together with its text. A
-    # holding answer later replaced by the real one keeps its old answer_date,
-    # so the date difference stays visible and the next full-fetch pass
-    # (_answer_already_stored, Stage B) re-fetches it.
+    # Without the full record, leave the answer's date, holding flag and
+    # correction date alone while an answer is stored: they must change
+    # together with its text. A holding answer later replaced by the real one,
+    # or a corrected answer, keeps its old values, so the difference stays
+    # visible and the next full-fetch pass (_answer_already_stored, Stage B)
+    # re-fetches it.
     keep_answer_meta = not text_complete and bool(existing.answer_text)
     for name in _REFRESH_IF_PRESENT:
         if keep_answer_meta and name in _ANSWER_META:
@@ -356,22 +363,36 @@ def _complete_from_individual(fields: dict) -> bool:
         val = _opt_bool(full.get(api_key))
         if val is not None:
             fields[key] = val
+    # The answer's dates from the same record as its text.
+    for key, api_key in (("answer_date", "dateAnswered"),
+                         ("answer_corrected_date", "dateAnswerCorrected")):
+        val = _parse_date(full.get(api_key))
+        if val is not None:
+            fields[key] = val
     return True
 
 
 def _answer_already_stored(fields: dict) -> bool:
     """True when the matching stored row already has this answer (same answer
-    date, answered, full text present) — no need to re-fetch the full record.
-    A missing answer, or one that looks like the truncated bulk copy, is
-    re-fetched."""
+    date, holding flag and correction date, answered, full text present) — no
+    need to re-fetch the full record. A missing answer, one that looks like the
+    truncated bulk copy, a holding answer since replaced (even on the same
+    day, when answer_date is unchanged) and a newly corrected answer are
+    re-fetched. A field the API leaves out is not compared."""
     try:
         existing, _by, ambiguous = find_existing_pq(
             fields.get("api_id"), fields.get("tabled_date"), fields.get("uin"))
     except Exception:
         return False
+    if existing is None or ambiguous:
+        return False
+    if fields.get("is_holding") is not None and bool(existing.is_holding) != fields["is_holding"]:
+        return False
+    corrected = fields.get("answer_corrected_date")
+    if corrected is not None and existing.answer_corrected_date != corrected:
+        return False
     return bool(
-        existing is not None and not ambiguous
-        and existing.is_answered == fields["is_answered"]
+        existing.is_answered == fields["is_answered"]
         and existing.answer_date == fields["answer_date"]
         and (not fields["is_answered"]
              or (existing.answer_text and not _looks_truncated(existing.answer_text)))
@@ -418,14 +439,17 @@ def ingest_pq_date_range(
 ) -> dict:
     """
     Fetch and upsert WQs with tabledDate (or, with date_field="answered",
-    dateAnswered) in [date_from, date_to].
+    dateAnswered; with date_field="corrected", dateAnswerCorrected) in
+    [date_from, date_to].
 
-    date_field: "tabled" or "answered". Answers usually arrive 1-4 weeks after
-        tabling, so a tabled-date window alone misses them; the cron also runs
-        an "answered in the last N days" pass.
+    date_field: "tabled", "answered" or "corrected". Answers usually arrive 1-4
+        weeks after tabling, so a tabled-date window alone misses them; the
+        cron also runs "answered in the last N days" and "corrected in the
+        last N days" passes.
     fetch_only_new_answers: only call the individual endpoint (full text) for
-        rows that are new or whose answer is new/changed — keeps the answered
-        pass cheap when its rows were already refreshed by the tabled pass.
+        rows that are new or whose answer is new/changed (including a holding
+        answer replaced or an answer corrected) — keeps the answered and
+        corrected passes cheap when their rows are already up to date.
 
     skip_answer_fetch: bulk records only (fast). Stored text is never replaced;
         missing question text is filled; answer text is never written (bulk
@@ -482,8 +506,8 @@ def ingest_pq_date_range(
             counts["rolled_back"] += n
             uncommitted[action] = 0
 
-    if date_field not in ("tabled", "answered"):
-        raise ValueError(f"date_field must be 'tabled' or 'answered', not {date_field!r}")
+    if date_field not in _DATE_FIELDS:
+        raise ValueError(f"date_field must be one of {_DATE_FIELDS}, not {date_field!r}")
     params_base = {
         f"{date_field}WhenFrom": date_from.isoformat(),
         f"{date_field}WhenTo": date_to.isoformat(),
