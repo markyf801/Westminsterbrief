@@ -101,10 +101,11 @@ _PARTY_LABELS = frozenset(_PARTY_COLOURS) | {"Bishops"}
 
 # A bracketed group starting with one of these is a peer's name, so the text
 # before it is a job title: "Baroness in Waiting/Government Whip (Baroness
-# Blake of Leeds) (Lab)". Commons constituencies never start this way.
+# Blake of Leeds) (Lab)". "Bishop" needs "of" after it, or the Commons
+# constituency "Bishop Auckland" would be read as a peer's name.
 _PEER_NAME_RE = re.compile(
-    r"^(?:The\s+)?(?:Lord|Baroness|Lady|Viscount|Viscountess|Earl|Countess|Marquess|"
-    r"Marchioness|Duke|Duchess|Bishop)\s"
+    r"^(?:The\s+)?(?:(?:Lord|Baroness|Lady|Viscount|Viscountess|Earl|Countess|Marquess|"
+    r"Marchioness|Duke|Duchess)\s|Bishop\s+of\s)"
 )
 
 

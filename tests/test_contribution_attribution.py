@@ -303,6 +303,8 @@ def test_repair_leaves_unrecognised_sessions_alone(repair):
      "Bridget Phillipson", "The Secretary of State for Education", None),
     ("Alice Macdonald (Norwich North) (Lab/Co-op)", "Alice Macdonald", "", "Lab/Co-op"),
     ("Mr Gagan Mohindra (South West Hertfordshire) (Con)", "Gagan Mohindra", "", "Con"),
+    # A constituency starting with a peerage word is not a peer's name
+    ("Sam Rushworth (Bishop Auckland) (Lab)", "Sam Rushworth", "", "Lab"),
     ("Baroness Deech (CB)", "Baroness Deech", "", None),
     ("Lord Balfe", "Lord Balfe", "", None),
 ])
