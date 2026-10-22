@@ -256,6 +256,26 @@ def test_row_stored_meanwhile_by_another_run_is_kept_not_failed(env, monkeypatch
     assert "0 same, 1 differ from the API" in out   # counted once, as stored
 
 
+def test_unusable_api_record_is_skipped_not_a_failed_day(env, monkeypatch, capsys):
+    from hansard_archive.models import HaPQ
+    real = pq_ingestor._extract_pq_fields
+    monkeypatch.setattr(pq_ingestor, "_extract_pq_fields",
+                        lambda v: None if v.get("id") == 5002 else real(v))
+    assert _run("--no-tag") == bpq.EXIT_OK
+    assert HaPQ.query.count() == 3
+    _, state = _checkpoint()
+    assert state["frontier"] == "2024-12-01"
+    out = capsys.readouterr().out
+    assert "unusable: 2024-12-02 api_id=5002 uin=20002" in out and "attempt 1/" not in out
+
+
+def test_other_row_failure_still_fails_the_day(env, monkeypatch):
+    def broken(fields, *, text_complete=True, dry_run=False):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(pq_ingestor, "upsert_pq", broken)
+    assert _run("--no-tag") == bpq.EXIT_FAILED
+
+
 def test_identity_mismatch_aborts(env):
     from extensions import db as _db
     from hansard_archive.models import HaPQ

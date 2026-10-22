@@ -19,6 +19,9 @@ Rules
   back), so no truncated bulk answer is ever stored by this script. A 404 from
   the individual endpoint (question removed at source) keeps the bulk record,
   as the cron does.
+- A record the API returns without a UIN, question text or tabled date is
+  skipped and listed at the end (the PQ cron can't store it either); it does
+  not fail the day.
 - Newest-first, one tabled day at a time, so ha_pq stays contiguous at every
   stopping point. Frontier checkpoint in ha_cron_run (service name below),
   saved as soon as a run starts and after every day.
@@ -118,6 +121,7 @@ class RunStats:
     tagged: int = 0
     conflicts: list = field(default_factory=list)
     differs: list = field(default_factory=list)
+    unusable: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +220,22 @@ def process_day(day: date, dry_run: bool, delay: float, stats: RunStats, sleep) 
             if not dry_run:
                 raise WouldUpdate(stats.conflicts[-1])
 
+    # Records the API returns without a UIN, question text or tabled date can't
+    # be stored (the cron skips them too). pq_ingestor counts them as failed; here
+    # they are listed and skipped, so one bad record can't block a day forever.
+    unusable: list[str] = []
+
+    def extract(value: dict):
+        fields = orig_extract(value)
+        if fields is None or fields["tabled_date"] is None:
+            unusable.append(f"{day} api_id={value.get('id')} uin={value.get('uin')}")
+        return fields
+
     orig_fetch, orig_upsert = pq_ingestor._fetch_individual, pq_ingestor.upsert_pq
+    orig_extract = pq_ingestor._extract_pq_fields
     pq_ingestor._fetch_individual = make_fetch_individual(sleep)
     pq_ingestor.upsert_pq = make_insert_only_upsert(orig_upsert, stats, day)
+    pq_ingestor._extract_pq_fields = extract
     try:
         result = pq_ingestor.ingest_pq_date_range(
             day, day, verbose=False, dry_run=dry_run,
@@ -233,8 +250,11 @@ def process_day(day: date, dry_run: bool, delay: float, stats: RunStats, sleep) 
         raise DayIncomplete(str(exc)) from exc
     finally:
         pq_ingestor._fetch_individual, pq_ingestor.upsert_pq = orig_fetch, orig_upsert
-    if result["failed"] or result["page_errors"]:
-        raise DayIncomplete(f"failed={result['failed']} page_errors={result['page_errors']}")
+        pq_ingestor._extract_pq_fields = orig_extract
+    failed = result["failed"] - len(unusable)
+    if failed or result["page_errors"]:
+        raise DayIncomplete(f"failed={failed} page_errors={result['page_errors']}")
+    stats.unusable.extend(unusable)
     return result
 
 
@@ -394,6 +414,10 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
               f"{stats.stored_differs} differ from the API", flush=True)
         for d in stats.differs:
             print(f"[pq-backfill]     differs: {d}", flush=True)
+        print(f"[pq-backfill]   skipped, no UIN / question text / tabled date in the API: "
+              f"{len(stats.unusable)}", flush=True)
+        for u in stats.unusable[:20]:
+            print(f"[pq-backfill]     unusable: {u}", flush=True)
         print(f"[pq-backfill]   identity mismatches: {stats.mismatches}", flush=True)
         for c in stats.conflicts[:20]:
             print(f"[pq-backfill]     {c}", flush=True)
