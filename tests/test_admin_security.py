@@ -82,3 +82,12 @@ def test_edge_secret_required_when_set(client, monkeypatch):
     assert client.get('/admin', headers={'X-Admin-Edge': 'edge-value'}).status_code == 200
     # Other pages are unaffected.
     assert client.get('/ping').status_code == 200
+
+
+def test_health_hides_error_detail(client, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError('could not connect to host secret-db.internal:5432')
+    monkeypatch.setattr(fa.db.session, 'execute', boom)
+    body = client.get('/health').get_data(as_text=True)
+    assert 'secret-db' not in body
+    assert 'FAIL: RuntimeError' in body

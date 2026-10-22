@@ -885,6 +885,13 @@ def home():
         print(f'[HOME ERROR] {_e}', flush=True)
         raise
 
+def _health_fail(e):
+    # /health is public: report only the error type; the detail (which can
+    # name hosts or SQL) goes to the logs.
+    app.logger.warning('[HEALTH] %s: %s', type(e).__name__, e)
+    return f'FAIL: {type(e).__name__}'
+
+
 @app.route('/health')
 def health():
     checks = {}
@@ -894,14 +901,14 @@ def health():
         db.session.execute(text('SELECT 1'))
         checks['database'] = 'ok'
     except Exception as e:
-        checks['database'] = f'FAIL: {e}'
+        checks['database'] = _health_fail(e)
 
     # Cache table
     try:
         CachedSearch.query.count()
         checks['cache_table'] = 'ok'
     except Exception as e:
-        checks['cache_table'] = f'FAIL: {e}'
+        checks['cache_table'] = _health_fail(e)
 
     # Gemini API
     gemini_key = os.environ.get('GEMINI_API_KEY')
@@ -921,7 +928,7 @@ def health():
         else:
             checks['backup'] = 'WARN: no backup record found'
     except Exception as e:
-        checks['backup'] = f'FAIL: {e}'
+        checks['backup'] = _health_fail(e)
 
     # Committee evidence freshness — weekly cron, stale after 8 days (192h)
     try:
@@ -935,7 +942,7 @@ def health():
         else:
             checks['committee_evidence'] = 'WARN: no run record yet'
     except Exception as e:
-        checks['committee_evidence'] = f'FAIL: {e}'
+        checks['committee_evidence'] = _health_fail(e)
 
     # Git version
     checks['version'] = os.environ.get('RAILWAY_GIT_COMMIT_SHA', 'unknown')[:7]
