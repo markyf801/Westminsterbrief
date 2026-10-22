@@ -68,3 +68,17 @@ def test_session_cookie_flags(client):
     assert fa.app.config['SESSION_COOKIE_HTTPONLY'] is True
     assert fa.app.config['SESSION_COOKIE_SAMESITE'] == 'Lax'
     assert fa.app.config['SESSION_COOKIE_SECURE'] is True
+
+
+def test_edge_secret_unset_changes_nothing(client):
+    assert client.get('/admin').status_code == 200
+
+
+def test_edge_secret_required_when_set(client, monkeypatch):
+    monkeypatch.setattr(fa, 'ADMIN_EDGE_SECRET', 'edge-value')
+    assert client.get('/admin').status_code == 404
+    assert client.get('/admin/stats').status_code == 404
+    assert client.get('/admin', headers={'X-Admin-Edge': 'wrong'}).status_code == 404
+    assert client.get('/admin', headers={'X-Admin-Edge': 'edge-value'}).status_code == 200
+    # Other pages are unaffected.
+    assert client.get('/ping').status_code == 200

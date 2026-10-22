@@ -1382,6 +1382,23 @@ def _enforce_feature_flags():
             abort(404)
 
 
+# Cloudflare restricts /admin to the owner's IP, but the direct Railway address
+# skips Cloudflare. When ADMIN_EDGE_SECRET is set, /admin answers only requests
+# carrying it in the X-Admin-Edge header, which a Cloudflare Transform Rule
+# adds; everything else gets a 404. Unset = no check (the default).
+ADMIN_EDGE_SECRET = os.environ.get('ADMIN_EDGE_SECRET', '').strip()
+
+
+@app.before_request
+def _admin_only_via_cloudflare():
+    if not ADMIN_EDGE_SECRET:
+        return None
+    if request.path == '/admin' or request.path.startswith('/admin/'):
+        if not _same_secret(request.headers.get('X-Admin-Edge', ''), ADMIN_EDGE_SECRET):
+            abort(404)
+    return None
+
+
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute; 20 per hour", methods=["POST"])
 def login():
