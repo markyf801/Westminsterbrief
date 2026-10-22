@@ -2067,6 +2067,7 @@ def admin_panel():
         _admin_log('login successful')
 
     from debate_scanner import MINISTER_CACHE_FILE
+    from ministers import clear_cache as _clear_minister_rows_cache, table_status as _minister_table_status
     import json, time
 
     message = None
@@ -2077,7 +2078,8 @@ def admin_panel():
             try:
                 if os.path.exists(MINISTER_CACHE_FILE):
                     os.remove(MINISTER_CACHE_FILE)
-                message = 'Minister cache cleared — will refresh from GOV.UK on next search.'
+                _clear_minister_rows_cache()
+                message = 'Minister cache cleared — the stored list is re-read on next search.'
                 _admin_log('clear_minister')
             except Exception as e:
                 message = f'Error clearing minister cache: {e}'
@@ -2105,6 +2107,7 @@ def admin_panel():
             try:
                 if os.path.exists(MINISTER_CACHE_FILE):
                     os.remove(MINISTER_CACHE_FILE)
+                _clear_minister_rows_cache()
                 deleted = CachedSearch.query.delete()
                 db.session.commit()
                 message = f'All caches cleared ({deleted} search cache entries removed, minister cache deleted).'
@@ -2303,6 +2306,8 @@ def admin_panel():
     except Exception:
         minister_status = {'exists': False, 'error': True}
 
+    minister_table = _minister_table_status()
+
     search_total = CachedSearch.query.count()
     search_session = CachedSearch.query.filter(
         CachedSearch.source_type.like('session_%')
@@ -2377,6 +2382,7 @@ def admin_panel():
     return render_template('admin.html',
                            message=message,
                            minister_status=minister_status,
+                           minister_table=minister_table,
                            search_total=search_total,
                            search_session=search_session,
                            search_keyword=search_keyword,

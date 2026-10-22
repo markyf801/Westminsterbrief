@@ -43,7 +43,20 @@
 
   <!-- Minister Cache -->
   <div style="border:1px solid #ddd; border-radius:8px; padding:20px; background:#fff;">
-    <h3 style="font-size:1rem; margin:0 0 12px;">Minister Cache (minister_cache.json)</h3>
+    <h3 style="font-size:1rem; margin:0 0 12px;">Ministers (gov_minister table)</h3>
+    {% if minister_table.get('rows') %}
+      <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
+        <tr><td style="padding:4px 0; color:#555;">Last refreshed</td><td style="font-weight:600;">{{ minister_table.fetched_at.strftime('%d %b %Y %H:%M') }} UTC ({{ minister_table.age_hours }}h ago)</td></tr>
+        <tr><td style="padding:4px 0; color:#555;">People / departments</td><td style="font-weight:600;">{{ minister_table.people }} / {{ minister_table.departments }}</td></tr>
+        <tr><td style="padding:4px 0; color:#555;">Without member id</td><td style="font-weight:600;">{{ minister_table.without_member_id }}</td></tr>
+      </table>
+      <p style="font-size:0.8rem; color:#888; margin:10px 0 0;">Refreshed daily by the <code>minister-refresh</code> cron. After a reshuffle, run it once by hand. The file cache below is only used while this table is empty.</p>
+    {% elif minister_table.get('exists') %}
+      <p style="color:#888; font-size:0.85rem;">Table is empty — run <code>scripts/refresh_ministers.py</code>. Searches use the file cache below until then.</p>
+    {% else %}
+      <p style="color:#888; font-size:0.85rem;">Table not created yet (<code>migrations/gov_minister_table.py</code>). Searches use the file cache below.</p>
+    {% endif %}
+    <h3 style="font-size:0.9rem; margin:16px 0 8px;">Fallback file cache (minister_cache.json)</h3>
     {% if minister_status.get('exists') %}
       <table style="width:100%; font-size:0.85rem; border-collapse:collapse;">
         <tr><td style="padding:4px 0; color:#555;">Age</td><td style="font-weight:600;">{{ minister_status.age_hours }}h ({{ minister_status.age_days }} days)</td></tr>

@@ -4,6 +4,7 @@ from flask_login import current_user, login_required
 from datetime import datetime
 from cache_models import CachedSearch, StakeholderOrg
 from extensions import limiter
+from ministers import display_name as _display_name, normalise_name as _normalise_name
 try:
     import feedparser
 except ImportError:
@@ -780,26 +781,6 @@ def _fetch_topic_wqs(topic, start_date, end_date, selected_depts, limit=800):
         return [], -1  # -1 signals fetch error (timeout etc.) vs genuine zero results
 
 
-def _display_name(title):
-    """Strip honorifics/post-nominals from a GOV.UK title for clean display.
-    Preserves Lords titles (Baroness/Lord) so name lookups can find peers.
-    'The Rt Hon Baroness Smith of Malvern' → 'Baroness Smith of Malvern'
-    'The Rt Hon Josh MacAlister MP' → 'Josh MacAlister'"""
-    name = title.strip()
-    # Strip Rt Hon / Right Hon only (not Lords titles)
-    for prefix in ['The Rt Hon ', 'The Right Hon ', 'Rt Hon ', 'Right Hon ', 'The ']:
-        if name.startswith(prefix):
-            name = name[len(prefix):]
-            break
-    # Strip commons-only honorifics (Dame, Sir, Dr, Mr etc) but NOT Baroness/Lord
-    for prefix in ['Dame ', 'Sir ', 'Dr ', 'Mr ', 'Mrs ', 'Ms ', 'Miss ']:
-        if name.startswith(prefix):
-            name = name[len(prefix):]
-            break
-    name = re.sub(r'\s+(MP|OBE|CBE|MBE|PC|QC|KC|DBE|KBE)(\b.*)?$', '', name)
-    return name.strip()
-
-
 def _fetch_govuk_dept_ministers(dept_base_path, dept_name):
     """Fetch ordered_ministers for one GOV.UK department page.
     Returns list of (normalised_name, role_string, display_name, dept_name) tuples."""
@@ -819,10 +800,24 @@ def _fetch_govuk_dept_ministers(dept_base_path, dept_name):
 
 
 def get_minister_list():
-    """Fetch ALL current government ministers from GOV.UK content API.
+    """All current government ministers: {by_norm, by_id, by_dept, member_ids}.
+
+    Read from our gov_minister table (refreshed daily by
+    scripts/refresh_ministers.py; see ministers.py). Only while that table is
+    empty or missing (before the migration and first run) does this fall back
+    to the old file-cached GOV.UK fetch, so deploy order can't break the site."""
+    from ministers import load_minister_list
+    data = load_minister_list()
+    if data:
+        return data
+    return _get_minister_list_live()
+
+
+def _get_minister_list_live():
+    """Legacy fallback: fetch ALL current government ministers from GOV.UK content API.
     Returns dict with 'by_norm' {normalised_name: role} keyed by _normalise_name().
-    File-cached for 24 hours. Includes junior ministers, not just Cabinet.
-    Falls back to Parliament GovernmentPosts if GOV.UK is unavailable."""
+    File-cached for 30 days. Includes junior ministers, not just Cabinet.
+    Supplemented by Parliament GovernmentPosts. Remove once gov_minister is live."""
     cache = {}
     try:
         if os.path.exists(MINISTER_CACHE_FILE):
@@ -910,25 +905,6 @@ def get_minister_list():
     return data
 
 
-def _normalise_name(name):
-    """Strip honorifics, titles, and post-nominal letters for name matching.
-    Works on both Hansard speaker names and GOV.UK person titles.
-    Applies prefix stripping in two passes to handle 'The Rt Hon Baroness ...'."""
-    n = name.lower().strip()
-    # Strip trailing post-nominals: MP, OBE, CBE, MBE, PC, QC, KC, etc.
-    n = re.sub(r'\s+(obe|cbe|mbe|pc|qc|kc|dbe|kbe|mp|obe mp|cbe mp|mbe mp)\s*$', '', n)
-    # Two passes of prefix stripping handles 'the rt hon baroness' → 'baroness' → ''
-    prefixes = ['the rt hon ', 'the right hon ', 'rt hon ', 'right hon ',
-                'the baroness ', 'baroness ', 'the lord ', 'lord ',
-                'dame ', 'sir ', 'dr ', 'mr ', 'mrs ', 'ms ', 'miss ']
-    for _ in range(2):
-        for prefix in prefixes:
-            if n.startswith(prefix):
-                n = n[len(prefix):]
-                break
-    return n.strip()
-
-
 def verify_government_speaker(name):
     """Confirm a speaker holds a current government post.
     Returns dict with confirmed (bool) and role (str).
@@ -937,14 +913,26 @@ def verify_government_speaker(name):
     1. Normalised name match against GOV.UK minister cache (covers all ministers)
     2. Parliament Members Search → check each result ID against Cabinet id cache
     3. Parliament Members Biography → governmentPosts with no endDate (gets precise role)
+
+    When the list comes from our gov_minister table (every current post holder,
+    with member ids), tiers 2-3 are replaced by a lookup in our own member
+    tables: no API calls on page view, and no process-lifetime cache.
     """
     norm_name = _normalise_name(name)
-    if norm_name and norm_name in _VERIFY_CACHE:
-        return _VERIFY_CACHE[norm_name]
-
     minister_data = get_minister_list()
     by_norm = minister_data.get('by_norm', {})
     by_id = minister_data.get('by_id', {})
+
+    if minister_data.get('_source') == 'db':
+        if norm_name and norm_name in by_norm:
+            return {'confirmed': True, 'role': by_norm[norm_name]}
+        member_id, _is_lord = _local_member_lookup(name)
+        if member_id and str(member_id) in by_id:
+            return {'confirmed': True, 'role': by_id[str(member_id)]}
+        return {'confirmed': False, 'role': ''}
+
+    if norm_name and norm_name in _VERIFY_CACHE:
+        return _VERIFY_CACHE[norm_name]
 
     # 1. Normalised match against GOV.UK full minister list
     if norm_name and norm_name in by_norm:
@@ -1757,11 +1745,14 @@ def get_dept_minister_member_ids(dept_name, minister_data):
     """Resolve all ministers for a department to Parliament member ids (MNIS ids,
     = ha_contribution.member_id). Returns list of {parliament_id, name, role, is_lord}.
 
-    Lookup chain: verified overrides -> minister cache file -> our own member
-    tables -> Parliament Members API search (last resort, result cached).
+    Lookup chain: the id stored in gov_minister -> verified overrides ->
+    minister cache file -> our own member tables -> Parliament Members API
+    search (last resort, result cached). The last step and the cache file are
+    only used by the legacy fallback list, never when it comes from gov_minister.
     """
     import logging
     ministers = minister_data.get('by_dept', {}).get(dept_name, [])
+    from_db = minister_data.get('_source') == 'db'
     ids_cache = minister_data.setdefault('member_ids', {})
     results = []
     json_updated = False
@@ -1770,8 +1761,14 @@ def get_dept_minister_member_ids(dept_name, minister_data):
         display = m.get('display_name') or m.get('name', '')
         if not display:
             continue
-        entry = KNOWN_MINISTER_MEMBER_IDS.get(display) or ids_cache.get(display)
-        if entry is None:
+        entry = None
+        if m.get('parliament_id'):
+            entry = {'parliament_id': m['parliament_id'], 'is_lord': bool(m.get('is_lord'))}
+        entry = entry or KNOWN_MINISTER_MEMBER_IDS.get(display) or ids_cache.get(display)
+        if entry is None and from_db:
+            member_id, is_lord = _local_member_lookup(display)
+            entry = {'parliament_id': member_id, 'is_lord': bool(is_lord)}
+        elif entry is None:
             member_id, is_lord = _local_member_lookup(display)
             if not member_id:
                 member_id, house = _resolve_parliament_id(display)
