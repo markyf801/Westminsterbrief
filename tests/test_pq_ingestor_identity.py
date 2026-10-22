@@ -1057,3 +1057,28 @@ def test_unknown_date_field_is_rejected(db, fake_api):
     with pytest.raises(ValueError):
         ingest_pq_date_range(date(2026, 10, 1), date(2026, 10, 2), verbose=False,
                              date_field="withdrawn")
+
+
+def test_pq_page_shows_holding_and_corrected_answers(db, app):
+    db.session.add(_pq(api_id=1, uin="35741", is_answered=True, is_holding=True,
+                       answer_date=date(2026, 10, 21), answer_text="<p>I will reply shortly.</p>"))
+    db.session.add(_pq(api_id=2, uin="23043", is_answered=True, answer_date=date(2026, 9, 8),
+                       answer_corrected_date=date(2026, 10, 20),
+                       answer_text="<p>The corrected answer.</p>"))
+    db.session.add(_pq(api_id=3, uin="36000", is_answered=True, answer_date=date(2026, 10, 20),
+                       answer_text="<p>A plain answer.</p>"))
+    db.session.commit()
+    client = app.test_client()
+
+    holding = client.get("/archive/pq/35741").get_data(as_text=True)
+    assert "Holding answer" in holding and "will reply in full later" in holding
+    assert "Corrected" not in holding
+
+    corrected = client.get("/archive/pq/23043").get_data(as_text=True)
+    assert "Corrected on 20 October 2026" in corrected
+    assert "This answer was corrected on 20 October 2026" in corrected
+    assert "Holding answer" not in corrected
+
+    plain = client.get("/archive/pq/36000").get_data(as_text=True)
+    assert "Holding answer" not in plain and "Corrected" not in plain
+    assert "Answered" in plain

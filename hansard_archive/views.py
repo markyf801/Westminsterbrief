@@ -2349,6 +2349,7 @@ def pq_detail(uin: str):
         specific_topics = specific_topics,
         human_tabled    = _human_date(pq.tabled_date) if pq.tabled_date else "",
         human_answered  = _human_date(pq.answer_date) if pq.answer_date else "",
+        human_corrected = _human_date(pq.answer_corrected_date) if pq.answer_corrected_date else "",
         human_updated   = _human_date(pq.updated_at.date()) if pq.updated_at else "",
         related         = related,
         seo_title       = seo_title,
