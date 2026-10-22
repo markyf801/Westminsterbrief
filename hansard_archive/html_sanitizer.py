@@ -14,10 +14,13 @@ Usage:
     # For Word/CSV exports — strip all tags to readable plain text:
     plain = to_plain_text(safe_html)
 
-XSS posture: Parliament's WQ API is the sole source. Bleach sanitises at
-ingestion time. Templates render sanitised-at-ingest content with | safe.
-This is the only location in the codebase where | safe is used on
-externally-sourced content; keep it that way.
+XSS posture: Parliament's Written Questions and Statements API is the sole
+source (written answers, and written ministerial statements via
+scripts/ingest_written_statements.py). Bleach sanitises at ingestion time.
+Templates render sanitised-at-ingest content with | safe (the statement page
+also re-sanitises at render time). These are the only places in the codebase
+where | safe is used on externally-sourced content; keep it that way, and
+route any new source through sanitize_answer_html().
 """
 
 import re

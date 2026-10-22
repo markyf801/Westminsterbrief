@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}{{ ws.title }} — written statement {{ ws.uin }} — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}{{ ws.title }} — written ministerial statement {{ ws.uin }}{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ ws.title|tojson }},
+  "description": {{ meta_desc|tojson }},
+  "datePublished": "{{ ws.date_made.isoformat() }}",
+  {% if ws.updated_at %}"dateModified": "{{ ws.updated_at.date().isoformat() }}",{% endif %}
+  "author": {"@type": "Person", "name": {{ (ws.member_name or 'Government minister')|tojson }}{% if ws.member_role %}, "jobTitle": {{ ws.member_role|tojson }}{% endif %}{% if ws.answering_body_name %}, "affiliation": {"@type": "GovernmentOrganization", "name": {{ ws.answering_body_name|tojson }}}{% endif %}},
+  {% if areas %}"about": [{% for a in areas %}{{ a.label|tojson }}{% if not loop.last %}, {% endif %}{% endfor %}],{% endif %}
+  "isBasedOn": "{{ official_link }}",
+  "license": "https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/",
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}",
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"}
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>
+body { background: #f0f2f5; }
+.ws-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.ws-meta-text { font-size: 13px; color: #5a6878; }
+.ws-official { font-size: 13px; color: #4a7fa5; text-decoration: none; font-weight: 500; }
+.ws-official:hover { text-decoration: underline; }
+.ws-box { background: #fff; border: 1px solid #dde3ed; border-radius: 6px; padding: 16px 18px; margin-bottom: 18px; }
+.ws-box h2 { font-size: 15px; font-weight: 700; color: #1a2332; margin: 0 0 10px; }
+.ws-box h3 { font-size: 13px; font-weight: 700; color: #1a2332; margin: 14px 0 6px; }
+.ws-by { font-size: 14px; color: #2d3748; margin: 0 0 12px; }
+.ws-text { font-size: 15px; line-height: 1.65; color: #2d3748; }
+.ws-text p { margin: 0 0 10px; }
+.ws-text table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0 12px; }
+.ws-text th, .ws-text td { border: 1px solid #dde3ed; padding: 5px 7px; text-align: left; vertical-align: top; }
+.ws-table-wrap { overflow-x: auto; }
+.ws-list { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+.ws-list li { margin-bottom: 4px; }
+.ws-item-meta { font-size: 12px; color: #8a96a4; }
+.ws-note { font-size: 12px; color: #8a96a4; margin: 10px 0 0; }
+.ws-related { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="ac-page">
+<div class="ac-inner">
+
+    <nav class="ac-breadcrumb" aria-label="breadcrumb">
+        <a href="/">Westminster Brief</a><span class="ac-breadcrumb-sep">›</span>
+        <a href="/written-statements">Written statements</a><span class="ac-breadcrumb-sep">›</span>
+        <span>{{ ws.uin }}</span>
+    </nav>
+
+    <div class="ac-header">
+        <span class="archive-tag archive-tag-topic ac-tag-large">Written ministerial statement {{ ws.uin }} · House of {{ ws.house }}</span>
+        <h1 class="ac-title">{{ ws.title }}</h1>
+        <div class="ws-meta">
+            <span class="ws-meta-text">Made {{ human_date }}</span>
+            {% if ws.answering_body_name %}<span class="ws-meta-text">· {{ ws.answering_body_name }}</span>{% endif %}
+            <a class="ws-official" href="{{ official_link }}" target="_blank" rel="noopener">View on parliament.uk ↗</a>
+        </div>
+    </div>
+
+    <section class="ws-box">
+        <h2>Statement</h2>
+        <p class="ws-by">
+            Made by <strong>{% if member_url %}<a href="{{ member_url }}" target="_blank" rel="noopener">{{ ws.member_name or 'the minister' }}</a>{% else %}{{ ws.member_name or 'the minister' }}{% endif %}</strong>{% if ws.member_party %} ({{ ws.member_party }}){% endif %}{% if ws.member_role %}, {{ ws.member_role }}{% endif %}
+        </p>
+        {% if body_html %}
+        <div class="ws-text ws-table-wrap">{{ body_html|safe }}</div>
+        {% else %}
+        <p class="ws-text">No text published. <a href="{{ official_link }}" target="_blank" rel="noopener">See parliament.uk ↗</a></p>
+        {% endif %}
+    </section>
+
+    {% if attachments %}
+    <section class="ws-box">
+        <h2>Attachments ({{ attachments|length }})</h2>
+        <ul class="ws-list">
+            {% for a in attachments %}
+            <li><a href="{{ a.url }}" target="_blank" rel="noopener">{{ a.title }}</a>
+                <span class="ws-item-meta">{{ (a.file_type or 'file')|upper }}{% if a.size %} · {{ a.size }}{% endif %}</span></li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    {% if linked %}
+    <section class="ws-box">
+        <h2>Linked statements</h2>
+        <ul class="ws-list">
+            {% for l in linked %}
+            <li>
+                {%- if l.link_type == 'JointStatement' %}Same statement{% if l.house %} made in the House of {{ l.house }}{% else %} made in the other House{% endif %}
+                {%- elif l.link_type in ('CorrectedStatement', 'CorrectedAnswer') %}Correction linked to this statement
+                {%- else %}Linked statement{% endif %}{% if l.path %}: <a href="{{ l.path }}">{{ l.uin }}</a>{% if l.human_date %} <span class="ws-item-meta">{{ l.human_date }}</span>{% endif %}{% endif -%}
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    {% if areas or has_related %}
+    <section class="ws-box">
+        <h2>Related on Westminster Brief</h2>
+        {% if areas %}
+        <div class="ws-related">
+            {% for a in areas %}<a href="/brief/{{ a.slug }}" class="archive-tag archive-tag-policy">{{ a.label }}</a>{% endfor %}
+        </div>
+        {% endif %}
+        {% if related.debates %}
+        <h3>Recent debates</h3>
+        <ul class="ws-list">{% for r in related.debates %}<li><a href="{{ r.url }}">{{ r.title }}</a> <span class="ws-item-meta">{{ r.meta }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        {% if related.pqs %}
+        <h3>Recent written questions</h3>
+        <ul class="ws-list">{% for r in related.pqs %}<li><a href="{{ r.url }}">{{ r.title }}</a> <span class="ws-item-meta">{{ r.meta }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        {% if related.bills %}
+        <h3>Bills before Parliament</h3>
+        <ul class="ws-list">{% for r in related.bills %}<li><a href="{{ r.url }}">{{ r.title }}</a> <span class="ws-item-meta">{{ r.meta }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        <p class="ws-note">Matched on policy area (from the department and keywords), not on this statement specifically — check relevance before use.</p>
+    </section>
+    {% endif %}
+
+    <p><a href="/written-statements" class="ws-official">‹ All written statements</a></p>
+
+    <p class="ah-source-note">
+        Statement text from <a href="{{ official_link }}" target="_blank" rel="noopener">UK Parliament</a>,
+        licensed under the
+        <a href="https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/" target="_blank" rel="noopener">Open Parliament Licence v3.0</a>.
+        Westminster Brief is not part of government or Parliament.{% if checked_date %} Last checked {{ checked_date }}.{% endif %}
+    </p>
+
+</div>
+</div>
+{% endblock %}
