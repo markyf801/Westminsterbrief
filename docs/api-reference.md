@@ -595,6 +595,25 @@ ministers = resp.json()["details"]["ordered_ministers"]
 
 ---
 
+## 7a. Commons Votes and Lords Votes APIs (divisions)
+
+Used offline by `scripts/ingest_divisions.py` only. Public, no key. Checked 22 Oct 2026.
+
+| API | Endpoint | Notes |
+|---|---|---|
+| Commons | `https://commonsvotes-api.parliament.uk/data/divisions.json/search?queryParameters.startDate=YYYY-MM-DD&queryParameters.endDate=…&queryParameters.skip=0&queryParameters.take=25` | `take` is capped at 25. Summaries only: `Ayes` / `Noes` are empty lists. `PublicationUpdated` changes when Parliament corrects a division. |
+| Commons | `/data/division/{id}.json` | Full lists: `Ayes`, `Noes`, `AyeTellers`, `NoTellers`, `NoVoteRecorded` (~130 KB). Tellers are **not** in `Ayes`/`Noes`, and `AyeCount`/`NoCount` exclude them. Deferred divisions (`IsDeferred`) have no tellers and a 00:00 time. `ProxyName` is set for proxy votes. An MP can appear in both lobbies (active abstention). |
+| Commons | `/data/divisions.json/searchTotalResults?…` | Count only (619 since 4 Jul 2024). |
+| Lords | `https://lordsvotes-api.parliament.uk/data/Divisions/search?StartDate=…&EndDate=…&skip=0&take=25` | Each row already includes `contents`, `notContents`, `contentTellers`, `notContentTellers`. Tellers **are** in `contents`/`notContents`, and `authoritativeContentCount` includes them. `number` restarts each day. `amendmentMotionNotes` is HTML. Swagger: `/swagger/v1/swagger.json`. 441 divisions since 4 Jul 2024. |
+| Hansard | `https://hansard-api.parliament.uk/search/divisions.json?queryParameters.house=Commons&queryParameters.startDate=…&queryParameters.endDate=…&queryParameters.take=100&queryParameters.skip=0` | Links a division to its debate: match on House + date + `Number` (a string). Gives `DebateSectionExtId` (= `ha_session.ext_id`), `TextBeforeVote` (question put) and `TextAfterVote` (result line). Skip `IsCommitteeDivision` rows (public bill committees reuse numbers). For deferred divisions `DebateSectionExtId` equals the division's own id, so there is no debate to link. |
+
+Member ids in both Votes APIs are MNIS ids. Official pages:
+`https://votes.parliament.uk/Votes/Commons/Division/{id}` and
+`https://votes.parliament.uk/Votes/Lords/Division/{id}` (the site is behind a
+Cloudflare check, so it can't be fetched from scripts; link to it only).
+
+---
+
 ## 8. Department ID Reference
 
 Department IDs used across WQ API, WMS API, and Members API:
