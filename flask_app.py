@@ -87,7 +87,15 @@ APP_VERSION = _get_app_version()
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-key-change-this-later')
+# Never fall back to a fixed key: this repo is public, so a fixed default lets
+# anyone forge session cookies (including the admin session). Without
+# SECRET_KEY each process gets a random key, so sessions simply don't survive
+# restarts or cross gunicorn workers until it is set.
+_secret_key = os.environ.get('SECRET_KEY', '').strip()
+if not _secret_key:
+    _secret_key = secrets.token_hex(32)
+    print('WARNING: SECRET_KEY is not set; using a random per-process key. Set SECRET_KEY in Railway.', flush=True)
+app.config['SECRET_KEY'] = _secret_key
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'intelligence.db'))
 if _db_url.startswith('postgres://'):
