@@ -4,19 +4,10 @@ Tests for tracker question-type badge derivation logic.
 Run: python -m pytest tests/test_tracker_badges.py -v
 """
 
-# ---------------------------------------------------------------------------
-# The question_type derivation is embedded in morning_tracker(); we test the
-# same conditional logic here as a standalone function so we don't need to
-# spin up Flask or hit the Parliament API.
-# ---------------------------------------------------------------------------
-
 def derive_question_type(val: dict) -> str:
-    """Mirror of the derivation in tracker.py morning_tracker()."""
-    if val.get('house') == 'Lords':
-        return 'LORDS'
-    if val.get('isNamedDay'):
-        return 'NAMED_DAY'
-    return 'ORDINARY'
+    """tracker.question_type from API-shaped values (house, isNamedDay)."""
+    from tracker import question_type
+    return question_type(val.get('house'), val.get('isNamedDay'))
 
 
 class TestQuestionTypeBadge:

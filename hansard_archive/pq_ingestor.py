@@ -42,7 +42,7 @@ from sqlalchemy import func
 
 from extensions import db
 from hansard_archive.html_sanitizer import sanitize_answer_html
-from hansard_archive.models import HaPQ, HaPQTheme
+from hansard_archive.models import HaPQ, HaPQDeadline, HaPQTheme
 
 _log = logging.getLogger(__name__)
 
@@ -199,6 +199,51 @@ def _extract_pq_fields(value: dict) -> dict | None:
         "is_withdrawn": _opt_bool(value.get("isWithdrawn")),
         "chamber":      (value.get("house") or "").strip() or None,
     }
+
+
+def _extract_deadline(value: dict) -> dict | None:
+    """Due-for-answer date and named-day flag (ha_pq_deadline), keyed by
+    Parliament's question id. None when the record has no id."""
+    api_id = value.get("id")
+    if not api_id:
+        return None
+    return {
+        "api_id": api_id,
+        "date_for_answer": _parse_date(value.get("dateForAnswer")),
+        "is_named_day": _opt_bool(value.get("isNamedDay")),
+    }
+
+
+def store_deadlines(rows: list[dict]) -> int:
+    """Insert or refresh ha_pq_deadline rows (one IN query for the batch).
+
+    Like the ha_pq update rule, a value the API leaves out never blanks a
+    stored one. Returns the number of rows added or changed. Caller owns the
+    transaction/savepoint.
+    """
+    by_id = {r["api_id"]: r for r in rows if r and r.get("api_id")}
+    if not by_id:
+        return 0
+    existing = {d.api_id: d for d in
+                HaPQDeadline.query.filter(HaPQDeadline.api_id.in_(list(by_id))).all()}
+    now = datetime.utcnow()
+    written = 0
+    for api_id, r in by_id.items():
+        values = {k: r[k] for k in ("date_for_answer", "is_named_day") if r[k] is not None}
+        row = existing.get(api_id)
+        if row is None:
+            if values:
+                db.session.add(HaPQDeadline(api_id=api_id, updated_at=now, **values))
+                written += 1
+            continue
+        changed = {k: v for k, v in values.items() if getattr(row, k) != v}
+        if changed:
+            for k, v in changed.items():
+                setattr(row, k, v)
+            row.updated_at = now
+            written += 1
+    db.session.flush()
+    return written
 
 
 def _same_uin(a: str | None, b: str | None) -> bool:
@@ -465,6 +510,10 @@ def ingest_pq_date_range(
     request_delay: seconds between API requests (default 0.3).
     on_outcome: optional callback(fields, outcome) per row, e.g. for sample diffs.
 
+    Each page also refreshes ha_pq_deadline (date due for answer, named day;
+    store_deadlines) for its rows, in a separate savepoint so a failure there
+    never affects the questions. Not part of the returned counts.
+
     Returns {"inserted", "updated", "unchanged", "identity_mismatch", "failed",
     "page_errors", "rolled_back", "errors"} — errors = failed + page_errors +
     identity_mismatch (kept for callers that check a single number).
@@ -480,7 +529,10 @@ def ingest_pq_date_range(
     counts = {"inserted": 0, "updated": 0, "unchanged": 0,
               "identity_mismatch": 0, "failed": 0, "page_errors": 0,
               "rolled_back": 0}
-    uncommitted = {"inserted": 0, "updated": 0}   # written since the last commit
+    # Written since the last commit. "deadlines" = ha_pq_deadline rows, which
+    # are not part of the inserted/updated counts.
+    uncommitted = {"inserted": 0, "updated": 0, "deadlines": 0}
+    deadlines = {"written": 0, "enabled": not dry_run}
 
     def result() -> dict:
         out = dict(counts)
@@ -489,7 +541,9 @@ def ingest_pq_date_range(
 
     def _commit() -> None:
         db.session.commit()
-        uncommitted["inserted"] = uncommitted["updated"] = 0
+        deadlines["written"] += uncommitted["deadlines"]
+        for key in uncommitted:
+            uncommitted[key] = 0
 
     def _finish() -> None:
         """End of run (normal or page-failure abort): keep what was written."""
@@ -502,8 +556,9 @@ def ingest_pq_date_range(
         """Mismatch abort: roll back uncommitted writes and stop counting them."""
         db.session.rollback()
         for action, n in uncommitted.items():
-            counts[action] -= n
-            counts["rolled_back"] += n
+            if action in counts:
+                counts[action] -= n
+                counts["rolled_back"] += n
             uncommitted[action] = 0
 
     if date_field not in _DATE_FIELDS:
@@ -577,6 +632,7 @@ def ingest_pq_date_range(
                 counts["page_errors"] += 1
             break
 
+        page_deadlines = []
         for item in results:
             value = item.get("value") or item
             fields = _extract_pq_fields(value)
@@ -610,6 +666,8 @@ def ingest_pq_date_range(
             counts[outcome.action] += 1
             if outcome.action in ("inserted", "updated") and not dry_run:
                 uncommitted[outcome.action] += 1
+            if outcome.action != "identity_mismatch":
+                page_deadlines.append(_extract_deadline(value))
             if on_outcome is not None:
                 on_outcome(fields, outcome)
 
@@ -623,6 +681,17 @@ def ingest_pq_date_range(
                            f"row write(s) rolled back")
                     _log.error(msg)
                     raise PQIdentityMismatchError(msg, result())
+
+        if deadlines["enabled"] and page_deadlines:
+            # Own savepoint: a deadline problem (e.g. the table not created
+            # yet) must never cost the question rows themselves.
+            try:
+                with db.session.begin_nested():
+                    uncommitted["deadlines"] += store_deadlines(page_deadlines)
+            except Exception as exc:
+                deadlines["enabled"] = False
+                _log.error("ha_pq_deadline not written - due dates skipped for the rest of "
+                           "this run (has migrations/pq_deadline_table.py been run?): %s", exc)
 
         # Commit every page: keeps the window in which an overlapping run could
         # insert the same question small (until uq_ha_pq_api_id exists).
@@ -652,9 +721,10 @@ def ingest_pq_date_range(
     if verbose:
         _log.info(
             "ingest_pq_date_range (%s) done%s: inserted=%d updated=%d unchanged=%d "
-            "identity_mismatch=%d failed=%d page_errors=%d",
+            "identity_mismatch=%d failed=%d page_errors=%d deadlines_written=%d",
             date_field, " (dry run)" if dry_run else "",
             out["inserted"], out["updated"], out["unchanged"],
             out["identity_mismatch"], out["failed"], out["page_errors"],
+            deadlines["written"],
         )
     return out

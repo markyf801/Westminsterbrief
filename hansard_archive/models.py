@@ -248,6 +248,33 @@ class HaPQ(db.Model):
         return f"<HaPQ {self.uin} {self.tabled_date} {(self.heading or '')[:60]!r}>"
 
 
+class HaPQDeadline(db.Model):
+    """When a Written Question is due for answer, filled by the PQ ingestor.
+
+    A side table rather than new ha_pq columns: every PQ page selects ha_pq,
+    and the web service runs with SKIP_MIGRATIONS=1, so a new ha_pq column
+    pushed before its migration would break all of them. A missing side table
+    only drops the "Due" date from Today's PQs.
+
+    Keyed by Parliament's question id (ha_pq.api_id), not ha_pq.id, with no
+    foreign key: scripts/dedupe_pq.py re-points every foreign key to ha_pq.id
+    when it merges duplicates, which would collide on this primary key. The
+    api_id key survives a merge unchanged.
+
+    Created on production by migrations/pq_deadline_table.py.
+    """
+
+    __tablename__ = "ha_pq_deadline"
+
+    api_id = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    date_for_answer = db.Column(db.Date)
+    is_named_day = db.Column(db.Boolean)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<HaPQDeadline api_id={self.api_id} due={self.date_for_answer} named={self.is_named_day}>"
+
+
 class HaPQTheme(db.Model):
     """AI-generated theme tags for a Written Question."""
 
