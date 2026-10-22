@@ -1,11 +1,17 @@
 """The visitor's real IP address, without trusting headers an attacker can set.
 
-Requests normally arrive Cloudflare -> Railway -> app, so the address the app
-sees (request.remote_addr, after ProxyFix) can be a Cloudflare server rather
-than the visitor. Cloudflare puts the visitor's address in CF-Connecting-IP.
-Anyone can also send requests straight to the Railway address and invent that
-header, so it is only believed when the request really came from a Cloudflare
-address.
+Requests arrive Cloudflare -> Railway edge -> app. On production the address
+the app sees (request.remote_addr, after ProxyFix) is Railway's edge node
+(e.g. 79.127.178.x, CDN77), shared by every visitor -- not Cloudflare and not
+the visitor. Keying rate limits on it would put all visitors in one bucket.
+Cloudflare puts the visitor's address in CF-Connecting-IP, so that header is
+used whenever it holds a valid address.
+
+Trade-off: someone calling the Railway address directly (bypassing
+Cloudflare) can invent the header and so dodge per-IP rate limits. That only
+loosens limits for an attacker who skips Cloudflare; it never locks real
+visitors out. Closing the direct Railway address (or ADMIN_EDGE_SECRET-style
+edge checks) is the proper fix for that route.
 """
 import ipaddress
 
@@ -36,8 +42,8 @@ def is_cloudflare_ip(value: str | None) -> bool:
 def client_ip() -> str:
     """Best address for rate limits and logs."""
     peer = request.remote_addr or ''
-    if is_cloudflare_ip(peer):
-        forwarded = (request.headers.get('CF-Connecting-IP') or '').strip()
+    forwarded = (request.headers.get('CF-Connecting-IP') or '').strip()
+    if forwarded:
         try:
             return str(ipaddress.ip_address(forwarded))
         except ValueError:

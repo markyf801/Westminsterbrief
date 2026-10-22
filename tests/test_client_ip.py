@@ -22,9 +22,15 @@ def test_header_believed_from_cloudflare():
     assert _ip('172.70.1.2', '81.2.69.160') == '81.2.69.160'
 
 
-def test_header_ignored_when_not_from_cloudflare():
-    # Someone calling the Railway address directly can't choose their address.
-    assert _ip('203.0.113.9', '81.2.69.160') == '203.0.113.9'
+def test_header_believed_behind_railway_edge():
+    # Production: the peer is Railway's shared edge node, not Cloudflare. The
+    # visitor must still get their own bucket, not share the edge's.
+    assert _ip('79.127.178.81', '81.2.69.160') == '81.2.69.160'
+    assert _ip('79.127.178.81', '2a02:6b67:d7f4:d701::1') == '2a02:6b67:d7f4:d701::1'
+
+
+def test_no_header_uses_peer():
+    assert _ip('203.0.113.9') == '203.0.113.9'
 
 
 def test_bad_header_falls_back_to_peer():
