@@ -312,3 +312,145 @@ def test_parse_attribution(raw, name, role, party):
     from hansard_archive.views import _parse_attribution
     got = _parse_attribution(raw)
     assert (got["name"], got["role"], got["party"]) == (name, role, party)
+
+
+# ---------------------------------------------------------------------------
+# Repair edge cases (review, 22 Oct 2026): several skipped items, items in
+# ChildDebates, the same speaker twice in a row, a named item with no member
+# id, an unnamed paragraph, and a named "in the Chair" line.
+# ---------------------------------------------------------------------------
+
+def _item(text, mid=None, name=None, tag="hs_para"):
+    return {"ItemType": "Contribution", "MemberId": mid, "AttributedTo": name,
+            "Value": text, "HRSTag": tag}
+
+
+def _gc_data() -> dict:
+    return {
+        "Overview": {"ExtId": "GC1", "Title": "X Regulations 2026"},
+        "Items": [
+            _item("Motion to Consider", tag="hs_DebateType"),
+            _item("Moved by", tag="hs_TabledBy"),
+            _item("That the Grand Committee do consider the X Regulations 2026.", 101,
+                  "Lord Alpha", "hs_TabledBy"),
+            _item("<p>My Lords, I beg to move.</p><p>These regulations matter.</p>", 101,
+                  "The Minister of State (Lord Alpha) (Lab)"),
+            _item("I add a second point straight away.", 101, "Lord Alpha (Lab)"),
+            _item("A quoted passage from the report.", 101, "Lord Alpha (Lab)", "hs_Quote"),
+            _item("An unnamed paragraph of debate text."),
+            _item("I have concerns about cost.", 202, "Baroness Beta (Con)"),
+            _item("Hear, hear!", None, "Noble Lords"),
+            _item("Lord Gamma in the Chair", 303, "Lord Gamma", "hs_76fChair"),
+            _item("I want to ask about timing.", 303, "Lord Gamma (LD)"),
+        ],
+        "ChildDebates": [{
+            "Items": [
+                _item("That the draft Y Order 2026 be approved.", 404, "Baroness Delta",
+                      "hs_TabledBy"),
+                _item("My Lords, this order is linked.", 404, "Baroness Delta (Lab)"),
+                _item("I thank the noble Baroness.", 101, "Lord Alpha (Lab)"),
+            ],
+            "ChildDebates": [],
+        }],
+    }
+
+
+def _gc_rows(script, data, shifted: bool) -> list[dict]:
+    legacy = script.build_lists(data)
+    fresh = [e for e in legacy if e["kept"]]
+    return [{"member_id": e["member_id"], "member_name": e["member_name"],
+             "speech_text": (fresh[i]["speech_text"] if shifted and i < len(fresh)
+                             else e["speech_text"])}
+            for i, e in enumerate(legacy)]
+
+
+@pytest.fixture
+def gc(app_db, monkeypatch):
+    app, db, HansardSession, HansardContribution = app_db
+    data = _gc_data()
+    script = _load_script("repair_shifted_contributions")
+    monkeypatch.setattr(script, "fetch_session_json", lambda ext_id: data)
+    monkeypatch.setattr(script, "_DELAY", 0)
+    return script, db, HansardSession, HansardContribution, data
+
+
+def _current_ingestion(data) -> list[tuple]:
+    return [(c["member_id"], c["member_name"], c["speech_text"])
+            for c in _flatten_items(data, [0]) if c["member_name"]]
+
+
+def test_repair_gc_shape_ends_identical_to_current_ingestion(gc):
+    script, db, HS, HC, data = gc
+    rows = _gc_rows(script, data, shifted=True)
+    assert len(rows) - len(_current_ingestion(data)) == 3  # three skipped named items
+    s = _add_session(db, HS, HC, "GC1", rows, orders=[2 * i + 5 for i in range(len(rows))])
+    result = script.run(_args(execute=True))
+    assert result["counts"] == {"shifted": 1}
+    assert result["deleted"] == 3
+    stored = [(r.member_id, r.member_name, r.speech_text) for r in _stored(HC, s.id)]
+    assert stored == _current_ingestion(data)
+    # Running again (dry run and execute) changes nothing.
+    assert script.run(_args())["counts"] == {"ok": 1}
+    again = script.run(_args(execute=True))
+    assert again["updated"] == 0 and again["deleted"] == 0
+    assert [(r.member_id, r.member_name, r.speech_text) for r in _stored(HC, s.id)] == stored
+
+
+def test_repair_gc_shape_correct_legacy_rows_left_alone(gc):
+    script, db, HS, HC, data = gc
+    s = _add_session(db, HS, HC, "GC1", _gc_rows(script, data, shifted=False))
+    before = _snapshot(HC, s.id)
+    result = script.run(_args(execute=True))
+    assert result["counts"] == {"legacy_unshifted": 1}
+    assert _snapshot(HC, s.id) == before
+
+
+@pytest.mark.parametrize("change", ["extra_row", "missing_row", "speaker_swapped", "texts_edited"])
+def test_repair_gc_shape_anything_unexpected_is_left_alone(gc, change):
+    script, db, HS, HC, data = gc
+    rows = _gc_rows(script, data, shifted=True)
+    if change == "extra_row":
+        rows.append({"member_id": 202, "member_name": "Baroness Beta (Con)", "speech_text": "Extra."})
+    elif change == "missing_row":
+        rows.pop(4)
+    elif change == "speaker_swapped":
+        rows[3], rows[4] = rows[4], rows[3]
+    else:  # Hansard has since corrected several speeches
+        for r in rows[:3]:
+            r["speech_text"] += " (corrected)"
+    s = _add_session(db, HS, HC, "GC1", rows)
+    before = _snapshot(HC, s.id)
+    result = script.run(_args(execute=True))
+    assert result["counts"].get("shifted", 0) == 0
+    assert _snapshot(HC, s.id) == before
+
+
+def test_repair_stops_on_403(repair, monkeypatch):
+    script, db, HC, sessions, data = repair
+
+    def _refused(ext_id):
+        raise script.Refused("HTTP 403")
+
+    monkeypatch.setattr(script, "fetch_session_json", _refused)
+    before = _snapshot(HC, sessions["SHIFT"].id)
+    result = script.run(_args(execute=True))
+    assert result["stopped"] and "403" in result["stopped"]
+    assert result["counts"] == {}
+    assert _snapshot(HC, sessions["SHIFT"].id) == before
+
+
+def test_repair_stops_after_three_failed_fetches_in_a_row(repair, monkeypatch):
+    script, db, HC, sessions, data = repair
+    from hansard_archive.models import HansardSession
+    for i in range(3):
+        _add_session(db, HansardSession, HC, f"EXTRA{i}", _shifted_rows(data))
+    calls = []
+
+    def _flaky(ext_id):
+        calls.append(ext_id)
+        return data if len(calls) == 1 else None  # first works, then the API is down
+
+    monkeypatch.setattr(script, "fetch_session_json", _flaky)
+    result = script.run(_args())
+    assert len(calls) == 4 and result["fetch_errors"] == 3
+    assert result["stopped"] and "in a row" in result["stopped"]

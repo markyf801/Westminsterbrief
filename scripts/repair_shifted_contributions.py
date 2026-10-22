@@ -43,9 +43,10 @@ deleted row as it was. Undo (Mark's call, production SQL log):
              old_text, speech_order FROM <bak> WHERE action = 'delete';
 
 API rules: about 3 requests a second at most (0.3s gap plus response time);
-a 429 stops the run at once (finished sessions stay committed); a timeout,
-connection error or 5xx is retried once after 5 seconds, then the session is
-skipped and counted.
+a 429, 401 or 403 stops the run at once (finished sessions stay committed); a
+timeout, connection error or 5xx is retried once after 5 seconds, then the
+session is skipped and counted; three failed sessions in a row stop the run.
+Re-running is safe: repaired sessions then classify as "ok".
 
 Usage (Railway one-off against production; dry run first):
     python scripts/repair_shifted_contributions.py --house Lords --until 2026-05-31
@@ -74,12 +75,20 @@ _MATCH_SHARE = 0.9  # share of rows whose text must line up to call a session sh
 STATES = ("ok", "shifted", "legacy_unshifted", "text_differs", "mismatch")
 
 
+_MAX_CONSECUTIVE_FETCH_ERRORS = 3  # CLAUDE.md three-strike rule
+
+
 class RateLimited(Exception):
     pass
 
 
+class Refused(Exception):
+    """401/403: permanent (CLAUDE.md) — stop, do not keep calling."""
+
+
 def fetch_session_json(ext_id: str) -> dict | None:
-    """Session JSON, or None on a non-transient error. Raises RateLimited on 429."""
+    """Session JSON, or None on a non-transient error. Raises RateLimited on
+    429 and Refused on 401/403."""
     for attempt in range(2):
         try:
             r = requests.get(_API.format(ext_id), timeout=_TIMEOUT)
@@ -91,6 +100,8 @@ def fetch_session_json(ext_id: str) -> dict | None:
             return None
         if r.status_code == 429:
             raise RateLimited(ext_id)
+        if r.status_code in (401, 403):
+            raise Refused(f"HTTP {r.status_code}")
         if r.status_code >= 500 and attempt == 0:
             print(f"[repair] HTTP {r.status_code}, retrying in 5s", flush=True)
             time.sleep(5)
@@ -263,7 +274,7 @@ def run(args) -> dict:
 
     with app.app_context():
         undo_table = _create_undo_table(db) if args.execute else None
-        q = db.session.query(HansardSession.id).filter(
+        q = db.session.query(HansardSession.id, HansardSession.ext_id).filter(
             HansardSession.is_container.is_(False),
             HansardSession.contributions_ingested.is_(True))
         if args.house:
@@ -274,13 +285,38 @@ def run(args) -> dict:
             q = q.filter(HansardSession.date <= date.fromisoformat(args.until))
         if args.ext_id:
             q = q.filter(HansardSession.ext_id.in_(args.ext_id))
-        ids = [r[0] for r in _with_db_retry(db, lambda: q.order_by(HansardSession.id).all())]
+        ids = [(r[0], r[1]) for r in
+               _with_db_retry(db, lambda: q.order_by(HansardSession.id).all())]
+        db.session.rollback()
         if args.limit:
             ids = ids[: args.limit]
         print(f"[repair] {len(ids)} sessions to check ({'EXECUTE' if args.execute else 'dry run'})",
               flush=True)
 
-        for n, sid in enumerate(ids, 1):
+        consecutive_errors = 0
+        for n, (sid, ext_id) in enumerate(ids, 1):
+            # Fetch first, so no DB transaction is held open during the HTTP call
+            # and the rows are read just before any write.
+            try:
+                data = fetch_session_json(ext_id)
+            except RateLimited:
+                stopped = f"429 from Hansard API at session {sid} — stopped; wait before re-running"
+                break
+            except Refused as exc:
+                stopped = f"{exc} from Hansard API at session {sid} — stopped (permanent error)"
+                break
+            finally:
+                time.sleep(_DELAY)
+            if data is None:
+                fetch_errors += 1
+                consecutive_errors += 1
+                if consecutive_errors >= _MAX_CONSECUTIVE_FETCH_ERRORS:
+                    stopped = (f"{consecutive_errors} fetch errors in a row at session {sid} — "
+                               f"stopped; check the Hansard API before re-running")
+                    break
+                continue
+            consecutive_errors = 0
+
             session = _with_db_retry(db, lambda sid=sid: db.session.get(HansardSession, sid))
             rows = _with_db_retry(db, lambda sid=sid: (
                 HansardContribution.query
@@ -288,16 +324,6 @@ def run(args) -> dict:
                         HansardContribution.member_name.isnot(None))
                 .order_by(HansardContribution.speech_order, HansardContribution.id)
                 .all()))
-            try:
-                data = fetch_session_json(session.ext_id)
-            except RateLimited:
-                stopped = f"429 from Hansard API at session {sid} — stopped; wait before re-running"
-                break
-            finally:
-                time.sleep(_DELAY)
-            if data is None:
-                fetch_errors += 1
-                continue
 
             legacy = build_lists(data)
             state = classify(rows, legacy)
@@ -324,6 +350,8 @@ def run(args) -> dict:
                     db.session.rollback()
                 rows_updated += upd
                 rows_deleted += dele
+
+            db.session.rollback()  # end this session's read transaction (no-op after a commit)
 
             if n % 50 == 0:
                 print(f"[repair] checked {n}/{len(ids)} — "
