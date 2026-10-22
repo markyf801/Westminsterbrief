@@ -50,7 +50,7 @@ each consumer service keeps the old password until redeployed.
 **Note:** all cron services build from `master` (`pq-cron-afternoon` was switched
 from `beta` on 2026-10-20).
 
-### Hansard debates, speeches, WMS (`scripts/archive_cron.py`)
+### Hansard debates, speeches, oral statements (`scripts/archive_cron.py`)
 
 | Service | Cron (UTC) | BST window | GMT window | Purpose |
 |---|---|---|---|---|
@@ -58,8 +58,10 @@ from `beta` on 2026-10-20).
 | `archive-cron-daytime-mth` | `0 11-23 * * 1-4` | 12:00–midnight Mon–Thu | 11:00–23:00 Mon–Thu | Hourly during sittings |
 | `archive-cron-daytime-fri` | `0 9-19 * * 5` | 10:00–20:00 Fri | 09:00–19:00 Fri | Hourly during Friday sittings |
 
-WMS are classified within the same Hansard ingestion — no separate cron. Theme
-tagging runs inline at the end of every Hansard cron run.
+Oral ministerial statements are classified within the same Hansard ingestion
+(`debate_type='ministerial_statement'`). Written ministerial statements are a
+separate source with their own cron — see "Written ministerial statements"
+below. Theme tagging runs inline at the end of every Hansard cron run.
 
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)
 
@@ -155,6 +157,39 @@ tabled in the last 90 days. Logs a row in `ha_cron_run` (`service_name=edm-cron`
 exits 1 if most API requests fail. Needs `migrations/edm_tables.py --execute`
 and a one-shot `--backfill` first (both done 2026-10-20: 4,230 EDMs). `FEATURE_EDMS=live`
 is set on the web service.
+
+### Written ministerial statements (`scripts/ingest_written_statements.py`) — not yet set up
+
+Feeds `ha_written_statement`, which `/written-statements` and Debate Prep read
+(Debate Prep falls back to Parliament's live API only while the table is
+missing or empty). Proposed service:
+
+| Setting | Value |
+|---|---|
+| Service name | `wms-cron` |
+| Source | this repo, branch `master` |
+| Dockerfile Path | `Dockerfile.cron` |
+| Start command | `python scripts/ingest_written_statements.py` |
+| Cron schedule | `15 19 * * 1-5` (UTC: 20:15 BST / 19:15 GMT, Mon–Fri) |
+| Restart policy | Never |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `SKIP_MIGRATIONS` | `1` |
+
+No API keys (Parliament's API is public; policy areas are mapped without AI).
+Statements are published through the sitting day, so an evening run picks up
+the whole day; each run lists the last 7 days and re-fetches only new or
+changed statements plus those made in the last 2 days (~2–3 minutes). It
+sits clear of the archive cron's on-the-hour runs and the push-free windows.
+Logs a row in `ha_cron_run` (`service_name=wms-cron`); exits 1 if most API
+requests fail or Parliament returns 429 (the run stops at the first 429).
+
+Order: `python migrations/written_statement_tables.py` (dry run) →
+`--execute` as a one-shot → one-shot backfill
+`python scripts/ingest_written_statements.py --since 2024-07-04 --service-name wms-backfill`
+(~3,900 statements: ~40 list pages + one detail request each, about 75
+minutes; re-running resumes, since unchanged statements are skipped; add
+`--dry-run` first to see the predicted split) → enable `wms-cron` → set
+`FEATURE_WRITTEN_STATEMENTS=beta`, then `live`, on the web service.
 
 ### Daily health report (`scripts/daily_health_report.py`) — not yet set up
 
