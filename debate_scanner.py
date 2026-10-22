@@ -1949,6 +1949,7 @@ def fetch_minister_debates_local(member_id, topic, start_date, end_date, house_f
 # ROUTE 0a: EXPAND TOPIC TERMS API (used by preview-and-edit UI)
 # ==========================================
 @debate_scanner_bp.route('/api/expand_topic', methods=['POST'])
+@limiter.limit("20 per minute; 200 per day")
 def api_expand_topic():
     from flask import jsonify
     topic = (request.json or {}).get('topic', '').strip()
@@ -2047,6 +2048,7 @@ def scan_debates():
 # ROUTE 2: TOPIC SEARCH (NEW — PARALLEL API CALLS)
 # ==========================================
 @debate_scanner_bp.route('/debates_topic', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 100 per day", methods=["POST"])
 def debates_topic():
     topic_rows = []
     oral_rows = []
@@ -2939,6 +2941,7 @@ def _stakeholder_org_view(obj):
 # ROUTE 9: STAKEHOLDER SEARCH
 # ==========================================
 @debate_scanner_bp.route('/stakeholder_search', methods=['POST'])
+@limiter.limit("10 per minute; 100 per day")
 def stakeholder_search():
     from flask_app import TrackedStakeholder
     topic = request.form.get('stakeholder_topic', '').strip()
@@ -4073,6 +4076,7 @@ def _prep_peer_contributions(parliament_id, start_date='', end_date=''):
 # ROUTE 11: DEBATE PREP
 # ==========================================
 @debate_scanner_bp.route('/debate_prep', methods=['GET', 'POST'])
+@limiter.limit("10 per minute; 100 per day", methods=["POST"])
 def debate_prep():
     import logging, traceback
     if request.method == 'GET':

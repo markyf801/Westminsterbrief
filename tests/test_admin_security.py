@@ -100,3 +100,14 @@ def test_ai_briefing_is_escaped():
                                briefing='## Record\n<script>alert(1)</script>', selected_count=1)
     assert '<script>alert(1)</script>' not in html
     assert '&lt;script&gt;alert(1)&lt;/script&gt;' in html
+
+
+def test_ai_endpoints_are_rate_limited(monkeypatch):
+    monkeypatch.setattr(fa.limiter, 'enabled', True)
+    c = fa.app.test_client()
+    env = {'REMOTE_ADDR': '198.51.100.77'}
+    codes = [c.post('/api/expand_topic', json={}, environ_base=env).status_code for _ in range(21)]
+    assert codes[:20] == [400] * 20
+    assert codes[20] == 429
+    codes = [c.post('/stakeholder_search', data={}, environ_base=env).status_code for _ in range(11)]
+    assert codes[-1] == 429
