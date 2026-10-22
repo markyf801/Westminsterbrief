@@ -133,6 +133,17 @@ def _gemini_headers(api_key):
     return {"x-goog-api-key": api_key}
 
 
+def research_ai_summary_enabled() -> bool:
+    """The Research Tool's AI summary is off unless RESEARCH_AI_SUMMARY=on.
+
+    Switched off on 22 Oct 2026: a scenario test found it inventing facts
+    (wrong date range, unsupported party positions, current titles for past
+    roles). It stays off until the prompt is fixed and a model passes the
+    accuracy comparison (docs/plans/backlog.md).
+    """
+    return os.environ.get('RESEARCH_AI_SUMMARY', '').strip().lower() in ('on', '1', 'true', 'yes')
+
+
 def get_working_model(api_key):
     if api_key in _MODEL_CACHE:
         return _MODEL_CACHE[api_key]
@@ -2267,7 +2278,7 @@ def debates_topic():
 
             if not topic_rows:
                 error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
-            elif GEMINI_API_KEY:
+            elif GEMINI_API_KEY and research_ai_summary_enabled():
                 try:
                     # Build a balanced AI payload:
                     # - Ministers first (capped at 15, highest relevance)
