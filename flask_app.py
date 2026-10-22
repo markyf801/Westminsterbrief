@@ -743,12 +743,8 @@ def _run_startup_migrations():
             _mig_log('StatObservation backfill: nothing to do')
     except Exception as _e:
         app.logger.warning('StatObservation backfill failed: %s', _e)
-    if not User.query.filter_by(email='joe@university.ac.uk').first():
-        joe_pass = generate_password_hash('password123', method='pbkdf2:sha256')
-        joe = User(email='joe@university.ac.uk', password_hash=joe_pass)
-        db.session.add(joe)
-        db.session.commit()
-    _mig_log('user seed done')
+    # (A demo user with a published password used to be created here. Removed:
+    # this repo is public, so it would be an open login once accounts go live.)
 
     # Seed education stakeholder orgs (run once — skipped if any orgs already exist)
     _mig_log('checking StakeholderOrg count')
