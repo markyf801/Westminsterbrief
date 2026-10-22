@@ -911,3 +911,174 @@ def test_stage_b_uses_the_ingestor_truncation_rule(db, monkeypatch):
     db.session.expire_all()
     row = HaPQ.query.filter_by(api_id=1203).one()
     assert row.answer_text.startswith("<p>zzz") and row.answer_date == date(2026, 9, 3)
+
+
+# ── holding answers replaced and corrected answers (accuracy review) ──────────
+# Real shapes (live API, 22 Oct 2026): a holding answer has answerIsHolding=true
+# and dateAnswered = dateHoldingAnswer; the real answer keeps dateHoldingAnswer
+# and sets dateAnswered — the same date when it lands on the same day. A
+# correction keeps dateAnswered and sets dateAnswerCorrected + answerIsCorrection.
+
+_Q = "To ask the Secretary of State, what steps are being taken."
+
+
+def _answered_value(api_id, uin, tabled, answer, answered, holding=False, corrected=None):
+    v = _value(api_id, uin, tabled, answer=answer, answered=answered)
+    v["value"].update({
+        "answerIsHolding": holding,
+        "answerIsCorrection": corrected is not None,
+        "dateAnswerCorrected": f"{corrected}T00:00:00" if corrected else None,
+    })
+    return v
+
+
+def _full(answer, answered, holding=False, corrected=None, held=None):
+    return {"questionText": _Q, "answerText": answer, "answerIsHolding": holding,
+            "isWithdrawn": False, "dateAnswered": f"{answered}T00:00:00",
+            "dateHoldingAnswer": f"{held}T00:00:00" if held else None,
+            "answerIsCorrection": corrected is not None,
+            "dateAnswerCorrected": f"{corrected}T00:00:00" if corrected else None}
+
+
+def _window(date_field, lo=date(2026, 10, 16), hi=date(2026, 10, 22)):
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    return ingest_pq_date_range(lo, hi, verbose=False, date_field=date_field,
+                                fetch_only_new_answers=True)
+
+
+def test_holding_answer_replaced_same_day_is_refetched(db, fake_api):
+    """Tabled 2 Oct (outside the tabled window); holding answer and the real
+    answer both dated 21 Oct. answer_date is unchanged, so only the holding
+    flag shows the answer changed."""
+    from hansard_archive.models import HaPQ
+    holding_text = "<p>I will reply to the hon. Member as soon as possible.</p>"
+    db.session.add(_pq(api_id=1949532, uin="35177", tabled_date=date(2026, 10, 2),
+                       is_answered=True, is_holding=True, answer_date=date(2026, 10, 21),
+                       answer_text=holding_text))
+    db.session.commit()
+    fake_api["bulk"] = [_answered_value(1949532, "35177", "2026-10-02",
+                                        "<p>The real answer.</p>", "2026-10-21")]
+    fake_api["individual"] = {1949532: _full("<p>The real answer, in full.</p>",
+                                             "2026-10-21", held="2026-10-21")}
+
+    res = _window("answered")
+
+    assert fake_api["individual_calls"] == [1949532]
+    assert res["updated"] == 1
+    row = HaPQ.query.filter_by(api_id=1949532).one()
+    assert row.is_holding is False
+    assert row.answer_text == "<p>The real answer, in full.</p>"
+    assert row.answer_date == date(2026, 10, 21)
+
+    fake_api["individual_calls"] = []
+    res = _window("answered")
+    assert res["unchanged"] == 1 and fake_api["individual_calls"] == []
+
+
+def test_correction_a_week_later_is_refetched_by_corrected_pass(db, fake_api):
+    """Answered 8 Oct, corrected 15 Oct: dateAnswered stays 8 Oct, so the
+    answered window (16-22 Oct) never sees it; the corrected window does."""
+    from hansard_archive.models import HaPQ
+    db.session.add(_pq(api_id=1933528, uin="23043", tabled_date=date(2026, 9, 28),
+                       is_answered=True, answer_date=date(2026, 10, 8),
+                       answer_text="<p>Was not entitled to a payment.</p>"))
+    db.session.commit()
+    fake_api["bulk"] = [_answered_value(1933528, "23043", "2026-09-28",
+                                        "<p>Was eligible for and received a payment.</p>",
+                                        "2026-10-08", corrected="2026-10-15")]
+    fake_api["individual"] = {1933528: _full("<p>Was eligible for and received a payment.</p>",
+                                             "2026-10-08", corrected="2026-10-15")}
+
+    res = _window("corrected")
+
+    params = fake_api["bulk_params"][0]
+    assert params["correctedWhenFrom"] == "2026-10-16" and params["correctedWhenTo"] == "2026-10-22"
+    assert "answeredWhenFrom" not in params and "tabledWhenFrom" not in params
+    assert fake_api["individual_calls"] == [1933528] and res["updated"] == 1
+    row = HaPQ.query.filter_by(api_id=1933528).one()
+    assert row.answer_text == "<p>Was eligible for and received a payment.</p>"
+    assert row.answer_corrected_date == date(2026, 10, 15)
+    assert row.answer_date == date(2026, 10, 8)            # original answer date kept
+
+    fake_api["individual_calls"] = []
+    res = _window("corrected")
+    assert res["unchanged"] == 1 and fake_api["individual_calls"] == []
+
+
+def test_unchanged_answer_is_not_refetched(db, fake_api):
+    from hansard_archive.models import HaPQ
+    same = dict(answering_body="Department for Testing", answering_body_id=7)
+    db.session.add(_pq(api_id=1950000, uin="36000", tabled_date=date(2026, 10, 1),
+                       is_answered=True, is_holding=False, answer_date=date(2026, 10, 20),
+                       answer_text="<p>A complete answer.</p>", **same))
+    db.session.add(_pq(api_id=1950001, uin="36001", tabled_date=date(2026, 9, 1),
+                       is_answered=True, answer_date=date(2026, 9, 10),
+                       answer_corrected_date=date(2026, 10, 18),
+                       answer_text="<p>A corrected answer.</p>", **same))
+    db.session.commit()
+
+    fake_api["bulk"] = [_answered_value(1950000, "36000", "2026-10-01",
+                                        "<p>A complete answer.</p>", "2026-10-20")]
+    res = _window("answered")
+    assert res["unchanged"] == 1
+
+    fake_api["bulk"] = [_answered_value(1950001, "36001", "2026-09-01",
+                                        "<p>A corrected answer.</p>", "2026-09-10",
+                                        corrected="2026-10-18")]
+    res = _window("corrected")
+    assert res["unchanged"] == 1
+    assert fake_api.get("individual_calls", []) == []
+    assert HaPQ.query.filter_by(api_id=1950001).one().answer_corrected_date == date(2026, 10, 18)
+
+
+def test_failed_fetch_of_a_correction_keeps_old_values_and_retries(db, fake_api):
+    """Without the full record neither the text nor the correction date
+    changes, so the next run still sees the difference and tries again."""
+    from hansard_archive.models import HaPQ
+    db.session.add(_pq(api_id=1938330, uin="27363", tabled_date=date(2026, 9, 4),
+                       is_answered=True, answer_date=date(2026, 9, 14),
+                       answer_text="<p>Old answer.</p>"))
+    db.session.commit()
+    fake_api["bulk"] = [_answered_value(1938330, "27363", "2026-09-04", "<p>New answer.</p>",
+                                        "2026-09-14", corrected="2026-10-20")]
+    fake_api["individual"] = {}
+
+    _window("corrected")
+    row = HaPQ.query.filter_by(api_id=1938330).one()
+    assert row.answer_text == "<p>Old answer.</p>" and row.answer_corrected_date is None
+
+    fake_api["individual_calls"] = []
+    _window("corrected")
+    assert fake_api["individual_calls"] == [1938330]
+
+
+def test_unknown_date_field_is_rejected(db, fake_api):
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    with pytest.raises(ValueError):
+        ingest_pq_date_range(date(2026, 10, 1), date(2026, 10, 2), verbose=False,
+                             date_field="withdrawn")
+
+
+def test_pq_page_shows_holding_and_corrected_answers(db, app):
+    db.session.add(_pq(api_id=1, uin="35741", is_answered=True, is_holding=True,
+                       answer_date=date(2026, 10, 21), answer_text="<p>I will reply shortly.</p>"))
+    db.session.add(_pq(api_id=2, uin="23043", is_answered=True, answer_date=date(2026, 9, 8),
+                       answer_corrected_date=date(2026, 10, 20),
+                       answer_text="<p>The corrected answer.</p>"))
+    db.session.add(_pq(api_id=3, uin="36000", is_answered=True, answer_date=date(2026, 10, 20),
+                       answer_text="<p>A plain answer.</p>"))
+    db.session.commit()
+    client = app.test_client()
+
+    holding = client.get("/archive/pq/35741").get_data(as_text=True)
+    assert "Holding answer" in holding and "will reply in full later" in holding
+    assert "Corrected" not in holding
+
+    corrected = client.get("/archive/pq/23043").get_data(as_text=True)
+    assert "Corrected on 20 October 2026" in corrected
+    assert "This answer was corrected on 20 October 2026" in corrected
+    assert "Holding answer" not in corrected
+
+    plain = client.get("/archive/pq/36000").get_data(as_text=True)
+    assert "Holding answer" not in plain and "Corrected" not in plain
+    assert "Answered" in plain

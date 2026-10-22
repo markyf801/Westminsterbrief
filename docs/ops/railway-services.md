@@ -71,6 +71,15 @@ tagging runs inline at the end of every Hansard cron run.
 | `pq-cron-monday` | `0 9 * * 1` | 10:00 Monday | 09:00 Monday | Post-weekend backlog catch-up |
 | `pq-cron-quickcheck` *(proposed, not created yet)* | `15,45 6-19 * * 1-5` | 07:15–20:45 | 06:15–19:45 | `--quick-check --service-name pq-quickcheck`: 3 count calls; exits in seconds if nothing new, else ingests only the windows that grew. Its counts feed `scripts/pq_publication_times.py`; narrow the hours once that report has 4+ sitting weeks |
 
+Each full sweep runs three passes: tabled in the last 7 days, answered in the
+last 7 days, and answers corrected in the last 7 days (`--corrected-days`,
+default same as `--answered-days`; 0 = off). The answered and corrected passes
+re-fetch a full record only when the answer is new or changed — including a
+holding answer replaced on the same day and a newly corrected answer. The
+corrected pass adds one list request per run plus one request per newly
+corrected answer. `--dry-run` also works for full sweeps (no writes, no run
+record, no tagging, no email; same API requests as a real run).
+
 **`pq-cron-quickcheck` setup (not created yet).** Create it only after the PQ
 identity steps 2–4 in `docs/plans/pq-identity-phase3-sql.md` (code deployed,
 duplicates merged, unique indexes on `api_id` and `(tabled_date, lower(uin))`):

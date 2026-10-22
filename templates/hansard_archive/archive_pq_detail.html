@@ -103,8 +103,9 @@ body { background: #f0f2f5; }
             {% if pq.answering_body %}<span class="archive-dept-badge">{{ pq.answering_body }}</span>{% endif %}
             {% if human_tabled %}<span class="sd-date">Tabled {{ human_tabled }}</span>{% endif %}
             <span class="archive-dtype-badge {% if pq.is_answered %}archive-dtype-debate{% else %}archive-dtype-other{% endif %}">
-                {% if pq.is_answered %}Answered{% else %}Awaiting answer{% endif %}
+                {% if pq.is_answered and pq.is_holding %}Holding answer{% elif pq.is_answered %}Answered{% else %}Awaiting answer{% endif %}
             </span>
+            {% if pq.is_answered and human_corrected %}<span class="sd-date">Corrected on {{ human_corrected }}</span>{% endif %}
         </div>
 
         {% if policy_areas or specific_topics %}
@@ -142,6 +143,7 @@ body { background: #f0f2f5; }
         {# Answer #}
         <div class="sd-contrib">
             {% if pq.is_answered %}
+            {% set answer_label = 'Holding answer' if pq.is_holding else 'Answer' %}
             <div class="sd-contrib-speaker" style="border-left-color: #2e7d32;">
                 {% if pq.answering_member %}
                 <span class="sd-speaker-name">{{ pq.answering_member }}</span>
@@ -149,14 +151,19 @@ body { background: #f0f2f5; }
                     {%- if answering_party or answering_role -%}
                         {{ answering_party }}{% if answering_party and answering_role %}, {% endif %}{{ answering_role }} ·
                     {%- endif %}
-                    Answer · {{ pq.answering_body }}{% if human_answered %} · {{ human_answered }}{% endif %}
+                    {{ answer_label }} · {{ pq.answering_body }}{% if human_answered %} · {{ human_answered }}{% endif %}{% if human_corrected %} · Corrected {{ human_corrected }}{% endif %}
                 </span>
                 {% else %}
                 <span class="sd-speaker-name">{{ pq.answering_body or 'Government' }}</span>
-                <span class="sd-speaker-secondary">Answer{% if human_answered %} · {{ human_answered }}{% endif %}</span>
+                <span class="sd-speaker-secondary">{{ answer_label }}{% if human_answered %} · {{ human_answered }}{% endif %}{% if human_corrected %} · Corrected {{ human_corrected }}{% endif %}</span>
                 {% endif %}
             </div>
             <div class="sd-contrib-text">{{ pq.answer_text | safe }}</div>
+            {% if pq.is_holding %}
+            <p class="sd-source-note">This is a holding answer: the department has said it will reply in full later.</p>
+            {% elif human_corrected %}
+            <p class="sd-source-note">This answer was corrected on {{ human_corrected }}. The original wording is on the official Parliament record (link below).</p>
+            {% endif %}
             {% else %}
             <div class="sd-contrib-speaker" style="border-left-color: #c0c8d4;">
                 <span class="sd-speaker-name" style="color:#8a96a4;">Awaiting answer</span>
