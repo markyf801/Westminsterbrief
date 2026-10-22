@@ -8,8 +8,9 @@ Schedule (CLAUDE.md "Branches and workflow", docs/ops/railway-services.md):
   member-profile-refresh Sun 03:00; member-bio-refresh 2nd of month 04:00;
   edm-cron 04:30; upcoming-refresh 05:45; rediscovery 06:00; bills-cron 06:30;
   daily health report 07:30; archive morning-catchup 08:00 Mon-Fri;
-  PQ crons 08:30, 09:30, 14:00 Mon-Fri and 09:00 Mon; archive daytime hourly
-  11:00-23:00 Mon-Thu and 09:00-19:00 Fri.
+  PQ crons 08:30, 09:30, 14:00 Mon-Fri and 09:00 Mon; PQ quick-check
+  (pq-cron-quickcheck, once created) :15 and :45 past 06:00-19:00 Mon-Fri;
+  archive daytime hourly 11:00-23:00 Mon-Thu and 09:00-19:00 Fri.
 
 Deliberately wide: weekday daytime is blocked whole, because the archive cron
 runs hourly and a capped tagging run can take most of an hour, so a gap between
@@ -39,8 +40,10 @@ CRON_WINDOWS: tuple[tuple[frozenset, str, str, str], ...] = (
     (_ALL_DAYS, "04:25", "07:45",
      "edm (04:30) / upcoming (05:45) / rediscovery (06:00) / bills (06:30-07:15) / health report (07:30)"),
     (MON_THU, "07:55", "23:30",
-     "archive 08:00 + hourly 11:00-23:00, PQ 08:30/09:30/14:00 (Mon also 09:00)"),
-    (FRI, "07:55", "19:30", "Fri: archive 08:00 + hourly 09:00-19:00, PQ 08:30/09:30/14:00"),
+     "archive 08:00 + hourly 11:00-23:00, PQ 08:30/09:30/14:00 (Mon also 09:00), "
+     "PQ quick-check 06:15-19:45"),
+    (FRI, "07:55", "20:00",
+     "Fri: archive 08:00 + hourly 09:00-19:00, PQ 08:30/09:30/14:00, PQ quick-check to 19:45"),
 )
 # (day of month, start, end, label)
 MONTHLY_WINDOWS: tuple[tuple[int, str, str, str], ...] = (

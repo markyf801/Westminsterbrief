@@ -182,6 +182,9 @@ def test_final_api_error_stops_at_once(retag, seeded, monkeypatch):
     (datetime(2026, 10, 21, 15, 30), "hourly"),           # Wednesday daytime, between runs
     (datetime(2026, 10, 23, 12, 0), "Fri"),               # Friday daytime
     (datetime(2026, 10, 23, 21, 0), None),                # Friday evening
+    (datetime(2026, 10, 23, 19, 35), "quick-check"),      # Friday 19:45 PQ quick-check
+    (datetime(2026, 10, 23, 20, 0), None),                # Friday, after the last quick-check
+    (datetime(2026, 10, 22, 6, 15), "edm"),               # weekday quick-check inside the early block
     (datetime(2026, 10, 24, 12, 0), None),                # Saturday midday
     (datetime(2026, 10, 21, 23, 45), None),               # after the last weekday run
     (datetime(2026, 10, 24, 7, 50), None),                # Saturday: no archive run
