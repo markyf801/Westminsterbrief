@@ -109,7 +109,7 @@ def api(monkeypatch):
     import time
     from hansard_archive.pq_ingestor import WQ_API_BASE
 
-    state = {"tabled": [], "answered": [], "individual": {},
+    state = {"tabled": [], "answered": [], "corrected": [], "individual": {},
              "count_calls": [], "bulk_calls": [], "fail": False, "bulk_status": 200,
              "count_status": 200}
 
@@ -117,10 +117,13 @@ def api(monkeypatch):
         if "tabledWhenFrom" in params:
             lo, hi, key = params["tabledWhenFrom"], params["tabledWhenTo"], "dateTabled"
             rows = state["tabled"]
+        elif "correctedWhenFrom" in params:
+            lo, hi, key = params["correctedWhenFrom"], params["correctedWhenTo"], "dateAnswerCorrected"
+            rows = state["corrected"]
         else:
             lo, hi, key = params["answeredWhenFrom"], params["answeredWhenTo"], "dateAnswered"
             rows = state["answered"]
-        return [r for r in rows if r["value"][key] and lo <= r["value"][key][:10] <= hi]
+        return [r for r in rows if r["value"].get(key) and lo <= r["value"][key][:10] <= hi]
 
     def fake_get(url, params=None, timeout=None):
         if state["fail"]:
@@ -342,9 +345,13 @@ def test_full_sweep_is_unchanged_and_makes_no_count_calls(db, api, cron, monkeyp
                                       "--skip-answer-fetch"])
     cron.main()
     assert api["count_calls"] == []
-    assert [("tabledWhenFrom" in c, "answeredWhenFrom" in c) for c in api["bulk_calls"]] == [
-        (True, False), (False, True)]
-    assert api["bulk_calls"][0]["tabledWhenFrom"] == (TODAY - timedelta(days=6)).isoformat()
+    assert [("tabledWhenFrom" in c, "answeredWhenFrom" in c, "correctedWhenFrom" in c)
+            for c in api["bulk_calls"]] == [
+        (True, False, False), (False, True, False), (False, False, True)]
+    week_ago = (TODAY - timedelta(days=6)).isoformat()
+    assert api["bulk_calls"][0]["tabledWhenFrom"] == week_ago
+    assert api["bulk_calls"][2]["correctedWhenFrom"] == week_ago
+    assert api["bulk_calls"][2]["correctedWhenTo"] == TODAY.isoformat()
     run = _last_run()
     assert run.status == "ok" and run.notes is None
 
@@ -501,8 +508,52 @@ def test_dry_run_writes_nothing(db, api, cron, monkeypatch, capsys):
     assert "quick-check: something new (" in out and "inserted=1" in out
 
 
-def test_dry_run_needs_quick_check(cron, monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["x", "--dry-run"])
-    with pytest.raises(SystemExit) as exc:
-        cron.main()
-    assert exc.value.code == 2
+def test_full_sweep_corrected_days_zero_turns_the_pass_off(db, api, cron, monkeypatch):
+    _seed_in_sync(db, api)
+    monkeypatch.setattr(sys, "argv", ["x", "--service-name", "pq-morning", "--no-tag",
+                                      "--skip-answer-fetch", "--corrected-days", "0"])
+    cron.main()
+    assert not any("correctedWhenFrom" in c for c in api["bulk_calls"])
+
+
+def test_full_sweep_corrected_pass_updates_an_old_question(db, api, cron, monkeypatch):
+    """Tabled and answered weeks ago (outside both other windows), corrected
+    yesterday: only the corrected pass finds it."""
+    from hansard_archive.models import HaPQ
+    old = TODAY - timedelta(days=40)
+    answered = TODAY - timedelta(days=30)
+    db.session.add(_pq(api_id=7, uin="700", tabled_date=old, is_answered=True,
+                       answer_date=answered, answer_text="<p>Original answer.</p>"))
+    db.session.commit()
+    row = _value(7, "700", old, answer="<p>Corrected answer.</p>", answered=answered)
+    row["value"]["answerIsCorrection"] = True
+    row["value"]["dateAnswerCorrected"] = f"{YESTERDAY}T00:00:00"
+    api["corrected"] = [row]
+    api["individual"] = {7: {"questionText": "To ask the Secretary of State, what steps are being taken.",
+                             "answerText": "<p>Corrected answer.</p>",
+                             "answerIsHolding": False, "isWithdrawn": False,
+                             "dateAnswered": f"{answered}T00:00:00",
+                             "dateAnswerCorrected": f"{YESTERDAY}T00:00:00"}}
+    monkeypatch.setattr(sys, "argv", ["x", "--service-name", "pq-morning", "--no-tag"])
+    cron.main()
+    stored = HaPQ.query.filter_by(api_id=7).one()
+    assert stored.answer_text == "<p>Corrected answer.</p>"
+    assert stored.answer_corrected_date == YESTERDAY and stored.answer_date == answered
+    db.session.rollback()
+    run = _last_run()
+    assert run.status == "ok" and run.sessions_ingested == 1
+
+
+def test_full_sweep_dry_run_writes_nothing(db, api, cron, monkeypatch, capsys):
+    from hansard_archive.models import HaCronRun, HaPQ
+    _seed_in_sync(db, api)
+    api["tabled"].append(_value(3, "102", YESTERDAY))
+    api["individual"] = {3: {"questionText": "To ask the Secretary of State, the full text.",
+                             "answerIsHolding": False, "isWithdrawn": False}}
+    monkeypatch.setattr(sys, "argv", ["x", "--service-name", "pq-morning", "--dry-run"])
+    cron.main()          # no --no-tag: a dry run never tags either
+    assert HaPQ.query.filter_by(api_id=3).count() == 0
+    assert HaCronRun.query.count() == 0
+    db.session.rollback()
+    out = capsys.readouterr().out
+    assert "Tabled pass done — inserted=1" in out and "Tagging skipped (--dry-run)" in out

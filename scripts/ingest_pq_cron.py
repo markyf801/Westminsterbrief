@@ -17,12 +17,18 @@ Usage:
   python scripts/ingest_pq_cron.py --days 1 --answered-days 120 --no-tag   # answer catch-up
   python scripts/ingest_pq_cron.py --quick-check --service-name pq-quickcheck  # frequent check
   python scripts/ingest_pq_cron.py --quick-check --dry-run   # counts + predicted changes, no writes
+  python scripts/ingest_pq_cron.py --dry-run --no-tag      # full sweep, predicted changes, no writes
 
-Two passes: questions TABLED in the last --days, then questions ANSWERED in the
-last --answered-days (default: same as --days). Answers usually arrive 1-4 weeks
-after tabling, so the tabled window alone leaves answered PQs showing
-"Awaiting answer". The answered pass only re-fetches the full record for rows
-whose answer is new or changed.
+Three passes: questions TABLED in the last --days, then questions ANSWERED in
+the last --answered-days (default: same as --days), then answers CORRECTED in
+the last --corrected-days (default: same as --answered-days). Answers usually
+arrive 1-4 weeks after tabling, so the tabled window alone leaves answered PQs
+showing "Awaiting answer". A correction keeps the original answer date, so only
+the corrected window finds a corrected answer to an older question. The
+answered and corrected passes only re-fetch the full record for rows whose
+answer is new or changed — including a holding answer replaced by the real one
+on the same day (same answer date, holding flag changed) and a newly corrected
+answer (new correction date).
 
 --quick-check (opt-in; the scheduled full sweeps don't use it) asks the API for
 counts only (take=1, totalResults): questions tabled in the last
@@ -410,35 +416,45 @@ def _run_tagger(no_tag: bool, new_rows: int) -> tuple[int, int]:
     return tagged, tag_errors
 
 
-def _run_full(args, date_from: date, today: date, answered_days: int, passes: dict) -> dict:
-    """The scheduled sweep: tabled window, then answered window, then tagging.
+def _run_full(args, date_from: date, today: date, answered_days: int, passes: dict,
+              corrected_days: int = 0) -> dict:
+    """The scheduled sweep: tabled window, then answered window, then corrected
+    window, then tagging.
     Returns {"inserted", "updated", "tagged", "tag_errors", "errors", "abort"}."""
     # --- Ingestion ---
     print(f"[pq-cron] Ingesting WQs {date_from} → {today}…", flush=True)
     result, abort = _run_pass("Tabled pass", date_from, today,
-                              skip_answer_fetch=args.skip_answer_fetch)
+                              skip_answer_fetch=args.skip_answer_fetch,
+                              dry_run=args.dry_run)
     passes["tabled"] = result
     out = {"inserted": result["inserted"], "updated": result["updated"],
            "errors": result["errors"], "tagged": 0, "tag_errors": 0}
 
-    # --- Answers to older questions (tabled before the window) ---
-    # Skipped after an abort: the API is down or identities disagree.
-    if answered_days > 0 and not abort:
-        answered_from = today - timedelta(days=answered_days - 1)
-        print(f"[pq-cron] Refreshing WQs answered {answered_from} → {today}…", flush=True)
-        ans, abort = _run_pass("Answered pass", answered_from, today,
+    # --- Answers to older questions (tabled before the window), then answers
+    # corrected recently (a correction keeps the original answer date) ---
+    # Each skipped after an abort: the API is down or identities disagree.
+    for kind, days, verb in (("answered", answered_days, "answered"),
+                             ("corrected", corrected_days, "with answers corrected")):
+        if days <= 0 or abort:
+            continue
+        since = today - timedelta(days=days - 1)
+        print(f"[pq-cron] Refreshing WQs {verb} {since} → {today}…", flush=True)
+        res, abort = _run_pass(f"{kind.capitalize()} pass", since, today,
                                skip_answer_fetch=args.skip_answer_fetch,
-                               date_field="answered",
-                               fetch_only_new_answers=True)
-        passes["answered"] = ans
-        out["inserted"] += ans["inserted"]
-        out["updated"] += ans["updated"]
-        out["errors"] += ans["errors"]
+                               date_field=kind,
+                               fetch_only_new_answers=True,
+                               dry_run=args.dry_run)
+        passes[kind] = res
+        out["inserted"] += res["inserted"]
+        out["updated"] += res["updated"]
+        out["errors"] += res["errors"]
     out["abort"] = abort
 
     # --- Theme tagging ---
     if abort and not args.no_tag:
         print("[pq-cron] Tagging skipped (ingest aborted)", flush=True)
+    elif args.dry_run:
+        print("[pq-cron] Tagging skipped (--dry-run)", flush=True)
     else:
         out["tagged"], out["tag_errors"] = _run_tagger(args.no_tag, out["inserted"] + out["updated"])
         out["errors"] += out["tag_errors"]
@@ -456,6 +472,9 @@ def main() -> None:
     parser.add_argument("--answered-days", type=int, default=None,
                         help="Also refresh questions ANSWERED in the last N days "
                              "(default: same as --days; 0 = off)")
+    parser.add_argument("--corrected-days", type=int, default=None,
+                        help="Also refresh answers CORRECTED in the last N days "
+                             "(default: same as --answered-days; 0 = off; full sweep only)")
     parser.add_argument("--skip-answer-fetch", action="store_true",
                         help="Skip per-row individual answer fetches (use for backfill — answer text already in DB)")
     parser.add_argument("--quick-check", action="store_true",
@@ -467,19 +486,18 @@ def main() -> None:
     parser.add_argument("--quick-answered-days", type=int, default=2,
                         help="Quick-check: answered days checked one by one, ending today (default: 2)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="With --quick-check: counts and predicted inserts/updates only; "
+                        help="Predicted inserts/updates only (with --quick-check: counts too); "
                              "writes nothing (no ha_cron_run row, no tagging, no email)")
     args = parser.parse_args()
     if args.quick_tabled_days < 1 or args.quick_answered_days < 0:
         parser.error("--quick-tabled-days must be >= 1 and --quick-answered-days >= 0")
-    if args.dry_run and not args.quick_check:
-        parser.error("--dry-run is only supported with --quick-check")
 
     run_start = datetime.utcnow()
     today = date.today()
     days_window = args.quick_tabled_days if args.quick_check else args.days
     date_from = today - timedelta(days=days_window - 1)
     answered_days = args.days if args.answered_days is None else args.answered_days
+    corrected_days = answered_days if args.corrected_days is None else args.corrected_days
 
     print(
         f"[pq-cron] === START === service={args.service_name} "
@@ -543,7 +561,8 @@ def main() -> None:
                 skipped = res["skipped"]
             else:
                 _wait_for_quick_check(run_record_id)
-                res = _run_full(args, date_from, today, answered_days, passes)
+                res = _run_full(args, date_from, today, answered_days, passes,
+                                corrected_days=corrected_days)
             total_inserted = res["inserted"]
             total_updated = res["updated"]
             total_tagged = res["tagged"]
