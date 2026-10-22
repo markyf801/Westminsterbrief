@@ -200,6 +200,42 @@ minutes; re-running resumes, since unchanged statements are skipped; add
 `--dry-run` first to see the predicted split) → enable `wms-cron` → set
 `FEATURE_WRITTEN_STATEMENTS=beta`, then `live`, on the web service.
 
+### Divisions / votes (`scripts/ingest_divisions.py`) — not yet set up
+
+| Service | Cron (UTC) | Start command | Purpose |
+|---|---|---|---|
+| `divisions-cron` | `15 5 * * *` | `python scripts/ingest_divisions.py` | Daily — Commons and Lords divisions dated in the last 14 days, plus Hansard debate links |
+
+Dockerfile.cron, restart policy Never, `SKIP_MIGRATIONS=1`, `DATABASE_URL` as a
+Variable Reference to Postgres. No API keys (Commons Votes, Lords Votes and
+Hansard APIs are public). 05:15 sits between `edm-cron` (04:30) and
+upcoming-refresh (05:45); by then the previous evening's votes are published
+and the hourly archive cron has normally stored the debates they link to.
+A normal run makes about 5–30 requests and takes under a minute. Logs a row
+in `ha_cron_run` (`service_name=divisions-cron`); exits 1 if most requests fail
+or Parliament returns 429 (the run stops at once on a 429; re-run later).
+
+What a run does: lists Commons divisions (detail fetched only for new ones or
+when Parliament's `PublicationUpdated` changes), lists Lords divisions (the
+list already carries the member lists), rewrites votes only when they differ,
+then matches each division to Hansard (`/search/divisions.json`, by House +
+date + division number) to link `ha_session` and store the question put and
+the result line. Divisions whose debate isn't in the archive yet are linked on
+a later run.
+
+Order:
+1. One-shot `python migrations/division_tables.py` (dry run: prints the SQL and
+   the database size), then `python migrations/division_tables.py --execute`.
+2. One-shot backfill for this Parliament: first
+   `python scripts/ingest_divisions.py --since 2024-07-04 --dry-run`, then
+   `python scripts/ingest_divisions.py --since 2024-07-04 --service-name divisions-backfill`.
+   About 620 Commons and 440 Lords divisions (~700 requests, roughly 20–40 min);
+   re-running resumes (stored Commons divisions are not re-fetched). Expect
+   ~435,000 vote rows, ~75–100 MB with indexes (growth ~40–50 MB a year).
+3. Create `divisions-cron` above; first run with `--dry-run` via Run Now.
+4. `FEATURE_DIVISIONS=beta` on the web service (owner preview), then `live`.
+   `live` also adds `/divisions` and `/sitemap-divisions.xml` to the sitemap.
+
 ### Daily health report (`scripts/daily_health_report.py`) — not yet set up
 
 | Service | Cron (UTC) | Purpose |
@@ -314,4 +350,4 @@ Set on the **service** (not just the project) in the Railway dashboard.
 - Billing (paid products; test keys during dev): `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - Backups: `R2_ENDPOINT_URL`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `BACKUP_ENCRYPTION_KEY`
 - No longer read by any code (delete from the web service once the TheyWorkForYou removal is deployed and confirmed): `TWFY_API_KEY`, `SEARCH_BACKEND`
-- Flags / behaviour: `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`
+- Flags / behaviour: `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `FEATURE_DIVISIONS`, `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`

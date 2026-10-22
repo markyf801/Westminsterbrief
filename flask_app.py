@@ -66,6 +66,7 @@ from edms import edms_bp
 from consultations import consultations_bp
 from committees import committees_bp
 from written_statements import written_statements_bp  # noqa: E402  (same position as the other blueprints)
+from divisions import divisions_bp  # noqa: E402
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -972,6 +973,7 @@ _sitemap_edms_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_consultations_cache: dict = {'xml': None, 'ts': 0.0}
 _sitemap_committees_cache: dict = {'xml': None, 'ts': 0.0}
 _sitemap_written_statements_cache: dict = {'xml': None, 'ts': 0.0}
+_sitemap_divisions_cache: dict = {'xml': None, 'ts': 0.0}
 _SITEMAP_TTL    = 3600   # 1h — core + index
 _SITEMAP_PQ_TTL = 86400  # 24h — PQ chunks
 _PQ_CHUNK_SIZE  = 25_000  # 25k per chunk; 4 chunks covers ~100k PQs
@@ -1014,6 +1016,8 @@ def _build_sitemap_core_xml() -> str:
         urls.append((f"{BASE}/consultations", ""))
     if feature_enabled('FEATURE_WRITTEN_STATEMENTS'):
         urls.append((f"{BASE}/written-statements", ""))
+    if feature_enabled('FEATURE_DIVISIONS'):
+        urls.append((f"{BASE}/divisions", ""))
 
     # Date browse — one URL per distinct date with sessions
     for (d,) in (db.session.query(HansardSession.date)
@@ -1142,6 +1146,8 @@ def _build_sitemap_index_xml() -> str:
         chunks.append('sitemap-committees.xml')
     if feature_enabled('FEATURE_WRITTEN_STATEMENTS'):
         chunks.append('sitemap-written-statements.xml')
+    if feature_enabled('FEATURE_DIVISIONS'):
+        chunks.append('sitemap-divisions.xml')
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -1244,6 +1250,13 @@ def sitemap_written_statements():
         abort(404)
     from written_statements import build_sitemap_xml as _build_ws_sitemap
     return _serve_xml(_sitemap_written_statements_cache, _build_ws_sitemap, _SITEMAP_TTL, _XML_EMPTY_URLSET)
+
+@app.route('/sitemap-divisions.xml')
+def sitemap_divisions():
+    if not feature_enabled('FEATURE_DIVISIONS'):
+        abort(404)
+    from divisions import build_sitemap_xml
+    return _serve_xml(_sitemap_divisions_cache, build_sitemap_xml, _SITEMAP_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/history-of-hansard')
 def history_of_hansard():
@@ -2636,6 +2649,7 @@ app.register_blueprint(edms_bp)
 app.register_blueprint(consultations_bp)
 app.register_blueprint(committees_bp)
 app.register_blueprint(written_statements_bp)
+app.register_blueprint(divisions_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
