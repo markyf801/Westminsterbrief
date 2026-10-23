@@ -96,6 +96,33 @@ def test_verify_tags_canonicalises_topics():
     assert out.topics == ["special educational needs"]
 
 
+@pytest.mark.parametrize("quote, vetoed", [
+    ("improve animal welfare on farms", True),
+    ("higher welfare standards for hens", True),
+    ("the welfare of farmed animals", True),
+    ("chicken welfare", True),
+    ("children's welfare in school", True),
+    ("the welfare of the child", True),
+    ("cuts to welfare spending", False),
+    ("the two-child limit on universal credit", False),
+    ("welfare reform", False),
+])
+def test_welfare_and_benefits_veto(quote, vetoed):
+    assert tg.area_evidence_vetoed("Welfare and benefits", quote) is vetoed
+    assert tg.area_evidence_vetoed("Environment", quote) is False   # only that area
+
+
+def test_verify_tags_drops_animal_welfare_as_benefits():
+    source = "The debate on animal welfare in farming: cages and crates for laying hens."
+    out = verify_tags({"policy_areas": [
+        {"area": "Welfare and benefits", "evidence": "animal welfare in farming"},
+        {"area": "Environment", "evidence": "cages and crates for laying hens"},
+    ], "topics": []}, source)
+    assert out.policy_areas == ["Environment"]
+    assert ("policy_area", "Welfare and benefits",
+            "evidence is about another sense of the word") in out.dropped
+
+
 def test_verify_tags_tolerates_garbage():
     assert verify_tags(None, "x").policy_areas == []
     out = verify_tags({"policy_areas": ["Transport"], "topics": ["a topic"]}, "x")

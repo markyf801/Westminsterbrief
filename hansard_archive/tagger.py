@@ -188,6 +188,31 @@ def evidence_in_source(quote: str, source_norm: str) -> bool:
     return all(f" {p} " in haystack for p in parts)
 
 
+# Evidence that can never support a policy area, whatever the model says. Small
+# models still pick "Welfare and benefits" on the word "welfare" (animal
+# welfare, a child's welfare) despite the scope note. Matched on the normalised
+# evidence quote; a vetoed area is dropped like an unsupported one.
+_AREA_EVIDENCE_VETO: dict[str, re.Pattern] = {
+    "Welfare and benefits": re.compile(
+        r"(?<![a-z0-9])(?:"
+        r"animals?|livestock|poultry|farmed|wildlife"
+        r"|welfare standards?"
+        r"|(?:hens?|chickens?|pigs?|birds?|fish|dogs?|cats?|pets?|horses?) welfare"
+        r"|welfare of (?:the )?(?:animals?|livestock|birds?|hens?|chickens?|pigs?|fish"
+        r"|dogs?|cats?|pets?|horses?|child|children|pupils?|students?)"
+        r"|(?:child|childrens|pupils?|students?) welfare"
+        r")(?![a-z0-9])"
+    ),
+}
+
+
+def area_evidence_vetoed(area: str, quote) -> bool:
+    """True when the evidence quote shows the area is the wrong sense of a word."""
+    pattern = _AREA_EVIDENCE_VETO.get(area)
+    return bool(pattern and isinstance(quote, str)
+                and pattern.search(normalise_for_evidence(quote)))
+
+
 @dataclass
 class TagOutcome:
     """Verified tags for one item, plus what was dropped and why (for eval / dry runs)."""
@@ -228,6 +253,8 @@ def verify_tags(raw: dict, source_text: str, outcome: Optional[TagOutcome] = Non
             continue
         elif not evidence_in_source(item.get("evidence"), src):
             out.dropped.append(("policy_area", area, "evidence not found in input"))
+        elif area_evidence_vetoed(area, item.get("evidence")):
+            out.dropped.append(("policy_area", area, "evidence is about another sense of the word"))
         elif len(out.policy_areas) >= MAX_POLICY_AREAS:
             out.dropped.append(("policy_area", area, "over the limit of 3"))
         else:
