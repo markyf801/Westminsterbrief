@@ -71,7 +71,7 @@ below. Theme tagging runs inline at the end of every Hansard cron run.
 | `pq-cron-early` | `30 8 * * 1-5` | 09:30 Mon–Fri | 08:30 Mon–Fri | First capture after Parliament's 08:00–09:30 publication window |
 | `pq-cron-morning` | `30 9 * * 1-5` | 10:30 Mon–Fri | 09:30 Mon–Fri | Safety net for late-published questions |
 | `pq-cron-afternoon` | `0 14 * * 1-5` | 15:00 Mon–Fri | 14:00 Mon–Fri | Captures answers published mid-afternoon |
-| `pq-cron-monday` | `0 9 * * 1` | 10:00 Monday | 09:00 Monday | Post-weekend backlog catch-up |
+| `pq-cron-monday` | `0 9 * * 1` | 10:00 Monday | 09:00 Monday | Post-weekend backlog catch-up; with `--full-refresh` (see "API trouble") the weekly full-record refresh |
 | `pq-cron-quickcheck` *(proposed, not created yet)* | `15,45 6-19 * * 1-5` | 07:15–20:45 | 06:15–19:45 | `--quick-check --service-name pq-quickcheck`: 3 count calls; exits in seconds if nothing new, else ingests only the windows that grew. Its counts feed `scripts/pq_publication_times.py`; narrow the hours once that report has 4+ sitting weeks |
 
 Each full sweep runs three passes: tabled in the last 7 days, answered in the
@@ -102,9 +102,30 @@ runs (another PQ run in progress) are recorded as `skipped`.
 5 times (pauses of 15, 30, 60 and 120 s plus jitter), then as pages of 100. A
 429 is never retried: the run stops. Three pages failing in a row stop a pass
 (the API is down); the rows already stored are still tagged and the run is
-reported as failed, with an email. Every pass fetches a question's full record
-only when it is new, its stored question text is cut (the list endpoint cuts
-it at 255 characters) or its answer is new or changed.
+reported as failed, with an email. A sweep or quick-check also stops starting
+new pages or full-record requests after 50 minutes (`--max-minutes`, env
+`PQ_RUN_BUDGET_MINUTES`; 0 = no limit), so a hanging API can't make 08:30 run
+into 09:30; it then tags what it stored and is reported failed. Chunked runs
+have no budget. The run notes list, per pass, rows written and full records
+fetched (`passes: tabled ins=… upd=… full_fetched=… fetch_failed=…`).
+
+Every pass fetches a question's full record only when it is new, its stored
+question text may be cut (the list endpoint cuts it at 255 characters with no
+marker; a list text of 245+ characters must be a strict prefix of what is
+stored) or its answer is new or changed (answer date, holding flag, correction
+date, or the stored answer missing or cut). Until 2026-10-23 the tabled pass
+fetched every question in its 7-day window on every run (~3,500 requests).
+Compared with that, three things are no longer seen at once: an edit to a
+question after its first 255 characters; an edit to an answer that changes
+neither its date nor its holding/correction flags; and a holding answer
+replaced the same day when the list record leaves out `answerIsHolding`.
+Safety net: **`pq-cron-monday` should run with `--full-refresh`**, which
+fetches every question in the tabled window as before, once a week (about 25
+minutes at today's speed, inside the budget). Start command:
+`python scripts/ingest_pq_cron.py --service-name pq-cron-monday --full-refresh`
+(add it to the existing command). Chosen over "also fetch answers from the
+last 2 days" because it covers all three cases, costs one run a week instead
+of a few hundred requests on every run, and Monday has the fewest new answers.
 
 **Long catch-ups: chunked mode (one-shot).** A long `--answered-days` window
 pages deep into the API, which returns HTTP 500 on deep pages and drops rows
@@ -117,8 +138,9 @@ saved in the run's `ha_cron_run.notes` after every page; **running the same
 command again carries on** from where an unfinished run stopped (a deploy to
 `master` kills a running one-shot: just run it again) and retries the chunks
 that failed. A failed chunk is retried at the end and doesn't stop the run;
-3 failed chunks in a row, a 429 or more than 5 identity mismatches in a chunk
-do. If a chunk's API total is above the unique questions seen, the chunk is
+3 failed chunks in a row, a 429, more than 5 identity mismatches in a chunk or
+more than 20 in the run do. A chunk where full-record requests failed counts
+as failed too, so its stale answers are retried. If a chunk's API total is above the unique questions seen, the chunk is
 walked once more (listed as `short=` if still short; not a failure). While it
 runs, quick-checks are skipped (soft lock, kept alive by the heartbeat; a
 crashed run stops blocking after 2 hours without progress). The scheduled
@@ -144,8 +166,13 @@ scheduled sweep tags any untagged rows.
    `SELECT id, status, started_at, finished_at, notes FROM ha_cron_run WHERE service_name = 'pq-catchup' ORDER BY id DESC LIMIT 3;`
    — `done=N/78`, `next=` (next chunk), `failed=` (to retry), `beat=` (last
    progress, UTC). Finished when `next=end | done=78/78 | failed=-`. If it
-   stopped (status `failed`, or the container died), run the same command
-   again. Keep the dates exactly the same, or it starts a new plan.
+   stopped (status `failed`), run the same command again. Keep the dates
+   exactly the same, or it starts a new plan. If the container was killed
+   (a deploy to `master`), its record still says `running` for up to 2 hours
+   after its last `beat=`; a rerun in that time is recorded as `skipped`
+   (no email) and does nothing. Either wait, or, once Railway shows the old
+   container stopped, run the same command with `--take-over` added (never
+   while the old one may still be running: two would walk at once).
 4. Capture the log, then delete the service (see "One-shot services").
 
 Estimated duration: about 110k answered questions in 78 chunks, about 225
