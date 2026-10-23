@@ -256,7 +256,8 @@ def test_new_rows_are_tagged(db, api, cron, monkeypatch):
     api["tabled"].append(_value(3, "102", YESTERDAY))
     calls = []
     monkeypatch.setattr(tagger, "tag_pq_all_untagged",
-                        lambda verbose=True: calls.append(1) or {"tagged": 1, "errors": 0})
+                        lambda verbose=True, limit=None: calls.append(1)
+                        or {"tagged": 1, "errors": 0})
     monkeypatch.setattr(sys, "argv", ["x", "--quick-check", "--service-name", "pq-quickcheck",
                                       "--skip-answer-fetch"])
     cron.main()
@@ -353,7 +354,7 @@ def test_full_sweep_is_unchanged_and_makes_no_count_calls(db, api, cron, monkeyp
     assert api["bulk_calls"][2]["correctedWhenFrom"] == week_ago
     assert api["bulk_calls"][2]["correctedWhenTo"] == TODAY.isoformat()
     run = _last_run()
-    assert run.status == "ok" and run.notes is None
+    assert run.status == "ok" and run.notes.startswith("passes: tabled ins=0 upd=0 full_fetched=0")
 
 
 def test_full_sweep_waits_for_a_running_quick_check(db, api, cron, monkeypatch):

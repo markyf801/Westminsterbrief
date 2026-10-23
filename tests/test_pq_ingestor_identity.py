@@ -573,7 +573,7 @@ def test_every_page_failing_aborts_instead_of_looping(db, paged_api):
 
     assert exc.value.counts["page_errors"] == 3          # DEFAULT_MAX_FAILED_PAGES
     assert exc.value.counts["errors"] >= 3
-    assert len(paged_api["skips"]) == 3 * 3               # 3 pages x 3 attempts
+    assert len(paged_api["skips"]) == 3 * 5               # 3 pages x 5 attempts (no fallback below 100)
 
 
 def test_one_failed_page_then_recovery_is_reported(db, paged_api):
