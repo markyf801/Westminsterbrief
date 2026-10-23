@@ -2442,11 +2442,15 @@ def pq_detail(uin: str):
         key=lambda t: (t.tagged_at or datetime.min, t.theme))]
     specific_topics = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_SPECIFIC})
 
-    # Enrich asking and answering members with party + constituency from cached_member
+    # Enrich asking and answering members with party + constituency from cached_member.
+    # Rows ingested before the bulk pass asked for member names (20 Oct 2026) have the
+    # member id but no name until the headings backfill re-walks them; use our cached name.
+    asking_name, answering_name = pq.asking_member, pq.answering_member
     asking_party = asking_role = None
     if pq.asking_mnis_id:
         cached = CachedMember.get(pq.asking_mnis_id)
         if cached:
+            asking_name = asking_name or cached.name
             asking_party = cached.party
             asking_role = ("Life Peer" if cached.house == "Lords"
                            else f"MP for {cached.constituency}" if cached.constituency else None)
@@ -2455,9 +2459,9 @@ def pq_detail(uin: str):
     if pq.answering_mnis_id:
         cached = CachedMember.get(pq.answering_mnis_id)
         if cached:
+            answering_name = answering_name or cached.name
             answering_party = cached.party
-            post = pq_answering_role(pq.answering_mnis_id, pq.answering_body, pq.answer_date,
-                                     fallback=cached.ministerial_role)
+            post = pq_answering_role(pq.answering_mnis_id, pq.answering_body, pq.answer_date)
             if post:
                 answering_role = post
             elif cached.house == "Lords":
@@ -2487,6 +2491,8 @@ def pq_detail(uin: str):
     return render_template(
         "hansard_archive/archive_pq_detail.html",
         pq              = pq,
+        asking_name     = asking_name,
+        answering_name  = answering_name,
         asking_party    = asking_party,
         asking_role     = asking_role,
         answering_party = answering_party,
@@ -2503,7 +2509,7 @@ def pq_detail(uin: str):
         og_title        = title_core,
         meta_desc       = (
             f"Written Question {pq.uin} — {page_heading} "
-            f"tabled by {pq.asking_member or 'an MP'} to {pq.answering_body or 'a department'}."
+            f"tabled by {asking_name or 'an MP'} to {pq.answering_body or 'a department'}."
         ),
         canonical_path  = f"/archive/pq/{(pq.uin or '').lower()}",
     )

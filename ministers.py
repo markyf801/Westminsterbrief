@@ -9,9 +9,12 @@ nothing in this module calls an outside API.
                         ({by_norm, by_id, by_dept, member_ids}), or None while
                         the table is empty (callers then fall back to the old
                         file-cached GOV.UK fetch, so deploy order doesn't matter)
+- post_on_date()        the post a member held on a given date, from the dated
+                        history in member_profile (Members API Biography, weekly)
+                        plus gov_minister; None when our records don't show one
 - pq_answering_role()   "Minister of State (Education)" for a PQ's answering
-                        minister, only when they hold that post in the answering
-                        department and held it on the answer date
+                        minister: the post they held in the answering department
+                        on the answer date
 - table_status()        counts for /admin
 
 Rows are cached per process for CACHE_TTL seconds, so a page that checks many
@@ -23,7 +26,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,7 @@ CACHE_TTL = 300  # seconds
 NON_PICKER_DEPARTMENTS = frozenset({
     "Whips Office (Commons)", "Whips Office (Lords)", "HM Household", "Prime Minister",
 })
+WHIP_DEPARTMENTS = NON_PICKER_DEPARTMENTS - {"Prime Minister"}
 
 _cache: dict = {"at": 0.0, "rows": None}
 _lock = threading.Lock()
@@ -85,12 +89,28 @@ def name_key(name: str) -> str:
     return normalise_name(display_name(name))
 
 
+# Written Questions answering-body names that differ from the Members API
+# department a post is filed under (keys as department_key gives them).
+_DEPARTMENT_ALIASES = {
+    "treasury": "hmtreasury",
+    "leaderofthehouse": "officeoftheleaderofthehouseofcommons",
+    "leaderofthehouseofcommons": "officeoftheleaderofthehouseofcommons",
+    "leaderofthehouseoflords": "officeoftheleaderofthehouseoflords",
+    "governmentequalitiesoffice": "womenandequalities",
+    "chancelloroftheduchyoflancaster": "cabinetoffice",
+    "chancelloroftheduchyoflancasterandministerforthecabinetoffice": "cabinetoffice",
+    "ministerwithoutportfolio": "cabinetoffice",
+}
+
+
 def department_key(name: str) -> str:
     """'Foreign, Commonwealth & Development Office' and Parliament's
-    'Foreign, Commonwealth and Development Office' give the same key."""
+    'Foreign, Commonwealth and Development Office' give the same key, as do
+    the Written Questions API's 'Treasury' and Parliament's 'HM Treasury'."""
     n = (name or "").lower().replace("&", " and ")
     n = re.sub(r"^the\s+", "", n.strip())
-    return re.sub(r"[^a-z0-9]+", "", n)
+    key = re.sub(r"[^a-z0-9]+", "", n)
+    return _DEPARTMENT_ALIASES.get(key, key)
 
 
 # ── Reading the table ─────────────────────────────────────────────────────────
@@ -171,31 +191,159 @@ def load_minister_list() -> dict | None:
             "by_norm": by_norm, "by_id": by_id, "by_dept": by_dept, "member_ids": member_ids}
 
 
-def pq_answering_role(mnis_id, answering_body, answer_date=None, fallback=None):
-    """Post title for a Written Question's answering minister, from gov_minister.
+# ── Posts held on a date ──────────────────────────────────────────────────────
 
-    Only returned when the member currently holds a post in the answering
-    department and the post began on or before the answer date, so an old
-    answer never shows a post the minister was given later. Returns None when
-    there is no such post, or `fallback` while the table is empty.
+def _as_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10]) if value else None
+    except ValueError:
+        return None
+
+
+def post_histories(member_ids) -> dict[int, dict]:
+    """Dated government posts from member_profile (the Members API Biography,
+    stored weekly by scripts/refresh_members.py), for the members whose
+    Biography has been fetched: {member_id: {"house", "refreshed", "posts":
+    [(start, end, name, department)]}}. A member missing from the result has no dated record
+    (never fetched), which is different from an empty list (never a minister).
     """
-    rows = _rows()
-    if not rows:
-        return fallback
-    if not mnis_id or not answering_body:
+    from cache_models import MemberProfile
+    from extensions import db
+    ids = sorted({int(m) for m in member_ids if m})
+    if not ids:
+        return {}
+    try:
+        rows = (db.session.query(MemberProfile.member_id, MemberProfile.house,
+                                 MemberProfile.government_posts, MemberProfile.details_refreshed_at)
+                .filter(MemberProfile.member_id.in_(ids),
+                        MemberProfile.details_refreshed_at.isnot(None))
+                .all())
+    except Exception as exc:
+        db.session.rollback()
+        logger.warning("member_profile read failed (table missing?): %s", exc)
+        return {}
+    out = {}
+    for member_id, house, posts, refreshed in rows:
+        if posts is None:
+            continue
+        out[member_id] = {"house": house, "refreshed": _as_date(refreshed), "posts": [
+            (_as_date(p.get("start")), _as_date(p.get("end")), p.get("name") or "", p.get("info") or "")
+            for p in posts if p.get("name")]}
+    return out
+
+
+# A post's place among those held on the same day: the main departmental post
+# first, then junior posts; secondary posts (Women and Equalities, Lords
+# spokesperson, whips' Household titles) last.
+_SECONDARY_POST_WORDS = ("women and equalities", "equalities", "spokesperson", "whip",
+                         "in waiting", "lord commissioner", "lords commissioner",
+                         "household", "comptroller", "vice-chamberlain", "captain of")
+_JUNIOR_POST_WORDS = ("under-secretary", "under secretary", "parliamentary secretary",
+                      "economic secretary", "exchequer secretary")
+# Checked before the senior words, so "Deputy Leader of the House" is not senior.
+_MIDDLE_POST_WORDS = ("minister of state", "solicitor general", "advocate general",
+                      "financial secretary", "paymaster general", "minister without portfolio",
+                      "deputy leader")
+_SENIOR_POST_WORDS = ("prime minister", "secretary of state", "chancellor of the exchequer",
+                      "chief secretary", "attorney general", "lord chancellor", "leader of the house",
+                      "chancellor of the duchy", "lord president", "lord privy seal")
+
+# Parliament's post list can lag an appointment by a few days, so a
+# gov_minister post that began this close before the history was fetched may
+# still be missing from it.
+HISTORY_LAG_DAYS = 7
+
+
+def post_rank(title: str) -> int:
+    """0 Secretary of State and other senior posts, 1 Minister of State,
+    2 Parliamentary Under-Secretary, 3 other, 5 secondary posts."""
+    t = (title or "").lower()
+    for rank, words in ((5, _SECONDARY_POST_WORDS), (2, _JUNIOR_POST_WORDS),
+                        (1, _MIDDLE_POST_WORDS), (0, _SENIOR_POST_WORDS)):
+        if any(w in t for w in words):
+            return rank
+    return 3
+
+
+def _held_on(member_id: int, day: date, history: dict | None) -> list[tuple]:
+    """(start, title, department keys, is_whip) for every post the member held
+    on `day`. A post's end date is the day the next one starts (Parliament
+    sets them equal), so it is not counted as held on that day.
+
+    Dated posts come from the member's history. gov_minister rows (refreshed
+    daily) add current posts that began on or before `day`; when there is a
+    history, only those that began after it was fetched (less a few days of
+    lag), so a stale table can't bring back a post the history shows ended."""
+    held = []
+    for start, end, name, dept in (history or {}).get("posts", []):
+        if start and start <= day and (end is None or day < end):
+            held.append((start, name, {department_key(dept)}, dept in WHIP_DEPARTMENTS))
+    newer_than = None
+    if history is not None:
+        refreshed = history.get("refreshed")
+        newer_than = refreshed - timedelta(days=HISTORY_LAG_DAYS) if refreshed else date.max
+    for r in _rows():
+        if r["mnis_id"] != member_id or not r["start_date"] or r["start_date"] > day:
+            continue
+        if newer_than is not None and r["start_date"] <= newer_than:
+            continue
+        keys = {department_key(r["department"]), department_key(r["govuk_department"] or "")}
+        held.append((r["start_date"], r["role_title"], keys - {""},
+                     r["department"] in WHIP_DEPARTMENTS))
+    return held
+
+
+def post_on_date(member_id, on_date, department=None, *, strict_department=False,
+                 histories=None) -> str | None:
+    """The government post a member held on a date, or None when our records
+    don't show one. Reads only our own tables (member_profile history and
+    gov_minister); never an outside API.
+
+    department: prefer a post in this department (a post naming it, e.g.
+      "Jointly with HM Treasury", counts). With strict_department, a post in
+      another department is not returned, except a Lords whip's (Lords whips
+      answer for departments); used for Written Question answers.
+    histories: a post_histories() result, so a page with many speakers makes
+      one query.
+    Among the remaining posts: a departmental post before a whip's, then the
+    most senior (post_rank), then the longest held.
+    """
+    day = _as_date(on_date)
+    if not member_id or day is None:
         return None
-    if isinstance(answer_date, datetime):
-        answer_date = answer_date.date()
-    dept = department_key(answering_body)
-    matches = [
-        r for r in rows
-        if r["mnis_id"] == int(mnis_id)
-        and dept in (department_key(r["department"]), department_key(r["govuk_department"] or ""))
-        and (answer_date is None or r["start_date"] is None or r["start_date"] <= answer_date)
-    ]
-    if not matches:
+    member_id = int(member_id)
+    if histories is None:
+        histories = post_histories([member_id])
+    history = histories.get(member_id)
+    held = _held_on(member_id, day, history)
+    if department:
+        key = department_key(department)
+        in_dept = [h for h in held if key in h[2] or key in department_key(h[1])]
+        if in_dept:
+            held = in_dept
+        elif strict_department:
+            is_lord = (history or {}).get("house") == "Lords" or any(
+                r["mnis_id"] == member_id and r["house"] == "Lords" for r in _rows())
+            held = [h for h in held if h[3]] if is_lord else []
+    if not held:
         return None
-    return min(matches, key=lambda r: r["rank"])["role_title"]
+    return min(held, key=lambda h: (h[3], post_rank(h[1]), h[0]))[1]
+
+
+def pq_answering_role(mnis_id, answering_body, answer_date=None, histories=None):
+    """Post title for a Written Question's answering minister: the post they
+    held in the answering department on the answer date (a Lords whip's own
+    post when they answered for another department). None when our records
+    don't show one, so a page shows no title rather than a wrong one.
+    """
+    if not mnis_id or not answering_body or not answer_date:
+        return None
+    return post_on_date(mnis_id, answer_date, answering_body, strict_department=True,
+                        histories=histories)
 
 
 def table_status() -> dict:

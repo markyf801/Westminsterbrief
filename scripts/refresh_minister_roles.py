@@ -1,4 +1,8 @@
 """
+SUPERSEDED (23 Oct 2026): no page reads cached_member.ministerial_role any more.
+Minister titles come from ministers.post_on_date() (member_profile post history
+plus gov_minister). Kept for reference; don't schedule it.
+
 Refresh ministerial roles for members who have answered Written Questions.
 
 Queries distinct answering_mnis_id values from ha_pq, fetches each member's

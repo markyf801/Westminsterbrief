@@ -4,7 +4,7 @@
 {% block title %}{{ seo_title }}{% endblock %}
 {% block meta_description %}{{ meta_desc }}{% endblock %}
 {% block og_title %}{{ og_title }}{% endblock %}
-{% block og_description %}Written Question by {{ pq.asking_member or 'an MP' }} to {{ pq.answering_body or 'a department' }}{% if human_tabled %}, tabled {{ human_tabled }}{% endif %}{% endblock %}
+{% block og_description %}Written Question by {{ asking_name or 'an MP' }} to {{ pq.answering_body or 'a department' }}{% if human_tabled %}, tabled {{ human_tabled }}{% endif %}{% endblock %}
 {% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
 
 {% block json_ld %}
@@ -127,8 +127,8 @@ body { background: #f0f2f5; }
         {# Question #}
         <div class="sd-contrib">
             <div class="sd-contrib-speaker" style="border-left-color: #4a7fa5;">
-                {% if pq.asking_member %}
-                <span class="sd-speaker-name">{{ pq.asking_member }}</span>
+                {% if asking_name %}
+                <span class="sd-speaker-name">{{ asking_name }}</span>
                 {% endif %}
                 <span class="sd-speaker-secondary">
                     {%- if asking_party or asking_role -%}
@@ -145,8 +145,8 @@ body { background: #f0f2f5; }
             {% if pq.is_answered %}
             {% set answer_label = 'Holding answer' if pq.is_holding else 'Answer' %}
             <div class="sd-contrib-speaker" style="border-left-color: #2e7d32;">
-                {% if pq.answering_member %}
-                <span class="sd-speaker-name">{{ pq.answering_member }}</span>
+                {% if answering_name %}
+                <span class="sd-speaker-name">{{ answering_name }}</span>
                 <span class="sd-speaker-secondary">
                     {%- if answering_party or answering_role -%}
                         {{ answering_party }}{% if answering_party and answering_role %}, {% endif %}{{ answering_role }} ·
