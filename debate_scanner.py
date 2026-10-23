@@ -2136,6 +2136,7 @@ def debates_topic():
     wq_total = 0
     wq_error = False
     topic_briefing = None
+    ai_briefing_attempted = False
     result_counts = {}
     result_sources = []
     topic_briefing_as_text = ""
@@ -2279,6 +2280,7 @@ def debates_topic():
             if not topic_rows:
                 error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
             elif GEMINI_API_KEY and research_ai_summary_enabled():
+                ai_briefing_attempted = True
                 try:
                     # Build a balanced AI payload:
                     # - Ministers first (capped at 15, highest relevance)
@@ -2603,6 +2605,7 @@ def debates_topic():
                            wq_rows=wq_rows, wq_total=wq_total, wq_error=wq_error,
                            topic_briefing=topic_briefing,
                            topic_briefing_as_text=topic_briefing_as_text,
+                           ai_briefing_attempted=ai_briefing_attempted,
                            opp_speaker_links=opp_speaker_links,
                            gov_speaker_links=gov_speaker_links,
                            start_date=start_date, end_date=end_date,
