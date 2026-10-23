@@ -24,6 +24,10 @@ what Hansard has now and classifies the session:
                  current ingestion skips (Lords, ingested before May 2026) ->
                  left alone for scripts/repair_shifted_contributions.py
   not_found      Hansard answered 404 -> skipped and counted
+  dead_id        Hansard answered 400 (or 200 without a debate) for this id:
+                 a provisional id Hansard has since replaced with its final
+                 one -> skipped and counted (usually a duplicate copy:
+                 scripts/find_duplicate_debates.py)
   fetch_failed   the API call failed -> skipped and counted
 
 Without --until it stops 4 days before today, so it never touches the debates
@@ -59,12 +63,21 @@ API rules: one request at a time, at least 0.5s apart; a 429, 401 or 403 stops
 the run at once (exit 3; finished sessions stay committed); a timeout,
 connection error or 5xx is retried once after 5 seconds, then the session is
 skipped; three failed sessions in a row stop the run (exit 3). A 404 is
-counted but doesn't count towards that stop.
+counted but doesn't count towards that stop, nor does a dead id (a 400, or a
+200 with no debate in it).
+
+--accept-shrink (only with --ext-id, never with a date range): applies a
+held_shrank or held_empty result for the sessions named, through the same
+path (undo table, re-tag list). For headings that swallowed the debates
+published after them while Hansard's copy was still being built, once a
+person has checked them (scripts/find_duplicate_debates.py lists candidates).
+A held_empty session ends up with no named contributions.
 
 Usage (Railway one-off against production; dry run first):
     python scripts/refresh_partial_debates.py --since 2026-04-27
     python scripts/refresh_partial_debates.py --ext-id 54FB2EDB-83AF-40FE-8A98-A914AD221CD7
     python scripts/refresh_partial_debates.py --since 2026-04-27 --execute
+    python scripts/refresh_partial_debates.py --accept-shrink --ext-id <id> --ext-id <id>
 
 Exit codes: 0 done, 2 bad arguments, 3 stopped on API errors, 4 stopped for a
 cron window (run the same command later to resume).
@@ -95,9 +108,10 @@ _RETAG_IDS_PER_LINE = 100
 _DEFAULT_UNTIL_DAYS_AGO = 4         # the cron refreshes the last 3 days itself
 
 STATES = ("unchanged", "refresh", "held_empty", "held_shrank", "legacy_rows",
-          "not_found", "fetch_failed")
+          "not_found", "dead_id", "fetch_failed")
 
 NOT_FOUND = "not_found"   # fetch_session_json() result for a 404
+DEAD_ID = "dead_id"       # ... for a 400, or a 200 without "Overview" (id replaced by Hansard)
 
 # Restores every row as it was before its first change (lowest seq per row).
 UNDO_SQL = """\
@@ -141,8 +155,8 @@ class WindowStop(Exception):
 
 
 def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | str | None:
-    """Session JSON; NOT_FOUND on a 404; None on another failed fetch.
-    Raises ApiStop on 429/401/403."""
+    """Session JSON; NOT_FOUND on a 404; DEAD_ID on a 400 or a 200 without a
+    debate in it; None on another failed fetch. Raises ApiStop on 429/401/403."""
     for attempt in range(2):
         try:
             r = requests.get(_API.format(ext_id), timeout=_TIMEOUT)
@@ -158,6 +172,8 @@ def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | str | None:
             raise ApiStop(f"HTTP {r.status_code} from the Hansard API at {ext_id} (permanent error)")
         if r.status_code == 404:
             return NOT_FOUND
+        if r.status_code == 400:
+            return DEAD_ID
         if r.status_code >= 500 and attempt == 0:
             print(f"[refresh] HTTP {r.status_code}, retrying in 5s", flush=True)
             sleep(5)
@@ -168,7 +184,9 @@ def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | str | None:
             data = r.json()
         except ValueError:
             return None
-        return data if isinstance(data, dict) and data.get("Overview") else None
+        if not isinstance(data, dict):
+            return None
+        return data if data.get("Overview") else DEAD_ID
     return None
 
 
@@ -214,8 +232,11 @@ def is_legacy(rows: list, fresh: list[dict], data: dict) -> bool:
 
 def checkpoint_service(args) -> str:
     # The arguments as given (a defaulted --until moves daily; resuming by id copes with that).
-    key = json.dumps({"since": args.since, "until": args.until, "house": args.house,
-                      "ext_id": sorted(args.ext_id or []), "limit": args.limit}, sort_keys=True)
+    fields = {"since": args.since, "until": args.until, "house": args.house,
+              "ext_id": sorted(args.ext_id or []), "limit": args.limit}
+    if getattr(args, "accept_shrink", False):
+        fields["accept_shrink"] = True    # only when set: older checkpoints keep their name
+    key = json.dumps(fields, sort_keys=True)
     return f"refresh-partial-{hashlib.sha1(key.encode()).hexdigest()[:10]}"
 
 
@@ -396,8 +417,8 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
             finally:
                 sleep(_DELAY)
             session = _with_db_retry(db, lambda sid=sid: db.session.get(HansardSession, sid))
-            if data is None or data == NOT_FOUND:
-                st = "not_found" if data == NOT_FOUND else "fetch_failed"
+            if data is None or data in (NOT_FOUND, DEAD_ID):
+                st = {NOT_FOUND: "not_found", DEAD_ID: "dead_id"}.get(data, "fetch_failed")
                 counts[st] += 1
                 by_house[(session.house, st)] += 1
                 if st == "fetch_failed":
@@ -420,7 +441,8 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
             else:
                 # Locks the session row and re-reads its rows when writing.
                 res = refresh_session(session, fresh, apply=args.execute,
-                                      debate_type_label=_official_debate_type_label(data))
+                                      debate_type_label=_official_debate_type_label(data),
+                                      accept_shrink=args.accept_shrink)
                 st = {STATE_CHANGED: "refresh", STATE_EMPTY: "held_empty",
                       STATE_SHRANK: "held_shrank"}.get(res.state, "unchanged")
             counts[st] += 1
@@ -444,6 +466,10 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
                     db.session.commit()
                     print(f"[refresh] REFRESHED id={sid} {session.date} {session.house} "
                           f"{(session.title or '')[:60]!r} — {res.summary()}", flush=True)
+                if args.accept_shrink and res.named_after < res.named_before:
+                    note = "" if args.execute else " (dry run: not written)"
+                    print(f"[refresh] SHRINK ACCEPTED id={sid} ext_id={ext_id} named "
+                          f"{res.named_before} -> {res.named_after}{note}", flush=True)
             db.session.rollback()   # end this session's transaction (no-op after a commit)
             last_done = sid
 
@@ -494,6 +520,10 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
         for i in range(0, len(ids_), _RETAG_IDS_PER_LINE):
             chunk = ",".join(str(x) for x in ids_[i:i + _RETAG_IDS_PER_LINE])
             print(f"  python scripts/retag.py --what sessions --ids {chunk}")
+    if counts["dead_id"]:
+        print(f"\n[refresh] {counts['dead_id']} session(s) have an id Hansard no longer "
+              f"recognises (replaced by a final id): usually a duplicate copy - see "
+              f"scripts/find_duplicate_debates.py")
     if stopped:
         print(f"\n[refresh] STOPPED: {stopped}")
         if not args.execute:
@@ -515,6 +545,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--after-id", type=int, help="skip sessions with id <= N (continue a dry run)")
     p.add_argument("--list-max", type=int, default=40, help="list at most N sessions per state")
     p.add_argument("--ignore-cron-windows", action="store_true")
+    p.add_argument("--accept-shrink", action="store_true",
+                   help="apply held_shrank / held_empty results (only with --ext-id, for "
+                        "reviewed sessions; held_empty leaves no named contributions)")
     return p
 
 
@@ -524,6 +557,13 @@ def main(argv=None) -> int:
     if not args.since and not args.ext_id:
         p.print_usage()
         print("refresh_partial_debates.py: give --since (or --ext-id)", file=sys.stderr)
+        return 2
+    if args.accept_shrink and (not args.ext_id or args.since or args.until or args.house
+                               or args.limit or args.after_id):
+        p.print_usage()
+        print("refresh_partial_debates.py: --accept-shrink only works with --ext-id "
+              "(the reviewed sessions), not with a date range or other selection",
+              file=sys.stderr)
         return 2
     try:
         for d in (args.since, args.until):

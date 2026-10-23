@@ -47,6 +47,13 @@ Safety
       backfill (strict=False): held only below half of ours.
     Smaller drops (Hansard removing a duplicate, merging two speeches) are
     applied.
+  - accept_shrink=True (scripts/refresh_partial_debates.py --accept-shrink,
+    only together with --ext-id, for sessions a person has reviewed) applies
+    a held "shrank" or "empty" result: the session ends up with Hansard's
+    contributions, which for "empty" means no named contributions at all.
+    Used for a heading that swallowed the debates published after it while
+    Hansard's copy was still being built (scripts/find_duplicate_debates.py
+    lists them). Nothing else ever empties a session.
   - Writers lock the ha_session row (SELECT ... FOR NO KEY UPDATE: it does not
     block inserts into tables pointing at the session) and read its rows
     after the lock, so the cron and the backfill refreshing the same session
@@ -132,8 +139,10 @@ class RefreshResult:
         return out
 
 
-def assess(stored: list[dict], fresh: list[dict], strict: bool = False) -> RefreshResult:
-    """Compare stored rows (dicts of _FIELDS, in display order) with Hansard's list."""
+def assess(stored: list[dict], fresh: list[dict], strict: bool = False,
+           accept_shrink: bool = False) -> RefreshResult:
+    """Compare stored rows (dicts of _FIELDS, in display order) with Hansard's list.
+    accept_shrink turns a held result (empty / shrank) into a change."""
     old_sig = _named_signature(stored)
     new_sig = _named_signature(fresh)
     res = RefreshResult(
@@ -142,7 +151,9 @@ def assess(stored: list[dict], fresh: list[dict], strict: bool = False) -> Refre
         chars_before=sum(len(s[2]) for s in old_sig), chars_after=sum(len(s[2]) for s in new_sig),
     )
     if not new_sig:
-        res.state = STATE_UNCHANGED if not old_sig else STATE_EMPTY
+        if not old_sig:
+            return res
+        res.state = STATE_CHANGED if accept_shrink else STATE_EMPTY
         return res
     if old_sig == new_sig:
         return res
@@ -151,7 +162,7 @@ def assess(stored: list[dict], fresh: list[dict], strict: bool = False) -> Refre
         held = loss > STRICT_MAX_LOSS_ROWS and loss > STRICT_MAX_LOSS_SHARE * len(old_sig)
     else:
         held = len(new_sig) < SHRINK_HOLD_SHARE * len(old_sig)
-    res.state = STATE_SHRANK if held else STATE_CHANGED
+    res.state = STATE_SHRANK if held and not accept_shrink else STATE_CHANGED
     return res
 
 
@@ -221,7 +232,8 @@ def lock_query(session_id: int):
 
 
 def refresh_session(session: HansardSession, fresh: list[dict], apply: bool = True,
-                    strict: bool = False, debate_type_label: str = "") -> RefreshResult:
+                    strict: bool = False, debate_type_label: str = "",
+                    accept_shrink: bool = False) -> RefreshResult:
     """
     Assess one stored session against Hansard's current contributions
     (_flatten_items output) and, when it changed and apply=True, rewrite its
@@ -229,12 +241,14 @@ def refresh_session(session: HansardSession, fresh: list[dict], apply: bool = Tr
     the session row is locked first and its rows are read after the lock; the
     caller must commit (or roll back, also when nothing changed, to release
     the lock). When applied, result.undo lists every change with the old values.
+    accept_shrink: apply a held shrink/empty result (reviewed sessions only;
+    see the module docstring).
     """
     if apply:
         lock_session(session.id)
     rows = stored_rows(session.id)
     stored = [_row_dict(r) for r in rows]
-    res = assess(stored, fresh, strict=strict)
+    res = assess(stored, fresh, strict=strict, accept_shrink=accept_shrink)
     if res.state != STATE_CHANGED:
         return res
 
