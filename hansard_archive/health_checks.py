@@ -139,7 +139,7 @@ CONFIG: dict = {
             "pq-cron-weekly": {"days": "sat", "warn_hours": 30, "fail_hours": None, "optional": True},
         },
         # One-off runs (started by hand): listed for information, never judged.
-        "one_off": ["pq-catchup"],
+        "one_off": ["pq-catchup", "pq-retag"],   # pq-retag: docs/plans/pq-identity-phase3-sql.md step 7
         # Any other "pq-*" service seen in the last N days is a WARN: probably a
         # scheduled service recording a name this config doesn't know.
         "discover_days": 30,

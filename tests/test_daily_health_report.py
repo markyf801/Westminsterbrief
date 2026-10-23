@@ -245,6 +245,8 @@ def test_cron_failures_and_one_off_services():
             {"service_name": "pq-early", "started_at": TUESDAY - timedelta(days=7),
              "finished_at": TUESDAY - timedelta(days=7), "status": "ok"},
             {"service_name": "backfill", "started_at": TUESDAY - timedelta(days=7), "status": "failed"},
+            {"service_name": "pq-retag", "started_at": TUESDAY - timedelta(hours=3),
+             "finished_at": TUESDAY - timedelta(hours=2), "status": "failed"},
         ] + [
             # a hand-started catch-up failing on deep pages
             {"service_name": "pq-catchup", "started_at": TUESDAY - timedelta(hours=h),
@@ -259,6 +261,7 @@ def test_cron_failures_and_one_off_services():
     assert catchup.status == hc.OK
     assert "latest run failed" in catchup.detail and "5 failed run(s) in last 24h" in catchup.detail
     assert "one-off run, report only" in catchup.detail
+    assert res["PQ one-off: pq-retag"].status == hc.OK          # tagging run, docs/plans step 7
     assert "PQ cron: backfill" not in res and "PQ one-off: backfill" not in res
     assert hc.count_problems(list(res.values())) == 2
 

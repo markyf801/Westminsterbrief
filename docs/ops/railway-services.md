@@ -85,7 +85,7 @@ on `/questions` read. For the four sweeps it is the Railway name
 (`pq-cron-early`, `pq-cron-morning`, `pq-cron-afternoon`, `pq-cron-monday`);
 the quick-check records `pq-quickcheck` and the weekly refresh
 `pq-cron-weekly`. Runs started by hand use their own name (e.g. `pq-catchup`
-for a one-off catch-up); the health report lists those for information only once
+for a one-off catch-up, `pq-retag` for a one-off tagging run); the health report lists those for information only once
 they are in `CONFIG["pq_crons"]["one_off"]`, and warns about any other `pq-*` name.
 A new scheduled PQ service needs its name added to `CONFIG["pq_crons"]["known"]`
 in `hansard_archive/health_checks.py` and to `PQ_SCHEDULED_RUNS` in
@@ -97,7 +97,9 @@ days before about 80%, a week before all). The sweeps refresh `heading` on every
 question in their 7-day tabled window (and on any question answered in the
 last 7 days), so headings fill in as long as sweeps finish. When they don't
 for several days (deploys, Railway outages, a slow Parliament API), questions
-age out of the window without one. `pq-cron-weekly` closes that gap cheaply:
+age out of the window without one. `pq-cron-weekly` closes that gap cheaply. It does a different job from
+`pq-cron-monday` with `--full-refresh` (on fix/pq-resilience): the weekly run re-reads 30 days of list
+records only, for headings; `--full-refresh` fetches full records for the 7-day window.
 
 | Setting | Value |
 |---|---|
