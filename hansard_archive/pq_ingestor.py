@@ -31,6 +31,7 @@ dateAnswerCorrected, so neither of the other windows finds an older one.
 
 import logging
 import os
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -47,10 +48,24 @@ from hansard_archive.models import HaPQ, HaPQDeadline, HaPQTheme
 _log = logging.getLogger(__name__)
 
 WQ_API_BASE = "https://questions-statements-api.parliament.uk/api/writtenquestions/questions"
-_REQUEST_TIMEOUT = 60        # Parliament API is slow; 30s was too tight
+# (connect, read) seconds. Pages have taken 20-50 s and a 500 can take 40+ s
+# to arrive, so 60 s risked cutting off good pages (30 s was already too tight).
+_REQUEST_TIMEOUT = (10, 90)
 _PAGE_SIZE = 500
 _INTER_REQUEST_DELAY = 0.3   # seconds between paginated requests
-_PAGE_RETRIES = 3            # retries on transient errors before skipping a page
+# A list page that fails with a transient error (5xx, timeout, connection
+# error) is tried up to 5 times, pausing 15, 30, 60 and 120 s (plus up to 20%
+# jitter) in between. Then it is tried as smaller pages of _FALLBACK_PAGE_SIZE
+# (same rows, skip moved on 100 at a time), each tried twice; two smaller pages
+# failing in a row give the page up. A 4xx is never retried (429 = stop).
+_PAGE_BACKOFF = (15, 30, 60, 120)
+_PAGE_ATTEMPTS = len(_PAGE_BACKOFF) + 1
+_FALLBACK_PAGE_SIZE = 100
+_FALLBACK_ATTEMPTS = 2
+_FALLBACK_FAILS_TO_GIVE_UP = 2
+# Individual-record requests failing in a row before a pass treats the API as
+# down (otherwise a dead API costs one timeout per row, 500 per page).
+_MAX_FULL_FETCH_FAILURES = 10
 
 _BULK_ANSWER_CAP = 258       # bulk endpoint cuts answerText at this length
 # "Looks truncated" window: near the cap and ending in the API's "...".
@@ -105,7 +120,19 @@ class PQIdentityMismatchError(PQIngestAborted):
 
 
 class PQPageFailureError(PQIngestAborted):
-    """Raised when too many consecutive API pages fail."""
+    """Raised when too many consecutive API pages fail (or the API refuses)."""
+
+
+class PQRateLimitedError(PQPageFailureError):
+    """Parliament's API answered 429: the run stops at once, nothing retried."""
+
+
+class _APIRefused(Exception):
+    """A 4xx from the WQ API: never retried."""
+
+    def __init__(self, status: int, where: str):
+        super().__init__(f"HTTP {status} at {where}")
+        self.status = status
 
 
 @dataclass
@@ -141,16 +168,109 @@ def _opt_bool(val) -> bool | None:
 
 def _fetch_individual(api_id: int) -> dict | None:
     """Fetch the full individual question record, which includes fields the
-    bulk endpoint omits or truncates (full question and answer text)."""
+    bulk endpoint omits or truncates (full question and answer text).
+
+    None when the request fails (the answer is left for the next run).
+    401/403/429 raise _APIRefused: a rate limit or refusal stops the run."""
     url = f"{WQ_API_BASE}/{api_id}"
     try:
         resp = requests.get(url, timeout=_REQUEST_TIMEOUT)
-        if resp.status_code != 200:
-            return None
+    except Exception as exc:
+        _log.warning("Individual fetch failed for id=%s: %s", api_id, exc)
+        return None
+    if resp.status_code in (401, 403, 429):
+        raise _APIRefused(resp.status_code, f"individual record id={api_id}")
+    if resp.status_code != 200:
+        return None
+    try:
         return resp.json().get("value") or {}
     except Exception as exc:
         _log.warning("Individual fetch failed for id=%s: %s", api_id, exc)
         return None
+
+
+def _jittered(seconds: float) -> float:
+    return seconds + random.uniform(0, seconds * 0.2)
+
+
+def _get_list(params: dict, attempts: int, where: str) -> dict | None:
+    """One list request, retried on transient errors (5xx, timeout, connection
+    error, a body without a results list) with growing pauses. None when every
+    attempt failed. A 4xx is never retried: it raises _APIRefused."""
+    for attempt in range(attempts):
+        try:
+            resp = requests.get(WQ_API_BASE, params=params, timeout=_REQUEST_TIMEOUT)
+            if 400 <= resp.status_code < 500:
+                raise _APIRefused(resp.status_code, where)
+            if resp.status_code != 200:
+                raise requests.HTTPError(f"HTTP {resp.status_code}")
+            body = resp.json()
+            # An error body or a page without a results list is a failed
+            # attempt, not "no more questions" (which would end the run early).
+            if not isinstance(body, dict) or not isinstance(body.get("results"), list):
+                raise ValueError(f"unexpected WQ API payload: {str(body)[:200]}")
+            return body
+        except _APIRefused:
+            raise
+        except Exception as exc:
+            _log.warning("WQ API error at %s attempt %d/%d: %s", where, attempt + 1, attempts, exc)
+            if attempt < attempts - 1:
+                time.sleep(_jittered(_PAGE_BACKOFF[min(attempt, len(_PAGE_BACKOFF) - 1)]))
+    return None
+
+
+@dataclass
+class _Page:
+    results: list
+    total: int | None
+    complete: bool       # False: part of the page could not be fetched
+
+
+def _fetch_page(params_base: dict, skip: int, take: int, where: str,
+                delay: float) -> _Page | None:
+    """The page at skip, with retries, then as smaller pages (skip moved on
+    _FALLBACK_PAGE_SIZE at a time) if the full page keeps failing. None when
+    nothing of the page could be fetched."""
+    body = _get_list({**params_base, "skip": skip, "take": take}, _PAGE_ATTEMPTS,
+                     f"skip={skip} ({where})")
+    if body is not None:
+        return _Page(body["results"], body.get("totalResults"), True)
+    small = _FALLBACK_PAGE_SIZE
+    if small >= take:
+        _log.error("WQ API failed after %d attempts at skip=%d (%s)", _PAGE_ATTEMPTS, skip, where)
+        return None
+    _log.warning("WQ API page skip=%d take=%d kept failing - trying it as pages of %d (%s)",
+                 skip, take, small, where)
+    results: list = []
+    total = None
+    fetched = missed = fails_in_a_row = 0
+    for sub_skip in range(skip, skip + take, small):
+        if total is not None and sub_skip >= total:
+            break
+        time.sleep(delay)
+        sub = _get_list({**params_base, "skip": sub_skip, "take": small}, _FALLBACK_ATTEMPTS,
+                        f"skip={sub_skip} take={small} ({where})")
+        if sub is None:
+            missed += 1
+            fails_in_a_row += 1
+            if fails_in_a_row >= _FALLBACK_FAILS_TO_GIVE_UP:
+                break
+            continue
+        fails_in_a_row = 0
+        fetched += 1
+        if sub.get("totalResults") is not None:
+            total = sub["totalResults"]
+        results.extend(sub["results"])
+        if len(sub["results"]) < small:
+            break
+    if not fetched:
+        _log.error("WQ API page skip=%d failed, smaller pages too (%s)", skip, where)
+        return None
+    if missed:
+        _log.error("WQ API page skip=%d only partly fetched: %d row(s) from %d smaller "
+                   "page(s), %d smaller page(s) failed (%s)", skip, len(results), fetched,
+                   missed, where)
+    return _Page(results, total, missed == 0)
 
 
 def _member_name(obj) -> str | None:
@@ -385,12 +505,9 @@ def upsert_pq(fields: dict, *, text_complete: bool = True,
     return UpsertOutcome("updated", changes=changes, pq_id=existing.id)
 
 
-def _complete_from_individual(fields: dict) -> bool:
-    """Replace bulk (truncated) text with the individual record. True if it worked."""
-    api_id = fields.get("api_id")
-    if not api_id:
-        return False
-    full = _fetch_individual(api_id)
+def _apply_individual(fields: dict, full: dict | None) -> bool:
+    """Replace bulk (truncated) text, flags and answer dates in fields with the
+    individual record's. True if the record was complete enough to use."""
     if not full:
         return False
     full_q = _clean_whitespace(_strip_html(full.get("questionText") or "")) or None
@@ -481,6 +598,9 @@ def ingest_pq_date_range(
     date_field: str = "tabled",
     fetch_only_new_answers: bool = False,
     max_failed_pages: int | None = None,
+    page_size: int | None = None,
+    seen_ids: set | None = None,
+    on_page: Callable[[int, int], None] | None = None,
 ) -> dict:
     """
     Fetch and upsert WQs with tabledDate (or, with date_field="answered",
@@ -503,40 +623,54 @@ def ingest_pq_date_range(
     dry_run: no writes; counts are predictions.
     max_identity_mismatches: abort (PQIdentityMismatchError) above this many.
     max_failed_pages: abort (PQPageFailureError) after this many consecutive
-        pages fail all retries (default 3, env PQ_MAX_FAILED_PAGES). A single
-        skipped page counts in page_errors, so the run is still reported as
-        failed. A permanent API error (400/401/403) aborts at once. Paging stops
-        at the API's totalResults, so a failed last page can't loop forever.
+        pages fail all retries and the smaller-page fallback (default 3, env
+        PQ_MAX_FAILED_PAGES). A single skipped or partly fetched page counts in
+        page_errors, so the run is still reported as failed. A 4xx aborts at
+        once without a retry (429: PQRateLimitedError). Paging stops at the
+        API's totalResults, so a failed last page can't loop forever. Ten
+        individual-record requests failing in a row also abort (API down).
     request_delay: seconds between API requests (default 0.3).
+    page_size: list page size (default 500).
+    seen_ids: optional set the caller owns; every api_id on the pages fetched
+        is added to it (chunked runs compare it with api_total).
     on_outcome: optional callback(fields, outcome) per row, e.g. for sample diffs.
+    on_page: optional callback(skip, rows_on_page) after each page, fetched or
+        not (chunked runs use it as a heartbeat).
 
     Each page also refreshes ha_pq_deadline (date due for answer, named day;
     store_deadlines) for its rows, in a separate savepoint so a failure there
     never affects the questions. Not part of the returned counts.
 
     Returns {"inserted", "updated", "unchanged", "identity_mismatch", "failed",
-    "page_errors", "rolled_back", "errors"} — errors = failed + page_errors +
-    identity_mismatch (kept for callers that check a single number).
-    rolled_back: writes discarded by a mismatch abort (not in inserted/updated).
-    Aborts raise a PQIngestAborted subclass whose .counts has the same keys.
+    "page_errors", "rolled_back", "full_fetch_failed", "errors", "api_total"}
+    — errors = failed + page_errors + identity_mismatch (kept for callers that
+    check a single number). rolled_back: writes discarded by a mismatch abort
+    (not in inserted/updated). full_fetch_failed: individual-record requests
+    that failed (those answers are left for the next run; not an error).
+    api_total: the API's totalResults on the latest page fetched (None if no
+    page was). Aborts raise a PQIngestAborted subclass whose .counts has the
+    same keys.
     """
     if max_identity_mismatches is None:
         max_identity_mismatches = DEFAULT_MAX_IDENTITY_MISMATCHES
     if max_failed_pages is None:
         max_failed_pages = DEFAULT_MAX_FAILED_PAGES
     delay = _INTER_REQUEST_DELAY if request_delay is None else request_delay
+    take = _PAGE_SIZE if page_size is None else page_size
 
     counts = {"inserted": 0, "updated": 0, "unchanged": 0,
               "identity_mismatch": 0, "failed": 0, "page_errors": 0,
-              "rolled_back": 0}
+              "rolled_back": 0, "full_fetch_failed": 0}
     # Written since the last commit. "deadlines" = ha_pq_deadline rows, which
     # are not part of the inserted/updated counts.
     uncommitted = {"inserted": 0, "updated": 0, "deadlines": 0}
     deadlines = {"written": 0, "enabled": not dry_run}
+    total_results = None      # from the latest successful page
 
     def result() -> dict:
         out = dict(counts)
         out["errors"] = counts["failed"] + counts["page_errors"] + counts["identity_mismatch"]
+        out["api_total"] = total_results
         return out
 
     def _commit() -> None:
@@ -566,154 +700,161 @@ def ingest_pq_date_range(
     params_base = {
         f"{date_field}WhenFrom": date_from.isoformat(),
         f"{date_field}WhenTo": date_to.isoformat(),
-        "take": _PAGE_SIZE,
         "expandMember": "true",   # otherwise askingMember/answeringMember are null
     }
+    where = f"{date_field} {date_from}..{date_to}"
 
     skip = 0
     page = 0
-    total_results = None      # from the latest successful page
     failed_in_a_row = 0
+    fetch_fails_in_a_row = 0
 
-    while True:
-        params = {**params_base, "skip": skip}
-        payload = None
-        for attempt in range(_PAGE_RETRIES):
-            try:
-                resp = requests.get(WQ_API_BASE, params=params, timeout=_REQUEST_TIMEOUT)
-                if resp.status_code in (401, 403, 400):
-                    counts["page_errors"] += 1
-                    _finish()
-                    msg = (f"PQ ingest aborted: WQ API permanent error {resp.status_code} "
-                           f"at skip={skip} ({date_field} {date_from}..{date_to})")
+    try:
+        while True:
+            fetched = _fetch_page(params_base, skip, take, where, delay)
+
+            if fetched is None:
+                # All retries and the smaller pages failed. Give up after a few
+                # in a row (the API is down) rather than walking skip forever.
+                counts["page_errors"] += 1
+                failed_in_a_row += 1
+                if on_page is not None:
+                    on_page(skip, 0)
+                if failed_in_a_row >= max_failed_pages:
+                    _finish()   # rows already processed are good
+                    msg = (f"PQ ingest aborted: {failed_in_a_row} consecutive API pages "
+                           f"failed at skip={skip} ({where})")
                     _log.error(msg)
                     raise PQPageFailureError(msg, result())
-                resp.raise_for_status()
-                body = resp.json()
-                # An error body or a page without a results list is a failed
-                # attempt, not "no more questions" (which would end the run early).
-                if not isinstance(body, dict) or not isinstance(body.get("results"), list):
-                    raise ValueError(f"unexpected WQ API payload: {str(body)[:200]}")
-                payload = body
-                break
-            except PQPageFailureError:
-                raise
-            except Exception as exc:
-                _log.warning("WQ API error at skip=%d attempt %d/%d: %s", skip, attempt + 1, _PAGE_RETRIES, exc)
-                if attempt < _PAGE_RETRIES - 1:
-                    time.sleep(2 ** attempt)  # 1s, 2s
-                else:
-                    _log.error("WQ API failed after %d attempts at skip=%d — skipping page", _PAGE_RETRIES, skip)
+                skip += take
+                if total_results is not None and skip >= total_results:
+                    break             # the failed page was the last one
+                continue
+
+            failed_in_a_row = 0
+            if not fetched.complete:
+                counts["page_errors"] += 1    # some rows of this page were not fetched
+            if fetched.total is not None:
+                total_results = fetched.total
+            results = fetched.results
+            if not results:
+                if total_results and skip < total_results:
+                    _log.error("WQ API returned an empty page at skip=%d of %d - stopping",
+                               skip, total_results)
                     counts["page_errors"] += 1
+                break
 
-        if payload is None:
-            # All retries exhausted for this page. Give up after a few in a
-            # row (the API is down) rather than walking skip forever.
-            failed_in_a_row += 1
-            if failed_in_a_row >= max_failed_pages:
-                _finish()   # rows already processed are good
-                msg = (f"PQ ingest aborted: {failed_in_a_row} consecutive API pages "
-                       f"failed at skip={skip} ({date_field} {date_from}..{date_to})")
-                _log.error(msg)
-                raise PQPageFailureError(msg, result())
-            skip += _PAGE_SIZE
-            if total_results is not None and skip >= total_results:
-                break             # the failed page was the last one
-            continue
+            page_deadlines = []
+            for item in results:
+                value = item.get("value") or item
+                if seen_ids is not None and value.get("id"):
+                    seen_ids.add(value["id"])
+                fields = _extract_pq_fields(value)
+                if fields is None or fields["tabled_date"] is None:
+                    counts["failed"] += 1
+                    continue
 
-        failed_in_a_row = 0
-        if payload.get("totalResults") is not None:
-            total_results = payload["totalResults"]
-        results = payload.get("results") or []
-        if not results:
-            if total_results and skip < total_results:
-                _log.error("WQ API returned an empty page at skip=%d of %d - stopping",
-                           skip, total_results)
-                counts["page_errors"] += 1
-            break
+                # The bulk endpoint truncates questionText (255 chars); the
+                # individual endpoint returns the full record. skip_answer_fetch
+                # bypasses this for bulk passes where speed matters more.
+                text_complete = False
+                want_full = not skip_answer_fetch and fields.get("api_id")
+                if want_full and fetch_only_new_answers and _answer_already_stored(fields):
+                    want_full = False
+                if want_full:
+                    full = _fetch_individual(fields["api_id"])
+                    if full is None:
+                        counts["full_fetch_failed"] += 1
+                        fetch_fails_in_a_row += 1
+                        if fetch_fails_in_a_row >= _MAX_FULL_FETCH_FAILURES:
+                            _finish()
+                            msg = (f"PQ ingest aborted: {fetch_fails_in_a_row} individual "
+                                   f"record requests failed in a row at skip={skip} ({where})")
+                            _log.error(msg)
+                            raise PQPageFailureError(msg, result())
+                    else:
+                        fetch_fails_in_a_row = 0
+                    text_complete = _apply_individual(fields, full)
+                    time.sleep(delay)
 
-        page_deadlines = []
-        for item in results:
-            value = item.get("value") or item
-            fields = _extract_pq_fields(value)
-            if fields is None or fields["tabled_date"] is None:
-                counts["failed"] += 1
-                continue
+                try:
+                    if dry_run:
+                        outcome = upsert_pq(fields, text_complete=text_complete, dry_run=True)
+                    else:
+                        with db.session.begin_nested():
+                            outcome = upsert_pq(fields, text_complete=text_complete)
+                except Exception as exc:
+                    _log.error("Row upsert error api_id=%s uin=%s tabled=%s: %s",
+                               fields.get("api_id"), fields.get("uin"), fields.get("tabled_date"), exc)
+                    counts["failed"] += 1
+                    continue
 
-            # The bulk endpoint truncates questionText (255 chars); the
-            # individual endpoint returns the full record. skip_answer_fetch
-            # bypasses this for bulk passes where speed matters more.
-            text_complete = False
-            want_full = not skip_answer_fetch and fields.get("api_id")
-            if want_full and fetch_only_new_answers and _answer_already_stored(fields):
-                want_full = False
-            if want_full:
-                text_complete = _complete_from_individual(fields)
-                time.sleep(delay)
+                counts[outcome.action] += 1
+                if outcome.action in ("inserted", "updated") and not dry_run:
+                    uncommitted[outcome.action] += 1
+                if outcome.action != "identity_mismatch":
+                    page_deadlines.append(_extract_deadline(value))
+                if on_outcome is not None:
+                    on_outcome(fields, outcome)
 
-            try:
-                if dry_run:
-                    outcome = upsert_pq(fields, text_complete=text_complete, dry_run=True)
-                else:
+                if outcome.action == "identity_mismatch":
+                    _log.warning("PQ identity mismatch (left untouched): %s", outcome.detail)
+                    if counts["identity_mismatch"] > max_identity_mismatches:
+                        _discard()   # drop this batch's uncommitted writes
+                        msg = (f"PQ ingest aborted: {counts['identity_mismatch']} identity "
+                               f"mismatches (limit {max_identity_mismatches}) in "
+                               f"{date_from}..{date_to}; {counts['rolled_back']} uncommitted "
+                               f"row write(s) rolled back")
+                        _log.error(msg)
+                        raise PQIdentityMismatchError(msg, result())
+
+            if deadlines["enabled"] and page_deadlines:
+                # Own savepoint: a deadline problem (e.g. the table not created
+                # yet) must never cost the question rows themselves.
+                try:
                     with db.session.begin_nested():
-                        outcome = upsert_pq(fields, text_complete=text_complete)
-            except Exception as exc:
-                _log.error("Row upsert error api_id=%s uin=%s tabled=%s: %s",
-                           fields.get("api_id"), fields.get("uin"), fields.get("tabled_date"), exc)
-                counts["failed"] += 1
-                continue
+                        uncommitted["deadlines"] += store_deadlines(page_deadlines)
+                except Exception as exc:
+                    deadlines["enabled"] = False
+                    _log.error("ha_pq_deadline not written - due dates skipped for the rest of "
+                               "this run (has migrations/pq_deadline_table.py been run?): %s", exc)
 
-            counts[outcome.action] += 1
-            if outcome.action in ("inserted", "updated") and not dry_run:
-                uncommitted[outcome.action] += 1
-            if outcome.action != "identity_mismatch":
-                page_deadlines.append(_extract_deadline(value))
-            if on_outcome is not None:
-                on_outcome(fields, outcome)
+            # Commit every page: keeps the window in which an overlapping run could
+            # insert the same question small (until uq_ha_pq_api_id exists).
+            if not dry_run and any(uncommitted.values()):
+                _commit()
 
-            if outcome.action == "identity_mismatch":
-                _log.warning("PQ identity mismatch (left untouched): %s", outcome.detail)
-                if counts["identity_mismatch"] > max_identity_mismatches:
-                    _discard()   # drop this batch's uncommitted writes
-                    msg = (f"PQ ingest aborted: {counts['identity_mismatch']} identity "
-                           f"mismatches (limit {max_identity_mismatches}) in "
-                           f"{date_from}..{date_to}; {counts['rolled_back']} uncommitted "
-                           f"row write(s) rolled back")
-                    _log.error(msg)
-                    raise PQIdentityMismatchError(msg, result())
+            page += 1
+            if verbose:
+                _log.info(
+                    "Page %d (skip=%d): %d results — running totals ins=%d upd=%d same=%d "
+                    "mismatch=%d failed=%d",
+                    page, skip, len(results), counts["inserted"], counts["updated"],
+                    counts["unchanged"], counts["identity_mismatch"], counts["failed"],
+                )
+            if on_page is not None:
+                on_page(skip, len(results))
 
-        if deadlines["enabled"] and page_deadlines:
-            # Own savepoint: a deadline problem (e.g. the table not created
-            # yet) must never cost the question rows themselves.
-            try:
-                with db.session.begin_nested():
-                    uncommitted["deadlines"] += store_deadlines(page_deadlines)
-            except Exception as exc:
-                deadlines["enabled"] = False
-                _log.error("ha_pq_deadline not written - due dates skipped for the rest of "
-                           "this run (has migrations/pq_deadline_table.py been run?): %s", exc)
+            # A partly fetched page is short because rows are missing, not
+            # because it is the last page: carry on to the next one.
+            if fetched.complete and len(results) < take:
+                break
 
-        # Commit every page: keeps the window in which an overlapping run could
-        # insert the same question small (until uq_ha_pq_api_id exists).
-        if not dry_run and any(uncommitted.values()):
-            _commit()
-
-        page += 1
-        if verbose:
-            _log.info(
-                "Page %d (skip=%d): %d results — running totals ins=%d upd=%d same=%d "
-                "mismatch=%d failed=%d",
-                page, skip, len(results), counts["inserted"], counts["updated"],
-                counts["unchanged"], counts["identity_mismatch"], counts["failed"],
-            )
-
-        if len(results) < _PAGE_SIZE:
-            break
-
-        skip += _PAGE_SIZE
-        if total_results is not None and skip >= total_results:
-            break
-        time.sleep(delay)
+            skip += take
+            if total_results is not None and skip >= total_results:
+                break
+            time.sleep(delay)
+    except _APIRefused as exc:
+        counts["page_errors"] += 1
+        _finish()
+        if exc.status == 429:
+            msg = (f"PQ ingest stopped: Parliament's API is rate limiting (HTTP 429) at "
+                   f"{exc} ({where}) - not retried; wait before running again")
+            _log.error(msg)
+            raise PQRateLimitedError(msg, result()) from None
+        msg = f"PQ ingest aborted: WQ API permanent error {exc} ({where})"
+        _log.error(msg)
+        raise PQPageFailureError(msg, result()) from None
 
     _finish()
 
@@ -721,10 +862,11 @@ def ingest_pq_date_range(
     if verbose:
         _log.info(
             "ingest_pq_date_range (%s) done%s: inserted=%d updated=%d unchanged=%d "
-            "identity_mismatch=%d failed=%d page_errors=%d deadlines_written=%d",
+            "identity_mismatch=%d failed=%d page_errors=%d full_fetch_failed=%d "
+            "deadlines_written=%d",
             date_field, " (dry run)" if dry_run else "",
             out["inserted"], out["updated"], out["unchanged"],
             out["identity_mismatch"], out["failed"], out["page_errors"],
-            deadlines["written"],
+            out["full_fetch_failed"], deadlines["written"],
         )
     return out
