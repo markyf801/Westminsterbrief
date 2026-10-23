@@ -323,15 +323,15 @@
                         <details class="debate-speeches-details">
                             <summary class="debate-speeches-summary">{{ grp.speeches|length }} speaker{{ 's' if grp.speeches|length != 1 else '' }}</summary>
                         {% for r in grp.speeches %}
-                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                        <div class="debate-speech {% if r.is_minister and not r.minister_unverified %}debate-speech-minister{% endif %}">
                             <label class="speech-select-wrap">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="debate"
-                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister and not r.minister_unverified, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
                             </label>
                             <div class="debate-speech-content">
                                 <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% if r.is_minister and not r.minister_unverified %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
                                 {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
@@ -364,15 +364,15 @@
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
-                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                        <div class="debate-speech {% if r.is_minister and not r.minister_unverified %}debate-speech-minister{% endif %}">
                             <label class="speech-select-wrap">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="legislation"
-                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister and not r.minister_unverified, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
                             </label>
                             <div class="debate-speech-content">
                                 <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% if r.is_minister and not r.minister_unverified %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
                                 {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
@@ -404,15 +404,15 @@
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
-                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                        <div class="debate-speech {% if r.is_minister and not r.minister_unverified %}debate-speech-minister{% endif %}">
                             <label class="speech-select-wrap">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="oral"
-                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister and not r.minister_unverified, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
                             </label>
                             <div class="debate-speech-content">
                                 <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% if r.is_minister and not r.minister_unverified %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
                                 {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
@@ -444,15 +444,15 @@
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister responds</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
-                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                        <div class="debate-speech {% if r.is_minister and not r.minister_unverified %}debate-speech-minister{% endif %}">
                             <label class="speech-select-wrap">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="urgent"
-                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister and not r.minister_unverified, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
                             </label>
                             <div class="debate-speech-content">
                                 <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% if r.is_minister and not r.minister_unverified %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
                                 {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
@@ -484,15 +484,15 @@
                             {% if grp.has_minister %}<span class="debate-minister-badge">✓ Minister</span>{% endif %}
                         </div>
                         {% for r in grp.speeches %}
-                        <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}">
+                        <div class="debate-speech {% if r.is_minister and not r.minister_unverified %}debate-speech-minister{% endif %}">
                             <label class="speech-select-wrap">
                                 <input type="checkbox" class="speech-select" onchange="updateSelectionBar()"
                                     data-section-type="statement"
-                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
+                                    data-speech="{{ {'speaker_name': r.speaker_name, 'speaker_party': r.speaker_party, 'hdate': r.hdate, 'debate_title': r.debate_title, 'body_clean': r.body_clean, 'body_export': r.body_export or r.body_clean, 'listurl': r.listurl, 'source_label': r.source_label, 'is_minister': r.is_minister and not r.minister_unverified, 'minister_role': r.minister_role or '', 'debate_type': r.debate_type} | tojson | e }}">
                             </label>
                             <div class="debate-speech-content">
                                 <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                                {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                                {% if r.is_minister and not r.minister_unverified %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                                 {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                                 <p class="debate-speech-body">{{ r.body_clean }}</p>
                                 {% if r.listurl %}<a href="{{ r.listurl | debate_url }}" target="_blank" class="debate-speech-source">↗ Hansard</a>{% endif %}
@@ -915,10 +915,10 @@
                 </summary>
                 <div class="research-section-body">
                 {% for r in stakeholder_hansard %}
-                <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}" style="margin-bottom:10px;">
+                <div class="debate-speech {% if r.is_minister and not r.minister_unverified %}debate-speech-minister{% endif %}" style="margin-bottom:10px;">
                     <div class="debate-speech-content">
                         <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                        {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
+                        {% if r.is_minister and not r.minister_unverified %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                         {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                         <span style="font-size:11.5px; color:#888; margin-left:6px;">{{ r.hdate }}</span>
                         {% if r.listurl %}&nbsp;<a href="{{ r.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Hansard</a>{% endif %}

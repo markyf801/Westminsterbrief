@@ -922,8 +922,10 @@ def flag_minister_rows(rows):
     plus gov_minister), never their current post projected back.
 
     A speaker with no dated record in our DB (no member id, or no stored
-    Biography) is flagged from the current minister list as before, but gets a
-    title only when gov_minister shows their current post had begun by then.
+    Biography) who is on the current minister list is still flagged, so their
+    speeches sort with the ministers', but is marked minister_unverified (no
+    "Minister" label) unless gov_minister shows their current post had begun
+    by the speech date.
     """
     from ministers import post_histories, post_on_date
     by_norm = get_minister_list().get('by_norm', {})
@@ -938,6 +940,7 @@ def flag_minister_rows(rows):
             norm_spk = _normalise_name(row.get('speaker_name', ''))
             row['is_minister'] = bool(role or (norm_spk and by_norm.get(norm_spk)))
         row['minister_role'] = role or ''
+        row['minister_unverified'] = row['is_minister'] and not role
 
 
 def verify_government_speaker(name):
@@ -3702,7 +3705,7 @@ def download_research_brief():
                     spk_p = doc.add_paragraph()
                     spk_run = spk_p.add_run(r.get('speaker_name', ''))
                     spk_run.bold = True
-                    if r.get('is_minister'):
+                    if r.get('is_minister') and not r.get('minister_unverified'):
                         role_run = spk_p.add_run(f"  —  {r.get('minister_role') or 'Minister'}")
                         role_run.font.size = Pt(9)
                         _set_run_colour(role_run, '1C3E6E')

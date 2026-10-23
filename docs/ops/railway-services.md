@@ -249,7 +249,12 @@ refetched from GOV.UK after every deploy). Titles next to an answer or speech
 are the post held on that date: `ministers.post_on_date()` reads the dated
 post history in `member_profile.government_posts` (weekly
 `member-profile-refresh`) plus `gov_minister` (daily, so a new appointment
-shows before the weekly history catches up). With neither, no title is shown;
+shows before the weekly history catches up; for a member with a history, only
+`gov_minister` posts that began within 7 days before or after the history was
+fetched are added, so a stale table can't bring back an ended post). When
+several posts are held on one day, the most senior one in the department wins
+(Secretary of State, then Minister of State, then Under-Secretary; Women and
+Equalities, spokesperson and whip posts last). With neither, no title is shown;
 `cached_member.ministerial_role` is no longer read. About 30 polite requests: Parliament
 Members API government posts per department (member ids, post names, start
 dates) merged with GOV.UK's ministers page (portfolio titles, and anyone

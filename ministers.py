@@ -26,7 +26,7 @@ import logging
 import re
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +89,28 @@ def name_key(name: str) -> str:
     return normalise_name(display_name(name))
 
 
+# Written Questions answering-body names that differ from the Members API
+# department a post is filed under (keys as department_key gives them).
+_DEPARTMENT_ALIASES = {
+    "treasury": "hmtreasury",
+    "leaderofthehouse": "officeoftheleaderofthehouseofcommons",
+    "leaderofthehouseofcommons": "officeoftheleaderofthehouseofcommons",
+    "leaderofthehouseoflords": "officeoftheleaderofthehouseoflords",
+    "governmentequalitiesoffice": "womenandequalities",
+    "chancelloroftheduchyoflancaster": "cabinetoffice",
+    "chancelloroftheduchyoflancasterandministerforthecabinetoffice": "cabinetoffice",
+    "ministerwithoutportfolio": "cabinetoffice",
+}
+
+
 def department_key(name: str) -> str:
     """'Foreign, Commonwealth & Development Office' and Parliament's
-    'Foreign, Commonwealth and Development Office' give the same key."""
+    'Foreign, Commonwealth and Development Office' give the same key, as do
+    the Written Questions API's 'Treasury' and Parliament's 'HM Treasury'."""
     n = (name or "").lower().replace("&", " and ")
     n = re.sub(r"^the\s+", "", n.strip())
-    return re.sub(r"[^a-z0-9]+", "", n)
+    key = re.sub(r"[^a-z0-9]+", "", n)
+    return _DEPARTMENT_ALIASES.get(key, key)
 
 
 # ── Reading the table ─────────────────────────────────────────────────────────
@@ -191,8 +207,8 @@ def _as_date(value) -> date | None:
 def post_histories(member_ids) -> dict[int, dict]:
     """Dated government posts from member_profile (the Members API Biography,
     stored weekly by scripts/refresh_members.py), for the members whose
-    Biography has been fetched: {member_id: {"house", "posts": [(start, end,
-    name, department)]}}. A member missing from the result has no dated record
+    Biography has been fetched: {member_id: {"house", "refreshed", "posts":
+    [(start, end, name, department)]}}. A member missing from the result has no dated record
     (never fetched), which is different from an empty list (never a minister).
     """
     from cache_models import MemberProfile
@@ -202,7 +218,7 @@ def post_histories(member_ids) -> dict[int, dict]:
         return {}
     try:
         rows = (db.session.query(MemberProfile.member_id, MemberProfile.house,
-                                 MemberProfile.government_posts)
+                                 MemberProfile.government_posts, MemberProfile.details_refreshed_at)
                 .filter(MemberProfile.member_id.in_(ids),
                         MemberProfile.details_refreshed_at.isnot(None))
                 .all())
@@ -211,29 +227,71 @@ def post_histories(member_ids) -> dict[int, dict]:
         logger.warning("member_profile read failed (table missing?): %s", exc)
         return {}
     out = {}
-    for member_id, house, posts in rows:
+    for member_id, house, posts, refreshed in rows:
         if posts is None:
             continue
-        out[member_id] = {"house": house, "posts": [
+        out[member_id] = {"house": house, "refreshed": _as_date(refreshed), "posts": [
             (_as_date(p.get("start")), _as_date(p.get("end")), p.get("name") or "", p.get("info") or "")
             for p in posts if p.get("name")]}
     return out
 
 
+# A post's place among those held on the same day: the main departmental post
+# first, then junior posts; secondary posts (Women and Equalities, Lords
+# spokesperson, whips' Household titles) last.
+_SECONDARY_POST_WORDS = ("women and equalities", "equalities", "spokesperson", "whip",
+                         "in waiting", "lord commissioner", "lords commissioner",
+                         "household", "comptroller", "vice-chamberlain", "captain of")
+_JUNIOR_POST_WORDS = ("under-secretary", "under secretary", "parliamentary secretary",
+                      "economic secretary", "exchequer secretary")
+_MIDDLE_POST_WORDS = ("minister of state", "solicitor general", "advocate general",
+                      "financial secretary", "paymaster general", "minister without portfolio")
+_SENIOR_POST_WORDS = ("prime minister", "secretary of state", "chancellor of the exchequer",
+                      "chief secretary", "attorney general", "lord chancellor", "leader of the house",
+                      "chancellor of the duchy", "lord president", "lord privy seal")
+
+# Parliament's post list can lag an appointment by a few days, so a
+# gov_minister post that began this close before the history was fetched may
+# still be missing from it.
+HISTORY_LAG_DAYS = 7
+
+
+def post_rank(title: str) -> int:
+    """0 Secretary of State and other senior posts, 1 Minister of State,
+    2 Parliamentary Under-Secretary, 3 other, 5 secondary posts."""
+    t = (title or "").lower()
+    for rank, words in ((5, _SECONDARY_POST_WORDS), (2, _JUNIOR_POST_WORDS),
+                        (1, _MIDDLE_POST_WORDS), (0, _SENIOR_POST_WORDS)):
+        if any(w in t for w in words):
+            return rank
+    return 3
+
+
 def _held_on(member_id: int, day: date, history: dict | None) -> list[tuple]:
     """(start, title, department keys, is_whip) for every post the member held
-    on `day`: dated posts from their history, plus current gov_minister posts
-    that began on or before that day (the table is refreshed daily, so it
-    knows about a new appointment before the weekly history does)."""
+    on `day`. A post's end date is the day the next one starts (Parliament
+    sets them equal), so it is not counted as held on that day.
+
+    Dated posts come from the member's history. gov_minister rows (refreshed
+    daily) add current posts that began on or before `day`; when there is a
+    history, only those that began after it was fetched (less a few days of
+    lag), so a stale table can't bring back a post the history shows ended."""
     held = []
     for start, end, name, dept in (history or {}).get("posts", []):
-        if start and start <= day and (end is None or day <= end):
+        if start and start <= day and (end is None or day < end):
             held.append((start, name, {department_key(dept)}, dept in WHIP_DEPARTMENTS))
+    newer_than = None
+    if history is not None:
+        refreshed = history.get("refreshed")
+        newer_than = refreshed - timedelta(days=HISTORY_LAG_DAYS) if refreshed else date.max
     for r in _rows():
-        if r["mnis_id"] == member_id and r["start_date"] and r["start_date"] <= day:
-            keys = {department_key(r["department"]), department_key(r["govuk_department"] or "")}
-            held.append((r["start_date"], r["role_title"], keys - {""},
-                         r["department"] in WHIP_DEPARTMENTS))
+        if r["mnis_id"] != member_id or not r["start_date"] or r["start_date"] > day:
+            continue
+        if newer_than is not None and r["start_date"] <= newer_than:
+            continue
+        keys = {department_key(r["department"]), department_key(r["govuk_department"] or "")}
+        held.append((r["start_date"], r["role_title"], keys - {""},
+                     r["department"] in WHIP_DEPARTMENTS))
     return held
 
 
@@ -249,8 +307,8 @@ def post_on_date(member_id, on_date, department=None, *, strict_department=False
       answer for departments); used for Written Question answers.
     histories: a post_histories() result, so a page with many speakers makes
       one query.
-    Among the remaining posts, a departmental post beats a whip's, then the
-    most recently started wins.
+    Among the remaining posts: a departmental post before a whip's, then the
+    most senior (post_rank), then the longest held.
     """
     day = _as_date(on_date)
     if not member_id or day is None:
@@ -271,10 +329,10 @@ def post_on_date(member_id, on_date, department=None, *, strict_department=False
             held = [h for h in held if h[3]] if is_lord else []
     if not held:
         return None
-    return max(held, key=lambda h: (not h[3], h[0]))[1]
+    return min(held, key=lambda h: (h[3], post_rank(h[1]), h[0]))[1]
 
 
-def pq_answering_role(mnis_id, answering_body, answer_date=None):
+def pq_answering_role(mnis_id, answering_body, answer_date=None, histories=None):
     """Post title for a Written Question's answering minister: the post they
     held in the answering department on the answer date (a Lords whip's own
     post when they answered for another department). None when our records
@@ -282,7 +340,8 @@ def pq_answering_role(mnis_id, answering_body, answer_date=None):
     """
     if not mnis_id or not answering_body or not answer_date:
         return None
-    return post_on_date(mnis_id, answer_date, answering_body, strict_department=True)
+    return post_on_date(mnis_id, answer_date, answering_body, strict_department=True,
+                        histories=histories)
 
 
 def table_status() -> dict:

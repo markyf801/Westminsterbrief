@@ -330,8 +330,17 @@ def _wq_list_columns():
     )
 
 
-def _pq_result(pq) -> dict:
-    """Display/export dict for one PQ (an HaPQ or a row from _wq_list_columns)."""
+def _answer_histories(rows):
+    """Dated post histories for the answering ministers of a list of PQs, in
+    one query (ministers.post_histories), for _pq_result(histories=)."""
+    from ministers import post_histories
+    return post_histories({r.answering_mnis_id for r in rows if r and r.answering_mnis_id})
+
+
+def _pq_result(pq, histories=None) -> dict:
+    """Display/export dict for one PQ (an HaPQ or a row from _wq_list_columns).
+    histories: _answer_histories() for the batch, so a page or export makes
+    one history query rather than one per question."""
     api_name, party, constituency, actual_house = get_member_details(
         pq.asking_mnis_id, pq.chamber or 'Commons'
     )
@@ -361,7 +370,8 @@ def _pq_result(pq) -> dict:
     answering_name = pq.answering_member or ''
     if pq.answering_mnis_id:
         from ministers import pq_answering_role
-        answering_role = pq_answering_role(pq.answering_mnis_id, pq.answering_body, pq.answer_date)
+        answering_role = pq_answering_role(pq.answering_mnis_id, pq.answering_body, pq.answer_date,
+                                           histories=histories)
         if not answering_name:
             ans_cached = CachedMember.get(pq.answering_mnis_id)
             answering_name = (ans_cached.name or '') if ans_cached else ''
@@ -465,7 +475,8 @@ def _wq_pager(source, page: int, last_page: int) -> dict:
 
 def _wq_export(action, rows, total, meta_lines, filename_ts):
     """Word or CSV download of the full (capped) result set."""
-    results = [_pq_result(pq) for pq in rows]
+    histories = _answer_histories(rows)
+    results = [_pq_result(pq, histories) for pq in rows]
     meta_lines = meta_lines + [
         f"Results: {len(results)}" + (f" (newest {len(results)} of {total})" if total > len(results) else ''),
         f"Generated: {datetime.now().strftime('%d %b %Y %H:%M')}",
@@ -597,8 +608,9 @@ def index():
             # Pre-warm member cache in parallel (DB lookup, API fallback)
             prefetch_members(list({r.asking_mnis_id for r in pq_rows if r.asking_mnis_id}))
 
+            histories = _answer_histories(pq_rows)
             for pq in pq_rows:
-                r = _pq_result(pq)
+                r = _pq_result(pq, histories)
                 _add_answer_preview(r, pq.answer_len)
                 results.append(r)
 
@@ -649,10 +661,11 @@ def _selected_results(items: list) -> list[dict]:
     uins = [str(i.get('uin')) for i in items if i.get('uin')]
     by_uin = {pq.uin: pq for pq in HaPQ.query.filter(HaPQ.uin.in_(uins)).all()} if uins else {}
     prefetch_members(list({pq.asking_mnis_id for pq in by_uin.values() if pq.asking_mnis_id}))
+    histories = _answer_histories(list(by_uin.values()))
     out = []
     for item in items:
         pq = by_uin.get(str(item.get('uin')))
-        out.append(_pq_result(pq) if pq else item)
+        out.append(_pq_result(pq, histories) if pq else item)
     return out
 
 

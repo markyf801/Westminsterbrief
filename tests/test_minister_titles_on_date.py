@@ -49,6 +49,25 @@ EAGLE_POSTS = [
      "end": None, "info": DEFRA},
     {"name": f"Minister of State ({DEFRA})", "start": "2025-09-06", "end": "2026-06-12", "info": DEFRA},
 ]
+DFE = "Department for Education"
+# Real shapes (Members API Biography, 23 Oct 2026)
+PHILLIPSON_POSTS = [
+    {"name": "Minister for Women and Equalities", "start": "2026-07-20", "end": None,
+     "info": "Ministry of Housing, Communities and Local Government"},
+    {"name": "Minister for Women and Equalities", "start": "2024-07-08", "end": "2026-07-20", "info": DFE},
+    {"name": "Secretary of State for Education", "start": "2024-07-05", "end": "2026-07-20", "info": DFE},
+]
+SMITH_POSTS = [
+    {"name": "Minister of State (Department for Work and Pensions)", "start": "2025-09-06", "end": None,
+     "info": "Department for Work and Pensions"},
+    {"name": "Minister of State (Minister for Women and Equalities) ", "start": "2025-03-04",
+     "end": "2026-07-21", "info": DFE},
+    {"name": "Lords Spokesperson (Equalities)", "start": "2024-10-08", "end": "2025-03-04",
+     "info": "Government Equalities Office"},
+    {"name": "Minister of State (Education)", "start": "2024-07-06", "end": None, "info": DFE},
+]
+CHANCELLOR_POSTS = [{"name": "Chancellor of the Exchequer", "start": "2024-07-05", "end": None,
+                     "info": "HM Treasury"}]
 STALE_WHIP = "Government Whip, Lord Commissioner of HM Treasury"
 
 
@@ -154,11 +173,20 @@ class TestPostOnDate:
         assert ministers.pq_answering_role(4653, DEFRA, date(2026, 10, 16)) is None
 
     def test_gov_minister_fills_a_post_newer_than_the_weekly_history(self, app):
-        # History fetched before a same-department promotion; gov_minister (daily) knows.
-        _member(4653, "Stephen Morgan", posts=MORGAN_POSTS[1:2] + MORGAN_POSTS[2:])
-        ministers_role = f"Parliamentary Under-Secretary ({DEFRA})"
-        _gov_row(4653, "Stephen Morgan", DEFRA, ministers_role, date(2026, 7, 22))
-        assert ministers.pq_answering_role(4653, DEFRA, date(2026, 8, 1)) == ministers_role
+        # History fetched 18 Oct; a same-department promotion on 20 Oct is only in
+        # gov_minister (daily) so far.
+        _member(4653, "Stephen Morgan", posts=MORGAN_POSTS)
+        _gov_row(4653, "Stephen Morgan", DEFRA, f"Minister of State ({DEFRA})", date(2026, 10, 20))
+        assert ministers.pq_answering_role(4653, DEFRA, date(2026, 10, 21)) == f"Minister of State ({DEFRA})"
+        assert ministers.pq_answering_role(4653, DEFRA, date(2026, 10, 16)) == \
+            f"Parliamentary Under-Secretary ({DEFRA})"
+
+    def test_stale_gov_minister_row_does_not_override_history(self, app):
+        # refresh_ministers failed and kept an old table: Reynolds still listed at Defra
+        _member(4077, "Emma Reynolds", posts=REYNOLDS_POSTS, constituency="Wycombe")
+        _gov_row(4077, "Emma Reynolds", DEFRA, f"Secretary of State for {DEFRA[15:]}", date(2025, 9, 5))
+        assert ministers.pq_answering_role(4077, DEFRA, date(2026, 10, 1)) is None
+        assert ministers.pq_answering_role(4077, DEFRA, date(2026, 5, 1)).startswith("Secretary of State")
 
     def test_gov_minister_alone_needs_start_on_or_before_answer(self, app):
         _gov_row(5305, "Georgia Gould", "Department for Education", "Minister of State (Education)",
@@ -172,6 +200,51 @@ class TestPostOnDate:
         assert ministers.post_on_date(4912, "2026-09-02") == \
             "Parliamentary Under-Secretary (Housing, Communities and Local Government)"
         assert ministers.post_on_date(4912, "2025-12-15") == "Baroness in Waiting (HM Household) (Whip)"
+
+    def test_phillipson_secretary_of_state_not_women_and_equalities(self, app):
+        _member(4046, "Bridget Phillipson", posts=PHILLIPSON_POSTS, constituency="Houghton and Sunderland South")
+        assert ministers.pq_answering_role(4046, DFE, date(2025, 1, 10)) == "Secretary of State for Education"
+        assert ministers.post_on_date(4046, "2025-01-10") == "Secretary of State for Education"
+        assert ministers.post_on_date(4046, "2025-01-10", DFE) == "Secretary of State for Education"
+        # Her Women and Equalities answers still get that post
+        assert ministers.pq_answering_role(4046, "Women and Equalities", date(2025, 1, 10)) == \
+            "Minister for Women and Equalities"
+        # Both DfE posts ended 20 Jul 2026 (end day not counted as held)
+        assert ministers.pq_answering_role(4046, DFE, date(2026, 7, 20)) is None
+
+    def test_smith_of_malvern_main_education_post(self, app):
+        _member(269, "Baroness Smith of Malvern", house="Lords", posts=SMITH_POSTS)
+        for day in (date(2025, 1, 15), date(2025, 6, 10), date(2026, 1, 20), date(2026, 9, 10)):
+            assert ministers.pq_answering_role(269, DFE, day) == "Minister of State (Education)", day
+            assert ministers.post_on_date(269, day) == "Minister of State (Education)", day
+        assert ministers.pq_answering_role(269, "Department for Work and Pensions", date(2026, 1, 20)) == \
+            "Minister of State (Department for Work and Pensions)"
+
+    def test_post_rank(self):
+        assert ministers.post_rank("Secretary of State for Education") == 0
+        assert ministers.post_rank("Minister of State (Education)") == 1
+        assert ministers.post_rank("Parliamentary Under-Secretary of State (Minister for Children)") == 2
+        assert ministers.post_rank("Minister of State (Minister for Women and Equalities)") == 5
+        assert ministers.post_rank("Lords Spokesperson (Equalities)") == 5
+
+    def test_treasury_answering_body_name(self, app):
+        _member(4264, "Rachel Reeves", posts=CHANCELLOR_POSTS, constituency="Leeds West and Pudsey")
+        _member(4077, "Emma Reynolds", posts=REYNOLDS_POSTS, constituency="Wycombe")
+        assert ministers.pq_answering_role(4264, "Treasury", date(2026, 9, 1)) == "Chancellor of the Exchequer"
+        assert ministers.pq_answering_role(4077, "Treasury", date(2026, 9, 1)) == \
+            "Chief Secretary to the Treasury"
+
+    def test_treasury_from_gov_minister_only(self, app):
+        _gov_row(4264, "Rachel Reeves", "HM Treasury", "Chancellor of the Exchequer", date(2024, 7, 5))
+        assert ministers.pq_answering_role(4264, "Treasury", date(2026, 9, 1)) == "Chancellor of the Exchequer"
+
+    def test_department_aliases(self):
+        k = ministers.department_key
+        assert k("Treasury") == k("HM Treasury")
+        assert k("Leader of the House") == k("Office of the Leader of the House of Commons")
+        assert k("Leader of the House of Lords") == k("Office of the Leader of the House of Lords")
+        assert k("Attorney General's Office") == k("Attorney General’s Office")
+        assert k("Women and Equalities") == k("Government Equalities Office")
 
     def test_one_query_for_many_members(self, app):
         _member(4653, "Stephen Morgan", posts=MORGAN_POSTS)
@@ -204,6 +277,12 @@ class TestPqPage:
         html = app.test_client().get("/archive/pq/11212").get_data(as_text=True)
         assert "Government Whip" not in html
         assert f"Parliamentary Under-Secretary ({DEFRA})" in html
+
+    def test_meta_description_uses_cached_name(self, app):
+        _member(5299, "Monica Harding", posts=[], party="Liberal Democrat", constituency="Esher and Walton")
+        _answered_pq("820", None, date(2026, 5, 20), asking_id=5299, asking_name=None, answering_name=None)
+        html = app.test_client().get("/archive/pq/820").get_data(as_text=True)
+        assert "tabled by Monica Harding to" in html
 
     def test_no_dated_record_shows_constituency_not_stale_role(self, app):
         _member(4653, "Stephen Morgan", posts=None, detailed=False, stale_role=STALE_WHIP)
@@ -246,6 +325,59 @@ class TestResearchToolRows:
         rows = [{"speaker_name": "Chris Bryant", "member_id": None, "hdate": "2026-05-20"}]
         debate_scanner.flag_minister_rows(rows)
         assert rows[0]["is_minister"] is True and rows[0]["minister_role"] == ""
+        assert rows[0]["minister_unverified"] is True
+
+    def test_no_history_label_only_after_gov_minister_start(self, app, monkeypatch):
+        import debate_scanner
+        _gov_row(5305, "Georgia Gould", DFE, "Minister of State (Education)", date(2025, 9, 6))
+        monkeypatch.setattr(debate_scanner, "get_minister_list", lambda: {
+            "by_norm": {"georgia gould": "Minister of State (Education)"}})
+        rows = [{"speaker_name": "Georgia Gould", "member_id": 5305, "hdate": "2025-03-01"},
+                {"speaker_name": "Georgia Gould", "member_id": 5305, "hdate": "2026-03-01"}]
+        debate_scanner.flag_minister_rows(rows)
+        assert rows[0]["is_minister"] and rows[0]["minister_unverified"] and rows[0]["minister_role"] == ""
+        assert rows[1]["minister_role"] == "Minister of State (Education)"
+        assert rows[1]["minister_unverified"] is False
+
+    def test_smith_of_malvern_research_rows(self, app, monkeypatch):
+        import debate_scanner
+        _member(269, "Baroness Smith of Malvern", house="Lords", posts=SMITH_POSTS)
+        monkeypatch.setattr(debate_scanner, "get_minister_list", lambda: {"by_norm": {}})
+        rows = [{"speaker_name": "Baroness Smith of Malvern", "member_id": 269, "hdate": d, "dept": dept}
+                for d in ("2025-01-15", "2025-06-10", "2026-01-20", "2026-09-10") for dept in (DFE, "")]
+        debate_scanner.flag_minister_rows(rows)
+        assert {r["minister_role"] for r in rows} == {"Minister of State (Education)"}
+
+    def test_unverified_minister_has_no_label_on_page(self):
+        from flask import Flask
+        a = Flask(__name__, template_folder=str(PROJECT_ROOT / "templates"))
+        src = (PROJECT_ROOT / "templates" / "debate_scanner.html").read_text(encoding="utf-8")
+        lines = src.splitlines()
+        i = next(n for n, ln in enumerate(lines) if "debate-speech-role" in ln and "r.minister_role" in ln)
+        tpl = a.jinja_env.from_string(lines[i].strip() + lines[i + 1].strip())  # if / elif ... endif
+        with a.app_context():
+            unverified = tpl.render(r={"is_minister": True, "minister_unverified": True,
+                                       "minister_role": "", "speaker_party": "Lab"})
+            verified = tpl.render(r={"is_minister": True, "minister_unverified": False,
+                                     "minister_role": "Minister of State (Education)"})
+        assert "Minister" not in unverified and "Lab" in unverified
+        assert "Minister of State (Education)" in verified
+
+    def test_wq_scanner_batch_makes_one_history_query(self, app, monkeypatch):
+        import hansard
+        import ministers as m
+        from hansard_archive.models import HaPQ
+        _member(4653, "Stephen Morgan", posts=MORGAN_POSTS)
+        for i in range(5):
+            _answered_pq(f"3{i}", 4653, date(2026, 10, 1 + i))
+        calls = []
+        real = m.post_histories
+        monkeypatch.setattr(m, "post_histories", lambda ids: calls.append(ids) or real(ids))
+        rows = HaPQ.query.all()
+        histories = hansard._answer_histories(rows)
+        results = [hansard._pq_result(pq, histories) for pq in rows]
+        assert len(calls) == 1
+        assert {r["answering_minister_role"] for r in results} == {f"Parliamentary Under-Secretary ({DEFRA})"}
 
     def test_wq_scanner_row_role_on_answer_date(self, app):
         from hansard import _pq_result

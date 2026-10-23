@@ -2484,7 +2484,7 @@ def pq_detail(uin: str):
         og_title        = title_core,
         meta_desc       = (
             f"Written Question {pq.uin} — {page_heading} "
-            f"tabled by {pq.asking_member or 'an MP'} to {pq.answering_body or 'a department'}."
+            f"tabled by {asking_name or 'an MP'} to {pq.answering_body or 'a department'}."
         ),
         canonical_path  = f"/archive/pq/{(pq.uin or '').lower()}",
     )
