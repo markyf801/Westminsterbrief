@@ -579,6 +579,29 @@ Settings: restart policy Never, `SKIP_MIGRATIONS=1`, internal `DATABASE_URL`.
 If a diagnostic script writes a summary block + CSV section + per-row log lines,
 the local capture must contain all three before teardown.
 
+### Duplicate topic tags clean-up (one-off, Oct 2026)
+
+`ha_session_theme` holds policy-area tags stored twice (the tagger before
+22 Oct 2026 kept repeats in Gemini's list). In this order:
+
+1. The tagger fix (`write_session_tags`: each tag once, per-session lock) is
+   deployed to the web service **and every cron service**. A push to master
+   redeploys them all; check none is still running an older build.
+2. `python scripts/dedupe_theme_rows.py` (dry run: groups per theme_type,
+   one-write vs separate-write groups, the other tag tables). Review the log.
+3. `python scripts/dedupe_theme_rows.py --execute`, outside a cron window. It
+   copies the deleted rows to `ha_theme_dedupe_bak_<timestamp>` and prints the
+   undo SQL. Log it in the production SQL log.
+4. Optional: `python migrations/theme_unique_indexes.py` (dry run: must show 0
+   duplicate groups).
+5. `python migrations/theme_unique_indexes.py --execute`. It must end with
+   "exists and is valid"; exit 1 means missing or INVALID (see the script's
+   docstring).
+
+If step 2 lists separate-write sessions, it prints a `scripts/retag.py --ids`
+line to give them one clean tag set after step 3. Use the undo SQL only before
+any re-tag of those sessions.
+
 ## Bulk migrations and volume size
 
 Single-transaction bulk inserts use working space (WAL + indexes) of roughly

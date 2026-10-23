@@ -550,3 +550,13 @@ def test_real_tagger_with_gemini_working_never_blocks(env, monkeypatch):
     assert state["stop_reason"] == "range complete"
     assert _counts()[0] == 7
     assert all(n == bps.TAG_MAX_ATTEMPTS for n in state["tag_failures"].values())
+
+
+def test_session_tagged_by_another_run_is_not_a_failure(capsys):
+    """tag_session returns ALREADY_TAGGED when the hourly cron tagged it meanwhile."""
+    results = {1: tagger.ALREADY_TAGGED, 2: 3}
+    budget = bps.TagBudget(10, "", sleep=lambda s: None, tag_fn=results.get, probe=lambda: True)
+    assert budget.tag([1, 2]) == 1
+    assert budget.succeeded == 1
+    assert budget.failures == {} and budget.failed_this_run == set() and budget.streak == []
+    assert "session 1: already tagged by another run" in capsys.readouterr().out

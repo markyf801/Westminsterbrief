@@ -195,8 +195,15 @@ def execute_dedupe(engine, stamp: str | None = None) -> tuple[str | None, int, l
 
 
 def undo_sql(bak: str, cols: list[str]) -> str:
+    """Re-insert the deleted rows whose kept partner is still there (a re-tag since
+    may have replaced the session's tags; those rows are not brought back)."""
     c = ", ".join(cols)
-    return (f"INSERT INTO {DEDUPE_TABLE} ({c})\n  SELECT {c} FROM {bak};\n"
+    bc = ", ".join(f"b.{x}" for x in cols)
+    same_key = " AND ".join(f"k.{k} = b.{k}" for k in DEDUPE_KEY)
+    return ("-- Drop uq_ha_session_theme_session_theme_type first (if created). "
+            "Only valid before any re-tag of these sessions.\n"
+            f"INSERT INTO {DEDUPE_TABLE} ({c})\n  SELECT {bc} FROM {bak} b\n"
+            f"  WHERE EXISTS (SELECT 1 FROM {DEDUPE_TABLE} k WHERE {same_key});\n"
             f"-- once the result is confirmed good: DROP TABLE {bak};  (Mark's call)")
 
 
@@ -218,6 +225,13 @@ def print_plan(plan: Plan | None) -> None:
     same = sum(g.same_write for g in plan.groups)
     print(f"[theme-dedupe]   {same:,} group(s) from one write (same tagged_at + model_used), "
           f"{len(plan.groups) - same:,} from separate writes", flush=True)
+    raced = sorted({g.key[0] for g in plan.groups if not g.same_write})
+    if raced:
+        ids = ",".join(str(i) for i in raced)
+        print(f"[theme-dedupe]   separate-write sessions (two runs' tag sets mixed): {ids}", flush=True)
+        print("[theme-dedupe]   to give them one clean tag set after the dedupe (dry run first, "
+              "then add --apply --backup):", flush=True)
+        print(f"[theme-dedupe]     python scripts/retag.py --what sessions --ids {ids}", flush=True)
     print(f"[theme-dedupe]   sample (first {min(SAMPLE, len(plan.groups))}):", flush=True)
     for g in plan.groups[:SAMPLE]:
         print(f"[theme-dedupe]   session {g.key[0]} [{g.key[2]}] {g.key[1]!r}: keep id {g.keep_id}, "

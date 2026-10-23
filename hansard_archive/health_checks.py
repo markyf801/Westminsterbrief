@@ -828,9 +828,11 @@ def check_search_locale(ctx: HealthContext) -> CheckResult:
         return CheckResult(name, SKIPPED, f"not Postgres ({ctx.conn.dialect.name}): full-text search not used")
     cfg = ctx.config["search_locale"]
     got = ctx.conn.execute(sa.text("SELECT to_tsvector('english', :w)::text"), {"w": cfg["sample"]}).scalar()
-    ctype = ctx.conn.execute(sa.text(
-        "SELECT datctype FROM pg_database WHERE datname = current_database()")).scalar()
-    detail = f"to_tsvector('english', '{cfg['sample']}') = {got}; database LC_CTYPE {ctype}"
+    ctype, provider = ctx.conn.execute(sa.text(
+        "SELECT datctype, datlocprovider FROM pg_database WHERE datname = current_database()")).one()
+    providers = {"c": "libc", "i": "icu", "b": "builtin"}
+    detail = (f"to_tsvector('english', '{cfg['sample']}') = {got}; database LC_CTYPE {ctype}, "
+              f"locale provider {providers.get(provider, provider)}")
     if f"'{cfg['expect']}'" not in (got or ""):
         return CheckResult(name, FAIL, f"{detail}; expected '{cfg['expect']}' - possessives won't match "
                                        "in archive search (database locale changed?)")

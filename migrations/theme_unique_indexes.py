@@ -5,6 +5,15 @@ tag can't be stored twice for the same debate.
 RUN scripts/dedupe_theme_rows.py --execute FIRST: the index can't be built
 while duplicates exist. This script checks and refuses (exit 1) if any remain.
 
+Deploy order:
+  1. the tagger fix (write_session_tags: each tag once, per-session lock)
+     deployed to the web service AND every cron service (a push to master
+     redeploys them all; check none is still on an older build)
+  2. python scripts/dedupe_theme_rows.py              (dry run; review)
+  3. python scripts/dedupe_theme_rows.py --execute
+  4. python migrations/theme_unique_indexes.py        (dry run: 0 duplicates)
+  5. python migrations/theme_unique_indexes.py --execute
+
 Run once on Railway as a one-shot service (SKIP_MIGRATIONS=1, Dockerfile.cron):
 
     python migrations/theme_unique_indexes.py              # dry run: target, duplicates, SQL, index state
@@ -21,8 +30,12 @@ else that writes the table.
 
 If a CONCURRENTLY build is interrupted (or hits a duplicate inserted during the
 build) it leaves an INVALID index, and IF NOT EXISTS would skip it silently on
-a re-run. So afterwards the script checks pg_index.indisvalid and exits 1 if
-the index is missing or INVALID. To fix: DROP INDEX CONCURRENTLY
+a re-run. So afterwards (also when the build raised an error) the script
+checks pg_index.indisvalid and exits 1 if the index is missing or INVALID.
+A failed CONCURRENTLY build of a unique index can be left "ready but invalid":
+queries don't use it, but it still rejects duplicate inserts until it is
+dropped. Tag writers then fail on a duplicate instead of storing it, which the
+tagger never attempts. To fix: DROP INDEX CONCURRENTLY
 uq_ha_session_theme_session_theme_type (Mark's call — CLAUDE.md "Destructive
 operations"), run the dedupe again, then re-run this script.
 
@@ -75,11 +88,18 @@ def apply(engine) -> str | None:
         if dups:
             return (f"{dups} duplicate (session_id, theme, theme_type) group(s) in ha_session_theme: "
                     "run scripts/dedupe_theme_rows.py --execute first")
-        conn.execute(text(CREATE_SQL))
+        error = ""
+        try:
+            conn.execute(text(CREATE_SQL))
+        except Exception as e:  # noqa: BLE001 - e.g. a duplicate inserted during the build
+            error = f"the build failed ({type(e).__name__}: {str(e)[:300]}); "
+    with engine.connect() as conn:
         valid = index_valid(conn)
-    if valid is not True:
-        return (f"{INDEX} is {'missing' if valid is None else 'INVALID'} after the build. Drop it with "
-                f"DROP INDEX CONCURRENTLY {INDEX}; run the dedupe again, then re-run this script.")
+    if error or valid is not True:
+        state = "missing" if valid is None else "INVALID" if valid is False else "valid"
+        fix = (f"Drop it with DROP INDEX CONCURRENTLY {INDEX}; run the dedupe again, then re-run "
+               "this script." if valid is not None else "Run the dedupe again, then re-run this script.")
+        return f"{error}{INDEX} is {state} after the build. {fix}"
     return None
 
 

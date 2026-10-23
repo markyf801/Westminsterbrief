@@ -126,6 +126,28 @@ def test_execute_backs_up_deletes_and_undo_restores(engine):
     assert _all(engine) == before
 
 
+def test_undo_skips_rows_whose_kept_partner_is_gone(engine):
+    """After a re-tag replaced session 11's tags, undo must not bring its old duplicates back."""
+    _seed(engine, SEED)
+    bak, _, cols = dd.execute_dedupe(engine, stamp="u")
+    undo = dd.undo_sql(bak, cols)
+    assert undo.startswith("-- Drop uq_ha_session_theme_session_theme_type first")
+    assert "Only valid before any re-tag of these sessions" in undo
+    assert "WHERE EXISTS (SELECT 1 FROM ha_session_theme k WHERE k.session_id = b.session_id" in undo
+    with engine.begin() as conn:
+        conn.execute(sa.text("DELETE FROM ha_session_theme WHERE session_id = 11"))   # re-tagged
+        conn.execute(sa.text(undo.split(";")[0]))
+    assert [r[0] for r in _all(engine)] == [1, 2, 3, 7, 8]      # 2 back; 4 and 6 not
+
+
+def test_dry_run_lists_separate_write_sessions_with_a_retag_line(engine, capsys):
+    _seed(engine, SEED + [_row(9, 13, "Transport", tagged_at=T1), _row(10, 13, "Transport", tagged_at=T2)])
+    dd.main([], engine=engine)
+    out = capsys.readouterr().out
+    assert "separate-write sessions (two runs' tag sets mixed): 11,13" in out
+    assert "python scripts/retag.py --what sessions --ids 11,13" in out
+
+
 def test_backup_name_does_not_clobber_an_existing_table(engine):
     _seed(engine, SEED)
     with engine.begin() as conn:
@@ -212,6 +234,60 @@ def test_migration_is_a_no_op_off_postgres(engine, capsys):
     assert "Not Postgres: nothing to do" in capsys.readouterr().out
 
 
+class _FakeConn:
+    def __init__(self, valid, create_error=None, dups=0):
+        self.valid, self.create_error, self.dups = valid, create_error, dups
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execution_options(self, **kw):
+        return self
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if sql.startswith("CREATE UNIQUE INDEX"):
+            if self.create_error:
+                raise self.create_error
+            return None
+        if "pg_index" in sql:
+            row = None if self.valid is None else (self.valid,)
+            return type("R", (), {"first": lambda _self: row})()
+        return type("R", (), {"scalar": lambda _self: self.dups})()
+
+
+class _FakeEngine:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def connect(self):
+        return self.conn
+
+
+@pytest.mark.parametrize("valid, error, expect", [
+    (True, None, None),
+    (False, None, "INVALID after the build. Drop it with DROP INDEX CONCURRENTLY"),
+    (None, None, "missing after the build. Run the dedupe again"),
+    (False, RuntimeError("could not create unique index"),
+     "the build failed (RuntimeError: could not create unique index); "
+     "uq_ha_session_theme_session_theme_type is INVALID after the build. Drop it with DROP INDEX CONCURRENTLY"),
+])
+def test_migration_apply_checks_the_index_even_when_the_build_fails(valid, error, expect):
+    problem = mig.apply(_FakeEngine(_FakeConn(valid, error)))
+    if expect is None:
+        assert problem is None
+    else:
+        assert expect in problem
+
+
+def test_migration_refuses_while_duplicates_remain():
+    problem = mig.apply(_FakeEngine(_FakeConn(True, dups=3)))
+    assert problem.startswith("3 duplicate (session_id, theme, theme_type) group(s)")
+
+
 def test_migration_sql_is_concurrent_and_idempotent():
     assert mig.CREATE_SQL.startswith("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ")
     assert "ON ha_session_theme (session_id, theme, theme_type)" in mig.CREATE_SQL
@@ -265,7 +341,8 @@ def test_second_writer_without_replace_writes_nothing(app_db):
     """Two runs tagging the same untagged session (hourly cron + backfill): both
     passed tag_session's "already tagged?" check before either wrote."""
     assert tg.write_session_tags(app_db, TagOutcome(policy_areas=["Economy"], model="a")) == 1
-    assert tg.write_session_tags(app_db, TagOutcome(policy_areas=["Economy", "Transport"], model="b")) == 0
+    assert (tg.write_session_tags(app_db, TagOutcome(policy_areas=["Economy", "Transport"], model="b"))
+            == tg.ALREADY_TAGGED)
     assert _tags(app_db) == [("Economy", "policy_area")]
 
 
@@ -293,3 +370,12 @@ def test_sqlite_takes_no_lock(app_db, monkeypatch):
     monkeypatch.setattr(tg.db.session, "execute", lambda *a, **k: calls.append(a))
     tg._lock_session_tags(app_db)
     assert calls == []
+
+
+def test_tag_all_untagged_counts_a_lost_race_as_already_tagged_not_failed(app_db, monkeypatch, capsys):
+    monkeypatch.setattr(tg, "tag_session", lambda sid, api_key=None, model=None: tg.ALREADY_TAGGED)
+    monkeypatch.setattr(tg.time, "sleep", lambda s: None)
+    res = tg.tag_all_untagged(api_key="key")
+    assert (res["tagged"], res["failed"], res["already_tagged"]) == (0, 0, 1)
+    out = capsys.readouterr().out
+    assert "already tagged by another run" in out and "FAIL" not in out

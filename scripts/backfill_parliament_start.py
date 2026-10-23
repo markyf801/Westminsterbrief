@@ -524,6 +524,11 @@ class TagBudget:
                 _reset_db()
                 print(f"[backfill]   tag error {self.label} {item_id}: {exc}", flush=True)
                 count = None
+            if count == tagger.ALREADY_TAGGED:      # another run (e.g. the hourly cron) won the race
+                print(f"[backfill]   {self.label} {item_id}: already tagged by another run", flush=True)
+                self._count(self.streak)        # Gemini works: the earlier errors were the items
+                self.streak = []
+                continue
             if count:
                 tagged += 1
                 self.succeeded += 1
