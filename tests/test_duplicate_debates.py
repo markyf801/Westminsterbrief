@@ -844,6 +844,87 @@ def test_delete_refuses_live_or_unchecked_copies_and_dead_twins(app, delete, han
     assert res["deleted"] == [] and _snapshot() == before
 
 
+def test_T1_deleter_refuses_a_same_title_swallower_as_twin(app, delete, find, hansard):
+    pm = pmqs()
+    own = [(SPEAKER, SPEAKER_TEXT)]
+    W, D, F = ("AAAAAAAA-0000-0000-0000-00000000AA01", "aaaaaaaa-0000-0000-0000-00000000aa02",
+               "AAAAAAAA-0000-0000-0000-00000000AA03")
+    w = add_session(W, "Speaker's Statement", own + pm, hrs_tag="hs_2GenericHdg")
+    d = add_session(D, "Speaker's Statement", own + pm[:3], hrs_tag="hs_2GenericHdg")
+    add_session(F, "Engagements", pm)
+    hansard.payloads.update({W: debate_json(W, own), D: 400,
+                             F: debate_json(F, pm, title="Engagements")})
+    r = by_session(run_find(find)["rows"])
+    assert r[d]["action"] != "delete"
+    res = _del(delete, [(d, w)], "--execute")
+    assert res["deleted"] == [] and "swallower" in res["refused"][0][2]
+    assert named_count(d) == 4
+
+
+def test_deleter_refuses_a_twin_holding_another_debate(app, delete, hansard):
+    pm = pmqs()
+    own = [(SPEAKER, SPEAKER_TEXT)]
+    W, D = "AAAAAAAA-0000-0000-0000-00000000AB01", "aaaaaaaa-0000-0000-0000-00000000ab02"
+    w = add_session(W, "Speaker's Statement", own + pm)
+    d = add_session(D, "Speaker's Statement", own + pm)
+    add_session("AAAAAAAA-0000-0000-0000-00000000AB03", "Engagements", pm)
+    # Hansard (wrongly or not yet) still has the heading with everything: only holds_others stops it.
+    hansard.payloads.update({W: debate_json(W, own + pm), D: 400})
+    res = _del(delete, [(d, w)], "--execute")
+    assert res["deleted"] == [] and "holds other debates" in res["refused"][0][2]
+
+
+def test_T3_contrib_links_follow_a_chain_of_deletions(app, delete, hansard):
+    from extensions import db
+    from sqlalchemy import text
+    rows = [(A, long(i)) for i in range(4)]
+    ea, eb, ec = ("bbbbbbbb-0000-0000-0000-00000000bb01", "bbbbbbbb-0000-0000-0000-00000000bb02",
+                  "BBBBBBBB-0000-0000-0000-00000000BB03")
+    a = add_session(ea, "Chain", rows)
+    b = add_session(eb, "Chain", rows)
+    c = add_session(ec, "Chain", rows)
+    hansard.payloads.update({ea: 400, eb: debate_json(eb, rows), ec: debate_json(ec, rows)})
+    before = _snapshot()
+    r1 = _del(delete, [(a, b)], "--execute")
+    hansard.payloads[eb] = 400
+    r2 = _del(delete, [(b, c)], "--execute", clock=datetime(2026, 10, 24, 12, 0, 5))
+    assert len(r1["deleted"]) == 1 and len(r2["deleted"]) == 1
+    c_ids = {x[0] for x in db.session.execute(
+        text("SELECT id FROM ha_contribution WHERE session_id = :c"), {"c": c})}
+    links = db.session.execute(text("SELECT old_contribution_id, new_contribution_id, session_id "
+                                    "FROM ha_contribution_redirect")).fetchall()
+    assert len(links) == 8 and all(n in c_ids and s == c for _o, n, s in links), \
+        "A's old ids now point at C's speeches, not B's deleted ones"
+    assert {(x[0], x[1]) for x in db.session.execute(
+        text("SELECT old_slug, new_session_id FROM ha_session_redirect"))} == {
+        (s, c) for s in [row[3] for row in before["s"] if row[0] in (a, b)]}
+    # Undo the second run, then the first: everything as it was.
+    _run_undo(delete.undo_sql(r2["ts"], r2["undo"]))
+    targets = {s for (s,) in db.session.execute(
+        text("SELECT session_id FROM ha_contribution_redirect"))}
+    assert targets == {b}, "after undoing the second run, A's links point at B again"
+    _run_undo(delete.undo_sql(r1["ts"], r1["undo"]))
+    assert _snapshot() == before
+
+
+def test_deleter_and_accept_shrink_take_the_day_lock_first(app, delete, backfill, hansard,
+                                                           monkeypatch):
+    calls = []
+    real_tag_lock = backfill.lock_for_tags
+    monkeypatch.setattr(dd, "lock_day", lambda day, house: calls.append(("day", day, house)))
+    monkeypatch.setattr(backfill, "lock_for_tags",
+                        lambda db, sid: (calls.append(("tags", sid)), real_tag_lock(db, sid)))
+    ids, payloads = seed_october()
+    hansard.payloads.update(payloads)
+    _del(delete, [(ids[DEAD_LOWER_1], ids[LIVE_NUMERIC])], "--execute")
+    assert calls[0] == ("day", OCT, "Commons")
+    calls.clear()
+    speaker, _e, _o, june = seed_june()
+    _patch_backfill_http(backfill, monkeypatch, june)
+    _bf(backfill, "--ext-id", SPEAKER_EXT, "--accept-shrink", "--execute")
+    assert calls[:2] == [("day", JUNE, "Commons"), ("tags", speaker)]
+
+
 def test_delete_stops_before_writing_on_429(app, delete, hansard):
     ids, payloads = seed_october()
     hansard.payloads.update(payloads)

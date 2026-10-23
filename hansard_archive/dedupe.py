@@ -298,6 +298,36 @@ def twin_shape_ok(a: Sess, b: Sess, m: Optional[dict] = None) -> tuple[bool, str
     return True, ""
 
 
+def holds_other_debates(b: Sess, day: Iterable[Sess]) -> list[Sess]:
+    """Sessions with another title or location whose every speech is inside b
+    (b is a parent heading or a swallower, not a copy of one debate)."""
+    out = []
+    for x in day:
+        if x.id == b.id or not x.named or x.named >= b.named or x.place_key == b.place_key:
+            continue
+        if len(align_sessions(x, b)) == x.named:
+            out.append(x)
+    return out
+
+
+# Per sitting day and House: delete_duplicate_debates.py and
+# refresh_partial_debates.py --accept-shrink both check a day's other sessions
+# before writing, so they must not run on the same day at once. Distinct from
+# the tagger's per-session namespace (72616701).
+DAY_LOCK_NAMESPACE = 72616702
+
+
+def lock_day(day: date, house: str) -> None:
+    """pg_advisory_xact_lock(DAY_LOCK_NAMESPACE, <day and House>) until commit /
+    rollback; no-op on SQLite. Take it before any other lock."""
+    from sqlalchemy import text
+    if db.session.connection().dialect.name != "postgresql":
+        return
+    key = day.toordinal() * 2 + (1 if house == "Lords" else 0)
+    db.session.execute(text("SELECT pg_advisory_xact_lock(:ns, :k)"),
+                       {"ns": DAY_LOCK_NAMESPACE, "k": key})
+
+
 def unheld_speeches(a: Sess, twin: Sess, others: Iterable[Sess],
                     m: Optional[dict] = None) -> list[Contrib]:
     """a's speeches not in the twin (by alignment) nor anywhere in `others`."""

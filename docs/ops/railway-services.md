@@ -99,7 +99,13 @@ is set on the web service) → `scripts/refresh_partial_debates.py --accept-shri
 empty) for the reviewed swallowers → `scripts/retag.py --ids …` as printed.
 Rehearse on a Postgres copy first; the delete script's docstring lists the
 before/after SQL checks, `curl -I`, the Cloudflare purge, and why the affected
-days must not be re-ingested afterwards.
+days must not be re-ingested afterwards. `ARCHIVE_REDIRECT_CODE` and the
+check that the redirect tables exist are per web worker (the check repeats at
+most every 10 minutes): after the migration, wait 10 minutes or restart the
+web service before testing redirects. Do not `--allow-empty` a final-id page
+with the debate's real title (e.g. 15 Oct C5400E9A) while its speeches live
+only under a provisional heading id; leave it for review until Hansard
+finalises the day.
 
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)
 

@@ -75,6 +75,11 @@ again just before writing (session row locked) and refused (shrink_refused)
 unless every speech it would remove is held by another stored session that
 day and what is left matches Hansard's current copy. Emptying a session
 (Hansard has no named contributions: held_empty) also needs --allow-empty.
+It takes the sitting day's advisory lock first (shared with
+scripts/delete_duplicate_debates.py). Do not empty a page with a final id and
+the debate's real title (e.g. 15 Oct 2026 C5400E9A, "Human Rights and the
+Regulation of AI") while its speeches are held only under a provisional
+heading id: leave it for review until Hansard finalises the day.
 A session shrunk to under half its speeches loses its tags too (backed up in
 ha_session_theme_refresh_bak_<time>; the undo SQL puts them back): they came
 from the swallowed speeches, and the cron's tagger tags it afresh.
@@ -373,6 +378,11 @@ def lock_for_tags(db, session_id: int) -> None:
                            {"ns": TAG_LOCK_NAMESPACE, "s": session_id})
 
 
+def lock_day(day, house) -> None:
+    from hansard_archive.dedupe import lock_day as _lock_day
+    _lock_day(day, house)
+
+
 def lock_session(session_id: int) -> None:
     from hansard_archive.refresh import lock_session as _lock
     _lock(session_id)
@@ -515,6 +525,8 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
                     held = refresh_session(session, fresh, apply=False).state
                     if held in (STATE_EMPTY, STATE_SHRANK):
                         if args.execute:
+                            # Same order as delete_duplicate_debates.py: day, tags, row.
+                            lock_day(session.date, session.house)
                             lock_for_tags(db, sid)
                             lock_session(sid)
                         refused_why = shrink_refusal(args, sid, fresh, held)

@@ -31,14 +31,19 @@ and listed) when:
     day (the refusal lists them); small sessions (one short contribution)
     need an identical twin;
   - the twin is much bigger and has speeches of its own before or among the
-    shared ones (it's a heading holding other debates, not a later copy);
+    shared ones (it's a heading holding other debates, not a later copy), or
+    Hansard now has fewer speeches for it than we hold (a swallower), or it
+    holds every speech of a debate with another title;
   - another session's contribution points at one of its contributions
     (responds_to_id);
   - a division (ha_division.ha_session_id, no foreign key) points at it,
     unless --repoint-divisions moves them to the twin;
   - a saved alert links to its page (alert.url).
 
---execute, one transaction per session. Locks, in this order: the tagger's
+--execute, one transaction per session. Locks, in this order: the sitting
+day's (pg_advisory_xact_lock(72616702, day and House), shared with
+refresh_partial_debates.py --accept-shrink so the two never check and change
+the same day at once), the tagger's
 per-session advisory lock (Postgres: pg_advisory_xact_lock(72616701, id), so
 tags aren't deleted while the tagger writes them), the session row FOR
 UPDATE, the twin's row FOR SHARE. Then it copies into undo tables and
@@ -76,7 +81,10 @@ Checks around a production run (Mark's SQL, via DBeaver; log it):
        WHERE d.ha_session_id IS NOT NULL AND s.id IS NULL;      -- expect no rows
   - curl -I https://westminsterbrief.co.uk/archive/debate/<date>/<old slug>
     -> 302 with Location: the kept copy; purge those URLs and the day pages
-    in Cloudflare; clear the cache at /admin.
+    in Cloudflare; clear the cache at /admin. Each web worker looks for the
+    redirect tables at most every 10 minutes and reads ARCHIVE_REDIRECT_CODE
+    itself: after the migration wait 10 minutes (or restart the web service)
+    before testing with curl, or a 404 is expected.
   - Don't re-ingest the affected days afterwards (scripts/backfill_hansard.py
     and the like): a provisional id Hansard still serves would be stored again.
   - The redirects are 302 until ARCHIVE_REDIRECT_CODE=301 is set on the web
@@ -128,6 +136,11 @@ UPDATE ha_session_redirect SET new_session_id = l.session_id
 DELETE FROM ha_contribution_redirect
  WHERE old_contribution_id IN (SELECT old_contribution_id FROM {links}
                                 WHERE kind = 'contrib' AND {lf});
+UPDATE ha_contribution_redirect
+   SET new_contribution_id = l.new_contribution_id, session_id = l.session_id
+  FROM {links} l
+ WHERE l.kind = 'contrib_moved'
+   AND ha_contribution_redirect.old_contribution_id = l.old_contribution_id AND {lf_l};
 -- 2. Put the sessions back first, then their contributions and tags (foreign keys; same ids).
 INSERT INTO ha_session ({session_cols}) SELECT {session_cols} FROM {bak_session} WHERE {sf_id};
 INSERT INTO ha_contribution ({contrib_cols}) SELECT {contrib_cols} FROM {bak_contrib} WHERE {sf};
@@ -220,6 +233,16 @@ def refusal(pair: tuple[int, int], deleting: set, today: date, repoint: bool,
         return f"its Hansard id is {st_s[0]} ({st_s[2]}), not confirmed dead"
     if st_k[0] != dd.LIVE:
         return f"kept twin's Hansard id is {st_k[0]} ({st_k[2]}), not live"
+    if st_k[1] is not None:
+        from hansard_archive.ingestion import _flatten_items
+        h_named = len(dd.contribs_from_fresh(_flatten_items(st_k[1], [0])))
+        if h_named < b.named:
+            return (f"kept twin is a swallower: Hansard now has {h_named} named contribution(s) "
+                    f"for it, we hold {b.named}")
+    inside = dd.holds_other_debates(b, day.values())
+    if inside:
+        return "kept twin holds other debates: " + ", ".join(
+            f"id {x.id} {x.title[:40]!r}" for x in inside[:3])
     if not a.named:
         return "session has no named contributions to compare"
     if a.small and a.signature != b.signature:
@@ -348,9 +371,15 @@ def _link(db, links: str, kind: str, deleted: int, now: datetime, session_id=Non
 
 
 def lock_pair(db, sid: int, kid: int) -> None:
-    """Advisory tag lock first (the tagger takes it before writing tags, which
-    needs a key-share lock on the session row), then the rows."""
+    """The day's lock first (shared with refresh_partial_debates.py
+    --accept-shrink, which also checks the day's other sessions), then the
+    tagger's per-session lock (it takes that before writing tags, which needs a
+    key-share lock on the session row), then the rows."""
+    from hansard_archive.dedupe import lock_day
     from hansard_archive.models import HansardSession
+    s = db.session.get(HansardSession, sid)
+    if s is not None:
+        lock_day(s.date, s.house)
     if db.session.connection().dialect.name == "postgresql":
         db.session.execute(text("SELECT pg_advisory_xact_lock(:ns, :s)"),
                            {"ns": TAG_LOCK_NAMESPACE, "s": sid})
@@ -388,9 +417,22 @@ def delete_one(db, sid: int, kid: int, undo: dict, repoint: bool, now: datetime)
     # Old contribution ids -> the twin's matching ones, for #contrib-<id> links.
     loaded = dd.load_sessions([sid, kid])
     a, b = loaded[sid], loaded[kid]
+    mapping = {a.contribs[i].id: b.contribs[j].id for i, j in dd.align_sessions(a, b).items()}
+    # Links from an earlier run that pointed at this copy's speeches follow on to the twin.
+    counts["contrib_links_moved"] = 0
+    for old_c, prev_new in db.session.execute(
+            text("SELECT old_contribution_id, new_contribution_id FROM ha_contribution_redirect "
+                 "WHERE session_id = :s"), {"s": sid}).fetchall():
+        if prev_new not in mapping:
+            continue
+        _link(db, links, "contrib_moved", sid, now, session_id=sid, new_session_id=kid,
+              old_contribution_id=old_c, new_contribution_id=prev_new)
+        db.session.execute(text("UPDATE ha_contribution_redirect SET new_contribution_id = :n, "
+                                "session_id = :k WHERE old_contribution_id = :o"),
+                           {"n": mapping[prev_new], "k": kid, "o": old_c})
+        counts["contrib_links_moved"] += 1
     counts["contrib_links"] = 0
-    for i, j in dd.align_sessions(a, b).items():
-        old_c, new_c = a.contribs[i].id, b.contribs[j].id
+    for old_c, new_c in mapping.items():
         if db.session.execute(text("SELECT 1 FROM ha_contribution_redirect "
                                    "WHERE old_contribution_id = :o"), {"o": old_c}).first():
             continue
