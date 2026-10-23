@@ -12,13 +12,24 @@ Per sitting day and House since --since (default 2026-04-27, when the hourly
 cron started) it compares every stored debate's named contributions (the
 speeches the page shows) with every other's and reports:
   exact_duplicate  identical named contributions (speaker + text) to another
-                   session: one copy is kept — live in Hansard first, then a
-                   final (uppercase GUID) id, then a real debate title rather
-                   than a heading, then the copy matching Hansard's current
-                   one, then the oldest — and the reason is logged.
-  dead_superseded  Hansard no longer has this id, and a live session holds at
-                   least 90% of its speeches (small text edits allowed):
-                   delete it, keep the live one.
+                   session with the same title, location and debate type: one
+                   copy is kept — live in Hansard first, then the copy matching
+                   Hansard's current one, then a final (uppercase GUID) id,
+                   then a real debate title rather than a heading, then the
+                   oldest — and the reason is logged. Only copies whose id is
+                   confirmed dead are recommended for deletion, and only when
+                   the kept copy is live and matches Hansard; otherwise the
+                   whole group is left for review. Identical speeches under a
+                   different title, location or type are only reviewed.
+  dead_superseded  Hansard no longer has this id, and a live session with the
+                   same title and location holds at least 90% of its speeches
+                   (small text edits allowed) while every other speech is held
+                   by another stored session that day: delete it, keep the
+                   live one. The twin is never a session holding other
+                   debates (a parent heading or a swallower), or one Hansard
+                   now has fewer speeches for;
+                   nor much bigger, unless its extra speeches all come after
+                   the shared ones (the debate went on).
   swallower        a live session holding speeches Hansard now has fewer of,
                    which are held by other stored sessions:
                    accept_shrink when everything the refresh would remove is
@@ -34,21 +45,25 @@ Small sessions (one named contribution under 300 characters) are never
 recommended for deletion, only for review.
 
 Hansard API check (skip with --no-api): every session involved is looked up
-once (/debates/debate/<id>.json, at least 1 second apart): HTTP 400 or 404,
-or a 200 without a debate in it, = dead; a timeout, 5xx or bad JSON =
-unknown. A 429, 401 or 403 stops the run (exit 3); so do three unknowns in a
-row. Without the API check nothing is known to be live or dead, so only exact
-duplicates get a keep/delete recommendation. --check-provisional also looks up
+once (/debates/debate/<id>.json, at least 1 second apart): HTTP 400 or 404
+= dead; a 200 without a debate in it = dead only if a second look-up agrees;
+a timeout, 5xx or bad JSON = unknown. A 429, 401 or 403 stops the run (exit
+3); so do three unknowns in a row. Without the API check nothing is known to
+be live or dead, so nothing is recommended for deletion or shrinking (all
+review). --check-provisional also looks up
 every session in range with a provisional (numeric / lowercase) id, to find
 dead ids that have no twin stored at all (dead_only_copy).
 
 Output: a CSV (--csv PATH, and always printed to the log between
 "----- CSV START -----" and "----- CSV END -----" so a Railway one-shot's log
-holds it), a summary, and ready commands:
-  scripts/delete_duplicate_debates.py --session-id <delete>:<keep>,...   (dry run first)
-  scripts/refresh_partial_debates.py --accept-shrink --ext-id ...         (dry run first)
-Review the CSV before running either; the delete script takes the CSV too
-(rows with action "delete"), so change an action there to override.
+holds it), a summary, and ready commands (one each):
+  scripts/delete_duplicate_debates.py --csv <file>  (or --session-id <delete>:<keep>,...)
+  scripts/refresh_partial_debates.py --accept-shrink --ext-id ...
+Both are dry runs until --execute. Review the CSV before running either. The
+delete script only uses rows whose action is "delete"; changing an action to
+"review" leaves that copy alone. Changing one TO "delete" is at your own risk:
+the delete script re-checks everything (dead id, live twin, nothing lost) and
+refuses what fails, but it can't know why the finder didn't recommend it.
 
 Nothing is written to the database.
 
@@ -77,45 +92,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_SINCE = "2026-04-27"
 MIN_PACE = 1.0
 _MAX_CONSECUTIVE_UNKNOWN = 3     # CLAUDE.md three-strike rule
-_IDS_PER_COMMAND = 40
 
 CSV_FIELDS = ("finding", "action", "group", "date", "house", "session_id", "ext_id", "id_format",
               "api_status", "title", "slug", "debate_type", "named", "hansard_named",
               "kept_session_id", "kept_ext_id", "coverage", "note")
 
 
-class Checker:
-    """Paced Hansard look-ups, cached by ext_id; stops on 429/401/403 or three unknowns in a row."""
-
-    def __init__(self, pace: float, sleep=time.sleep, clock=time.monotonic):
-        self.pace, self.sleep, self.clock = max(MIN_PACE, pace), sleep, clock
-        self.cache: dict[str, tuple] = {}
-        self.calls = 0
-        self.unknown_run = 0
-        self._last = None
-
-    def __call__(self, ext_id: str) -> tuple:
-        from hansard_archive.dedupe import UNKNOWN, ApiStop, check_ext_id
-        if ext_id in self.cache:
-            return self.cache[ext_id]
-        if self._last is not None:
-            wait = self.pace - (self.clock() - self._last)
-            if wait > 0:
-                self.sleep(wait)
-        try:
-            result = check_ext_id(ext_id)
-        finally:
-            self._last = self.clock()
-            self.calls += 1
-        self.cache[ext_id] = result
-        if result[0] == UNKNOWN:
-            self.unknown_run += 1
-            if self.unknown_run >= _MAX_CONSECUTIVE_UNKNOWN:
-                raise ApiStop(f"{self.unknown_run} failed look-ups in a row (last {ext_id}: "
-                              f"{result[2]}) — check the Hansard API before re-running")
-        else:
-            self.unknown_run = 0
-        return result
+def Checker(pace: float, sleep=time.sleep, clock=time.monotonic):
+    """Paced, cached Hansard look-ups (hansard_archive.dedupe.Checker)."""
+    from hansard_archive.dedupe import Checker as _Checker
+    return _Checker(pace=pace, sleep=sleep, clock=clock, max_unknown=_MAX_CONSECUTIVE_UNKNOWN)
 
 
 def sitting_days(since: date, until: date | None, house: str | None) -> list[tuple[date, str]]:
@@ -229,22 +215,24 @@ def run(args, sleep=time.sleep, clock=time.monotonic) -> dict:
         print(f"[dupes] Hansard API look-ups: {checker.calls}")
 
     deletes = [r for r in rows if r["action"] == ACTION_DELETE]
+    kept_ids = {r["kept_session_id"] for r in deletes}
+    clash = sorted(str(r["session_id"]) for r in deletes if r["session_id"] in kept_ids)
+    assert not clash, f"a kept twin is also listed for deletion: {clash}"
     if deletes:
         print(f"\n[dupes] {len(deletes)} copies to delete (after review; dry run first, then "
               f"add --execute):")
-        pairs = [f"{r['session_id']}:{r['kept_session_id']}" for r in deletes]
-        for i in range(0, len(pairs), _IDS_PER_COMMAND):
-            print(f"  python scripts/delete_duplicate_debates.py --session-id "
-                  f"{','.join(pairs[i:i + _IDS_PER_COMMAND])}")
         if args.csv:
-            print(f"  (or: python scripts/delete_duplicate_debates.py --csv {args.csv})")
+            print(f"  python scripts/delete_duplicate_debates.py --csv {args.csv}")
+        else:
+            pairs = ",".join(f"{r['session_id']}:{r['kept_session_id']}" for r in deletes)
+            print(f"  python scripts/delete_duplicate_debates.py --session-id {pairs}")
     shrinks = [r for r in rows if r["action"] == ACTION_ACCEPT_SHRINK]
     if shrinks:
         print(f"\n[dupes] {len(shrinks)} swallowing session(s) to bring in line with Hansard "
               f"AFTER the deletes (dry run first, then add --execute):")
-        for i in range(0, len(shrinks), _IDS_PER_COMMAND):
-            ids = " ".join(f"--ext-id {r['ext_id']}" for r in shrinks[i:i + _IDS_PER_COMMAND])
-            print(f"  python scripts/refresh_partial_debates.py --accept-shrink {ids}")
+        ids = " ".join(f"--ext-id {r['ext_id']}" for r in shrinks)
+        empty = " --allow-empty" if any(str(r["hansard_named"]) == "0" for r in shrinks) else ""
+        print(f"  python scripts/refresh_partial_debates.py --accept-shrink{empty} {ids}")
     reviews = [r for r in rows if r["action"] == "review"]
     if reviews:
         print(f"\n[dupes] {len(reviews)} session(s) to review by hand (action 'review' in the CSV).")
