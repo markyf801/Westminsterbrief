@@ -624,7 +624,7 @@ def _group_by_debate(rows):
             rel_level = 'low'
         result.append({
             'date': k[0], 'title': k[1], 'speeches': v,
-            'has_minister': any(r.get('is_minister') for r in v),
+            'has_minister': any(r.get('is_minister') and not r.get('minister_unverified') for r in v),
             'source_label': v[0].get('source_label', '') if v else '',
             'source': v[0].get('source', '') if v else '',
             'matched_count': matched,
@@ -3486,7 +3486,7 @@ def download_research_brief():
             row = tbl.add_row().cells
             row[0].text = title
             row[1].text = str(len(items))
-            ministers = sum(1 for r in items if r.get('is_minister'))
+            ministers = sum(1 for r in items if r.get('is_minister') and not r.get('minister_unverified'))
             row[2].text = f'{ministers} minister(s)' if ministers else '—'
         doc.add_paragraph()
 

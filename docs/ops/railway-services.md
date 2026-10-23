@@ -250,8 +250,8 @@ are the post held on that date: `ministers.post_on_date()` reads the dated
 post history in `member_profile.government_posts` (weekly
 `member-profile-refresh`) plus `gov_minister` (daily, so a new appointment
 shows before the weekly history catches up; for a member with a history, only
-`gov_minister` posts that began within 7 days before or after the history was
-fetched are added, so a stale table can't bring back an ended post). When
+`gov_minister` posts that started at most 7 days before the history was
+fetched, or any time after, are added, so a stale table can't bring back an ended post). When
 several posts are held on one day, the most senior one in the department wins
 (Secretary of State, then Minister of State, then Under-Secretary; Women and
 Equalities, spokesperson and whip posts last). With neither, no title is shown;

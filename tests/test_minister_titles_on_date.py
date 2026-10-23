@@ -226,6 +226,10 @@ class TestPostOnDate:
         assert ministers.post_rank("Parliamentary Under-Secretary of State (Minister for Children)") == 2
         assert ministers.post_rank("Minister of State (Minister for Women and Equalities)") == 5
         assert ministers.post_rank("Lords Spokesperson (Equalities)") == 5
+        assert ministers.post_rank("Deputy Leader of the House of Commons") == 1
+        assert ministers.post_rank("Deputy Leader of the House of Lords") == 1
+        assert ministers.post_rank("Leader of the House of Commons") == 0
+        assert ministers.post_rank("Deputy Prime Minister") == 0
 
     def test_treasury_answering_body_name(self, app):
         _member(4264, "Rachel Reeves", posts=CHANCELLOR_POSTS, constituency="Leeds West and Pudsey")
@@ -347,6 +351,16 @@ class TestResearchToolRows:
                 for d in ("2025-01-15", "2025-06-10", "2026-01-20", "2026-09-10") for dept in (DFE, "")]
         debate_scanner.flag_minister_rows(rows)
         assert {r["minister_role"] for r in rows} == {"Minister of State (Education)"}
+
+    def test_unverified_minister_not_counted_for_group_badge(self):
+        import debate_scanner
+        unverified = {"speaker_name": "A", "is_minister": True, "minister_unverified": True,
+                      "debate_title": "Cats", "hdate": "2026-05-20", "listurl": "u1"}
+        verified = dict(unverified, speaker_name="B", minister_unverified=False, listurl="u2")
+        groups = debate_scanner._group_by_debate([unverified])
+        assert groups and not any(g["has_minister"] for g in groups)
+        groups = debate_scanner._group_by_debate([unverified, verified])
+        assert any(g["has_minister"] for g in groups)
 
     def test_unverified_minister_has_no_label_on_page(self):
         from flask import Flask

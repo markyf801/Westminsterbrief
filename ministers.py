@@ -244,8 +244,10 @@ _SECONDARY_POST_WORDS = ("women and equalities", "equalities", "spokesperson", "
                          "household", "comptroller", "vice-chamberlain", "captain of")
 _JUNIOR_POST_WORDS = ("under-secretary", "under secretary", "parliamentary secretary",
                       "economic secretary", "exchequer secretary")
+# Checked before the senior words, so "Deputy Leader of the House" is not senior.
 _MIDDLE_POST_WORDS = ("minister of state", "solicitor general", "advocate general",
-                      "financial secretary", "paymaster general", "minister without portfolio")
+                      "financial secretary", "paymaster general", "minister without portfolio",
+                      "deputy leader")
 _SENIOR_POST_WORDS = ("prime minister", "secretary of state", "chancellor of the exchequer",
                       "chief secretary", "attorney general", "lord chancellor", "leader of the house",
                       "chancellor of the duchy", "lord president", "lord privy seal")
