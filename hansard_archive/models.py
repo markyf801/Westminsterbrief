@@ -150,6 +150,26 @@ class HansardSessionTheme(db.Model):
         return f"<HansardSessionTheme session={self.session_id} [{self.theme_type}] {self.theme!r}>"
 
 
+class HaSessionRedirect(db.Model):
+    """
+    Old debate URL slug -> the session that replaced it. Written by
+    scripts/delete_duplicate_debates.py for each duplicate copy of a debate it
+    deletes, so the deleted copy's /archive/debate/<date>/<slug> URL 301s to
+    the copy we kept (see views._session_or_404). No foreign key, like
+    ha_division.ha_session_id. Created on production by
+    migrations/session_redirect_table.py; the debate page works without it.
+    """
+
+    __tablename__ = "ha_session_redirect"
+
+    old_slug = db.Column(db.String(200), primary_key=True)
+    new_session_id = db.Column(db.Integer, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<HaSessionRedirect {self.old_slug!r} -> {self.new_session_id}>"
+
+
 # ha_cron_run.service_name of the scheduled PQ crons (docs/ops/railway-services.md).
 # Their ok runs date the "updated" times on /questions and /tracker; one-off runs
 # (pq-catchup, backfill, manual) don't. Same names as health_checks CONFIG["pq_crons"]["known"].

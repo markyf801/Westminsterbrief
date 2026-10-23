@@ -34,7 +34,7 @@ from docx.shared import Pt, RGBColor
 from flask import Blueprint, abort, redirect, render_template, make_response, request
 from markupsafe import Markup
 from sqlalchemy import case, func, or_, select, text as sqla_text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import load_only
 
 from cache_models import CachedMember
@@ -50,6 +50,7 @@ from hansard_archive.models import (
     HansardSessionTheme,
     HaPQ,
     HaPQTheme,
+    HaSessionRedirect,
     ManifestoChunk,
     ManifestoChunkTag,
     THEME_TYPE_POLICY_AREA,
@@ -286,16 +287,37 @@ def _batch_load_contrib_counts(session_ids: list) -> dict:
     )
 
 
-def _session_or_404(slug: str) -> HansardSession:
-    """Fetch a non-container session by slug or 404."""
+def _session_or_404(slug: str, suffix: str = "") -> HansardSession:
+    """Fetch a non-container session by slug; 301 a deleted duplicate's slug to
+    the copy we kept (ha_session_redirect, + suffix e.g. "/word"); else 404."""
     session = (
         HansardSession.query
         .filter_by(slug=slug, is_container=False)
         .first()
     )
     if session is None:
+        target = _redirect_target(slug)
+        if target is not None:
+            abort(redirect(f"/archive/debate/{_url_date(target.date)}/{target.slug}{suffix}", code=301))
         abort(404)
     return session
+
+
+def _redirect_target(slug: str) -> HansardSession | None:
+    """The live session an old slug redirects to, or None. The table may not
+    exist yet (migrations/session_redirect_table.py): then there are none."""
+    try:
+        row = db.session.get(HaSessionRedirect, slug)
+    except SQLAlchemyError as exc:
+        db.session.rollback()
+        print(f"[archive] ha_session_redirect lookup failed (table missing?): {exc}", flush=True)
+        return None
+    if row is None:
+        return None
+    target = db.session.get(HansardSession, row.new_session_id)
+    if target is None or target.is_container or not target.slug or target.slug == slug:
+        return None
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -1253,7 +1275,7 @@ def session_detail(date_str: str, slug: str):
 
 @archive_bp.route("/debate/<string:date_str>/<string:slug>/word")
 def session_word(date_str: str, slug: str):
-    session = _session_or_404(slug)
+    session = _session_or_404(slug, "/word")
     if _url_date(session.date) != date_str:
         abort(404)
     ctx = _session_context(session)
