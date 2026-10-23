@@ -3,8 +3,13 @@ Hansard Archive incremental ingestion — cron entry point.
 
 Ingest the last N days for both Commons and Lords, then theme-tag any newly
 ingested sessions. Designed to run hourly during sitting-day windows.
-Safe to re-run: sessions already in the DB are skipped; already-tagged
-sessions are skipped by the tagger.
+Safe to re-run: a session already in the DB is never stored twice. If
+Hansard's copy of it has changed since (a debate stored while still going on,
+or before Hansard finished publishing it), its contributions are brought up to
+date in place — same id, slug and tags — and, when the text changed
+materially, it is re-tagged (old tags kept if the new ones don't verify).
+See hansard_archive/refresh.py. Already-tagged sessions are otherwise skipped
+by the tagger.
 
 Three Railway Cron Job services use this script with different schedules:
 
@@ -36,6 +41,7 @@ sys.path.insert(0, ".")
 
 from flask_app import app
 from hansard_archive.ingestion import ingest_date_range
+from hansard_archive.refresh import retag_refreshed
 from hansard_archive.tagger import tag_all_untagged
 from hansard_archive.models import HaCronRun
 from extensions import db
@@ -47,6 +53,11 @@ _LOG_RETENTION_DAYS = 90
 # instead of one run spending an hour on it. Override with ARCHIVE_TAG_CAP.
 _TAG_CAP = int(os.environ.get("ARCHIVE_TAG_CAP", "200"))
 
+# Refreshed sessions re-tagged per run (only those already tagged whose text
+# changed materially; see hansard_archive/refresh.py). Override with
+# ARCHIVE_RETAG_CAP.
+_RETAG_CAP = int(os.environ.get("ARCHIVE_RETAG_CAP", "30"))
+
 
 def _alert_email() -> str:
     return os.environ.get("CRON_ALERT_EMAIL") or os.environ.get("ADMIN_EMAIL", "")
@@ -56,7 +67,7 @@ def _send_failure_alert(service_name: str, subject: str, body: str) -> None:
     """Send a failure alert email. Silently no-ops if Postmark isn't configured."""
     recipient = _alert_email()
     if not recipient:
-        print(f"[cron] ALERT: no recipient configured (set ADMIN_EMAIL or CRON_ALERT_EMAIL)", flush=True)
+        print("[cron] ALERT: no recipient configured (set ADMIN_EMAIL or CRON_ALERT_EMAIL)", flush=True)
         return
     try:
         from email_service import send_email
@@ -104,6 +115,10 @@ def main() -> None:
     total_sessions = 0
     total_errors = 0
     total_tagged = 0
+    total_refreshed = 0
+    total_held = 0
+    retag_ids: list[int] = []
+    refresh_notes = ""
     tag_notes = ""
     tag_aborted = ""
     run_record_id: int | None = None
@@ -130,24 +145,43 @@ def main() -> None:
             # --- Ingestion ---
             for house in ("Commons", "Lords"):
                 print(f"[cron] === {house} ===", flush=True)
-                result = ingest_date_range(start, today, house=house, verbose=True)
+                result = ingest_date_range(start, today, house=house, verbose=True,
+                                           refresh_existing=True)
                 house_sessions = result["total_sessions"]
                 house_errors = result["errors"]
                 total_sessions += house_sessions
                 total_errors += house_errors
+                total_refreshed += result["refreshed"]
+                total_held += result["held"]
+                retag_ids.extend(result["retag_ids"])
                 print(
                     f"[cron] {house} done — "
                     f"{house_sessions} new sessions, "
+                    f"{result['refreshed']} refreshed, {result['held']} held, "
                     f"{result['sitting_days']} sitting day(s), "
                     f"{house_errors} error(s)",
                     flush=True,
                 )
+            refresh_notes = f"refresh: refreshed={total_refreshed} held={total_held}"
+
+            # --- Re-tag refreshed sessions whose text changed materially ---
+            db.session.rollback()
+            if retag_ids:
+                retag = retag_refreshed(retag_ids, limit=_RETAG_CAP)
+                total_errors += retag["api_errors"]
+                refresh_notes += (
+                    f" retag: retagged={retag['retagged']} kept_old={retag['kept_old']} "
+                    f"untagged={retag['untagged']} over_cap={retag['over_cap']} "
+                    f"api_errors={retag['api_errors']}"
+                    + (f" ABORTED: {retag['aborted']}" if retag["aborted"] else "")
+                )
+            print(f"[cron] {refresh_notes}", flush=True)
 
             # --- Theme tagging ---
             if total_sessions > 0:
                 print(f"[cron] Tagging {total_sessions} new session(s)…", flush=True)
             else:
-                print(f"[cron] No new sessions — running tagger for any missed sessions…", flush=True)
+                print("[cron] No new sessions — running tagger for any missed sessions…", flush=True)
 
             db.session.rollback()  # clear any poisoned state from ingestion errors
             tag_result = tag_all_untagged(limit=_TAG_CAP, verbose=True)
@@ -183,7 +217,7 @@ def main() -> None:
                     record.sessions_tagged = total_tagged
                     record.errors = total_errors
                     record.status = final_status
-                    notes = "\n".join(n for n in (fatal_error, tag_notes) if n)
+                    notes = "\n".join(n for n in (fatal_error, refresh_notes, tag_notes) if n)
                     if notes:
                         record.notes = notes[:2000]
                     db.session.commit()
@@ -194,7 +228,8 @@ def main() -> None:
         # --- Summary ---
         print(
             f"[cron] === END === status={final_status} "
-            f"ingested={total_sessions} tagged={total_tagged} errors={total_errors} "
+            f"ingested={total_sessions} refreshed={total_refreshed} held={total_held} "
+            f"tagged={total_tagged} errors={total_errors} "
             f"elapsed={elapsed:.1f}s",
             flush=True,
         )
@@ -214,7 +249,8 @@ def main() -> None:
             f"Schedule:  {run_start.strftime('%Y-%m-%d %H:%M')} UTC\n"
             f"Window:    {start} → {today} ({args.days} days)\n"
             f"Ingested:  {total_sessions} sessions\n"
-            f"Tagged:    {total_tagged} sessions\n"
+            f"Refreshed: {refresh_notes or 'not run'}\n"
+            f"Tagged:   {total_tagged} sessions\n"
             f"Tagging:   {tag_notes or 'not run'}\n"
             f"Errors:    {total_errors}\n"
             f"Status:    {final_status}\n"

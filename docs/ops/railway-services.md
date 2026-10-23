@@ -64,6 +64,16 @@ Oral ministerial statements are classified within the same Hansard ingestion
 separate source with their own cron — see "Written ministerial statements"
 below. Theme tagging runs inline at the end of every Hansard cron run.
 
+Each run also refreshes debates it already holds when Hansard's copy has
+changed (a debate stored while still going on, or before Hansard finished
+publishing it): contributions are updated in place, keeping the session's id,
+slug and tags, and `REFRESHED` / `HOLD` lines appear in the log, with counts in
+the run summary and `ha_cron_run.notes`. Refreshed debates that were already
+tagged are re-tagged (at most `ARCHIVE_RETAG_CAP`, default 30, per run; old
+tags kept if the new ones don't verify). See `hansard_archive/refresh.py`.
+Older debates stored cut short: `scripts/refresh_partial_debates.py` (one-off,
+dry run by default).
+
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)
 
 | Service | Cron (UTC) | BST window | GMT window | Purpose |
