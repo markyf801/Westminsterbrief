@@ -208,12 +208,13 @@ _AREA_EVIDENCE_VETO: dict[str, re.Pattern] = {
 
 # ...unless the same quote also names the area's own subject, e.g. "the
 # two-child limit harms the welfare of children" or "PIP claimants with
-# assistance animals" really are about benefits.
+# assistance animals" really are about benefits. Not "claims" (animal welfare
+# claims on labels) or "benefits of" (the benefits of higher welfare).
 _AREA_EVIDENCE_KEEP: dict[str, re.Pattern] = {
     "Welfare and benefits": re.compile(
         r"(?<![a-z0-9])(?:"
-        r"benefits?|universal credit|pip|personal independence payment|allowances?"
-        r"|pensions?|claimants?|claims?|two child|social security|dwp"
+        r"benefits?(?! of)|universal credit|pip|personal independence payment|allowances?"
+        r"|pensions?|claimants?|two child|social security|dwp"
         r"|department for work and pensions"
         r")(?![a-z0-9])"
     ),

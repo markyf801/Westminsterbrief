@@ -113,6 +113,9 @@ def test_verify_tags_canonicalises_topics():
     ("welfare standards for claimants", False),
     ("PIP claimants with assistance animals", False),
     ("benefits for livestock farmers", False),
+    # not benefits evidence: still vetoed
+    ("misleading animal welfare claims on labels", True),
+    ("the benefits of higher welfare standards for hens", True),
 ])
 def test_welfare_and_benefits_veto(quote, vetoed):
     assert tg.area_evidence_vetoed("Welfare and benefits", quote) is vetoed
