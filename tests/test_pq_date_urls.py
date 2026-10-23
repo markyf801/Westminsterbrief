@@ -245,3 +245,20 @@ def test_selected_export_picks_the_question_by_date_and_uin(client):
     r = client.post("/questions/download_selected", data={
         "format": "csv", "items_json": json.dumps([{"uin": "6978"}])})
     assert "Question about rail punctuality." in r.get_data(as_text=True)
+
+
+def test_new_month_chunk_rebuilds_the_month_list_before_404(fa, client):
+    """On the 1st of a month the cached list may not have the new month yet
+    (and the other worker may already list it): rebuild once before a 404."""
+    _add("6978", date(2026, 6, 4), "Rail")
+    assert "2026-06" in fa._sitemap_pq_months()              # list now cached
+    _add("1", date(2026, 7, 1), "First of July")
+    # Just built: an unknown month doesn't force a rebuild (at most once a minute)
+    assert client.get("/sitemap-pqs-2026-07.xml").status_code == 404
+    fa._sitemap_pq_month_summary["ts"] -= 61
+    r = client.get("/sitemap-pqs-2026-07.xml")
+    assert r.status_code == 200
+    assert "/archive/pq/2026-07-01/1</loc>" in r.get_data(as_text=True)
+    assert "2026-07" in fa._sitemap_pq_months()
+    fa._sitemap_pq_month_summary["ts"] -= 61
+    assert client.get("/sitemap-pqs-2026-08.xml").status_code == 404   # still no such month

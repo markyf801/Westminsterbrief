@@ -1114,14 +1114,18 @@ def _pq_lastmod(*days):
     return max(d for d in days if d)
 
 
-def _sitemap_pq_months() -> dict:
+def _sitemap_pq_months(refresh: bool = False) -> dict:
     """{'YYYY-MM': lastmod} for every month with a stored written question,
-    newest first. One GROUP BY over ha_pq, cached as long as the PQ chunks."""
+    newest first. One GROUP BY over ha_pq, cached for an hour like the index.
+    refresh=True rebuilds early (a chunk asked for a month not in the list,
+    e.g. on the 1st), at most once a minute so unknown months can't force a
+    rebuild on every request."""
     import time as _t
     from sqlalchemy import func as sqlfunc
     from hansard_archive.models import HaPQ
     cache = _sitemap_pq_month_summary
-    if cache['data'] is not None and _t.time() - cache['ts'] < _SITEMAP_PQ_TTL:
+    age = _t.time() - cache['ts']
+    if cache['data'] is not None and age < _SITEMAP_TTL and not (refresh and age >= 60):
         return cache['data']
     months: dict = {}
     for tabled, answered, corrected in (
@@ -1240,7 +1244,7 @@ def sitemap_pqs_month(month: str):
     if not _re.fullmatch(r'20\d\d-(0[1-9]|1[0-2])', month):
         abort(404)
     try:
-        known = month in _sitemap_pq_months()
+        known = month in _sitemap_pq_months() or month in _sitemap_pq_months(refresh=True)
     except Exception as exc:   # serve the cached (or empty) chunk rather than fail
         print(f'[SITEMAP] PQ month list error: {exc}', flush=True)
         db.session.rollback()
