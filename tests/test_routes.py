@@ -736,16 +736,17 @@ class TestArchiveSearchFixes:
                 fn('school funding', **kw)
                 return [str(c.args[0]) for c in ex.call_args_list]
 
-        with app.app_context():
+        with app.app_context(), patch.object(views._st, 'name_guard', return_value=None):
             rel = run(views._fts_search, page=1)[-1]
             new = run(views._fts_search, page=1, sort='newest')[-1]
             pq_rel = run(views._pq_fts_search)[0]
             pq_new = run(views._pq_fts_search, sort='newest')[0]
             count = run(views._pq_fts_count)[0]
         assert 'CURRENT_DATE - s.date' in rel
-        assert 'ORDER BY final_rank DESC, s.date DESC' in rel
-        assert 'ORDER BY s.date DESC, final_rank DESC' in new
+        # Phrase matches first, then rank (tests/test_archive_search_noise.py)
+        assert 'ORDER BY phrase_hit DESC, final_rank DESC, date DESC' in rel
+        assert 'ORDER BY date DESC, final_rank DESC' in new
         assert 'CURRENT_DATE - p.tabled_date' in pq_rel
-        assert 'ORDER BY rank DESC' in pq_rel
+        assert 'ORDER BY phrase_hit DESC, rank DESC' in pq_rel
         assert 'ORDER BY p.tabled_date DESC' in pq_new
         assert 'LIMIT :cap' in count
