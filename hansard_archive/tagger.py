@@ -48,6 +48,7 @@ from datetime import datetime
 from typing import Optional
 
 import requests
+from sqlalchemy import text as sa_text
 
 from extensions import db
 from hansard_archive.models import (
@@ -977,25 +978,54 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
 # Writing
 # ---------------------------------------------------------------------------
 
+# First key of the Postgres advisory lock taken while a session's tags are written.
+_SESSION_TAGS_LOCK = 72_616_701
+
+
+def _lock_session_tags(session_id: int) -> None:
+    """
+    Postgres: hold a transaction-scoped advisory lock on one session's tags, so
+    two writers (hourly archive cron, retag, backfill) can't interleave their
+    delete/insert and leave a tag stored twice. Released at commit/rollback.
+    ha_session_theme has no unique constraint to fall back on. SQLite
+    serialises writers anyway.
+    """
+    if db.session.get_bind().dialect.name == "postgresql":
+        db.session.execute(sa_text("SELECT pg_advisory_xact_lock(CAST(:k AS integer), CAST(:i AS integer))"),
+                           {"k": _SESSION_TAGS_LOCK, "i": session_id})
+
+
 def write_session_tags(session_id: int, outcome: TagOutcome, replace: bool = False,
                        now: Optional[datetime] = None) -> int:
-    """Store verified tags for a session (policy areas in centrality order). Commits."""
+    """
+    Store verified tags for a session (policy areas in centrality order). Commits.
+
+    Each (theme, theme_type) is written once. Without replace, nothing is written
+    if the session already has tags (another writer got there first since the
+    caller checked); with replace, its tags are swapped for these.
+    """
     now = now or datetime.utcnow()
+    _lock_session_tags(session_id)
     if replace:
         HansardSessionTheme.query.filter_by(session_id=session_id).delete(synchronize_session=False)
+    elif HansardSessionTheme.query.filter_by(session_id=session_id).first():
+        db.session.commit()      # end the transaction (and the lock)
+        logger.warning("Tagger: session %d was tagged by another run meanwhile — not written", session_id)
+        return 0
     count = 0
-    for area in outcome.policy_areas:
-        db.session.add(HansardSessionTheme(session_id=session_id, theme=area,
-                                           theme_type=THEME_TYPE_POLICY_AREA,
-                                           tagged_at=now, model_used=outcome.model))
-        count += 1
-    for theme in outcome.topics:
-        db.session.add(HansardSessionTheme(session_id=session_id, theme=theme,
-                                           theme_type=THEME_TYPE_SPECIFIC,
+    seen: set[tuple[str, str]] = set()
+    for theme, theme_type in ([(a, THEME_TYPE_POLICY_AREA) for a in outcome.policy_areas]
+                              + [(t, THEME_TYPE_SPECIFIC) for t in outcome.topics]):
+        if (theme, theme_type) in seen:
+            continue
+        seen.add((theme, theme_type))
+        db.session.add(HansardSessionTheme(session_id=session_id, theme=theme, theme_type=theme_type,
                                            tagged_at=now, model_used=outcome.model))
         count += 1
     if count or replace:
         db.session.commit()
+    else:
+        db.session.rollback()    # release the lock
     return count
 
 
