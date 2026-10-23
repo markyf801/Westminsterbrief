@@ -1671,6 +1671,8 @@ _TOPIC_TAG_CANDIDATES = 5000   # distinct stored tags examined per page; more ->
 _TOPIC_TWIN_DAYS      = 14     # Lords repeat of a Commons statement: same title, days apart
 _TOPIC_TWIN_TYPES     = ("ministerial_statement", "urgent_question")
 _TOPIC_MATCH_TTL      = 1800   # seconds; a topic page picks up new items within 30 minutes
+_TOPIC_FALLBACK_TTL   = 300    # seconds; an exact-tags-only fallback is retried sooner
+_TOPIC_BUDGET_S       = 8.0    # overall time for the extra matching, checked between steps
 _TOPIC_MATCH_MAX      = 256    # cached topic pages per worker
 _TOPIC_TIMEOUT_MS     = 5000   # Postgres statement_timeout for the extra matching
 _topic_match_cache: dict = {}
@@ -1679,6 +1681,10 @@ _IN_CHUNK = 500                # bound bind parameters per IN (...) list
 
 class _TopicTooBroad(Exception):
     """More candidate tags than _TOPIC_TAG_CANDIDATES: list exact tags only."""
+
+
+class _TopicOverBudget(Exception):
+    """The extra matching took longer than _TOPIC_BUDGET_S: list exact tags only."""
 
 
 def _chunks(seq, n: int = _IN_CHUNK):
@@ -1762,9 +1768,11 @@ def _heading_matched_pqs(matcher) -> list:
     if _is_postgres():
         tsq, params = _tsquery_any("hq", matcher)
         q = q.filter(sqla_text(f"ha_pq.question_tsv @@ {tsq}").bindparams(**params))
-    else:
-        q = q.filter(or_(*[func.lower(HaPQ.heading).like(p.title_like_pattern())
-                           for p in matcher.phrases]))
+    # The heading LIKE must stay on Postgres too: question_tsv also covers the
+    # question and answer text, so the tsquery alone matches tens of thousands
+    # of rows for "send" or "ukraine".
+    q = q.filter(or_(*[func.lower(HaPQ.heading).like(p.title_like_pattern())
+                       for p in matcher.phrases]))
     return [(r[0], r[1]) for r in q.all() if matcher.title_matches(r[2])]
 
 
@@ -1843,7 +1851,9 @@ class _statement_timeout:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        if exc_type is None and _is_postgres():
+        # After a database error the transaction is aborted and is rolled back
+        # by the caller, which clears SET LOCAL; otherwise restore it here.
+        if _is_postgres() and not (exc_type and issubclass(exc_type, OperationalError)):
             db.session.execute(sqla_text("SET LOCAL statement_timeout TO DEFAULT"))
         return False
 
@@ -1881,29 +1891,43 @@ def _pq_rows_for_tags(names) -> dict[int, object]:
 
 
 def _topic_extra_matches(theme_slug: str, session_names, pq_names, sessions: dict, pqs: dict) -> None:
-    """Add to `sessions` / `pqs` (in place) the items found beyond exact tags."""
+    """Add to `sessions` / `pqs` (in place) the items found beyond exact tags.
+    Raises _TopicOverBudget when the steps together run past _TOPIC_BUDGET_S."""
     matcher = _tm.TopicMatcher(theme_slug, stored_names=set(session_names) | set(pq_names))
     if not matcher:
         return
+    started = time.monotonic()
+
+    def check_budget(step: str) -> None:
+        if time.monotonic() - started > _TOPIC_BUDGET_S:
+            raise _TopicOverBudget(step)
+
     try:
         s_extra = _contained_topic_names(
             HansardSessionTheme.theme, HansardSessionTheme.theme_type, matcher) - set(session_names)
+        check_budget("session tags")
         p_extra = _contained_topic_names(
             HaPQTheme.theme, HaPQTheme.theme_type, matcher) - set(pq_names)
     except _TopicTooBroad:
         print(f"[brief_topic] {theme_slug}: over {_TOPIC_TAG_CANDIDATES} candidate tags; "
               "tag containment skipped", flush=True)
         s_extra = p_extra = set()
+    check_budget("question tags")
     for sid, r in _session_rows_for_tags(s_extra).items():
         sessions.setdefault(sid, r)
+    check_budget("tagged sessions")
     for r in _title_matched_sessions(matcher):
         sessions.setdefault(r[0], r)
+    check_budget("titles")
     for r in _other_house_twins(list(sessions.values())):
         sessions.setdefault(r[0], r)
+    check_budget("repeats")
     for pid, tabled in _pq_rows_for_tags(p_extra).items():
         pqs.setdefault(pid, tabled)
+    check_budget("tagged questions")
     for pid, tabled in _heading_matched_pqs(matcher):
         pqs.setdefault(pid, tabled)
+    check_budget("headings")
 
 
 def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tuple:
@@ -1914,20 +1938,23 @@ def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tu
     pq_names); exact count is how many, and decides thin/noindex. Extra
     (_topic_extra_matches): tags containing the topic phrase, titles and
     headings containing it, other-House twins. The extra matching runs under a
-    Postgres statement_timeout; on a timeout the page lists exact matches only.
+    Postgres statement_timeout per statement and an overall _TOPIC_BUDGET_S; on
+    a timeout, a database error or an overrun the page lists exact matches only.
 
     Sessions are ordered by _session_tier, then newest first; PQs newest tabled
-    first. Cached per worker for _TOPIC_MATCH_TTL seconds.
+    first. Cached per worker for _TOPIC_MATCH_TTL seconds, or _TOPIC_FALLBACK_TTL
+    when it fell back to exact matches.
     """
     key = (id(db.engine), theme_slug)
     now = time.time()
     hit = _topic_match_cache.get(key)
-    if hit and now - hit[3] < _TOPIC_MATCH_TTL:
+    if hit and now < hit[3]:
         return hit[0], hit[1], hit[2]
 
     sessions = _session_rows_for_tags(session_names)
     pqs = _pq_rows_for_tags(pq_names)
     exact = len(sessions) + len(pqs)
+    ttl = _TOPIC_MATCH_TTL
     try:
         more_s, more_p = dict(sessions), dict(pqs)
         with _statement_timeout(_TOPIC_TIMEOUT_MS):
@@ -1935,8 +1962,13 @@ def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tu
         sessions, pqs = more_s, more_p
     except OperationalError as exc:      # statement_timeout (QueryCanceled) or a dropped connection
         db.session.rollback()
+        ttl = _TOPIC_FALLBACK_TTL
         print(f"[brief_topic] {theme_slug}: extra matching failed, exact tags only: "
               f"{type(exc.orig).__name__ if exc.orig else exc}", flush=True)
+    except _TopicOverBudget as exc:
+        ttl = _TOPIC_FALLBACK_TTL
+        print(f"[brief_topic] {theme_slug}: extra matching over {_TOPIC_BUDGET_S}s "
+              f"(after {exc}), exact tags only", flush=True)
 
     ordered = sorted(sessions.values(), key=lambda r: (_session_tier(r[1], r[4]), -r[2].toordinal(), -r[0]))
     session_ids = array("q", (r[0] for r in ordered))
@@ -1944,7 +1976,7 @@ def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tu
 
     if len(_topic_match_cache) >= _TOPIC_MATCH_MAX:
         _topic_match_cache.pop(min(_topic_match_cache, key=lambda k: _topic_match_cache[k][3]))
-    _topic_match_cache[key] = (session_ids, pq_ids, exact, now)
+    _topic_match_cache[key] = (session_ids, pq_ids, exact, now + ttl)
     return session_ids, pq_ids, exact
 
 

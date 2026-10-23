@@ -27,7 +27,9 @@ looked for that way when it has a family here, because one word often has
 another sense ("arms" in "arm's-length bodies", "turkey" the bird): adding a
 family is the decision that the word is safe to search for. "exclude" lists
 text that contains the word but means something else ("CAT scans" on the cats
-page). ACRONYMS must be upper case in a title or heading ("SEND", not "send").
+page); "upper_case_exclude" words in upper case in a title or heading are an
+acronym for something else ("CAT"). ACRONYMS are the reverse: they must be upper
+case in a title or heading ("SEND", not "send").
 
 Data-driven and extendable: add a family or an alias here, no other code changes.
 Keys and aliases are lowercase, whitespace-collapsed (as stored). Run
@@ -117,7 +119,12 @@ TOPIC_FAMILIES: dict[str, dict] = {
         "exclude": [
             "cat scan", "cat scans", "cat scanner", "cat scanners",
             "centres for advanced training", "music and dance scheme",
+            "cat and mouse", "fat cat", "cat s eyes", "cats eyes", "cat smith",
+            "out of the bag", "competition appeal tribunal",
         ],
+        # Upper case in a title or heading is an acronym, not the animal:
+        # CAT scans, the Competition Appeal Tribunal (CAT), CATs dance scheme.
+        "upper_case_exclude": ["cat"],
     },
 }
 
@@ -185,14 +192,24 @@ def expand_topics(themes) -> list[str]:
     return sorted(out)
 
 
-def topic_exclusions(theme: str) -> list[str]:
-    """The "exclude" texts of the family this topic belongs to (empty if none)."""
+def _family_spec(theme: str) -> dict:
     canon = canonical_topic(theme)
     root = _PARENT_OF.get(canon, canon)
     for parent, spec in TOPIC_FAMILIES.items():
         if _norm(parent) == root:
-            return [_norm(x) for x in spec.get("exclude", [])]
-    return []
+            return spec
+    return {}
+
+
+def topic_exclusions(theme: str) -> list[str]:
+    """The "exclude" texts of the family this topic belongs to (empty if none)."""
+    return [_norm(x) for x in _family_spec(theme).get("exclude", [])]
+
+
+def topic_upper_case_exclusions(theme: str) -> list[str]:
+    """Words of this topic's family that, written in upper case in a title or
+    heading, are an acronym for something else ("CAT")."""
+    return [_norm(x) for x in _family_spec(theme).get("upper_case_exclude", [])]
 
 
 def known_canonical_topics() -> list[str]:

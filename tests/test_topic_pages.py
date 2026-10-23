@@ -12,6 +12,7 @@ SQLite in memory, no network.
 """
 
 import re
+import time
 from datetime import date, timedelta
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -32,6 +33,16 @@ _NOINDEX = '<meta name="robots" content="noindex, follow">'
     ("cats", "Animal Welfare (Import of Dogs, Cats and Ferrets) Bill", True),
     ("cats", "Catapults and Antisocial Behaviour", False),
     ("cats", "CAT Scans: Waiting Times", False),                   # family "exclude"
+    ("cats", "Cat and Mouse Act", False),
+    ("cats", "Cat-and-mouse tactics", False),
+    ("cats", "Let the cat out of the bag", False),
+    ("cats", "Cat Smith", False),
+    ("cats", "Roads: Cat's Eyes", False),
+    ("cats", "Fat Cat Pay", False),
+    ("cats", "Competition Appeal Tribunal (CAT)", False),
+    ("cats", "CATs: Funding", False),                              # upper case: an acronym
+    ("cats", "Big Cats: Private Ownership", True),                 # kept (noted for Mark)
+    ("cats", "Cat Welfare", True),
     ("ukraine", "US-Russia Deal on Diesel Exports: Effect on Ukraine", True),
     ("ukraine", "Ukrainian Refugees", False),
     ("animal-welfare", "Animal Welfare Strategy for England", True),
@@ -71,6 +82,12 @@ def test_tag_containment(slug, tag, hit):
     assert tm.TopicMatcher(slug).tag_matches(tag) is hit
 
 
+def test_possessive_stored_spelling_does_not_pass_the_one_word_gate():
+    assert not tm.TopicMatcher("arms", stored_names=["arm's"])
+    assert not tm.TopicMatcher("childrens", stored_names=["children's"])
+    assert tm.Phrase("children's services").words == ["children", "services"]
+
+
 def test_possessive_never_makes_a_plural():
     assert tm.normalise("Arm's-Length Bodies") == "arm s length bodies"
     m = tm.TopicMatcher("childrens-services", stored_names=["children's services"])
@@ -86,15 +103,22 @@ def test_generic_and_short_phrases_are_not_expanded():
     assert "send" in sen and "special educational needs" in sen
 
 
-@pytest.mark.parametrize("tag", [
-    "send", "send system reform", "unmet send need", "sending", "consent", "pre-send checks",
-    "special educational needs funding", "ehcp delays", "sentencing and diversion",
-])
-def test_postgres_prefilter_regex_agrees_with_like_patterns(tag):
-    """The one-regex pre-filter used on Postgres keeps the same tags as the LIKEs."""
-    m = tm.TopicMatcher("special-educational-needs")
+@pytest.mark.parametrize("slug, tag", [
+    ("special-educational-needs", t) for t in (
+        "send", "send system reform", "unmet send need", "sending", "consent", "pre-send checks",
+        "special educational needs funding", "ehcp delays", "sentencing and diversion",
+        "(send) provision", "special  educational needs")
+] + [("womens-pensions", "women's pensions compensation"), ("ukraine", "russia-ukraine war"),
+     ("cats", "feral cats"), ("animal-welfare", "farm animal-welfare")])
+def test_postgres_prefilter_regex_never_narrower_than_python(slug, tag):
+    """The Postgres regex pre-filter keeps every tag the Python check accepts,
+    and (like the SQLite LIKEs) rejects what neither could accept."""
+    m = tm.TopicMatcher(slug, stored_names=["women's pensions"] if slug == "womens-pensions" else ())
+    pre = bool(re.search(m.tag_pg_regex(), tag))
+    if m.tag_matches(tag):
+        assert pre
     like = any(fnmatchcase(tag, x.replace("%", "*")) for x in m.tag_like_patterns())
-    assert bool(re.search(m.tag_pg_regex(), tag)) is like
+    assert pre <= like or m.tag_matches(tag)
 
 
 # ── Pages ────────────────────────────────────────────────────────────────────
@@ -320,6 +344,22 @@ class TestUkraine:
         assert r.status_code == 200
         assert _titles(html)[0] == "Engagements"         # the only exact-tagged session
         assert "1 session and 29 written questions on this topic" in html
+        expires = views._topic_match_cache[next(iter(views._topic_match_cache))][3]
+        assert expires - time.time() <= views._TOPIC_FALLBACK_TTL   # retried in 5 minutes
+
+    def test_over_budget_falls_back_to_exact_tags(self, client, monkeypatch):
+        from hansard_archive import views
+        monkeypatch.setattr(views, "_TOPIC_BUDGET_S", -1.0)   # every step is over budget
+        html = _get(client, "/brief/ukraine")
+        assert "1 session and 29 written questions on this topic" in html
+        expires = views._topic_match_cache[next(iter(views._topic_match_cache))][3]
+        assert expires - time.time() <= views._TOPIC_FALLBACK_TTL
+
+    def test_full_match_cached_for_30_minutes(self, client):
+        from hansard_archive import views
+        _get(client, "/brief/ukraine")
+        expires = views._topic_match_cache[next(iter(views._topic_match_cache))][3]
+        assert expires - time.time() > views._TOPIC_FALLBACK_TTL
 
 
 class TestSend:

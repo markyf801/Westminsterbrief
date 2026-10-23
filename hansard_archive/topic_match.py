@@ -22,7 +22,9 @@ Sense guards (one word often means something else):
   - Words match as written, plus a plural "s"/"es" on the last word ("cat" ->
     "cats"). Nothing is stripped, and a possessive "'s" is its own token, so it
     never makes a plural ("arm's" is "arm s", not "arms").
-  - A family's "exclude" texts veto a match ("CAT scans" on the cats page).
+  - A family's "exclude" texts veto a match ("CAT scans" on the cats page),
+    and its "upper_case_exclude" words veto a title written in upper case
+    ("CAT" is an acronym there, not the animal).
   - Acronyms (topic_canon.ACRONYMS: SEND, EHCP) must be upper case in a title
     or heading, so the verb "send" does not match.
 """
@@ -76,7 +78,9 @@ class Phrase:
         self.curated = curated
         toks = self.tokens
         self._like = "%".join(toks) + "%" if toks else ""
-        self._pg_body = ".*".join(toks)    # tokens are [a-z0-9] only: nothing to escape
+        # Words separated by non-alphanumerics ("women's pensions", "russia-ukraine"):
+        # far cheaper per row than ".*", and still a superset of the Python check.
+        self._pg_body = "[^a-z0-9]+".join(toks)    # tokens are [a-z0-9] only: nothing to escape
         body = " ".join(re.escape(t) + (r"(?:s|es)?" if i == len(toks) - 1 else "")
                         for i, t in enumerate(toks))
         self._re = re.compile(r"(?<![a-z0-9])" + body + r"(?![a-z0-9])") if toks else None
@@ -106,9 +110,15 @@ class Phrase:
         if len(self.text) < _MIN_CONTAINS_CHARS and not (self.curated and not self.acronym
                                                          and len(self.text) >= 3):
             return False
-        if len(self.tokens) == 1:
-            return self.curated and self.tokens[0] not in _NO_EXPANSION_WORDS
+        if len(self.words) == 1:
+            return self.curated and self.words[0] not in _NO_EXPANSION_WORDS
         return True
+
+    @property
+    def words(self) -> list[str]:
+        """Tokens without possessive "s" tokens: "arm's" is one word, so it
+        cannot pass the one-word gate as if it were two."""
+        return [t for i, t in enumerate(self.tokens) if not (i and t == "s")]
 
     def in_tag(self, tag: str) -> bool:
         """Whole-word match inside a stored (lowercase) topic tag."""
@@ -168,6 +178,10 @@ class TopicMatcher:
         self.phrases = expandable(phrases_for_slug(slug, stored_names))
         canon = _tc.canonical_for_slug(slug)
         self.excludes = [Phrase(x) for x in _tc.topic_exclusions(canon)] if canon else []
+        self._upper_excludes = [
+            re.compile(r"(?<![A-Za-z0-9])" + re.escape(w.upper()) + r"[sS]?(?![A-Za-z0-9])")
+            for w in (_tc.topic_upper_case_exclusions(canon) if canon else [])
+        ]
 
     def __bool__(self) -> bool:
         return bool(self.phrases)
@@ -178,17 +192,18 @@ class TopicMatcher:
 
     def title_matches(self, title: str) -> bool:
         return (any(p.in_title(title) for p in self.phrases)
-                and not any(x.in_tag(title) for x in self.excludes))
+                and not any(x.in_tag(title) for x in self.excludes)
+                and not any(u.search(title or "") for u in self._upper_excludes))
 
     def tag_like_patterns(self) -> list[str]:
         return sorted({x for p in self.phrases for x in p.tag_like_patterns()})
 
     def tag_pg_regex(self) -> str:
         """
-        One Postgres regex equivalent to tag_like_patterns() ORed: a phrase
-        starting at the start of the tag or after a space or hyphen. One regex
-        per row is several times faster than dozens of LIKEs (SEND has 12
-        phrases). Empty when there is nothing to match.
+        One Postgres regex pre-filter for all phrases (used instead of the
+        LIKEs): a phrase starting at a word start, its words separated by
+        non-alphanumerics. Never narrower than tag_matches() for ASCII tags;
+        Python makes the exact check. Empty when there is nothing to match.
         """
         bodies = [p._pg_body for p in self.phrases if p._pg_body]
-        return f"(^|[ -])({'|'.join(bodies)})" if bodies else ""
+        return f"(^|[^a-z0-9])({'|'.join(bodies)})" if bodies else ""
