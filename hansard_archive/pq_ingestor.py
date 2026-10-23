@@ -68,6 +68,7 @@ _FALLBACK_FAILS_TO_GIVE_UP = 2
 _MAX_FULL_FETCH_FAILURES = 10
 
 _BULK_ANSWER_CAP = 258       # bulk endpoint cuts answerText at this length
+_BULK_QUESTION_CAP = 255     # bulk endpoint cuts questionText at this length (no marker)
 # "Looks truncated" window: near the cap and ending in the API's "...".
 _TRUNC_MIN, _TRUNC_MAX = _BULK_ANSWER_CAP - 10, _BULK_ANSWER_CAP + 40
 
@@ -417,7 +418,7 @@ def _planned_changes(existing: HaPQ, fields: dict, matched_by: str,
     # correction date alone while an answer is stored: they must change
     # together with its text. A holding answer later replaced by the real one,
     # or a corrected answer, keeps its old values, so the difference stays
-    # visible and the next full-fetch pass (_answer_already_stored, Stage B)
+    # visible and the next full-fetch pass (_full_record_already_stored, Stage B)
     # re-fetches it.
     keep_answer_meta = not text_complete and bool(existing.answer_text)
     for name in _REFRESH_IF_PRESENT:
@@ -432,7 +433,7 @@ def _planned_changes(existing: HaPQ, fields: dict, matched_by: str,
     # bulk-only pass fills missing question text but NEVER writes answer text:
     # a truncated answer would look complete and never be re-fetched. It still
     # sets is_answered (and answer_date while no answer is stored), which makes
-    # the answered pass (and _answer_already_stored) fetch the full answer.
+    # the answered pass (and _full_record_already_stored) fetch the full answer.
     q_new, a_new = fields["question_text"], fields["answer_text"] or None
     if text_complete:
         consider("question_text", q_new)
@@ -534,19 +535,39 @@ def _apply_individual(fields: dict, full: dict | None) -> bool:
     return True
 
 
-def _answer_already_stored(fields: dict) -> bool:
-    """True when the matching stored row already has this answer (same answer
-    date, holding flag and correction date, answered, full text present) — no
-    need to re-fetch the full record. A missing answer, one that looks like the
-    truncated bulk copy, a holding answer since replaced (even on the same
-    day, when answer_date is unchanged) and a newly corrected answer are
-    re-fetched. A field the API leaves out is not compared."""
+def _question_text_complete(stored: str | None, bulk: str, bulk_raw_len: int) -> bool:
+    """True when the stored question text is the full text of this bulk record.
+
+    The bulk endpoint cuts questionText at _BULK_QUESTION_CAP characters with
+    no marker. A shorter bulk text is the whole question, so the stored text
+    must equal it; a cut one must be a strict prefix of the stored text. Text
+    that differs any other way (edited at source, or stored from a cut bulk
+    copy) is fetched again."""
+    if not stored:
+        return False
+    if bulk_raw_len < _BULK_QUESTION_CAP:
+        return stored == bulk
+    return len(stored) > len(bulk) and stored.startswith(bulk)
+
+
+def _full_record_already_stored(fields: dict, bulk_question_len: int) -> bool:
+    """True when the matching stored row already has everything the
+    individual record would add: the full question text
+    (_question_text_complete) and this answer (same answer date, holding flag
+    and correction date, answered, full text present) — no need to fetch the
+    full record. A new row, a cut question, a missing answer, one that looks
+    like the truncated bulk copy, a holding answer since replaced (even on the
+    same day, when answer_date is unchanged) and a newly corrected answer are
+    fetched. An answer field the API leaves out is not compared."""
     try:
         existing, _by, ambiguous = find_existing_pq(
             fields.get("api_id"), fields.get("tabled_date"), fields.get("uin"))
     except Exception:
         return False
     if existing is None or ambiguous:
+        return False
+    if not _question_text_complete(existing.question_text, fields["question_text"],
+                                   bulk_question_len):
         return False
     if fields.get("is_holding") is not None and bool(existing.is_holding) != fields["is_holding"]:
         return False
@@ -612,9 +633,11 @@ def ingest_pq_date_range(
         cron also runs "answered in the last N days" and "corrected in the
         last N days" passes.
     fetch_only_new_answers: only call the individual endpoint (full text) for
-        rows that are new or whose answer is new/changed (including a holding
-        answer replaced or an answer corrected) — keeps the answered and
-        corrected passes cheap when their rows are already up to date.
+        rows that are new, whose stored question text is not the full text
+        (the bulk endpoint cuts it at 255 characters), or whose answer is
+        new/changed (including a holding answer replaced or an answer
+        corrected) — keeps every pass cheap when its rows are already up to
+        date. The cron uses it for all passes, the tabled one included.
 
     skip_answer_fetch: bulk records only (fast). Stored text is never replaced;
         missing question text is filled; answer text is never written (bulk
@@ -759,7 +782,8 @@ def ingest_pq_date_range(
                 # bypasses this for bulk passes where speed matters more.
                 text_complete = False
                 want_full = not skip_answer_fetch and fields.get("api_id")
-                if want_full and fetch_only_new_answers and _answer_already_stored(fields):
+                if want_full and fetch_only_new_answers and _full_record_already_stored(
+                        fields, len(value.get("questionText") or "")):
                     want_full = False
                 if want_full:
                     full = _fetch_individual(fields["api_id"])

@@ -605,3 +605,88 @@ def test_identity_mismatch_abort_still_skips_tagging(db, cron, monkeypatch):
 
     assert _run(cron, monkeypatch, "--service-name", "pq-morning") == 1
     assert tagged == []
+
+
+# ── tabled pass: full record only when needed ────────────────────────────────
+
+_FULL_Q = ("To ask the Secretary of State for Transport, what assessment her Department has "
+           "made of the potential merits of extending the zero-emission HGV grant scheme to "
+           "small hauliers operating fewer than five vehicles in rural areas, and whether "
+           "she plans to publish that assessment before the next Spending Review.")
+_CUT_Q = _FULL_Q[:255]           # what the bulk endpoint serves: cut, no marker
+_SHORT_Q = "To ask the Secretary of State, what steps are being taken."
+
+
+def _tabled_row(api_id, text):
+    row = _value(api_id, "2026-09-02")
+    row["value"]["questionText"] = text
+    return row
+
+
+def _stored(db, api_id, text):
+    from hansard_archive.models import HaPQ
+    db.session.add(HaPQ(api_id=api_id, uin=str(api_id), tabled_date=D("2026-09-02"),
+                        question_text=text, is_answered=False, heading="Schools",
+                        is_holding=False, is_withdrawn=False))
+    db.session.commit()
+
+
+def _tabled_pass():
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    return ingest_pq_date_range(D("2026-09-01"), D("2026-09-07"), verbose=False,
+                                fetch_only_new_answers=True)
+
+
+def test_question_text_rule():
+    from hansard_archive.pq_ingestor import _question_text_complete as ok
+    assert len(_FULL_Q) > 255
+    assert ok(_FULL_Q, _CUT_Q.rstrip(), 255)          # full text stored
+    assert not ok(_CUT_Q.rstrip(), _CUT_Q.rstrip(), 255)   # only the cut copy stored
+    assert not ok(None, _CUT_Q, 255)
+    assert ok(_SHORT_Q, _SHORT_Q, len(_SHORT_Q))       # short: bulk is the whole text
+    assert not ok(_SHORT_Q, _SHORT_Q + " Edited.", len(_SHORT_Q) + 8)
+
+
+def test_tabled_pass_skips_rows_already_complete(db, wq):
+    _stored(db, 1, _FULL_Q)
+    _stored(db, 2, _SHORT_Q)
+    wq["rows"] = [_tabled_row(1, _CUT_Q), _tabled_row(2, _SHORT_Q)]
+
+    from hansard_archive.models import HaPQ
+    res = _tabled_pass()
+
+    assert wq["individual_calls"] == [] and res["failed"] == 0
+    assert HaPQ.query.filter_by(api_id=1).one().question_text == _FULL_Q   # never the cut copy
+
+
+def test_tabled_pass_fetches_new_rows_and_cut_question_text(db, wq):
+    from hansard_archive.models import HaPQ
+    _stored(db, 1, _CUT_Q.rstrip())                   # stored from a bulk-only pass
+    _stored(db, 2, _SHORT_Q)
+    wq["rows"] = [_tabled_row(1, _CUT_Q), _tabled_row(2, _SHORT_Q + " Amended."),
+                  _tabled_row(3, _SHORT_Q)]
+    full = {"answerIsHolding": False, "isWithdrawn": False}
+    wq["individual"] = {1: {**full, "questionText": _FULL_Q},
+                        2: {**full, "questionText": _SHORT_Q + " Amended."},
+                        3: {**full, "questionText": _SHORT_Q}}
+
+    res = _tabled_pass()
+
+    assert sorted(wq["individual_calls"]) == [1, 2, 3]
+    assert res["inserted"] == 1 and res["updated"] == 2
+    assert HaPQ.query.filter_by(api_id=1).one().question_text == _FULL_Q
+    assert HaPQ.query.filter_by(api_id=2).one().question_text == _SHORT_Q + " Amended."
+
+
+def test_scheduled_tabled_pass_makes_no_full_fetch_for_stored_rows(db, wq, cron, monkeypatch):
+    today = date.today().isoformat()
+    from hansard_archive.models import HaPQ
+    db.session.add(HaPQ(api_id=1, uin="1", tabled_date=date.today(), question_text=_FULL_Q,
+                        is_answered=False, is_holding=False, is_withdrawn=False))
+    db.session.commit()
+    row = _value(1, today)
+    row["value"]["questionText"] = _CUT_Q
+    wq["rows"] = [row]
+
+    assert _run(cron, monkeypatch, "--service-name", "pq-cron-morning", "--no-tag") == 0
+    assert wq["individual_calls"] == []

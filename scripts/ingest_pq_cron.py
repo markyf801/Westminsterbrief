@@ -4,15 +4,18 @@ PQ Archive incremental ingestion — cron entry point.
 Fetches the last N days of Written Questions from Parliament's WQ API,
 upserts into ha_pq, then theme-tags any untagged PQs.
 
-Three Railway Cron Job services use this script:
+Railway Cron Job services using this script (each records its own name as
+--service-name; schedules and settings: docs/ops/railway-services.md):
 
-  pq-cron-morning    0 11 * * 1-5   11:00 UTC Mon-Fri  (first WQ publication window)
+  pq-cron-early      30 8 * * 1-5   08:30 UTC Mon-Fri  (first capture after publication)
+  pq-cron-morning    30 9 * * 1-5   09:30 UTC Mon-Fri  (late-published questions)
   pq-cron-afternoon  0 14 * * 1-5   14:00 UTC Mon-Fri  (answer publication window)
-  pq-cron-monday     0 9 * * 1      09:00 UTC Monday   (catch recess backlog)
+  pq-cron-monday     0 9 * * 1      09:00 UTC Monday   (post-weekend backlog)
+  pq-quickcheck      --quick-check  (proposed; see the doc)
 
 Usage:
   python scripts/ingest_pq_cron.py                            # defaults (7d, inline tag)
-  python scripts/ingest_pq_cron.py --days 7 --service-name pq-morning
+  python scripts/ingest_pq_cron.py --days 7 --service-name pq-cron-morning
   python scripts/ingest_pq_cron.py --days 365 --service-name backfill --no-tag
   python scripts/ingest_pq_cron.py --days 1 --answered-days 120 --no-tag   # answer catch-up
   python scripts/ingest_pq_cron.py --quick-check --service-name pq-quickcheck  # frequent check
@@ -26,11 +29,13 @@ the last --answered-days (default: same as --days), then answers CORRECTED in
 the last --corrected-days (default: same as --answered-days). Answers usually
 arrive 1-4 weeks after tabling, so the tabled window alone leaves answered PQs
 showing "Awaiting answer". A correction keeps the original answer date, so only
-the corrected window finds a corrected answer to an older question. The
-answered and corrected passes only re-fetch the full record for rows whose
-answer is new or changed — including a holding answer replaced by the real one
-on the same day (same answer date, holding flag changed) and a newly corrected
-answer (new correction date).
+the corrected window finds a corrected answer to an older question. Every
+pass fetches the full (individual) record only for rows that need it: new
+rows, rows whose stored question text is not the full text (the bulk endpoint
+cuts it at 255 characters), and rows whose answer is new or changed —
+including a holding answer replaced by the real one on the same day (same
+answer date, holding flag changed) and a newly corrected answer (new
+correction date). Rows already complete cost one DB lookup, not a request.
 
 --quick-check (opt-in; the scheduled full sweeps don't use it) asks the API for
 counts only (take=1, totalResults): questions tabled in the last
@@ -476,8 +481,12 @@ def _run_full(args, date_from: date, today: date, answered_days: int, passes: di
     "tag_notes", "errors", "abort"}."""
     # --- Ingestion ---
     print(f"[pq-cron] Ingesting WQs {date_from} → {today}…", flush=True)
+    # fetch_only_new_answers: the full record only for new rows, cut question
+    # text and new/changed answers (it used to be fetched for every row in the
+    # window, about 3,500 requests a run).
     result, abort, abort_exc = _run_pass("Tabled pass", date_from, today,
                                          skip_answer_fetch=args.skip_answer_fetch,
+                                         fetch_only_new_answers=True,
                                          dry_run=args.dry_run)
     passes["tabled"] = result
     out = {"inserted": result["inserted"], "updated": result["updated"],
@@ -744,7 +753,8 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=7,
                         help="Lookback window in days (default: 7)")
     parser.add_argument("--service-name", default="manual",
-                        help="Service name for monitoring (pq-morning / pq-afternoon / pq-monday / backfill)")
+                        help="Service name recorded in ha_cron_run (pq-cron-early / pq-cron-morning / "
+                             "pq-cron-afternoon / pq-cron-monday / pq-quickcheck / pq-catchup / backfill)")
     parser.add_argument("--no-tag", action="store_true",
                         help="Skip theme tagging (use for large backfill runs)")
     parser.add_argument("--answered-days", type=int, default=None,
