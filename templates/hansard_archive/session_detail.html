@@ -370,6 +370,18 @@ body { background: #f0f2f5; }
         }
     }
 
+{% if contrib_redirects %}
+    // A #contrib- link to a deleted duplicate of this debate: map to the same speech here.
+    var contribRedirects = {{ contrib_redirects|tojson }};
+    if (hash && hash.startsWith('#contrib-') && !document.getElementById(hash.slice(1))) {
+        var mapped = contribRedirects[hash.slice('#contrib-'.length)];
+        if (mapped && document.getElementById('contrib-' + mapped)) {
+            hash = '#contrib-' + mapped;
+            history.replaceState(null, '', window.location.pathname + window.location.search + hash);
+            document.getElementById(hash.slice(1)).scrollIntoView({ block: 'start' });
+        }
+    }
+{% endif %}
     if (hash && hash.startsWith('#contrib-')) {
         var target = document.getElementById(hash.slice(1));
         if (target) {

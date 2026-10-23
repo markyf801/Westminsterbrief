@@ -33,7 +33,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 from flask import Blueprint, abort, redirect, render_template, make_response, request
 from markupsafe import Markup
-from sqlalchemy import case, func, or_, select, text as sqla_text
+from sqlalchemy import case, func, inspect as sa_inspect, or_, select, text as sqla_text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import load_only
 
@@ -50,6 +50,7 @@ from hansard_archive.models import (
     HansardSessionTheme,
     HaPQ,
     HaPQTheme,
+    HaContributionRedirect,
     HaSessionRedirect,
     ManifestoChunk,
     ManifestoChunkTag,
@@ -288,8 +289,9 @@ def _batch_load_contrib_counts(session_ids: list) -> dict:
 
 
 def _session_or_404(slug: str, suffix: str = "") -> HansardSession:
-    """Fetch a non-container session by slug; 301 a deleted duplicate's slug to
-    the copy we kept (ha_session_redirect, + suffix e.g. "/word"); else 404."""
+    """Fetch a non-container session by slug; redirect a deleted duplicate's slug
+    to the copy we kept (ha_session_redirect, + suffix e.g. "/word", query string
+    kept); else 404. A live session always wins over a redirect for its slug."""
     session = (
         HansardSession.query
         .filter_by(slug=slug, is_container=False)
@@ -298,19 +300,54 @@ def _session_or_404(slug: str, suffix: str = "") -> HansardSession:
     if session is None:
         target = _redirect_target(slug)
         if target is not None:
-            abort(redirect(f"/archive/debate/{_url_date(target.date)}/{target.slug}{suffix}", code=301))
+            url = f"/archive/debate/{_url_date(target.date)}/{target.slug}{suffix}"
+            qs = request.query_string.decode("utf-8", errors="replace")
+            abort(redirect(f"{url}?{qs}" if qs else url, code=_redirect_code()))
         abort(404)
     return session
 
 
+# 302 while the duplicate clean-up is new (Google keeps the old URL indexed and
+# nothing is cached for long); set ARCHIVE_REDIRECT_CODE=301 once it has been
+# checked. Read at call time, like feature_flags.
+def _redirect_code() -> int:
+    return 301 if os.environ.get("ARCHIVE_REDIRECT_CODE", "").strip() == "301" else 302
+
+
+_REDIRECT_TABLES = {"ready": False, "checked_at": None}
+_REDIRECT_RECHECK_S = 600
+
+
+def _redirect_tables_ready() -> bool:
+    """ha_session_redirect / ha_contribution_redirect exist (migrations/
+    session_redirect_table.py). Once seen, remembered; while missing, looked
+    for again at most every 10 minutes, so a 404 costs no extra query."""
+    if _REDIRECT_TABLES["ready"]:
+        return True
+    now = time.monotonic()
+    last = _REDIRECT_TABLES["checked_at"]
+    if last is not None and now - last < _REDIRECT_RECHECK_S:
+        return False
+    _REDIRECT_TABLES["checked_at"] = now
+    try:
+        insp = sa_inspect(db.session.connection())
+        ready = insp.has_table("ha_session_redirect") and insp.has_table("ha_contribution_redirect")
+    except SQLAlchemyError:
+        db.session.rollback()
+        ready = False
+    _REDIRECT_TABLES["ready"] = ready
+    return ready
+
+
 def _redirect_target(slug: str) -> HansardSession | None:
-    """The live session an old slug redirects to, or None. The table may not
-    exist yet (migrations/session_redirect_table.py): then there are none."""
+    """The live session an old slug redirects to, or None."""
+    if not _redirect_tables_ready():
+        return None
     try:
         row = db.session.get(HaSessionRedirect, slug)
-    except SQLAlchemyError as exc:
-        db.session.rollback()
-        print(f"[archive] ha_session_redirect lookup failed (table missing?): {exc}", flush=True)
+    except SQLAlchemyError:
+        db.session.rollback()            # table dropped since: treat as none
+        _REDIRECT_TABLES.update(ready=False, checked_at=time.monotonic())
         return None
     if row is None:
         return None
@@ -318,6 +355,22 @@ def _redirect_target(slug: str) -> HansardSession | None:
     if target is None or target.is_container or not target.slug or target.slug == slug:
         return None
     return target
+
+
+def _contrib_redirects(session_id: int) -> dict:
+    """{old contribution id: this page's contribution id} for #contrib- links
+    that pointed at a deleted copy of this debate."""
+    if not _redirect_tables_ready():
+        return {}
+    try:
+        rows = (db.session.query(HaContributionRedirect.old_contribution_id,
+                                 HaContributionRedirect.new_contribution_id)
+                .filter(HaContributionRedirect.session_id == session_id).all())
+    except SQLAlchemyError:
+        db.session.rollback()
+        _REDIRECT_TABLES.update(ready=False, checked_at=time.monotonic())
+        return {}
+    return {old: new for old, new in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -1266,6 +1319,7 @@ def session_detail(date_str: str, slug: str):
     )
     ctx["related_pqs"] = _related_pqs(session, ctx["policy_ranked"], ctx["specific_topics"])
     ctx["citation"] = _citation(session, ctx["url_date"])
+    ctx["contrib_redirects"] = _contrib_redirects(session.id)
     return render_template("hansard_archive/session_detail.html", **ctx)
 
 

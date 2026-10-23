@@ -154,8 +154,8 @@ class HaSessionRedirect(db.Model):
     """
     Old debate URL slug -> the session that replaced it. Written by
     scripts/delete_duplicate_debates.py for each duplicate copy of a debate it
-    deletes, so the deleted copy's /archive/debate/<date>/<slug> URL 301s to
-    the copy we kept (see views._session_or_404). No foreign key, like
+    deletes, so the deleted copy's /archive/debate/<date>/<slug> URL redirects
+    to the copy we kept (see views._session_or_404). No foreign key, like
     ha_division.ha_session_id. Created on production by
     migrations/session_redirect_table.py; the debate page works without it.
     """
@@ -168,6 +168,26 @@ class HaSessionRedirect(db.Model):
 
     def __repr__(self):
         return f"<HaSessionRedirect {self.old_slug!r} -> {self.new_session_id}>"
+
+
+class HaContributionRedirect(db.Model):
+    """
+    Old contribution id -> the matching contribution of the kept copy, written
+    with ha_session_redirect, so an old #contrib-<id> link still lands on the
+    same speech (the browser keeps the #fragment across the redirect; the kept
+    page's script maps it). session_id is the kept session. Created by
+    migrations/session_redirect_table.py.
+    """
+
+    __tablename__ = "ha_contribution_redirect"
+
+    old_contribution_id = db.Column(db.Integer, primary_key=True, autoincrement=False)
+    new_contribution_id = db.Column(db.Integer, nullable=False)
+    session_id = db.Column(db.Integer, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<HaContributionRedirect {self.old_contribution_id} -> {self.new_contribution_id}>"
 
 
 # ha_cron_run.service_name of the scheduled PQ crons (docs/ops/railway-services.md).

@@ -1,11 +1,13 @@
 """
 Debate URL redirects: the ha_session_redirect table (old slug -> the session
-that replaced it), written by scripts/delete_duplicate_debates.py so a deleted
-duplicate's /archive/debate/<date>/<slug> URL 301s to the copy we kept.
+that replaced it) and ha_contribution_redirect (old contribution id -> the
+kept copy's matching one), written by scripts/delete_duplicate_debates.py so
+a deleted duplicate's /archive/debate/<date>/<slug> URL (and its
+#contrib-<id> links) lead to the copy we kept.
 
 Run once on Railway as a one-shot service, BEFORE running
 scripts/delete_duplicate_debates.py --execute (which refuses to run without the
-table). The web service and crons run with SKIP_MIGRATIONS=1, so
+tables). The web service and crons run with SKIP_MIGRATIONS=1, so
 db.create_all() never creates it there; until it exists the debate page simply
 404s unknown slugs, as before.
 
@@ -47,6 +49,18 @@ def steps(dialect: str) -> list[tuple[str, str]]:
             CREATE INDEX IF NOT EXISTS ix_ha_session_redirect_new_session_id
                 ON ha_session_redirect (new_session_id)
         """),
+        ("Create ha_contribution_redirect", """
+            CREATE TABLE IF NOT EXISTS ha_contribution_redirect (
+                old_contribution_id INTEGER PRIMARY KEY,
+                new_contribution_id INTEGER NOT NULL,
+                session_id          INTEGER NOT NULL,
+                created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """),
+        ("Index ha_contribution_redirect.session_id", """
+            CREATE INDEX IF NOT EXISTS ix_ha_contribution_redirect_session_id
+                ON ha_contribution_redirect (session_id)
+        """),
     ]
 
 
@@ -58,7 +72,7 @@ def upgrade(engine) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create the ha_session_redirect table")
+    parser = argparse.ArgumentParser(description="Create the ha_session_redirect and ha_contribution_redirect tables")
     parser.add_argument("--execute", action="store_true",
                         help="Actually run the SQL (default: dry run)")
     args = parser.parse_args()
@@ -89,7 +103,9 @@ def main() -> None:
 
         with engine.connect() as conn:
             n = conn.execute(text("SELECT COUNT(*) FROM ha_session_redirect")).scalar()
-        print(f"[session-redirect-migration] Done. ha_session_redirect rows: {n}", flush=True)
+            c = conn.execute(text("SELECT COUNT(*) FROM ha_contribution_redirect")).scalar()
+        print(f"[session-redirect-migration] Done. ha_session_redirect rows: {n}, "
+              f"ha_contribution_redirect rows: {c}", flush=True)
 
 
 if __name__ == "__main__":
