@@ -714,6 +714,8 @@ def _collect_all_sessions_for_date(
         # Store non-procedural sessions; still follow links through procedural ones
         title = (overview.get("Title") or "").strip()
         if title.lower() not in _SKIP_TITLES:
+            # Parent/child links for the duplicate check (_report_copies); key is ours.
+            overview["_ChildExtIds"] = list(child_ext_ids)
             results[ext_id] = (overview, contributions)
 
         # When we encounter a department oral-questions container, record the mapping
@@ -795,7 +797,8 @@ def _refresh_existing(session: HansardSession, overview: dict, contributions: li
     return True
 
 
-def _report_copies(sitting_date: date, house: str, changed_ids: list[int], stats: dict) -> None:
+def _report_copies(sitting_date: date, house: str, changed_ids: list[int], stats: dict,
+                   related: list[tuple] = ()) -> None:
     """
     Log and count sessions just stored or refreshed that copy, or sit inside,
     another stored session that day (hansard_archive/dedupe.py). Read-only and
@@ -805,7 +808,7 @@ def _report_copies(sitting_date: date, house: str, changed_ids: list[int], stats
         return
     from hansard_archive.dedupe import copies_and_swallows
     try:
-        found = copies_and_swallows(sitting_date, house, changed_ids)
+        found = copies_and_swallows(sitting_date, house, changed_ids, related)
     except Exception as e:  # noqa: BLE001 - a report must never stop ingestion
         _log.warning("[archive] duplicate check failed for %s %s: %s", sitting_date, house, e)
         print(f"[archive]   WARNING duplicate check failed for {sitting_date} {house}: {e}",
@@ -814,7 +817,10 @@ def _report_copies(sitting_date: date, house: str, changed_ids: list[int], stats
         return
     db.session.rollback()   # end the read transaction
     for kind, inner, outer in found:
-        if kind == "duplicate":
+        if kind == "parent":         # a session holding its own child debate: expected, not counted
+            print(f"[archive]   (parent/child) id={outer.id} {outer.title[:50]!r} holds child "
+                  f"id={inner.id} {inner.title[:50]!r}", flush=True)
+        elif kind == "duplicate":
             stats["duplicates"] += 1
             print(f"[archive]   DUPLICATE? id={inner.id} {inner.title[:50]!r} ({inner.ext_id}) and "
                   f"id={outer.id} {outer.title[:50]!r} ({outer.ext_id}) have the same "
@@ -1000,7 +1006,9 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             print(f"[archive]   ERROR processing session {ext_id}: {e}", flush=True)
 
     if refresh_existing:
-        _report_copies(sitting_date, house, changed_ids, refresh_stats)
+        related = [(ext, child) for ext, (ov, _c) in all_sessions.items()
+                   for child in (ov.get("_ChildExtIds") or [])]
+        _report_copies(sitting_date, house, changed_ids, refresh_stats, related)
     return new_sessions
 
 
