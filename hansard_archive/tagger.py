@@ -48,6 +48,7 @@ from datetime import datetime
 from typing import Optional
 
 import requests
+from sqlalchemy import text as sa_text
 
 from extensions import db
 from hansard_archive.models import (
@@ -977,25 +978,58 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
 # Writing
 # ---------------------------------------------------------------------------
 
+# First key of the Postgres advisory lock taken while a session's tags are written.
+_SESSION_TAGS_LOCK = 72_616_701
+# write_session_tags / tag_session result when another run tagged the session
+# between the caller's "already tagged?" check and the write: not a failure.
+ALREADY_TAGGED = -1
+
+
+def _lock_session_tags(session_id: int) -> None:
+    """
+    Postgres: hold a transaction-scoped advisory lock on one session's tags, so
+    two writers (hourly archive cron, retag, backfill) can't interleave their
+    delete/insert and leave a tag stored twice. Released at commit/rollback.
+    ha_session_theme has no unique constraint to fall back on. SQLite
+    serialises writers anyway.
+    """
+    if db.session.get_bind().dialect.name == "postgresql":
+        db.session.execute(sa_text("SELECT pg_advisory_xact_lock(CAST(:k AS integer), CAST(:i AS integer))"),
+                           {"k": _SESSION_TAGS_LOCK, "i": session_id})
+
+
 def write_session_tags(session_id: int, outcome: TagOutcome, replace: bool = False,
                        now: Optional[datetime] = None) -> int:
-    """Store verified tags for a session (policy areas in centrality order). Commits."""
+    """
+    Store verified tags for a session (policy areas in centrality order). Commits.
+
+    Each (theme, theme_type) is written once. Without replace, nothing is written
+    if the session already has tags (another writer got there first since the
+    caller checked) and ALREADY_TAGGED is returned; with replace, its tags are
+    swapped for these. Otherwise returns the number of rows written.
+    """
     now = now or datetime.utcnow()
+    _lock_session_tags(session_id)
     if replace:
         HansardSessionTheme.query.filter_by(session_id=session_id).delete(synchronize_session=False)
+    elif HansardSessionTheme.query.filter_by(session_id=session_id).first():
+        db.session.commit()      # end the transaction (and the lock)
+        logger.warning("Tagger: session %d was tagged by another run meanwhile — not written", session_id)
+        return ALREADY_TAGGED
     count = 0
-    for area in outcome.policy_areas:
-        db.session.add(HansardSessionTheme(session_id=session_id, theme=area,
-                                           theme_type=THEME_TYPE_POLICY_AREA,
-                                           tagged_at=now, model_used=outcome.model))
-        count += 1
-    for theme in outcome.topics:
-        db.session.add(HansardSessionTheme(session_id=session_id, theme=theme,
-                                           theme_type=THEME_TYPE_SPECIFIC,
+    seen: set[tuple[str, str]] = set()
+    for theme, theme_type in ([(a, THEME_TYPE_POLICY_AREA) for a in outcome.policy_areas]
+                              + [(t, THEME_TYPE_SPECIFIC) for t in outcome.topics]):
+        if (theme, theme_type) in seen:
+            continue
+        seen.add((theme, theme_type))
+        db.session.add(HansardSessionTheme(session_id=session_id, theme=theme, theme_type=theme_type,
                                            tagged_at=now, model_used=outcome.model))
         count += 1
     if count or replace:
         db.session.commit()
+    else:
+        db.session.rollback()    # release the lock
     return count
 
 
@@ -1103,7 +1137,8 @@ def _failure_reason(outcome: TagOutcome) -> str:
 def tag_session(session_id: int, api_key: Optional[str] = None, model: Optional[str] = None) -> int:
     """
     Tag a single session. Skips if already tagged.
-    Returns number of theme rows written (0 if skipped or failed).
+    Returns number of theme rows written (0 if skipped or failed), or
+    ALREADY_TAGGED if another run tagged it while the model was answering.
     Raises GeminiCallFailed when the API call fails (so callers can count it).
     Expects to run inside a Flask app context with an active DB session.
     """
@@ -1147,7 +1182,8 @@ def tag_all_untagged(
     reclassification — is worked through over several runs).
 
     Returns {total_eligible, tagged, failed, errors, api_errors, aborted,
-    given_up}. API failures count as errors; after
+    given_up, already_tagged}. already_tagged: another run tagged the session
+    meanwhile (not a failure). API failures count as errors; after
     MAX_CONSECUTIVE_API_FAILURES in a row the run stops and aborted holds the
     reason. Expects to run inside a Flask app context.
     """
@@ -1174,7 +1210,7 @@ def tag_all_untagged(
     if verbose:
         print(f"[tagger] {total_eligible} sessions to tag (limit={limit})", flush=True)
 
-    tagged = failed = errors = api_errors = consecutive = 0
+    tagged = failed = errors = api_errors = consecutive = already_tagged = 0
     aborted = ""
     for i, session in enumerate(sessions):
         try:
@@ -1186,6 +1222,11 @@ def tag_all_untagged(
                 if verbose:
                     print(f"[tagger] [{i+1}/{total_eligible}] + {session.title[:60]!r} — {count} tags",
                           flush=True)
+            elif count == ALREADY_TAGGED:
+                already_tagged += 1
+                if verbose:
+                    print(f"[tagger] [{i+1}/{total_eligible}] already tagged by another run "
+                          f"{session.title[:60]!r}", flush=True)
             else:
                 failed += 1
                 if verbose:
@@ -1212,7 +1253,8 @@ def tag_all_untagged(
         print(f"[tagger] {n_given_up} session(s) skipped after {TAG_MAX_ATTEMPTS} attempts "
               "with nothing writable", flush=True)
     return {"total_eligible": total_eligible, "tagged": tagged, "failed": failed, "errors": errors,
-            "api_errors": api_errors, "aborted": aborted, "given_up": n_given_up}
+            "api_errors": api_errors, "aborted": aborted, "given_up": n_given_up,
+            "already_tagged": already_tagged}
 
 
 def tag_pq(pq_id: int, api_key: Optional[str] = None, model: Optional[str] = None) -> int:

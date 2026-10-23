@@ -265,6 +265,9 @@ def _batch_load_tags(session_ids: list) -> tuple[dict, dict]:
                 policy[t.session_id].append(t.theme)
             elif t.theme_type == THEME_TYPE_SPECIFIC:
                 specific[t.session_id].append(t.theme)
+    # A tag stored twice (ha_session_theme has no unique constraint) is shown once.
+    policy = defaultdict(list, {k: list(dict.fromkeys(v)) for k, v in policy.items()})
+    specific = defaultdict(list, {k: list(dict.fromkeys(v)) for k, v in specific.items()})
     return policy, specific
 
 
@@ -3418,14 +3421,14 @@ def _compute_party_data(slug: str) -> dict | None:
         policy_rows = (
             db.session.query(
                 HansardSessionTheme.theme,
-                func.count(HansardSessionTheme.session_id).label("n"),
+                func.count(func.distinct(HansardSessionTheme.session_id)).label("n"),
             )
             .filter(
                 HansardSessionTheme.session_id.in_(contrib_session_q),
                 HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA,
             )
             .group_by(HansardSessionTheme.theme)
-            .order_by(func.count(HansardSessionTheme.session_id).desc())
+            .order_by(func.count(func.distinct(HansardSessionTheme.session_id)).desc())
             .limit(8)
             .all()
         )

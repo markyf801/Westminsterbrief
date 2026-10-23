@@ -1040,12 +1040,12 @@ def _build_sitemap_core_xml() -> str:
     seen_theme_slugs: set = set()
     for (theme, _, max_d) in (db.session
                               .query(HansardSessionTheme.theme,
-                                     sqlfunc.count(HansardSessionTheme.session_id),
+                                     sqlfunc.count(sqlfunc.distinct(HansardSessionTheme.session_id)),
                                      sqlfunc.max(HansardSession.date))
                               .join(HansardSession, HansardSession.id == HansardSessionTheme.session_id)
                               .filter(HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
                               .group_by(HansardSessionTheme.theme)
-                              .having(sqlfunc.count(HansardSessionTheme.session_id) >= 5)
+                              .having(sqlfunc.count(sqlfunc.distinct(HansardSessionTheme.session_id)) >= 5)
                               .all()):
         # Alias spellings ("send", "send provision") share their canonical topic's page.
         slug = _slugify_theme(_canonical_topic(theme))

@@ -148,6 +148,9 @@ CONFIG: dict = {
     # Share of recent items with at least one topic tag. Window ends yesterday so
     # items ingested this morning (tagged by the same cron run) don't skew it.
     "tagging": {"window_days": 7, "warn_pct": 90.0, "min_items": 20},
+    # Archive search relies on Postgres splitting "Starmer’s" (curly apostrophe)
+    # into 'starmer', which depends on the database locale (LC_CTYPE).
+    "search_locale": {"sample": "Starmer’s", "expect": "starmer"},
     "cron_recent_failures_hours": 24,     # failed runs in this window are listed in the detail
     "cron_stuck_hours": 3,                # latest run still "running" after this: interrupted
     "cron_interrupted_streak_warn": 3,    # grouped service: this many unfinished runs in a row -> WARN
@@ -813,6 +816,29 @@ def check_tagging_coverage(ctx: HealthContext) -> list[CheckResult]:
     ]
 
 
+def check_search_locale(ctx: HealthContext) -> CheckResult:
+    """
+    Archive search treats curly apostrophes as punctuation only when the
+    database locale does: on en_US.utf8 (production) to_tsvector('english',
+    'Starmer’s') gives 'starmer'; a restore into a "C"-locale cluster would
+    silently stop most possessives matching.
+    """
+    name = "Search: curly apostrophes (database locale)"
+    if ctx.conn.dialect.name != "postgresql":
+        return CheckResult(name, SKIPPED, f"not Postgres ({ctx.conn.dialect.name}): full-text search not used")
+    cfg = ctx.config["search_locale"]
+    got = ctx.conn.execute(sa.text("SELECT to_tsvector('english', :w)::text"), {"w": cfg["sample"]}).scalar()
+    ctype, provider = ctx.conn.execute(sa.text(
+        "SELECT datctype, datlocprovider FROM pg_database WHERE datname = current_database()")).one()
+    providers = {"c": "libc", "i": "icu", "b": "builtin"}
+    detail = (f"to_tsvector('english', '{cfg['sample']}') = {got}; database LC_CTYPE {ctype}, "
+              f"locale provider {providers.get(provider, provider)}")
+    if f"'{cfg['expect']}'" not in (got or ""):
+        return CheckResult(name, FAIL, f"{detail}; expected '{cfg['expect']}' - possessives won't match "
+                                       "in archive search (database locale changed?)")
+    return CheckResult(name, OK, detail)
+
+
 def check_headline_stats(ctx: HealthContext) -> CheckResult:
     # last_success, not last_refreshed: stats_refresh bumps last_refreshed on failure too (SWR).
     res = _table_freshness(ctx, "Stats: headline refresh", "headline_stat", "headline_stats", "last_success")
@@ -859,6 +885,7 @@ DB_CHECKS: list[Callable[[HealthContext], CheckResult | list[CheckResult]]] = [
     check_pq_integrity,
     check_pq_headings_total,
     check_tagging_coverage,
+    check_search_locale,
     check_bills,
     check_edms,
     check_edm_cron,
