@@ -123,6 +123,11 @@ day a question can be stored twice.
 (685,358 rows), verified by psql count. Keep them until step 7 has been checked.
 The daily R2 backup is the fallback behind them.
 
+**Dropped 23 Oct 2026** (Mark's decision, to free ~300 MB). Later catch-ups had
+updated most rows, so undoing from them was no longer practical. If ever needed,
+restore them from an R2 backup dated 20–22 Oct 2026 (daily backups are kept 30 days,
+weekly ones 12 weeks). The undo steps below assume a restored copy.
+
 Note for any undo: `ha_pq.question_tsv` is a generated column, so copy rows
 back by naming the other columns (see step 3's undo), never `SELECT *`.
 

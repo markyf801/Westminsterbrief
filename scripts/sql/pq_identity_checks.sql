@@ -82,8 +82,7 @@ FROM ha_pq
 WHERE tabled_date < DATE '2026-05-13'
   AND api_id >= (SELECT min(api_id) FROM ha_pq WHERE tabled_date >= DATE '2026-05-13');
 
--- Snapshot still present (taken 2026-10-20)
-SELECT (SELECT count(*) FROM ha_pq_snap_20261020)       AS snap_pq_rows,
-       (SELECT count(*) FROM ha_pq_theme_snap_20261020) AS snap_theme_rows;
+-- The 2026-10-20 snapshot tables were dropped on 2026-10-23 (restore from an R2
+-- backup if needed), so the snapshot row-count check has been removed.
 
 ROLLBACK;
