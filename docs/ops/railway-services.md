@@ -86,6 +86,14 @@ for at most 3 runs (a session whose Gemini call failed with a final error is
 not carried; the log says how many were dropped — re-tag those with
 `scripts/retag.py --ids`). See `hansard_archive/refresh.py`. Older debates stored cut
 short: `scripts/refresh_partial_debates.py` (one-off, dry run by default).
+Duplicate and swallowing debates (provisional copies Hansard later split or
+re-keyed): the cron logs `DUPLICATE?` / `SWALLOWED?` and counts them in
+`ha_cron_run.notes` (`swallowed=… duplicates=…`) but never deletes. Clean-up,
+all one-shots, dry run first: `scripts/find_duplicate_debates.py` (read-only;
+CSV in the log) → review → `migrations/session_redirect_table.py --execute` →
+`scripts/delete_duplicate_debates.py` (undo tables, old URLs 301 to the kept
+copy) → `scripts/refresh_partial_debates.py --accept-shrink --ext-id …` for the
+reviewed swallowers → `scripts/retag.py --ids …` as printed.
 
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)
 
