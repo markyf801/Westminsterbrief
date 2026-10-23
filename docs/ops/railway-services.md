@@ -68,11 +68,13 @@ Each run also refreshes debates it already holds when Hansard's copy has
 changed (a debate stored while still going on, or before Hansard finished
 publishing it): contributions are updated in place, keeping the session's id,
 slug and tags, and `REFRESHED` / `HOLD` lines appear in the log, with counts in
-the run summary and `ha_cron_run.notes`. Refreshed debates that were already
-tagged are re-tagged (at most `ARCHIVE_RETAG_CAP`, default 30, per run; old
-tags kept if the new ones don't verify). See `hansard_archive/refresh.py`.
-Older debates stored cut short: `scripts/refresh_partial_debates.py` (one-off,
-dry run by default).
+the run summary and `ha_cron_run.notes`. A debate that loses more than 3
+speeches and more than 10% is held (`HOLD`), not refreshed. Refreshed debates
+that were already tagged are re-tagged (at most `ARCHIVE_RETAG_CAP`, default
+30, per run; old tags kept if the new ones don't verify); any left over are
+carried to the next archive run via a `retag_pending:` line at the top of
+`ha_cron_run.notes`. See `hansard_archive/refresh.py`. Older debates stored cut
+short: `scripts/refresh_partial_debates.py` (one-off, dry run by default).
 
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)
 
