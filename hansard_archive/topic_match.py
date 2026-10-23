@@ -12,12 +12,19 @@ The page therefore also matches:
   - stored topic tags that CONTAIN the topic phrase as whole words
     ("animal welfare" -> "animal welfare strategy", "farm animal welfare");
   - debate titles and written-question headings that contain the phrase
-    ("Ukraine and Russia", "Local Authority SEND Services", "Cats: Microchips").
+    ("Animal Welfare in Farming", "Local Authority SEND Services").
 
-Whole words, with a plural "s"/"es" allowed on each word: "cats" matches "cat
-welfare" and "Cats and Ferrets", but not "Catapults". Short acronym aliases from
-topic_canon ("SEND", "SEN", "EHCP") must be upper case in a title or heading, so
-the verb "send" does not match.
+Sense guards (one word often means something else):
+  - A one-word topic is only looked for inside other text when topic_canon has
+    a family for it ("ukraine", "cats"); otherwise its page lists exact tags
+    only. "arms" would match "Arm's-Length Bodies", "turkey" the bird, "trade"
+    "trade unions".
+  - Words match as written, plus a plural "s"/"es" on the last word ("cat" ->
+    "cats"). Nothing is stripped, and a possessive "'s" is its own token, so it
+    never makes a plural ("arm's" is "arm s", not "arms").
+  - A family's "exclude" texts veto a match ("CAT scans" on the cats page).
+  - Acronyms (topic_canon.ACRONYMS: SEND, EHCP) must be upper case in a title
+    or heading, so the verb "send" does not match.
 """
 
 from __future__ import annotations
@@ -27,19 +34,18 @@ import unicodedata
 
 from hansard_archive import topic_canon as _tc
 
+_POSSESSIVE = re.compile(r"['‘’‚‛′ʼ]s\b")
 _APOSTROPHES = re.compile(r"['‘’‚‛′ʼ]")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 # Phrases shorter than this are only matched exactly (as tags), never inside
-# other text: "sen" is inside too many words for a LIKE pre-filter.
+# other text: "sen" is inside too many words for a LIKE pre-filter. A curated
+# three-letter word ("cat") is the exception; three-letter acronyms are not.
 _MIN_CONTAINS_CHARS = 4
 
-# Acronym aliases: one word of at most this many letters (SEND, EHCP, BIOT).
-_ACRONYM_MAX_CHARS = 5
-
-# One-word phrases too generic to look for inside titles, headings or other
-# tags: words naming a kind of parliamentary business, or so broad that every
-# title would match. The page still lists items tagged with the exact topic.
+# One-word phrases never looked for inside other text, even with a family:
+# words naming a kind of parliamentary business, or so broad that every title
+# would match.
 _NO_EXPANSION_WORDS = frozenset({
     "act", "acts", "amendment", "amendments", "bill", "bills", "business",
     "committee", "committees", "debate", "debates", "government", "house",
@@ -52,38 +58,36 @@ _NO_EXPANSION_WORDS = frozenset({
 
 
 def normalise(text: str) -> str:
-    """Lowercase, accents and apostrophes removed, anything else non-alphanumeric to one space."""
+    """Lowercase, accents removed, possessive "'s" to its own "s" token, other
+    apostrophes removed, anything else non-alphanumeric to one space."""
     t = unicodedata.normalize("NFKD", text or "").encode("ascii", errors="ignore").decode("ascii")
-    t = _APOSTROPHES.sub("", t.lower())
+    t = _POSSESSIVE.sub(" s", t.lower())
+    t = _APOSTROPHES.sub("", t)
     return " ".join(_NON_ALNUM.sub(" ", t).split())
 
 
-def _base(token: str) -> str:
-    """Token with one plural 's' removed ("cats" -> "cat"); 'ss', 'us', 'is' endings kept."""
-    if len(token) >= 4 and token.endswith("s") and token[-2] not in "sui":
-        return token[:-1]
-    return token
-
-
 class Phrase:
-    """One topic phrase, with its whole-word pattern and SQL LIKE pre-filter."""
+    """One topic phrase, with its whole-word pattern and SQL pre-filters."""
 
-    def __init__(self, text: str, acronym: bool = False):
+    def __init__(self, text: str, acronym: bool = False, curated: bool = False):
         self.text = normalise(text)
         self.tokens = self.text.split()
         self.acronym = acronym and len(self.tokens) == 1
-        bases = [_base(t) for t in self.tokens]
-        self._like = "%".join(bases) + "%" if bases else ""
-        self._pg_body = ".*".join(bases)   # bases are [a-z0-9] only: nothing to escape
-        body = r" ".join(re.escape(b) + r"(?:s|es)?" for b in bases)
-        self._re = re.compile(r"(?<![a-z0-9])" + body + r"(?![a-z0-9])") if bases else None
+        self.curated = curated
+        toks = self.tokens
+        self._like = "%".join(toks) + "%" if toks else ""
+        self._pg_body = ".*".join(toks)    # tokens are [a-z0-9] only: nothing to escape
+        body = " ".join(re.escape(t) + (r"(?:s|es)?" if i == len(toks) - 1 else "")
+                        for i, t in enumerate(toks))
+        self._re = re.compile(r"(?<![a-z0-9])" + body + r"(?![a-z0-9])") if toks else None
         self._acronym_re = (
             re.compile(r"(?<![A-Za-z0-9])" + re.escape(self.text.upper()) + r"[sS]?(?![A-Za-z0-9])")
             if self.acronym else None
         )
 
     def __repr__(self):
-        return f"Phrase({self.text!r}{', acronym' if self.acronym else ''})"
+        flags = [f for f, on in (("acronym", self.acronym), ("curated", self.curated)) if on]
+        return f"Phrase({self.text!r}{''.join(', ' + f for f in flags)})"
 
     def tag_like_patterns(self) -> list[str]:
         """LIKE pre-filters for stored lowercase tags: the phrase starting at a word start."""
@@ -97,9 +101,14 @@ class Phrase:
 
     @property
     def expandable(self) -> bool:
-        """Worth looking for inside other text (not too short, not a generic word)."""
-        return (len(self.text) >= _MIN_CONTAINS_CHARS
-                and not (len(self.tokens) == 1 and self.tokens[0] in _NO_EXPANSION_WORDS))
+        """Safe to look for inside other text: long enough, and either several
+        words or a one-word topic curated in topic_canon (and not generic)."""
+        if len(self.text) < _MIN_CONTAINS_CHARS and not (self.curated and not self.acronym
+                                                         and len(self.text) >= 3):
+            return False
+        if len(self.tokens) == 1:
+            return self.curated and self.tokens[0] not in _NO_EXPANSION_WORDS
+        return True
 
     def in_tag(self, tag: str) -> bool:
         """Whole-word match inside a stored (lowercase) topic tag."""
@@ -112,27 +121,32 @@ class Phrase:
         return bool(self._re and self._re.search(normalise(title)))
 
 
-def phrases_for_slug(slug: str) -> list[Phrase]:
+def phrases_for_slug(slug: str, stored_names=()) -> list[Phrase]:
     """
-    Phrases a /brief/<slug> page looks for: the slug's own words, plus, when the
-    slug is a canonical topic in topic_canon, every spelling in its family (the
-    parent's page gets the children too). Short one-word aliases are acronyms.
+    Phrases a /brief/<slug> page looks for: the slug's own words, the stored
+    tag spellings that gave the page ("women's pensions" keeps its apostrophe,
+    which the slug lost), and, when the slug is a canonical topic in topic_canon,
+    every spelling in its family (curated; the parent's page gets the children).
     """
     out: dict[str, Phrase] = {}
 
-    def add(text: str, acronym: bool = False) -> None:
-        p = Phrase(text, acronym)
-        if p.text and p.text not in out:
-            out[p.text] = p
+    def add(text: str, acronym: bool = False, curated: bool = False) -> None:
+        p = Phrase(text, acronym, curated)
+        if not p.text:
+            return
+        if p.text in out:
+            curated = curated or out[p.text].curated
+            acronym = acronym or out[p.text].acronym
+            p = Phrase(text, acronym, curated)
+        out[p.text] = p
 
     add(slug.replace("-", " "))
+    for name in stored_names or ():
+        add(name)
     canon = _tc.canonical_for_slug(slug)
     if canon:
-        canon_names = set(_tc.known_canonical_topics())
         for name in sorted(_tc.topic_family_names(canon)):
-            one_word = len(normalise(name).split()) == 1
-            add(name, acronym=one_word and name not in canon_names
-                and len(name) <= _ACRONYM_MAX_CHARS)
+            add(name, acronym=name in _tc.ACRONYMS, curated=True)
     return list(out.values())
 
 
@@ -142,25 +156,39 @@ def expandable(phrases: list[Phrase]) -> list[Phrase]:
     cands = [p for p in phrases if p.expandable]
     keep: list[Phrase] = []
     for p in sorted(cands, key=lambda p: (len(p.tokens), len(p.text))):
-        if not any(k.in_tag(p.text) for k in keep):
+        if not any(k.in_tag(p.text) and k.acronym == p.acronym for k in keep):
             keep.append(p)
     return keep
 
 
-def tag_pg_regex(phrases: list[Phrase]) -> str:
-    """
-    One Postgres regex equivalent to every phrase's tag_like_patterns() ORed:
-    a phrase starting at the start of the tag or after a space or hyphen. One
-    regex per row is several times faster than dozens of LIKEs (SEND has 12
-    phrases). Empty when there is nothing to match.
-    """
-    bodies = [p._pg_body for p in phrases if p._pg_body]
-    return f"(^|[ -])({'|'.join(bodies)})" if bodies else ""
+class TopicMatcher:
+    """Everything a topic page needs to match text: phrases plus exclusions."""
 
+    def __init__(self, slug: str, stored_names=()):
+        self.phrases = expandable(phrases_for_slug(slug, stored_names))
+        canon = _tc.canonical_for_slug(slug)
+        self.excludes = [Phrase(x) for x in _tc.topic_exclusions(canon)] if canon else []
 
-def tag_matches(tag: str, phrases: list[Phrase]) -> bool:
-    return any(p.in_tag(tag) for p in phrases)
+    def __bool__(self) -> bool:
+        return bool(self.phrases)
 
+    def tag_matches(self, tag: str) -> bool:
+        return (any(p.in_tag(tag) for p in self.phrases)
+                and not any(x.in_tag(tag) for x in self.excludes))
 
-def title_matches(title: str, phrases: list[Phrase]) -> bool:
-    return any(p.in_title(title) for p in phrases)
+    def title_matches(self, title: str) -> bool:
+        return (any(p.in_title(title) for p in self.phrases)
+                and not any(x.in_tag(title) for x in self.excludes))
+
+    def tag_like_patterns(self) -> list[str]:
+        return sorted({x for p in self.phrases for x in p.tag_like_patterns()})
+
+    def tag_pg_regex(self) -> str:
+        """
+        One Postgres regex equivalent to tag_like_patterns() ORed: a phrase
+        starting at the start of the tag or after a space or hyphen. One regex
+        per row is several times faster than dozens of LIKEs (SEND has 12
+        phrases). Empty when there is nothing to match.
+        """
+        bodies = [p._pg_body for p in self.phrases if p._pg_body]
+        return f"(^|[ -])({'|'.join(bodies)})" if bodies else ""

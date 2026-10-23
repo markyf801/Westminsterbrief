@@ -3,14 +3,17 @@
 
 A topic page exists when a stored tag spells the topic exactly (as before). It
 then also lists items whose tags contain the topic phrase, whose title or
-heading contains it, and other-House twins (Lords repeats) of those. Sessions of
-many unrelated questions (PMQs etc.) come after the debates on the topic.
-Overview shows the first 25 of each list with "See all"; ?show= pages one list.
+heading contains it, and other-House copies of matched statements. One-word
+topics are only searched for that way when topic_canon has a family for them
+(sense guard). Thin/noindex counts exact tags only. Sessions of many unrelated
+questions (PMQs etc.) come after the debates on the topic. The overview shows
+the first 25 of each list with "See all"; ?show= pages one list.
 SQLite in memory, no network.
 """
 
 import re
 from datetime import date, timedelta
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pytest
@@ -28,6 +31,7 @@ _NOINDEX = '<meta name="robots" content="noindex, follow">'
     ("cats", "Cats: Animal Welfare", True),
     ("cats", "Animal Welfare (Import of Dogs, Cats and Ferrets) Bill", True),
     ("cats", "Catapults and Antisocial Behaviour", False),
+    ("cats", "CAT Scans: Waiting Times", False),                   # family "exclude"
     ("ukraine", "US-Russia Deal on Diesel Exports: Effect on Ukraine", True),
     ("ukraine", "Ukrainian Refugees", False),
     ("animal-welfare", "Animal Welfare Strategy for England", True),
@@ -37,9 +41,17 @@ _NOINDEX = '<meta name="robots" content="noindex, follow">'
     ("special-educational-needs", "EHCPs: Delays", True),
     ("special-educational-needs", "Sending Asylum Seekers Abroad", False),
     ("special-educational-needs", "Send a Signal", False),     # verb, not the acronym
+    # One-word topics without a topic_canon family: never searched in titles
+    ("arms", "Arm's-Length Bodies", False),
+    ("arms", "Arms Trade", False),
+    ("news", "New Towns", False),
+    ("goods", "Good Friday Agreement", False),
+    ("turkey", "Turkey Farming", False),
+    ("works", "Work Capability Assessment", False),
+    ("economics", "Economic Crime", False),
 ])
 def test_title_matching(slug, text, hit):
-    assert tm.title_matches(text, tm.expandable(tm.phrases_for_slug(slug))) is hit
+    assert tm.TopicMatcher(slug).title_matches(text) is hit
 
 
 @pytest.mark.parametrize("slug, tag, hit", [
@@ -47,13 +59,31 @@ def test_title_matching(slug, text, hit):
     ("ukraine", "russia-ukraine war", True),
     ("cats", "cat welfare", True),
     ("cats", "catapults", False),
+    ("cats", "cat scans", False),
     ("animal-welfare", "farm animal welfare", True),
     ("animal-welfare", "welfare reform", False),
     ("special-educational-needs", "send system reform", True),   # tags are lowercase
-    ("womens-pensions", "women's pensions compensation", True),
+    ("trade", "trade unions", False),
+    ("energy-drinks", "energy drinks ban", True),
+    ("water", "water cannon", False),
 ])
 def test_tag_containment(slug, tag, hit):
-    assert tm.tag_matches(tag, tm.expandable(tm.phrases_for_slug(slug))) is hit
+    assert tm.TopicMatcher(slug).tag_matches(tag) is hit
+
+
+def test_possessive_never_makes_a_plural():
+    assert tm.normalise("Arm's-Length Bodies") == "arm s length bodies"
+    m = tm.TopicMatcher("childrens-services", stored_names=["children's services"])
+    assert m.title_matches("Children's Services: Funding")       # stored spelling kept
+    assert not tm.Phrase("arms length").in_title("Arm's-Length Bodies")
+
+
+def test_generic_and_short_phrases_are_not_expanded():
+    assert not tm.TopicMatcher("bill")
+    assert not tm.TopicMatcher("nhs")                             # too short for LIKE
+    assert not tm.TopicMatcher("arms")                            # one word, no family
+    sen = {p.text for p in tm.TopicMatcher("special-educational-needs").phrases}
+    assert "send" in sen and "special educational needs" in sen
 
 
 @pytest.mark.parametrize("tag", [
@@ -62,17 +92,9 @@ def test_tag_containment(slug, tag, hit):
 ])
 def test_postgres_prefilter_regex_agrees_with_like_patterns(tag):
     """The one-regex pre-filter used on Postgres keeps the same tags as the LIKEs."""
-    from fnmatch import fnmatchcase
-    ps = tm.expandable(tm.phrases_for_slug("special-educational-needs"))
-    like = any(fnmatchcase(tag, x.replace("%", "*")) for p in ps for x in p.tag_like_patterns())
-    assert bool(re.search(tm.tag_pg_regex(ps), tag)) is like
-
-
-def test_generic_and_short_phrases_are_not_expanded():
-    assert tm.expandable(tm.phrases_for_slug("bill")) == []
-    assert tm.expandable(tm.phrases_for_slug("nhs")) == []        # too short for LIKE
-    sen = {p.text for p in tm.expandable(tm.phrases_for_slug("special-educational-needs"))}
-    assert "send" in sen and "send provision" not in sen          # implied by "send"
+    m = tm.TopicMatcher("special-educational-needs")
+    like = any(fnmatchcase(tag, x.replace("%", "*")) for x in m.tag_like_patterns())
+    assert bool(re.search(m.tag_pg_regex(), tag)) is like
 
 
 # ── Pages ────────────────────────────────────────────────────────────────────
@@ -137,8 +159,8 @@ def app():
         _db.create_all()
         views._topic_match_cache.clear()
 
-        # Ukraine: one exact tag makes the page exist; the rest is found by
-        # containment, title, heading.
+        # Ukraine (topic_canon family): one exact tag makes the page exist; the
+        # rest is found by containment, title, heading.
         ptag(pq("UKR01", "Ukraine: Ceasefires", date(2026, 1, 8)), "ukraine")
         ptag(pq("UKR02", None, date(2026, 6, 1), "What military aid has been given?"),
              "military aid to ukraine")
@@ -163,15 +185,50 @@ def app():
              "send system reform")
         stag(sess("Sending Asylum Seekers Abroad", date(2026, 9, 2)), "asylum returns")
         ptag(pq("SEN01", "Special Educational Needs: Transport", date(2026, 10, 1)), "send")
+        # Same-title pairs that are not repeats of a statement on the topic:
+        stag(sess("Higher Education Update", date(2026, 3, 9), dtype="ministerial_statement"),
+             "send reforms")
+        stag(sess("Higher Education Update", date(2026, 3, 10), house="Lords", dtype="other"),
+             "university funding")                                   # tagged, no shared tag
+        stag(sess("King's Speech", date(2026, 5, 13)), "send reforms")
+        sess("King's Speech", date(2026, 5, 14), house="Lords")     # a debate, not a statement
 
-        # Cats
+        # Cats (topic_canon family, with "exclude")
         ptag(pq("CAT01", "Cats: Animal Welfare", date(2026, 3, 10)), "cats")
         ptag(pq("CAT02", "Pets: Microchips", date(2026, 3, 11)), "cat microchipping")
+        ptag(pq("CAT03", "CAT Scans: Waiting Times", date(2026, 3, 12)), "cat scans")
         sess("Animal Welfare (Import of Dogs, Cats and Ferrets) Bill", date(2025, 7, 4))
         stag(sess("Catapults and Antisocial Behaviour", date(2025, 12, 2)), "catapults")
 
-        # Policy-area page ordering: PMQs newest, debate older.
+        # One-word topics without a family: exact tags only.
+        ptag(pq("ARM01", "Arms Trade: Saudi Arabia", date(2026, 4, 1)), "arms")
+        for i in range(4):
+            pq(f"ALB{i}", f"Arm's-Length Bodies: Review {i}", date(2026, 4, 2 + i))
+        pq("COA01", "Coat of Arms", date(2026, 4, 9))
+        ptag(pq("TUR01", "Turkey: Human Rights", date(2026, 4, 1)), "turkey")
+        ptag(pq("TUR02", "Poultry: Christmas", date(2026, 4, 2)), "turkey farming")
+        sess("Turkey Farming", date(2026, 4, 3))
+        ptag(pq("NEW01", "Local News", date(2026, 4, 1)), "news")
+        sess("New Towns", date(2026, 4, 2))
+        pq("NZ01", "New Zealand: Trade Agreements", date(2026, 4, 3))
+        ptag(pq("GDS01", "Imports: Goods", date(2026, 4, 1)), "goods")
+        sess("Good Friday Agreement", date(2026, 4, 2))
+        ptag(pq("TRD01", "Trade Agreements", date(2026, 4, 1)), "trade")
+        ptag(pq("TRD02", "Trade Unions: Ballots", date(2026, 4, 2)), "trade unions")
+
+        # Thin is judged on exact tags only: 1 exact tag, 3 title matches.
+        ptag(pq("FAW01", "Animal Welfare", date(2026, 4, 1)), "farm animal welfare")
+        for i in range(3):
+            sess(f"Farm Animal Welfare Debate {i}", date(2026, 4, 2 + i))
+
+        # Apostrophes: stored tag keeps the apostrophe the slug lost.
+        ptag(pq("CHS01", "Children's Services", date(2026, 4, 1)), "children's services")
+        sess("Children's Services: Funding", date(2026, 4, 2))
+
+        # Policy-area page ordering: PMQs newest, debate older; title with stray space.
         stag(sess("Engagements", date(2026, 10, 8), dtype="pmqs"), "Transport", THEME_TYPE_POLICY_AREA)
+        stag(sess("Topical Questions ", date(2026, 10, 9), dtype="oral_questions"),
+             "Transport", THEME_TYPE_POLICY_AREA)
         stag(sess("Rail Franchising", date(2026, 3, 3)), "Transport", THEME_TYPE_POLICY_AREA)
         _db.session.commit()
         yield test_app
@@ -181,7 +238,10 @@ def app():
 
 @pytest.fixture
 def client(app):
-    return app.test_client()
+    from hansard_archive import views
+    views._topic_match_cache.clear()
+    yield app.test_client()
+    views._topic_match_cache.clear()
 
 
 def _titles(html):
@@ -192,9 +252,13 @@ def _hrefs(html):
     return re.findall(r'class="ah-card-title" href="([^"]+)"', html)
 
 
+def _get(client, url):
+    return client.get(url).get_data(as_text=True)
+
+
 class TestUkraine:
     def test_debates_found_by_containment_title_and_house(self, client):
-        html = client.get("/brief/ukraine").get_data(as_text=True)
+        html = _get(client, "/brief/ukraine")
         titles = _titles(html)
         assert "Ukraine and Russia" in titles            # untagged Lords debate, by title
         assert "Russian Shadow Fleet" in titles          # tag contains "ukraine"
@@ -202,22 +266,23 @@ class TestUkraine:
         assert "4 sessions and 31 written questions on this topic" in html
 
     def test_pmqs_after_debates(self, client):
-        titles = _titles(client.get("/brief/ukraine").get_data(as_text=True))
+        titles = _titles(_get(client, "/brief/ukraine"))
         debates = titles[:titles.index("Engagements") + 1]
         assert debates == ["Ukraine and Russia", "Ukraine", "Russian Shadow Fleet", "Engagements"]
 
     def test_questions_by_tag_containment_and_heading(self, client):
-        hrefs = _hrefs(client.get("/brief/ukraine").get_data(as_text=True))
+        hrefs = _hrefs(_get(client, "/brief/ukraine"))
         assert "/archive/pq/ukr02" in hrefs              # tag "military aid to ukraine"
         assert "/archive/pq/ukr03" in hrefs              # untagged, heading "Ukraine: ..."
         assert "/archive/pq/ukr04" not in hrefs          # "Ukrainian" is not "Ukraine"
 
     def test_overview_caps_lists_with_see_all(self, client):
-        html = client.get("/brief/ukraine").get_data(as_text=True)
+        html = _get(client, "/brief/ukraine")
         assert len([h for h in _hrefs(html) if h.startswith("/archive/pq/")]) == 25
         assert 'href="/brief/ukraine?show=questions">See all 31 written questions' in html
         assert "?show=debates" not in html               # all 4 debates already shown
         assert _INDEX in html
+        assert '<link rel="canonical" href="https://westminsterbrief.co.uk/brief/ukraine">' in html
 
     def test_show_questions_pages(self, client):
         r = client.get("/brief/ukraine?show=questions&page=2")
@@ -225,6 +290,8 @@ class TestUkraine:
         assert r.status_code == 200
         assert len(_hrefs(html)) == 6
         assert _NOINDEX in html
+        assert ('<link rel="canonical" href="https://westminsterbrief.co.uk'
+                '/brief/ukraine?show=questions&amp;page=2">') in html     # self-canonical
         assert "Back to" in html
         assert client.get("/brief/ukraine?show=questions&page=3").status_code == 404
 
@@ -234,28 +301,77 @@ class TestUkraine:
         assert r.headers["Location"].endswith("/brief/ukraine?show=questions&page=2")
         assert client.get("/brief/ukraine?page=9").status_code == 404
 
+    def test_candidate_cap_skips_containment_not_truncates(self, client, monkeypatch):
+        from hansard_archive import views
+        monkeypatch.setattr(views, "_TOPIC_TAG_CANDIDATES", 0)
+        titles = _titles(_get(client, "/brief/ukraine"))
+        assert "Russian Shadow Fleet" not in titles      # containment skipped
+        assert "Ukraine and Russia" in titles            # title match still runs
+
+    def test_extra_matching_failure_falls_back_to_exact_tags(self, client, monkeypatch):
+        from sqlalchemy.exc import OperationalError
+        from hansard_archive import views
+
+        def boom(*a, **k):
+            raise OperationalError("SELECT ...", {}, Exception("canceling statement due to statement timeout"))
+        monkeypatch.setattr(views, "_topic_extra_matches", boom)
+        r = client.get("/brief/ukraine")
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert _titles(html)[0] == "Engagements"         # the only exact-tagged session
+        assert "1 session and 29 written questions on this topic" in html
+
 
 class TestSend:
     def test_lords_repeat_of_matched_statement_is_listed(self, client):
-        html = client.get("/brief/special-educational-needs").get_data(as_text=True)
+        html = _get(client, "/brief/special-educational-needs")
         wp = "Schools White Paper: Every Child Achieving and Thriving"
         assert _titles(html).count(wp) == 2              # Commons + Lords repeat, not the June one
         assert "Local Authority SEND Services" in _titles(html)
         assert "Sending Asylum Seekers Abroad" not in _titles(html)
 
+    def test_repeats_need_a_statement_and_a_shared_tag_if_tagged(self, client):
+        titles = _titles(_get(client, "/brief/special-educational-needs"))
+        assert titles.count("Higher Education Update") == 1    # Lords copy tagged differently
+        assert titles.count("King&#39;s Speech") == 1          # debates, not a statement repeat
+
     def test_show_debates_lists_only_debates(self, client):
-        html = client.get("/brief/special-educational-needs?show=debates").get_data(as_text=True)
+        html = _get(client, "/brief/special-educational-needs?show=debates")
         assert "Local Authority SEND Services" in _titles(html)
         assert not any(h.startswith("/archive/pq/") for h in _hrefs(html))
 
 
 class TestCats:
     def test_cat_page_finds_related_tags_and_titles(self, client):
-        html = client.get("/brief/cats").get_data(as_text=True)
+        html = _get(client, "/brief/cats")
         titles = _titles(html)
         assert "Animal Welfare (Import of Dogs, Cats and Ferrets) Bill" in titles
         assert "Catapults and Antisocial Behaviour" not in titles
         assert "/archive/pq/cat02" in _hrefs(html)       # tag "cat microchipping"
+        assert "/archive/pq/cat03" not in _hrefs(html)   # "CAT scans": excluded
+
+
+class TestWrongSense:
+    @pytest.mark.parametrize("slug, only", [
+        ("arms", ["/archive/pq/arm01"]),
+        ("turkey", ["/archive/pq/tur01"]),
+        ("news", ["/archive/pq/new01"]),
+        ("goods", ["/archive/pq/gds01"]),
+        ("trade", ["/archive/pq/trd01"]),
+    ])
+    def test_one_word_topic_without_family_lists_exact_tags_only(self, client, slug, only):
+        html = _get(client, f"/brief/{slug}")
+        assert _hrefs(html) == only
+        assert _NOINDEX in html                          # one item: thin
+
+    def test_thin_counts_exact_tags_only(self, client):
+        html = _get(client, "/brief/farm-animal-welfare")
+        assert len(_hrefs(html)) == 4                    # 1 tagged PQ + 3 titles
+        assert _NOINDEX in html
+
+    def test_apostrophe_titles_match_via_stored_spelling(self, client):
+        titles = _titles(_get(client, "/brief/childrens-services"))
+        assert "Children&#39;s Services: Funding" in titles
 
 
 class TestExistenceUnchanged:
@@ -268,5 +384,5 @@ class TestExistenceUnchanged:
 
 
 def test_policy_page_lists_pmqs_after_debates(client):
-    titles = _titles(client.get("/brief/transport").get_data(as_text=True))
-    assert titles == ["Rail Franchising", "Engagements"]
+    titles = _titles(_get(client, "/brief/transport"))
+    assert titles == ["Rail Franchising", "Topical Questions ", "Engagements"]

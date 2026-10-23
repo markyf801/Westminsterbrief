@@ -4,7 +4,7 @@
 {% block meta_description %}{{ meta_desc }}{% endblock %}
 {% block og_title %}{{ og_title }}{% endblock %}
 {% block og_description %}{{ meta_desc }}{% endblock %}
-{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_link|default(canonical_path) }}">{% endblock %}
 
 {% block json_ld %}
 <script type="application/ld+json">

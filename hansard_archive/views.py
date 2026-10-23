@@ -34,6 +34,7 @@ from docx.shared import Pt, RGBColor
 from flask import Blueprint, abort, redirect, render_template, make_response, request
 from markupsafe import Markup
 from sqlalchemy import case, func, or_, select, text as sqla_text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import load_only
 
 from cache_models import CachedMember
@@ -1666,12 +1667,18 @@ def _build_pq_items(pqs: list) -> list:
 # Topic-page matching beyond exact tags (specific-topic pages only)
 # ---------------------------------------------------------------------------
 
-_TOPIC_TAG_CANDIDATES = 5000   # distinct stored tags examined per page
+_TOPIC_TAG_CANDIDATES = 5000   # distinct stored tags examined per page; more -> exact tags only
 _TOPIC_TWIN_DAYS      = 14     # Lords repeat of a Commons statement: same title, days apart
+_TOPIC_TWIN_TYPES     = ("ministerial_statement", "urgent_question")
 _TOPIC_MATCH_TTL      = 1800   # seconds; a topic page picks up new items within 30 minutes
 _TOPIC_MATCH_MAX      = 256    # cached topic pages per worker
+_TOPIC_TIMEOUT_MS     = 5000   # Postgres statement_timeout for the extra matching
 _topic_match_cache: dict = {}
 _IN_CHUNK = 500                # bound bind parameters per IN (...) list
+
+
+class _TopicTooBroad(Exception):
+    """More candidate tags than _TOPIC_TAG_CANDIDATES: list exact tags only."""
 
 
 def _chunks(seq, n: int = _IN_CHUNK):
@@ -1690,134 +1697,160 @@ def _session_tier_sql():
     """_session_tier() as a SQL expression, for policy-area pages."""
     return case(
         (or_(HansardSession.debate_type == "pmqs",
-             HansardSession.title.in_(sorted(_PROCEDURAL_TITLE_NOISE))), 1),
+             func.trim(HansardSession.title).in_(sorted(_PROCEDURAL_TITLE_NOISE))), 1),
         else_=0,
     )
 
 
-def _contained_topic_names(theme_col, type_col, phrases) -> set[str]:
-    """Stored specific tags that contain one of the phrases as whole words.
-    One pass over the tag table for all phrases (a regex on Postgres, LIKEs on
-    SQLite, as a pre-filter; then the whole-word check in Python)."""
-    patterns = sorted({x for p in phrases for x in p.tag_like_patterns()})
+def _contained_topic_names(theme_col, type_col, matcher) -> set[str]:
+    """Stored specific tags that contain one of the matcher's phrases as whole
+    words. One pass over the tag table (a regex on Postgres, LIKEs on SQLite, as
+    a pre-filter; then the whole-word check in Python). Raises _TopicTooBroad
+    rather than keep an arbitrary (alphabetical) part of a huge candidate set."""
+    patterns = matcher.tag_like_patterns()
     if not patterns:
         return set()
     if _is_postgres():
-        pre = func.lower(theme_col).op("~")(_tm.tag_pg_regex(phrases))
+        pre = func.lower(theme_col).op("~")(matcher.tag_pg_regex())
     else:
         pre = or_(*[func.lower(theme_col).like(x) for x in patterns])
     rows = (
         db.session.query(theme_col)
         .filter(type_col == THEME_TYPE_SPECIFIC, pre)
         .distinct()
-        .order_by(theme_col)
-        .limit(_TOPIC_TAG_CANDIDATES)
+        .limit(_TOPIC_TAG_CANDIDATES + 1)
         .all()
     )
-    if len(rows) >= _TOPIC_TAG_CANDIDATES:
-        print(f"[brief_topic] tag candidates capped at {_TOPIC_TAG_CANDIDATES} for "
-              f"{[p.text for p in phrases]}", flush=True)
-    return {r[0] for r in rows if _tm.tag_matches(r[0], phrases)}
+    if len(rows) > _TOPIC_TAG_CANDIDATES:
+        raise _TopicTooBroad()
+    return {r[0] for r in rows if matcher.tag_matches(r[0])}
 
 
-def _tsquery_any(prefix: str, phrases) -> tuple[str, dict]:
-    """OR of phraseto_tsquery() over the phrases, with its bind parameters."""
-    params = {f"{prefix}{i}": p.text for i, p in enumerate(phrases)}
-    sql = " || ".join(f"phraseto_tsquery('english', :{k})" for k in params)
+def _tsquery_any(prefix: str, matcher) -> tuple[str, dict]:
+    """OR over the phrases of plainto_tsquery() (all words, any order), with
+    bind parameters. A pre-filter only: plainto rather than phraseto because
+    "Children's" is indexed as two positions, so a phrase query from the
+    apostrophe-free text would miss it. Python does the exact check."""
+    params = {f"{prefix}{i}": p.text for i, p in enumerate(matcher.phrases)}
+    sql = " || ".join(f"plainto_tsquery('english', :{k})" for k in params)
     return f"({sql})", params
 
 
-def _title_matched_sessions(phrases) -> list:
+def _title_matched_sessions(matcher) -> list:
     """(id, title, date, house, debate_type) of non-container sessions whose title
     contains a phrase. Postgres narrows with the title_tsv GIN index first."""
-    if not phrases:
+    if not matcher:
         return []
     q = (db.session.query(HansardSession.id, HansardSession.title, HansardSession.date,
                           HansardSession.house, HansardSession.debate_type)
          .filter(HansardSession.is_container.is_(False)))
     if _is_postgres():
-        tsq, params = _tsquery_any("tq", phrases)
+        tsq, params = _tsquery_any("tq", matcher)
         q = q.filter(sqla_text(f"ha_session.title_tsv @@ {tsq}").bindparams(**params))
     else:
         q = q.filter(or_(*[func.lower(HansardSession.title).like(p.title_like_pattern())
-                           for p in phrases]))
-    return [r for r in q.all() if _tm.title_matches(r[1], phrases)]
+                           for p in matcher.phrases]))
+    return [tuple(r) for r in q.all() if matcher.title_matches(r[1])]
 
 
-def _heading_matched_pqs(phrases) -> list:
+def _heading_matched_pqs(matcher) -> list:
     """(id, tabled_date) of written questions whose heading contains a phrase.
     Postgres narrows with the question_tsv GIN index (it includes the heading)."""
-    if not phrases:
+    if not matcher:
         return []
     q = db.session.query(HaPQ.id, HaPQ.tabled_date, HaPQ.heading).filter(HaPQ.heading.isnot(None))
     if _is_postgres():
-        tsq, params = _tsquery_any("hq", phrases)
+        tsq, params = _tsquery_any("hq", matcher)
         q = q.filter(sqla_text(f"ha_pq.question_tsv @@ {tsq}").bindparams(**params))
-    q = q.filter(or_(*[func.lower(HaPQ.heading).like(p.title_like_pattern()) for p in phrases]))
-    return [(r[0], r[1]) for r in q.all() if _tm.title_matches(r[2], phrases)]
+    else:
+        q = q.filter(or_(*[func.lower(HaPQ.heading).like(p.title_like_pattern())
+                           for p in matcher.phrases]))
+    return [(r[0], r[1]) for r in q.all() if matcher.title_matches(r[2])]
+
+
+def _specific_tags(session_ids) -> dict[int, set]:
+    out: dict[int, set] = defaultdict(set)
+    for chunk in _chunks(session_ids):
+        for sid, theme in (
+            db.session.query(HansardSessionTheme.session_id, HansardSessionTheme.theme)
+            .filter(HansardSessionTheme.session_id.in_(chunk),
+                    HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC)
+            .all()
+        ):
+            out[sid].add(theme)
+    return out
 
 
 def _other_house_twins(rows) -> list:
     """
-    Sessions in the other House with the same title within _TOPIC_TWIN_DAYS of a
-    matched session: the Lords repeat of a Commons statement, or the Commons
-    original of a Lords repeat. These are often untagged (Lords debates are
-    typed 'other', which the tagger skips) and have nothing else to match on.
+    The other House's copy of a matched statement or urgent question: same
+    title, within _TOPIC_TWIN_DAYS, and at least one of the pair is a statement
+    or UQ (the Lords repeat is often typed 'other' and untagged). If the twin is
+    tagged, it must share a specific tag with the matched session, so recurring
+    titles ("Middle East", "Northern Ireland") don't pull in unrelated days.
     """
-    when: dict[str, list] = defaultdict(list)
-    for _sid, title, d, house, _dt in rows:
-        if title and not _is_procedural_noise(title):
-            when[title.lower()].append((d, house))
-    if not when:
+    by_title: dict[str, list] = defaultdict(list)
+    for r in rows:
+        if r[1] and not _is_procedural_noise(r[1]):
+            by_title[r[1].strip().lower()].append(r)
+    if not by_title:
         return []
     known = {r[0] for r in rows}
-    lo = min(d for v in when.values() for d, _ in v) - timedelta(days=_TOPIC_TWIN_DAYS)
-    hi = max(d for v in when.values() for d, _ in v) + timedelta(days=_TOPIC_TWIN_DAYS)
-    out = []
-    for chunk in _chunks(sorted(when)):
-        cands = (
+    dates = [r[2] for v in by_title.values() for r in v]
+    lo = min(dates) - timedelta(days=_TOPIC_TWIN_DAYS)
+    hi = max(dates) + timedelta(days=_TOPIC_TWIN_DAYS)
+    pairs = []
+    for chunk in _chunks(sorted(by_title)):
+        for c in (
             db.session.query(HansardSession.id, HansardSession.title, HansardSession.date,
                              HansardSession.house, HansardSession.debate_type)
             .filter(HansardSession.is_container.is_(False),
                     HansardSession.date.between(lo, hi),
-                    func.lower(HansardSession.title).in_(chunk))
+                    func.lower(func.trim(HansardSession.title)).in_(chunk))
             .all()
-        )
-        for c in cands:
+        ):
             if c[0] in known:
                 continue
-            if any(h != c[3] and abs((d - c[2]).days) <= _TOPIC_TWIN_DAYS
-                   for d, h in when.get((c[1] or "").lower(), ())):
-                out.append(tuple(c))
-                known.add(c[0])
+            srcs = [s for s in by_title.get((c[1] or "").strip().lower(), ())
+                    if s[3] != c[3] and abs((s[2] - c[2]).days) <= _TOPIC_TWIN_DAYS
+                    and (s[4] in _TOPIC_TWIN_TYPES or c[4] in _TOPIC_TWIN_TYPES)]
+            if srcs:
+                pairs.append((tuple(c), srcs))
+    if not pairs:
+        return []
+    tags = _specific_tags({c[0] for c, _ in pairs} | {s[0] for _, srcs in pairs for s in srcs})
+    out = []
+    for c, srcs in pairs:
+        if c[0] in known:
+            continue
+        twin_tags = tags.get(c[0])
+        if twin_tags and not any(twin_tags & tags.get(s[0], set()) for s in srcs):
+            continue
+        out.append(c)
+        known.add(c[0])
     return out
 
 
-def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tuple:
-    """
-    Ordered ids for a specific-topic page: (session ids, PQ ids), as compact arrays.
+class _statement_timeout:
+    """SET LOCAL statement_timeout on Postgres for the block; restored after it."""
 
-    Sessions: tagged with an exact spelling (session_names) or with a tag that
-    contains the topic phrase, or titled with it, plus other-House twins of
-    those. Ordered by _session_tier, then newest first.
-    PQs: tagged the same way, or with the phrase in Parliament's heading.
-    Newest tabled first.
+    def __init__(self, ms: int):
+        self.ms = int(ms)
 
-    Cached per worker for _TOPIC_MATCH_TTL seconds: page 2 and repeat visits
-    re-use the match instead of re-scanning the tag tables.
-    """
-    key = (id(db.engine), theme_slug)
-    now = time.time()
-    hit = _topic_match_cache.get(key)
-    if hit and now - hit[2] < _TOPIC_MATCH_TTL:
-        return hit[0], hit[1]
+    def __enter__(self):
+        if _is_postgres():
+            db.session.execute(sqla_text(f"SET LOCAL statement_timeout = {self.ms}"))
+        return self
 
-    phrases = _tm.expandable(_tm.phrases_for_slug(theme_slug))
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None and _is_postgres():
+            db.session.execute(sqla_text("SET LOCAL statement_timeout TO DEFAULT"))
+        return False
 
-    s_names = set(session_names) | _contained_topic_names(
-        HansardSessionTheme.theme, HansardSessionTheme.theme_type, phrases)
+
+def _session_rows_for_tags(names) -> dict[int, tuple]:
     rows: dict[int, tuple] = {}
-    for chunk in _chunks(sorted(s_names)):
+    for chunk in _chunks(sorted(names)):
         for r in (
             db.session.query(HansardSession.id, HansardSession.title, HansardSession.date,
                              HansardSession.house, HansardSession.debate_type)
@@ -1829,16 +1862,12 @@ def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tu
             .all()
         ):
             rows[r[0]] = tuple(r)
-    for r in _title_matched_sessions(phrases):
-        rows.setdefault(r[0], tuple(r))
-    for r in _other_house_twins(list(rows.values())):
-        rows.setdefault(r[0], r)
-    ordered = sorted(rows.values(), key=lambda r: (_session_tier(r[1], r[4]), -r[2].toordinal(), -r[0]))
-    session_ids = array("q", (r[0] for r in ordered))
+    return rows
 
-    p_names = set(pq_names) | _contained_topic_names(HaPQTheme.theme, HaPQTheme.theme_type, phrases)
-    pq_rows: dict[int, object] = {}
-    for chunk in _chunks(sorted(p_names)):
+
+def _pq_rows_for_tags(names) -> dict[int, object]:
+    rows: dict[int, object] = {}
+    for chunk in _chunks(sorted(names)):
         for pid, tabled in (
             db.session.query(HaPQ.id, HaPQ.tabled_date)
             .filter(HaPQ.id.in_(
@@ -1847,15 +1876,76 @@ def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tu
                     HaPQTheme.theme.in_(chunk))))
             .all()
         ):
-            pq_rows[pid] = tabled
-    for pid, tabled in _heading_matched_pqs(phrases):
-        pq_rows.setdefault(pid, tabled)
-    pq_ids = array("q", sorted(pq_rows, key=lambda i: (pq_rows[i] or date_type.min, i), reverse=True))
+            rows[pid] = tabled
+    return rows
+
+
+def _topic_extra_matches(theme_slug: str, session_names, pq_names, sessions: dict, pqs: dict) -> None:
+    """Add to `sessions` / `pqs` (in place) the items found beyond exact tags."""
+    matcher = _tm.TopicMatcher(theme_slug, stored_names=set(session_names) | set(pq_names))
+    if not matcher:
+        return
+    try:
+        s_extra = _contained_topic_names(
+            HansardSessionTheme.theme, HansardSessionTheme.theme_type, matcher) - set(session_names)
+        p_extra = _contained_topic_names(
+            HaPQTheme.theme, HaPQTheme.theme_type, matcher) - set(pq_names)
+    except _TopicTooBroad:
+        print(f"[brief_topic] {theme_slug}: over {_TOPIC_TAG_CANDIDATES} candidate tags; "
+              "tag containment skipped", flush=True)
+        s_extra = p_extra = set()
+    for sid, r in _session_rows_for_tags(s_extra).items():
+        sessions.setdefault(sid, r)
+    for r in _title_matched_sessions(matcher):
+        sessions.setdefault(r[0], r)
+    for r in _other_house_twins(list(sessions.values())):
+        sessions.setdefault(r[0], r)
+    for pid, tabled in _pq_rows_for_tags(p_extra).items():
+        pqs.setdefault(pid, tabled)
+    for pid, tabled in _heading_matched_pqs(matcher):
+        pqs.setdefault(pid, tabled)
+
+
+def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tuple:
+    """
+    Ordered ids for a specific-topic page: (session ids, PQ ids, exact count).
+
+    Exact: items tagged with a stored spelling of the topic (session_names /
+    pq_names); exact count is how many, and decides thin/noindex. Extra
+    (_topic_extra_matches): tags containing the topic phrase, titles and
+    headings containing it, other-House twins. The extra matching runs under a
+    Postgres statement_timeout; on a timeout the page lists exact matches only.
+
+    Sessions are ordered by _session_tier, then newest first; PQs newest tabled
+    first. Cached per worker for _TOPIC_MATCH_TTL seconds.
+    """
+    key = (id(db.engine), theme_slug)
+    now = time.time()
+    hit = _topic_match_cache.get(key)
+    if hit and now - hit[3] < _TOPIC_MATCH_TTL:
+        return hit[0], hit[1], hit[2]
+
+    sessions = _session_rows_for_tags(session_names)
+    pqs = _pq_rows_for_tags(pq_names)
+    exact = len(sessions) + len(pqs)
+    try:
+        more_s, more_p = dict(sessions), dict(pqs)
+        with _statement_timeout(_TOPIC_TIMEOUT_MS):
+            _topic_extra_matches(theme_slug, session_names, pq_names, more_s, more_p)
+        sessions, pqs = more_s, more_p
+    except OperationalError as exc:      # statement_timeout (QueryCanceled) or a dropped connection
+        db.session.rollback()
+        print(f"[brief_topic] {theme_slug}: extra matching failed, exact tags only: "
+              f"{type(exc.orig).__name__ if exc.orig else exc}", flush=True)
+
+    ordered = sorted(sessions.values(), key=lambda r: (_session_tier(r[1], r[4]), -r[2].toordinal(), -r[0]))
+    session_ids = array("q", (r[0] for r in ordered))
+    pq_ids = array("q", sorted(pqs, key=lambda i: (pqs[i] or date_type.min, i), reverse=True))
 
     if len(_topic_match_cache) >= _TOPIC_MATCH_MAX:
-        _topic_match_cache.pop(min(_topic_match_cache, key=lambda k: _topic_match_cache[k][2]))
-    _topic_match_cache[key] = (session_ids, pq_ids, now)
-    return session_ids, pq_ids
+        _topic_match_cache.pop(min(_topic_match_cache, key=lambda k: _topic_match_cache[k][3]))
+    _topic_match_cache[key] = (session_ids, pq_ids, exact, now)
+    return session_ids, pq_ids, exact
 
 
 _PQ_LIST_COLUMNS = (
@@ -1926,6 +2016,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         return []
 
     session_total = pq_total = 0
+    exact_total = None                  # specific topics: items with an exact tag
     get_sessions = get_pqs = _no_rows
     if policy_names:
         theme_sub = (
@@ -1961,7 +2052,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
 
         get_sessions, get_pqs = _policy_sessions, _policy_pqs
     elif session_names or pq_names:
-        session_ids, pq_ids = _topic_match_ids(theme_slug, session_names, pq_names)
+        session_ids, pq_ids, exact_total = _topic_match_ids(theme_slug, session_names, pq_names)
         session_total, pq_total = len(session_ids), len(pq_ids)
 
         def _topic_sessions(offset, limit):
@@ -2052,7 +2143,9 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     if theme_type_used == THEME_TYPE_POLICY_AREA and _pa.by_slug(theme_slug) is not None:
         headline_stat = get_headline_stat(theme_slug)
 
-    thin = session_total + pq_total < _BRIEF_THIN_ITEMS
+    # Thin is judged on exact tags only: title, heading and containment matches
+    # can be wrong-sense and must not, on their own, make a page indexable.
+    thin = (session_total + pq_total if exact_total is None else exact_total) < _BRIEF_THIN_ITEMS
     list_cap = _BRIEF_MAX_PAGES * _PER_PAGE
 
     return render_template(
@@ -2074,6 +2167,8 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         search_url        = "/archive/search?" + urlencode({"q": f'"{theme_name}"'}),
         base_qs           = "",
         canonical_path    = canonical_path,
+        canonical_link    = (f"{canonical_path}?show={show}" + (f"&page={page}" if page > 1 else "")
+                             if show else canonical_path),
         og_title          = f"{theme_name} — Westminster Brief",
         meta_desc         = (
             f"UK parliamentary debates and written questions on {theme_name}. "
