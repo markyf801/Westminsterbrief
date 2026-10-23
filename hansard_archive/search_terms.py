@@ -10,13 +10,23 @@ Two jobs:
    member's name or seat. Hansard text is full of attributions such as
    "the hon. Member for Lancaster and Wyre (Cat Smith)" and committee lists
    ("Ordered, That ... Cat Eccles, Cat Smith ..."), so a search for "cats"
-   used to return them. The guard finds members whose name (or Commons seat)
-   contains a search word. A speech that mentions one of those names is kept
-   only if the search word still appears once the names are removed.
-   Speeches that never mention those names are not rechecked, so the extra
-   work stays small (a regular expression on a few hundred speeches).
-   If the search names the member ("cat smith") or the seat ("forest of
-   dean"), that name or seat is not removed.
+   used to return them.
+
+   Only unambiguous name forms are removed, never a lone word:
+   - an MP's full name ("Cat Smith"; titles such as "Dr" are optional);
+   - a peer with a title in front ("Lord Price", "Lady Stroud", "Baroness
+     Stroud", "Lord Black of Brentwood") — so "Stroud" the town, "price"
+     and "bird flu" are untouched;
+   - "Member for <seat>" (Commons seats).
+   A speech that mentions one of those forms is kept only if it still
+   matches the search (same Postgres stemming) once they are removed.
+   Speeches that never mention them are not rechecked.
+   If the search names the member ("cat smith", "lady stroud") or the seat
+   ("forest of dean"), that name or seat is not removed.
+
+   Former members are kept in the list on purpose: their names still appear
+   in debates ("as Boris Johnson said"), and only full or titled names are
+   removed, which never carry a topic.
 
 Postgres only: callers use it inside the existing Postgres branches.
 """
@@ -37,6 +47,12 @@ def parse_query(q_raw: str) -> tuple[str, str]:
     return "plainto_tsquery", q_raw
 
 
+# Peerage titles: a one-word peer name is only removed with one of these in front.
+_PEER_TITLES = ("Viscountess", "Viscount", "Countess", "Baroness", "Marquess",
+                "Duchess", "Baron", "Lord", "Lady", "Earl", "Duke")
+_PEER_TITLE_WORDS = frozenset(t.lower() for t in _PEER_TITLES)
+_PEER_TITLE_RE = "(?:" + "|".join(_PEER_TITLES) + r")\s+"
+
 # Titles are not names: "lord" must not pull in every peer.
 _NOT_NAME_WORDS = frozenset({
     "lord", "lady", "baroness", "baron", "viscount", "viscountess", "earl",
@@ -48,8 +64,10 @@ _WORD_RE = re.compile(r"[^\W\d_][\w'’-]*")
 _LEXEME_RE = re.compile(r"'((?:[^']|'')+)'")
 _MAX_PHRASES = 80
 _CACHE_TTL_SECONDS = 6 * 3600
+_FAILED_TTL_SECONDS = 300
 _CACHE_MAX = 500
 _cache: dict = {}
+_failed: dict = {"until": 0.0}
 
 # Replaces a removed name, so the words either side do not become a phrase.
 NAME_GAP = " xname "
@@ -57,24 +75,36 @@ NAME_GAP = " xname "
 # Leading titles, so "Dr Danny Chambers" is matched as "Danny Chambers".
 _TITLES_SQL = (r"'^((the|rt|hon|lord|lady|baroness|baron|viscount|viscountess|earl|"
                r"countess|duke|duchess|marquess|bishop|sir|dame|dr|mr|mrs|ms|miss)\.?\s+)+'")
+# A peer's display name starts with a title: "Lord Price", "The Earl of Kinnoull".
+_PEER_NAME_SQL = (r"'^(the\s+)?(lord|lady|baroness|baron|viscount|viscountess|earl|"
+                  r"countess|duke|duchess|marquess)\s'")
 
 
 @dataclass(frozen=True)
 class NameGuard:
-    tsquery: str                  # matches a speech that mentions a guarded name or seat
-    pattern: str                  # Postgres regex for those names / "Member for <seat>"
-    word_patterns: tuple = ()     # regex per search word that is part of a guarded name
+    tsquery: str   # tsquery text: matches a speech that mentions a guarded name or seat
+    pattern: str   # Postgres regex for those name forms / "Member for <seat>"
 
-    def sql(self, tsv_col: str, text_expr: str) -> str:
-        """AND-clause: keep a row unless the search word appears only in guarded names."""
-        stripped = f"regexp_replace({text_expr}, :ng_re, '{NAME_GAP}', 'g')"
-        checks = " AND ".join(f"{stripped} ~* :ng_w{i}" for i in range(len(self.word_patterns)))
-        return f"AND (NOT ({tsv_col} @@ CAST(:ng_q AS tsquery)) OR ({checks}))"
+    def sql(self, tsv_col: str, text_expr: str, query_expr: str) -> str:
+        """AND-clause: keep a row unless it matches only through a guarded name."""
+        return (
+            f"AND (NOT ({tsv_col} @@ CAST(:ng_q AS tsquery)) "
+            f"OR to_tsvector('english', regexp_replace({text_expr}, :ng_re, "
+            f"'{NAME_GAP}', 'g')) @@ {query_expr})"
+        )
 
     def params(self) -> dict:
-        p = {"ng_q": self.tsquery, "ng_re": self.pattern}
-        p.update({f"ng_w{i}": w for i, w in enumerate(self.word_patterns)})
-        return p
+        return {"ng_q": self.tsquery, "ng_re": self.pattern}
+
+
+@dataclass(frozen=True)
+class _Entry:
+    kind: str                 # "mp", "peer" or "seat"
+    phrase: str               # MP: full name; peer: name without title; seat
+    lexemes: frozenset        # stems in phrase, to match search words
+    tsquery: str              # prefilter: speech mentions this name form
+    regex: str                # Postgres regex for the removable form
+    short: str = ""           # peer: name before " of " ("Black")
 
 
 def _regex_word(word: str) -> str:
@@ -88,29 +118,18 @@ def _phrase_regex(phrase: str) -> str:
 
 
 def _names_regex(phrases) -> str:
-    """One alternation grouped by first word, e.g. Cat followed by (Eccles|Smith):
+    """MP names as one alternation grouped by first word, e.g. Cat then (Eccles|Smith):
     noticeably faster than a flat list when many members share a first name."""
     groups: dict = {}
     for phrase in phrases:
         first, _, rest = phrase.partition(" ")
-        groups.setdefault(_regex_word(first), set()).add(_phrase_regex(rest) if rest else "")
+        groups.setdefault(_regex_word(first), set()).add(_phrase_regex(rest))
     alts = []
     for first in sorted(groups):
-        rests = sorted(groups[first] - {""})
-        if rests:
-            tail = rests[0] if len(rests) == 1 else "(?:" + "|".join(rests) + ")"
-            alts.append(first + r"\s+" + tail)
-        if "" in groups[first]:
-            alts.append(first)
+        rests = sorted(groups[first])
+        tail = rests[0] if len(rests) == 1 else "(?:" + "|".join(rests) + ")"
+        alts.append(first + r"\s+" + tail)
     return "|".join(alts)
-
-
-def _word_regex(typed: str, lexeme: str) -> str:
-    """Postgres ARE (used case-insensitively) for a search word and its plurals:
-    "cats" -> cat, cats, cat's. Close enough to stemming for the few speeches
-    it is used on (those that mention a guarded name)."""
-    forms = sorted({typed.lower(), lexeme.lower()} - {""}, key=len, reverse=True)
-    return r"\m(?:" + "|".join(_regex_word(f) for f in forms) + r")(?:s|es|['’]s|['’])?\M"
 
 
 def _query_words(q_clean: str) -> list[str]:
@@ -121,9 +140,8 @@ def _plain_words(text: str) -> list[str]:
     return [w.lower() for w in _WORD_RE.findall(text or "")]
 
 
-def _is_named_in(query_words: set, phrase: str, keep_titles: bool = False) -> bool:
-    skip = {"the", "of", "and"} if keep_titles else _NOT_NAME_WORDS
-    words = [w for w in _plain_words(phrase) if w not in skip]
+def _is_named_in(query_words: set, phrase: str) -> bool:
+    words = [w for w in _plain_words(phrase) if w not in _NOT_NAME_WORDS]
     return bool(words) and set(words) <= query_words
 
 
@@ -136,19 +154,23 @@ def name_guard(q_clean: str) -> NameGuard | None:
     words = _query_words(q_clean)
     if not words:
         return None
+    now = time.monotonic()
     key = (tuple(words), q_clean.lower())
     hit = _cache.get(key)
-    if hit and time.monotonic() - hit[0] < _CACHE_TTL_SECONDS:
+    if hit and now - hit[0] < _CACHE_TTL_SECONDS:
         return hit[1]
+    if now < _failed["until"]:
+        return None     # the member list failed to load recently: don't retry every search
     try:
         guard = _lookup(words, q_clean)
     except Exception as exc:
         db.session.rollback()
-        print(f"[search_terms] name guard skipped: {exc}", flush=True)
+        _failed["until"] = now + _FAILED_TTL_SECONDS
+        print(f"[search_terms] name guard skipped for 5 minutes: {exc}", flush=True)
         return None
     if len(_cache) >= _CACHE_MAX:
         _cache.clear()
-    _cache[key] = (time.monotonic(), guard)
+    _cache[key] = (now, guard)
     return guard
 
 
@@ -156,27 +178,55 @@ _index: dict = {"at": None, "entries": ()}
 
 
 def _member_index() -> tuple:
-    """(kind, member name, phrase, phrase tsquery text, lexemes) for every member
-    name (titles removed) and Commons seat in member_profile. Reloaded every 6 hours."""
+    """Every removable name form in member_profile, as _Entry. Reloaded every 6 hours."""
     now = time.monotonic()
     if _index["at"] is not None and now - _index["at"] < _CACHE_TTL_SECONDS:
         return _index["entries"]
+    title_tsv = db.session.execute(
+        sqla_text("SELECT CAST(to_tsvector('english', :t) AS text)"),
+        {"t": " ".join(_PEER_TITLES)}).scalar()
     rows = db.session.execute(sqla_text(f"""
         WITH m AS (
             SELECT name, house, membership_from,
-                   regexp_replace(name, {_TITLES_SQL}, '', 'i') AS bare
+                   regexp_replace(name, {_TITLES_SQL}, '', 'i') AS bare,
+                   (name ~* {_PEER_NAME_SQL}) AS is_peer
             FROM member_profile
         )
-        SELECT 'name', name, bare, CAST(phraseto_tsquery('english', bare) AS text) FROM m
+        SELECT CASE WHEN is_peer THEN 'peer' ELSE 'mp' END, bare,
+               CAST(phraseto_tsquery('english', bare) AS text),
+               CAST(phraseto_tsquery('english', split_part(bare, ' of ', 1)) AS text)
+        FROM m
         UNION
-        SELECT 'seat', name, membership_from,
-               CAST(phraseto_tsquery('english', membership_from) AS text)
+        SELECT 'seat', membership_from,
+               CAST(phraseto_tsquery('english', membership_from) AS text), NULL
         FROM m
         WHERE house = 'Commons' AND membership_from IS NOT NULL
     """)).fetchall()
-    entries = tuple(sorted(
-        (kind, member_name or "", " ".join(phrase.split()), tsq, frozenset(_lexemes(tsq)))
-        for kind, member_name, phrase, tsq in rows if phrase and phrase.strip() and tsq))
+    title_q = "( " + " | ".join(f"'{t}'" for t in sorted(_lexemes(title_tsv))) + " )"
+
+    entries = set()
+    for kind, phrase, tsq, short_tsq in rows:
+        phrase = " ".join((phrase or "").split())
+        if not phrase or not tsq:
+            continue
+        lex = frozenset(_lexemes(tsq))
+        if kind == "seat":
+            entries.add(_Entry("seat", phrase, lex, tsq, _phrase_regex(phrase)))
+        elif kind == "mp":
+            if len(phrase.split()) < 2:
+                continue    # one word is not a safe name form ("Hunt", "Green")
+            entries.add(_Entry("mp", phrase, lex, tsq, _phrase_regex(phrase)))
+        else:
+            if phrase.lower().startswith("of ") or not short_tsq:
+                continue    # "The Earl of Kinnoull", "Bishop of London": titles, not names
+            short, _, place = phrase.partition(" of ")
+            regex = _PEER_TITLE_RE + _phrase_regex(short)
+            if place:
+                regex += r"(?:\s+of\s+" + _phrase_regex(place) + ")?"
+            # "Lord Price", "Lady Stroud", "Baroness Stroud", "Lord Black (of Brentwood)"
+            entries.add(_Entry("peer", phrase, lex, f"{title_q} <-> ( {short_tsq} )",
+                               regex, short=short))
+    entries = tuple(sorted(entries, key=lambda e: (e.kind, e.phrase)))
     _index.update(at=now, entries=entries)
     return entries
 
@@ -189,51 +239,36 @@ def _word_lexemes(words: list[str]) -> list[set]:
     return [_lexemes(t) for t in row]
 
 
+def _named(entry: _Entry, query_words: set) -> bool:
+    """The search names this member or seat, so it stays searchable."""
+    if entry.kind == "peer":
+        # "lord black", "lady stroud", "baroness stroud": the name and any title
+        return (_is_named_in(query_words, entry.short)
+                and bool(query_words & _PEER_TITLE_WORDS))
+    return _is_named_in(query_words, entry.phrase)
+
+
 def _lookup(words: list[str], q_clean: str) -> NameGuard | None:
-    word_lex = _word_lexemes(words)
-    query_lex = set().union(*word_lex)
+    query_lex = set().union(*_word_lexemes(words))
     if not query_lex:
         return None
-    candidates = [e for e in _member_index() if e[4] & query_lex][:_MAX_PHRASES]
-
     query_words = set(_plain_words(q_clean))
-    names, seats, tsqueries = set(), set(), set()
-    for kind, member_name, phrase, tsq, _lex in candidates:
-        if kind == "name":
-            if phrase.lower().startswith("of "):
-                continue    # "The Earl of Kinnoull": a title, not a name
-            # The search names this member ("cat smith"; "lord black" for
-            # Lord Black of Brentwood), so keep their name searchable.
-            short = re.split(r"\s+of\s+", phrase)[0]
-            if len(_plain_words(short)) >= 2:
-                named = _is_named_in(query_words, short)
-            else:   # a peer known by one name: needs the title too
-                named = _is_named_in(query_words, re.split(r"\s+of\s+", member_name)[0],
-                                     keep_titles=True)
-            if named:
-                continue
-            names.add(phrase)
-        else:
-            if _is_named_in(query_words, phrase):
-                continue    # the search names the seat ("forest of dean")
-            seats.add(_phrase_regex(phrase))
-        tsqueries.add(tsq)
-    if not tsqueries:
+    chosen = [e for e in _member_index()
+              if e.lexemes & query_lex and not _named(e, query_words)][:_MAX_PHRASES]
+    if not chosen:
         return None
-
-    # Only the search words that are part of a guarded name need rechecking.
-    in_names = set().union(*(_lexemes(t) for t in tsqueries))
-    word_patterns = [_word_regex(word, lexeme)
-                     for word, lexemes in zip(words, word_lex)
-                     for lexeme in sorted(lexemes) if lexeme in in_names]
-    if not word_patterns:
-        return None
-
     alternatives = []
+    mps = {e.phrase for e in chosen if e.kind == "mp"}
+    peers = sorted({e.regex[len(_PEER_TITLE_RE):] for e in chosen if e.kind == "peer"})
+    seats = [e.regex for e in chosen if e.kind == "seat"]
+    names = []
+    if mps:
+        names.append(_names_regex(mps))
+    if peers:
+        names.append(_PEER_TITLE_RE + "(?:" + "|".join(peers) + ")")
     if names:
-        alternatives.append(r"\m(?:" + _names_regex(names) + r")\M")
+        alternatives.append(r"\m(?:" + "|".join(names) + r")\M")
     if seats:
-        alternatives.append(r"\m(?:Members?|MP)\s+for\s+(?:" + "|".join(sorted(seats)) + r")\M")
-    return NameGuard(tsquery=" | ".join(f"( {t} )" for t in sorted(tsqueries)),
-                     pattern="|".join(alternatives),
-                     word_patterns=tuple(word_patterns))
+        alternatives.append(r"\m(?:Members?|MP)\s+for\s+(?:" + "|".join(sorted(set(seats))) + r")\M")
+    return NameGuard(tsquery=" | ".join(sorted({f"( {e.tsquery} )" for e in chosen})),
+                     pattern="|".join(alternatives))

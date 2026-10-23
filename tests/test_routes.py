@@ -698,7 +698,8 @@ class TestArchiveSearchFixes:
         html = client.get('/archive/search?q=school+funding').get_data(as_text=True)
         assert len(_pq_uins(html)) == 20
         assert '<span class="as-tab-count">24</span>' in html
-        assert 'href="/written-questions?q=school+funding">See all 24 written questions' in html
+        assert 'Showing the top 20 of 24 written questions.' in html
+        assert 'href="/written-questions?q=school+funding">See them all' in html
 
     def test_wq_count_is_capped_on_postgres(self, client):
         from unittest.mock import patch
@@ -715,7 +716,7 @@ class TestArchiveSearchFixes:
             html = client.get('/archive/search?q=school&sort=newest').get_data(as_text=True)
         assert mock_fts.call_args.kwargs['sort'] == 'newest'
         assert mock_pq.call_args.kwargs['sort'] == 'newest'
-        assert 'See all 10,000+ written questions' in html
+        assert 'Showing the top 20 of 10,000+ written questions.' in html
 
     def test_huge_page_is_404_not_500(self, client):
         r = client.get('/archive/search?q=school+funding&page=99999999999999999999')

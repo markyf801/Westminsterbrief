@@ -1907,7 +1907,7 @@ def _fts_search(
       session_id, title, date, house, debate_type, slug, department,
       snippet (Markup — safe HTML with <mark> highlights), final_rank
 
-    skip_count=True skips the COUNT query (callers that discard the total should use this).
+    skip_count=True returns 0 as the total (callers that discard it).
     lim overrides the default _PER_PAGE fetch size.
 
     Matching: a "quoted" query is an exact phrase; otherwise every word must
@@ -1915,10 +1915,10 @@ def _fts_search(
     A word that appears only inside a member's name or seat does not count
     (search_terms.name_guard).
 
-    sort="relevance": sessions containing the words as a phrase come first,
-    then the rest. Within each group: title match, best speech, and how many
-    speeches match (a debate about cats beats one passing mention), decayed by
-    age. sort="newest": by date.
+    sort="relevance": sessions with the words as a phrase in a speech, or all
+    of them in the title, come first; then the rest. Within each group: title
+    match, best speech, and how many speeches match (a debate about cats
+    beats one passing mention), decayed by age. sort="newest": by date.
     """
     ts_func, q_clean = _st.parse_query(q_raw)
     q_expr = f"{ts_func}('english', :q)"
@@ -1960,33 +1960,17 @@ def _fts_search(
     extra_where_sql = " ".join(extra_where_parts)
 
     guard = None if title_only else _st.name_guard(q_clean)
-    guard_sql = guard.sql("c.speech_tsv", "c.speech_text") if guard else ""
+    guard_sql = guard.sql("c.speech_tsv", "c.speech_text", q_expr) if guard else ""
     if guard:
         extra_params.update(guard.params())
-
-    body_match_clause = "" if title_only else "OR c.id IS NOT NULL"
-
-    count_sql = sqla_text(f"""
-        SELECT COUNT(DISTINCT s.id)
-        FROM ha_session s
-        {policy_join}
-        LEFT JOIN ha_contribution c ON c.session_id = s.id
-            AND c.speech_tsv @@ {q_expr}
-            {guard_sql}
-        WHERE s.is_container = false
-          AND (
-              s.title_tsv @@ {q_expr}
-              {body_match_clause}
-          )
-          {extra_where_sql}
-    """)
 
     if sort == "newest":
         order_sql = "date DESC, final_rank DESC"
     else:
         order_sql = "phrase_hit DESC, final_rank DESC, date DESC"
-    # Speech text is read only for the page of results (snippets), not for
-    # every matching speech.
+    # One pass: the total comes from a window count, so matching (and the
+    # name recheck) runs once. Speech text is read only for the page of
+    # results (snippets), not for every matching speech.
     rows_sql = sqla_text(f"""
         WITH matched AS MATERIALIZED (
             SELECT c.id, c.session_id,
@@ -2007,8 +1991,7 @@ def _fts_search(
         ),
         title_match AS (
             SELECT id AS session_id,
-                   ts_rank(title_tsv, {q_expr})          AS title_rank,
-                   (title_tsv @@ {phrase_expr})          AS title_phrase
+                   ts_rank(title_tsv, {q_expr})          AS title_rank
             FROM ha_session
             WHERE title_tsv @@ {q_expr}
               AND is_container = false
@@ -2017,11 +2000,13 @@ def _fts_search(
             SELECT
                 s.id, s.title, s.date, s.house, s.debate_type, s.slug, s.department,
                 ps.best_id,
-                (COALESCE(ps.has_phrase, false) OR COALESCE(tm.title_phrase, false)) AS phrase_hit,
+                -- first group: the words as a phrase in a speech, or all of them in the title
+                (COALESCE(ps.has_phrase, false) OR tm.session_id IS NOT NULL) AS phrase_hit,
                 (COALESCE(tm.title_rank, 0.0) * 3
                     + COALESCE(ps.body_rank, 0.0)
                     + {_HITS_WEIGHT} * LN(1 + COALESCE(ps.hits, 0)))
-                    * {_recency_weight("s.date")}                   AS final_rank
+                    * {_recency_weight("s.date")}                   AS final_rank,
+                COUNT(*) OVER ()                                    AS full_count
             FROM ha_session s
             {policy_join}
             LEFT JOIN per_session ps ON ps.session_id = s.id
@@ -2035,16 +2020,12 @@ def _fts_search(
         SELECT
             r.id, r.title, r.date, r.house, r.debate_type, r.slug, r.department,
             r.final_rank,
-            ts_headline('english', bc.speech_text, {q_expr}, :hl_opts) AS snippet
+            ts_headline('english', bc.speech_text, {q_expr}, :hl_opts) AS snippet,
+            r.full_count
         FROM ranked r
         LEFT JOIN ha_contribution bc ON bc.id = r.best_id
         ORDER BY {order_sql}
     """)
-
-    count_params = {"q": q_clean}
-    if policy_filter:
-        count_params["policy"] = policy_filter
-    count_params.update(extra_params)
 
     params = {"q": q_clean, "hl_opts": _FTS_HEADLINE_OPTS,
               "lim": effective_lim, "off": offset}
@@ -2052,12 +2033,13 @@ def _fts_search(
         params["policy"] = policy_filter
     params.update(extra_params)
 
-    total = 0 if skip_count else (db.session.execute(count_sql, count_params).scalar() or 0)
-    rows  = db.session.execute(rows_sql, params).fetchall()
+    rows = db.session.execute(rows_sql, params).fetchall()
+    # A page past the end has no rows, so no count: the route then 404s.
+    total = 0 if (skip_count or not rows) else rows[0][-1]
 
     results = []
     for row in rows:
-        sid, title, d, house, dtype, slug, dept, rank, snippet = row
+        sid, title, d, house, dtype, slug, dept, rank, snippet, _full_count = row
         results.append({
             "session_id":        sid,
             "title":             title,
@@ -2105,12 +2087,12 @@ _PQ_TEXT_SQL = ("coalesce(p.heading, '') || ' ' || coalesce(p.question_text, '')
                 " || ' ' || coalesce(p.answer_text, '')")
 
 
-def _pq_match_sql(q_clean: str) -> tuple[str, dict]:
+def _pq_match_sql(q_clean: str, q_expr: str) -> tuple[str, dict]:
     """Name-guard clause and params for a ha_pq search (see search_terms)."""
     guard = _st.name_guard(q_clean)
     if not guard:
         return "", {}
-    return guard.sql("p.question_tsv", _PQ_TEXT_SQL), guard.params()
+    return guard.sql("p.question_tsv", _PQ_TEXT_SQL, q_expr), guard.params()
 
 
 def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "",
@@ -2119,9 +2101,10 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "",
     """
     Full-text search over ha_pq using question_tsv. Returns up to `limit` results.
 
-    Matching as _fts_search. sort="relevance": questions containing the words
-    as a phrase first, then ts_rank with a recency boost; sort="newest" by
-    tabled date. date_from / date_to filter on the tabled date.
+    Matching as _fts_search. sort="relevance": questions with the words as a
+    phrase, or all of them in the heading, first; then ts_rank with a recency
+    boost. sort="newest": by tabled date. date_from / date_to filter on the
+    tabled date.
 
     Each result dict:
       result_type, uin, heading, asking_member, answering_body,
@@ -2131,7 +2114,7 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "",
     q_expr = f"{ts_func}('english', :q)"
     join_sql, filter_sql, filter_params = _pq_filters(
         date_from, date_to, house_filter, policy_filter)
-    guard_sql, guard_params = _pq_match_sql(q_clean)
+    guard_sql, guard_params = _pq_match_sql(q_clean, q_expr)
 
     order_sql = ("p.tabled_date DESC, rank DESC" if sort == "newest"
                  else "phrase_hit DESC, rank DESC, p.tabled_date DESC")
@@ -2146,7 +2129,8 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "",
                 {q_expr},
                 :hl_opts) AS snippet,
             p.question_text,
-            (p.question_tsv @@ phraseto_tsquery('english', :q)) AS phrase_hit
+            (p.question_tsv @@ phraseto_tsquery('english', :q)
+             OR to_tsvector('english', coalesce(p.heading, '')) @@ {q_expr}) AS phrase_hit
         FROM ha_pq p
         {join_sql}
         WHERE p.question_tsv @@ {q_expr}
@@ -2194,7 +2178,7 @@ def _pq_fts_count(q_raw: str, cap: int = _PQ_COUNT_CAP, date_from: str = "",
     q_expr = f"{ts_func}('english', :q)"
     join_sql, filter_sql, filter_params = _pq_filters(
         date_from, date_to, house_filter, policy_filter)
-    guard_sql, guard_params = _pq_match_sql(q_clean)
+    guard_sql, guard_params = _pq_match_sql(q_clean, q_expr)
     sql = sqla_text(f"""
         SELECT COUNT(*) FROM (
             SELECT 1 FROM ha_pq p
@@ -2378,6 +2362,26 @@ def _wq_scanner_qs(q: str, date_from: str, date_to: str, house_filter: str) -> s
     return urlencode(params)
 
 
+_SEARCH_TIMEOUT = "8s"
+
+
+def _limit_search_time() -> None:
+    """Cap each archive-search query (Postgres), so one heavy search cannot tie up a worker.
+    SET LOCAL lasts until the request's transaction ends."""
+    if db.engine.dialect.name == "postgresql":
+        db.session.execute(sqla_text(f"SET LOCAL statement_timeout = '{_SEARCH_TIMEOUT}'"))
+
+
+def _search_failed(exc: Exception, where: str) -> str:
+    """Roll back the failed transaction and return the message to show."""
+    db.session.rollback()
+    print(f"[{where}] error: {exc}", flush=True)
+    if "statement timeout" in str(exc).lower():
+        return ("This search took too long. Try a more specific search, "
+                'a "quoted phrase" or a date range.')
+    return "Search is temporarily unavailable."
+
+
 @archive_bp.route("/search")
 def archive_search():
     q             = request.args.get("q", "").strip()
@@ -2406,6 +2410,7 @@ def archive_search():
     if q:
         try:
             if _is_postgres():
+                _limit_search_time()
                 results, total = _fts_search(
                     q, page,
                     policy_filter=policy_filter,
@@ -2429,8 +2434,7 @@ def archive_search():
                     house_filter=house_filter)
             total_pages = max(1, (total + _PER_PAGE - 1) // _PER_PAGE)
         except Exception as exc:
-            error_msg = "Search is temporarily unavailable."
-            print(f"[archive_search] error: {exc}", flush=True)
+            error_msg = _search_failed(exc, "archive_search")
 
     # Past the last page of debate results: 404 rather than an empty page.
     if page > total_pages and not error_msg:
@@ -3250,13 +3254,13 @@ def hansard_home():
     if q:
         try:
             if _is_postgres():
+                _limit_search_time()
                 results, total = _fts_search(q, page=1)
                 pq_results = _pq_fts_search(q, limit=5)
             else:
                 results, total = _ilike_search(q, page=1)
         except Exception as exc:
-            error_msg = "Search is temporarily unavailable."
-            print(f"[hansard_home] error: {exc}", flush=True)
+            error_msg = _search_failed(exc, "hansard_home")
 
     # No query: show recent sessions
     recent_sessions = []

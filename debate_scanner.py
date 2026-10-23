@@ -1383,7 +1383,7 @@ def _topic_words(topic):
     return ' '.join(w for w in words if w.lower() not in ('or', 'and', 'not'))
 
 
-def build_topic_query(expanded, topic, narrow_keyword=''):
+def build_topic_query(expanded, topic, narrow_keyword='', add_topic_words=True):
     """The Research Tool's search string: the expanded phrases OR the topic's words.
 
     The AI expansion gives exact phrases, and when it fails the fallback is the
@@ -1392,6 +1392,7 @@ def build_topic_query(expanded, topic, narrow_keyword=''):
     that use every word of the topic in any order, like the archive search.
     A narrowing keyword applies to every branch (websearch_to_tsquery binds AND
     tighter than OR, so appending it once only narrowed the last phrase).
+    add_topic_words=False when the user edited the terms in Preview: use theirs as given.
     """
     inner = (expanded or '').strip()
     if inner.startswith('(') and inner.endswith(')'):
@@ -1399,7 +1400,7 @@ def build_topic_query(expanded, topic, narrow_keyword=''):
     branches = [b.strip() for b in re.split(r'\s+OR\s+', inner, flags=re.I) if b.strip()]
     words = _topic_words(topic)
     one_word_phrases = {b.strip('"').lower() for b in branches if ' ' not in b.strip('"')}
-    if words and words.lower() not in one_word_phrases:
+    if add_topic_words and words and words.lower() not in one_word_phrases:
         branches.append(words)
     kw = (narrow_keyword or '').replace('"', ' ').strip()
     if kw:
@@ -2209,7 +2210,8 @@ def debates_topic():
                 expanded = preset_expanded
             else:
                 expanded = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
-            search_query = build_topic_query(expanded, topic, narrow_keyword)
+            search_query = build_topic_query(expanded, topic, narrow_keyword,
+                                             add_topic_words=not preset_expanded)
             debug_query = search_query
 
             # Resolve department ministers for minister-led DB search
