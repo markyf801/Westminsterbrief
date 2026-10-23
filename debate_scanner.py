@@ -1377,6 +1377,38 @@ def _db_is_postgres():
     return _db.engine.url.drivername.startswith('postgresql')
 
 
+def _topic_words(topic):
+    """The topic's own words for websearch_to_tsquery: no quotes or operators."""
+    words = re.findall(r"[^\W_][\w'’-]*", topic or '')
+    return ' '.join(w for w in words if w.lower() not in ('or', 'and', 'not'))
+
+
+def build_topic_query(expanded, topic, narrow_keyword=''):
+    """The Research Tool's search string: the expanded phrases OR the topic's words.
+
+    The AI expansion gives exact phrases, and when it fails the fallback is the
+    whole topic as one exact phrase ("UK support for Ukraine" is rarely said
+    word for word, so that found nothing). The extra branch also finds speeches
+    that use every word of the topic in any order, like the archive search.
+    A narrowing keyword applies to every branch (websearch_to_tsquery binds AND
+    tighter than OR, so appending it once only narrowed the last phrase).
+    """
+    inner = (expanded or '').strip()
+    if inner.startswith('(') and inner.endswith(')'):
+        inner = inner[1:-1].strip()
+    branches = [b.strip() for b in re.split(r'\s+OR\s+', inner, flags=re.I) if b.strip()]
+    words = _topic_words(topic)
+    one_word_phrases = {b.strip('"').lower() for b in branches if ' ' not in b.strip('"')}
+    if words and words.lower() not in one_word_phrases:
+        branches.append(words)
+    kw = (narrow_keyword or '').replace('"', ' ').strip()
+    if kw:
+        branches = [f'{b} "{kw}"' for b in branches]
+    if not branches:
+        return ''
+    return branches[0] if len(branches) == 1 else '(' + ' OR '.join(branches) + ')'
+
+
 def _wsq_string(fts_query):
     """Prepare fts_query for websearch_to_tsquery: strip outer parens, lowercase OR."""
     s = fts_query.strip()
@@ -1623,9 +1655,10 @@ def fetch_wqs_from_db(topic, dept_names, date_from='', date_to='', limit=300):
 
         if topic:
             if is_pg:
-                m_q = re.search(r'"([^"]+)"', topic)
-                kw = m_q.group(1) if m_q else topic.strip('()"')
-                q = q.filter(sqla_text("question_tsv @@ plainto_tsquery('english', :kw)").bindparams(kw=kw))
+                # Every word of the topic, and any "quoted phrase" in it, as the
+                # archive search does. websearch_to_tsquery never raises on input.
+                q = q.filter(sqla_text("question_tsv @@ websearch_to_tsquery('english', :kw)")
+                             .bindparams(kw=topic))
             else:
                 raw_words = [w.lower() for w in topic.split() if len(w) > 3]
                 kw = raw_words[0] if raw_words else topic
@@ -1638,8 +1671,13 @@ def fetch_wqs_from_db(topic, dept_names, date_from='', date_to='', limit=300):
         total = q.count()
         pq_rows = q.limit(limit).all()
 
+        # SQLite only: the ILIKE above matches one word, so check the others here.
+        # Postgres full-text search already needs every word (properly stemmed);
+        # this cruder substring check dropped real matches there ("microchipping"
+        # is not in "microchip", and short words such as "cat" were ignored).
         raw_words = [w.lower() for w in topic.split() if len(w) > 3]
-        relevance_stems = [(w[:-1] if w.endswith('s') and len(w) > 4 else w) for w in raw_words]
+        relevance_stems = ([] if is_pg else
+                           [(w[:-1] if w.endswith('s') and len(w) > 4 else w) for w in raw_words])
 
         results = []
         seen_ids = set()   # by row id: UINs repeat across sessions (INC-008)
@@ -2171,10 +2209,7 @@ def debates_topic():
                 expanded = preset_expanded
             else:
                 expanded = expand_search_query(topic, GEMINI_API_KEY) if GEMINI_API_KEY else f'"{topic}"'
-            if narrow_keyword:
-                search_query = f'{expanded} AND "{narrow_keyword}"'
-            else:
-                search_query = expanded
+            search_query = build_topic_query(expanded, topic, narrow_keyword)
             debug_query = search_query
 
             # Resolve department ministers for minister-led DB search

@@ -1,4 +1,4 @@
-"""Archive search precision: member names, phrase-first ranking, WQ filters.
+"""Archive search precision: member names, phrase-first ranking, WQ filters, Research Tool terms.
 
 Most tests inspect the SQL the Postgres paths send (the suite runs on SQLite).
 TestOnLocalPostgres runs the real SQL, but only when WB_TEST_POSTGRES_URL points
@@ -284,6 +284,48 @@ def test_postgres_route_passes_filters_to_wq_search(app):
     assert ('href="/written-questions?q=ukraine&amp;start_date=2026-05-01'
             '&amp;end_date=2026-10-23&amp;house_filter=Commons"') in html
     assert views._wq_scanner_qs("x", "", "", "") == "q=x"
+
+
+# ── Research Tool search terms ────────────────────────────────────────────────
+
+def test_topic_query_adds_the_topics_own_words():
+    from debate_scanner import build_topic_query
+    assert build_topic_query('"UK support for Ukraine"', "UK support for Ukraine") == (
+        '("UK support for Ukraine" OR UK support for Ukraine)')
+    assert build_topic_query('("cat microchipping" OR "single point of search")',
+                             "cat microchipping") == (
+        '("cat microchipping" OR "single point of search" OR cat microchipping)')
+
+
+def test_topic_query_one_word_topic_is_not_repeated():
+    from debate_scanner import build_topic_query
+    assert build_topic_query('("Ukraine" OR "Ukraine Defence Contact Group")', "Ukraine") == (
+        '("Ukraine" OR "Ukraine Defence Contact Group")')
+
+
+def test_topic_query_strips_operators_from_the_topic():
+    from debate_scanner import build_topic_query
+    assert build_topic_query('"x"', 'cats or -dogs & "ferrets"') == '("x" OR cats dogs ferrets)'
+
+
+def test_topic_query_narrow_keyword_applies_to_every_branch():
+    from debate_scanner import build_topic_query
+    assert build_topic_query('("a b" OR "c")', "a b", "stray") == (
+        '("a b" "stray" OR "c" "stray" OR a b "stray")')
+
+
+def test_wq_fetch_uses_full_text_query_on_postgres(app_ctx):
+    import debate_scanner as ds
+    with patch.object(ds, "_db_is_postgres", return_value=True), \
+            patch("hansard_archive.models.HaPQ.query") as query:
+        chain = query.filter.return_value
+        chain.order_by.return_value = chain
+        chain.filter.return_value = chain
+        chain.count.return_value = 0
+        chain.limit.return_value.all.return_value = []
+        ds.fetch_wqs_from_db("cat microchipping", [])
+    sql = str(query.filter.call_args.args[0])
+    assert "websearch_to_tsquery('english', :kw)" in sql
 
 
 # ── Real SQL on a local scratch Postgres (opt-in) ─────────────────────────────
