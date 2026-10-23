@@ -206,11 +206,30 @@ _AREA_EVIDENCE_VETO: dict[str, re.Pattern] = {
 }
 
 
+# ...unless the same quote also names the area's own subject, e.g. "the
+# two-child limit harms the welfare of children" or "PIP claimants with
+# assistance animals" really are about benefits.
+_AREA_EVIDENCE_KEEP: dict[str, re.Pattern] = {
+    "Welfare and benefits": re.compile(
+        r"(?<![a-z0-9])(?:"
+        r"benefits?|universal credit|pip|personal independence payment|allowances?"
+        r"|pensions?|claimants?|claims?|two child|social security|dwp"
+        r"|department for work and pensions"
+        r")(?![a-z0-9])"
+    ),
+}
+
+
 def area_evidence_vetoed(area: str, quote) -> bool:
     """True when the evidence quote shows the area is the wrong sense of a word."""
     pattern = _AREA_EVIDENCE_VETO.get(area)
-    return bool(pattern and isinstance(quote, str)
-                and pattern.search(normalise_for_evidence(quote)))
+    if not (pattern and isinstance(quote, str)):
+        return False
+    q = normalise_for_evidence(quote)
+    if not pattern.search(q):
+        return False
+    keep = _AREA_EVIDENCE_KEEP.get(area)
+    return not (keep and keep.search(q))
 
 
 @dataclass

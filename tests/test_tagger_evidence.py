@@ -106,6 +106,13 @@ def test_verify_tags_canonicalises_topics():
     ("cuts to welfare spending", False),
     ("the two-child limit on universal credit", False),
     ("welfare reform", False),
+    # benefits named in the same quote: keep the area
+    ("the two-child limit harms the welfare of children", False),
+    ("universal credit and the welfare of children in poverty", False),
+    ("the welfare of the child and child benefit", False),
+    ("welfare standards for claimants", False),
+    ("PIP claimants with assistance animals", False),
+    ("benefits for livestock farmers", False),
 ])
 def test_welfare_and_benefits_veto(quote, vetoed):
     assert tg.area_evidence_vetoed("Welfare and benefits", quote) is vetoed
