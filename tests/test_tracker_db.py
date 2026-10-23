@@ -110,6 +110,9 @@ def _seed(db):
                   finished_at=CRON_FINISHED + timedelta(hours=1, minutes=5), status="failed"),
         HaCronRun(service_name="archive-cron", started_at=CRON_FINISHED + timedelta(hours=2),
                   finished_at=CRON_FINISHED + timedelta(hours=2, minutes=5), status="ok"),
+        # a one-off catch-up doesn't ingest newly tabled questions: not an update
+        HaCronRun(service_name="pq-catchup", started_at=CRON_FINISHED + timedelta(hours=1),
+                  finished_at=CRON_FINISHED + timedelta(hours=3), status="ok"),
     ])
     db.session.commit()
 

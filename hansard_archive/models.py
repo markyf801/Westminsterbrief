@@ -150,6 +150,13 @@ class HansardSessionTheme(db.Model):
         return f"<HansardSessionTheme session={self.session_id} [{self.theme_type}] {self.theme!r}>"
 
 
+# ha_cron_run.service_name of the scheduled PQ crons (docs/ops/railway-services.md).
+# Their ok runs date the "updated" times on /questions and /tracker; one-off runs
+# (pq-catchup, backfill, manual) don't. Same names as health_checks CONFIG["pq_crons"]["known"].
+PQ_SCHEDULED_RUNS = ("pq-cron-early", "pq-cron-morning", "pq-cron-afternoon", "pq-cron-monday",
+                     "pq-quickcheck", "pq-cron-weekly")
+
+
 class HaCronRun(db.Model):
     """
     Persisted log of each scheduled cron run.

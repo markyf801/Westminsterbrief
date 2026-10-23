@@ -47,8 +47,13 @@ to master redeploys the crons) or a restart keeps "running" with no
 ``finished_at`` for ever; older than ``cron_stuck_hours`` it counts as
 unfinished, not failed. It stops mattering once a later run of the same service
 finishes. For the PQ sweeps (``pq_crons`` "group"), another sweep finishing ok
-after it covers it straight away. One-off runs (``pq_crons`` "one_off", and any
-``pq-*`` name not in the config) are listed for information only.
+after it covers it, while the unfinished run is younger than the service's
+``warn_hours`` (Railway skips a cron's next run while one is still running, so
+a hung run must not stay covered). One-off runs (``pq_crons`` "one_off") are
+listed for information only; any other ``pq-*`` name is a WARN.
+
+Bank holidays are not known here: ``_sitting_weekdays_back`` (recent answers,
+heading lag) counts them as working days.
 """
 
 from __future__ import annotations
@@ -131,12 +136,12 @@ CONFIG: dict = {
             "pq-cron-afternoon": {"days": "mon-fri", "warn_hours": 26, "fail_hours": 50, "group": "pq-sweep"},
             "pq-cron-monday": {"days": "mon", "warn_hours": 26, "fail_hours": 50, "group": "pq-sweep"},
             "pq-quickcheck": {"days": "mon-fri", "warn_hours": 26, "fail_hours": 50},
-            "pq-weekly-refresh": {"days": "sat", "warn_hours": 30, "fail_hours": None, "optional": True},
+            "pq-cron-weekly": {"days": "sat", "warn_hours": 30, "fail_hours": None, "optional": True},
         },
         # One-off runs (started by hand): listed for information, never judged.
         "one_off": ["pq-catchup"],
-        # Any other "pq-*" service seen in the last N days is listed the same
-        # way, with a note to add it to "known" if it runs on a schedule.
+        # Any other "pq-*" service seen in the last N days is a WARN: probably a
+        # scheduled service recording a name this config doesn't know.
         "discover_days": 30,
         "ignore": ["backfill", "manual"],
     },
@@ -424,8 +429,9 @@ def _cron_service_check(ctx: HealthContext, label: str, service: str, rule: dict
     restart stopped it (every push to master redeploys the crons), or it is
     hung. That alone is not a failure. For a service in a group (peers doing
     the same sweep), a peer that finished ok after it covers it, so it is OK
-    until cron_interrupted_streak_warn unfinished runs in a row; otherwise it
-    is at most WARN while no run has actually failed since the last ok one.
+    while the unfinished run is younger than warn_hours and fewer than
+    cron_interrupted_streak_warn runs in a row didn't finish. Otherwise it is
+    graded by the age of its last ok run, and at least WARN.
     """
     t = ctx.table("ha_cron_run")
     is_svc = t.c.service_name == service
@@ -450,6 +456,13 @@ def _cron_service_check(ctx: HealthContext, label: str, service: str, rule: dict
     res.detail = res.detail.replace("last update", "last ok run")
     if recent_failed:
         res.detail += f"; {recent_failed} failed run(s) in last {ctx.config['cron_recent_failures_hours']}h"
+    recent_skipped = ctx.scalar(
+        sa.select(sa.func.count()).select_from(t)
+        .where(is_svc, t.c.status == "skipped", t.c.started_at >= since)
+    ) or 0
+    if recent_skipped:
+        res.detail += (f"; {recent_skipped} run(s) skipped in last {ctx.config['cron_recent_failures_hours']}h "
+                       f"(another PQ run in progress)")
 
     # Runs started after the last ok one, newest first.
     later = [(s, _coerce(st)) for s, st in ctx.conn.execute(
@@ -472,10 +485,13 @@ def _cron_service_check(ctx: HealthContext, label: str, service: str, rule: dict
         streak = ctx.config["cron_interrupted_streak_warn"]
         if len(unfinished) >= streak:
             res.detail += f"; {len(unfinished)} runs in a row never finished"
-        if cover and len(unfinished) < streak:
+        # Railway skips a cron's next run while the last one is still running,
+        # so a hung run is covered only while it is younger than warn_hours.
+        recent = active_hours_since(unfinished[0], ctx.now, _DAYS[rule["days"]]) <= rule["warn_hours"]
+        if cover and recent and len(unfinished) < streak:
             res.status = OK
             res.detail += f"; covered by {cover[0]} finishing ok at {fmt_when(cover[1])}"
-        else:
+        elif res.status == OK:
             res.status = WARN
     elif latest_status == "failed" or (unfinished and latest_start == unfinished[0]):
         if res.status == OK:
@@ -527,7 +543,8 @@ def check_pq_crons(ctx: HealthContext) -> list[CheckResult]:
 
 
 def _one_off_run(ctx: HealthContext, service: str, listed: bool) -> CheckResult:
-    """Report only: how a one-off (hand-started) run's latest attempt went."""
+    """How a one-off (hand-started) run's latest attempt went: report only when
+    listed in "one_off", else WARN (a name the config doesn't know)."""
     t = ctx.table("ha_cron_run")
     is_svc = t.c.service_name == service
     status, started, finished = ctx.conn.execute(
@@ -545,10 +562,11 @@ def _one_off_run(ctx: HealthContext, service: str, listed: bool) -> CheckResult:
         detail += f", finished {fmt_when(finished)}"
     if failed:
         detail += f"; {failed} failed run(s) in last {hours}h"
-    detail += "; one-off run, report only" if listed else (
-        "; not in the health config: report only (add it to CONFIG['pq_crons']['known'] "
-        "if it runs on a schedule)")
-    return CheckResult(f"PQ one-off: {service}", OK, detail, last_ok)
+    if listed:
+        return CheckResult(f"PQ one-off: {service}", OK, detail + "; one-off run, report only", last_ok)
+    return CheckResult(f"PQ cron: {service}", WARN,
+                       detail + "; not in the health config (add it to CONFIG['pq_crons']['known'] "
+                                "if it runs on a schedule, or to 'one_off')", last_ok)
 
 
 def check_pq_headings(ctx: HealthContext) -> CheckResult:
@@ -572,7 +590,10 @@ def check_pq_headings(ctx: HealthContext) -> CheckResult:
     status = OK
     if missing >= cfg["missing_heading_min_count"] and pct >= cfg["missing_heading_warn_pct"]:
         status = WARN
-    detail = (f"{missing} of {total} tabled {cutoff.isoformat()} to {(lag_from - timedelta(days=1)).isoformat()} "
+    last_counted = lag_from - timedelta(days=1)
+    while last_counted.weekday() >= 5:
+        last_counted -= timedelta(days=1)
+    detail = (f"{missing} of {total} tabled {cutoff.isoformat()} to {last_counted.isoformat()} "
               f"({pct:.1f}%), warn at >={cfg['missing_heading_warn_pct']}%; "
               f"{too_new} tabled since {lag_from.isoformat()} not counted (Parliament adds headings "
               f"about {cfg['heading_lag_working_days']} working days after tabling)")

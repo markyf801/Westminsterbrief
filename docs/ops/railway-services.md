@@ -84,10 +84,12 @@ below. Theme tagging runs inline at the end of every Hansard cron run.
 on `/questions` read. For the four sweeps it is the Railway name
 (`pq-cron-early`, `pq-cron-morning`, `pq-cron-afternoon`, `pq-cron-monday`);
 the quick-check records `pq-quickcheck` and the weekly refresh
-`pq-weekly-refresh`. Runs started by hand use their own name (e.g. `pq-catchup`
-for a one-off catch-up); the health report lists those for information only.
+`pq-cron-weekly`. Runs started by hand use their own name (e.g. `pq-catchup`
+for a one-off catch-up); the health report lists those for information only once
+they are in `CONFIG["pq_crons"]["one_off"]`, and warns about any other `pq-*` name.
 A new scheduled PQ service needs its name added to `CONFIG["pq_crons"]["known"]`
-in `hansard_archive/health_checks.py`.
+in `hansard_archive/health_checks.py` and to `PQ_SCHEDULED_RUNS` in
+`hansard_archive/models.py` (the "updated" times on `/questions` and `/written-questions/today`).
 
 **Headings.** Parliament adds a question's heading 2–3 working days after it
 is tabled (checked 23 Oct 2026: questions tabled the day before had none, three
@@ -102,7 +104,7 @@ age out of the window without one. `pq-cron-weekly` closes that gap cheaply:
 | Service name | `pq-cron-weekly` |
 | Source | this repo, branch `master` |
 | Dockerfile Path | `Dockerfile.cron` |
-| Start command | `python scripts/ingest_pq_cron.py --days 30 --answered-days 0 --skip-answer-fetch --no-tag --service-name pq-weekly-refresh` |
+| Start command | `python scripts/ingest_pq_cron.py --days 30 --answered-days 0 --skip-answer-fetch --no-tag --service-name pq-cron-weekly` |
 | Cron schedule | `0 6 * * 6` (Saturday 06:00 UTC; no other PQ run then) |
 | Restart policy | Never |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
@@ -366,10 +368,14 @@ normally empty):
 
 - Hansard archive newest session per House; archive and PQ cron runs (`ha_cron_run`,
   by the run-record names above). A run with no finish time after 3 hours was stopped
-  by a deploy or restart (or is hung): the line says so, and it is not a failure. For
-  the four PQ sweeps another sweep finishing after it covers it (OK); three unfinished
-  runs in a row, or no sweep finishing since, is a WARN. One-off runs (`pq-catchup`,
-  any `pq-*` name not in the config) are listed for information only
+  by a deploy or restart (or is hung): the line says so. For the four PQ sweeps another
+  sweep finishing after it covers it (OK) while the unfinished run is under 26 Mon–Fri
+  hours old (Railway skips a cron's next run while one is still running, so a hung run
+  must not stay covered); after that, three unfinished runs in a row, or no sweep
+  finishing since, the service is graded by the age of its last ok run (WARN, then
+  FAIL). One-off runs (`pq-catchup`) are listed for information only; any other
+  `pq-*` name not in the config is a WARN. Skipped quick-check runs are counted
+- Bank holidays: not known to the report; "working days" below count them
 - Written questions: newest tabled per House, last write, recent answers, missing
   headings (tabled in the last 14 days except the last 3 working days, which
   Parliament hasn't headed yet; WARN at 5%), all-time missing headings (count only — should

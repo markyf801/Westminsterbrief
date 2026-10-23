@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func
 from cache_models import CachedMember
 from extensions import db, limiter
-from hansard_archive.models import HaCronRun, HaPQ, HaPQDeadline
+from hansard_archive.models import PQ_SCHEDULED_RUNS, HaCronRun, HaPQ, HaPQDeadline
 from hansard_archive.pq_publication import to_uk
 
 try:
@@ -231,10 +231,11 @@ def _members(member_ids: set[int]) -> dict[int, CachedMember]:
 
 def _pq_updated_label(now_utc: datetime | None = None) -> str | None:
     """'09:42 today' / '14:05 on 21 October' (UK time) for the newest PQ cron
-    run that finished successfully; None if there is none or it can't be read."""
+    run that finished successfully (scheduled crons only, not one-off runs);
+    None if there is none or it can't be read."""
     try:
         finished = (db.session.query(func.max(HaCronRun.finished_at))
-                    .filter(HaCronRun.service_name.like('pq-%'),
+                    .filter(HaCronRun.service_name.in_(PQ_SCHEDULED_RUNS),
                             HaCronRun.status == 'ok')
                     .scalar())
     except Exception as e:

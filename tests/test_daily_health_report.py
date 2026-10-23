@@ -85,7 +85,7 @@ def _seed_fresh(engine: sa.Engine, now: datetime, skip: tuple = ()) -> None:
         add("ha_cron_run", [
             {"service_name": svc, "started_at": recent, "finished_at": recent, "status": "ok"}
             for svc in ["morning-catchup", "daytime-mth", "daytime-fri", "pq-cron-early", "pq-cron-morning",
-                        "pq-cron-afternoon", "pq-cron-monday", "pq-quickcheck", "pq-weekly-refresh",
+                        "pq-cron-afternoon", "pq-cron-monday", "pq-quickcheck", "pq-cron-weekly",
                         "committee-evidence-cron", "backup-r2", "edm-cron"]
         ])
         add("ha_pq", [
@@ -253,24 +253,39 @@ def test_cron_failures_and_one_off_services():
     res = _run_db(engine, TUESDAY)
     assert res["PQ cron: pq-cron-afternoon"].status == hc.WARN
     assert "latest run failed" in res["PQ cron: pq-cron-afternoon"].detail
-    unknown = res["PQ one-off: pq-early"]
-    assert unknown.status == hc.OK and "not in the health config" in unknown.detail
+    unknown = res["PQ cron: pq-early"]                 # a name the config doesn't know
+    assert unknown.status == hc.WARN and "not in the health config" in unknown.detail
     catchup = res["PQ one-off: pq-catchup"]
     assert catchup.status == hc.OK
     assert "latest run failed" in catchup.detail and "5 failed run(s) in last 24h" in catchup.detail
     assert "one-off run, report only" in catchup.detail
     assert "PQ cron: backfill" not in res and "PQ one-off: backfill" not in res
+    assert hc.count_problems(list(res.values())) == 2
+
+
+def test_misnamed_weekly_service_warns():
+    engine = _fresh_engine(FRIDAY)
+    cron = m.HaCronRun.__table__
+    with engine.begin() as conn:
+        conn.execute(cron.delete().where(cron.c.service_name == "pq-cron-weekly"))
+        conn.execute(cron.insert(), [{"service_name": "pq-weekly-refresh", "started_at": datetime(2026, 10, 17, 6),
+                                      "finished_at": datetime(2026, 10, 17, 6, 5), "status": "failed"}])
+    res = _run_db(engine, FRIDAY)
+    assert res["PQ cron: pq-cron-weekly"].status == hc.SKIPPED
+    wrong = res["PQ cron: pq-weekly-refresh"]
+    assert wrong.status == hc.WARN and "latest run failed" in wrong.detail
     assert hc.count_problems(list(res.values())) == 1
 
 
 def test_cron_names_match_the_ops_doc():
     names = set(hc.CONFIG["pq_crons"]["known"])
     assert names == {"pq-cron-early", "pq-cron-morning", "pq-cron-afternoon", "pq-cron-monday",
-                     "pq-quickcheck", "pq-weekly-refresh"}
+                     "pq-quickcheck", "pq-cron-weekly"}
     docs = (PROJECT_ROOT / "docs" / "ops" / "railway-services.md").read_text(encoding="utf-8")
     expected = (names | set(hc.CONFIG["archive_crons"]) | set(hc.CONFIG["pq_crons"]["one_off"])
                 | {hc.CONFIG[k]["service"] for k in ("edm_cron", "committee_evidence", "backup_record")})
     assert {n for n in expected if f"`{n}`" not in docs} == set()
+    assert set(m.PQ_SCHEDULED_RUNS) == names       # the "updated" times on /questions and /tracker
 
 
 def test_optional_cron_without_runs_is_skipped():
@@ -278,9 +293,9 @@ def test_optional_cron_without_runs_is_skipped():
     _seed_fresh(engine, TUESDAY)
     cron = m.HaCronRun.__table__
     with engine.begin() as conn:
-        conn.execute(cron.delete().where(cron.c.service_name.in_(["pq-weekly-refresh", "pq-quickcheck"])))
+        conn.execute(cron.delete().where(cron.c.service_name.in_(["pq-cron-weekly", "pq-quickcheck"])))
     res = _run_db(engine, TUESDAY)
-    assert res["PQ cron: pq-weekly-refresh"].status == hc.SKIPPED
+    assert res["PQ cron: pq-cron-weekly"].status == hc.SKIPPED
     assert res["PQ cron: pq-quickcheck"].status == hc.WARN          # not optional
 
 
@@ -327,7 +342,8 @@ def test_run_stopped_by_deploy_is_covered_by_a_later_sweep():
     assert "finish time" not in res["PQ cron: pq-cron-afternoon"].detail
 
 
-def test_stopped_runs_without_a_later_sweep_warn_not_fail():
+def test_stopped_runs_without_a_later_sweep_are_graded_by_age():
+    # No sweep has finished since Tuesday: 3 working days, a real FAIL.
     engine = _fresh_engine(FRIDAY)
     _pq_runs(engine, [
         _ok("pq-cron-early", TUE.replace(hour=8, minute=30)),
@@ -337,8 +353,14 @@ def test_stopped_runs_without_a_later_sweep_warn_not_fail():
     ])
     res = _run_db(engine, FRIDAY)
     for svc in ("pq-cron-early", "pq-cron-afternoon"):
-        assert res[f"PQ cron: {svc}"].status == hc.WARN
+        assert res[f"PQ cron: {svc}"].status == hc.FAIL
         assert "has no finish time" in res[f"PQ cron: {svc}"].detail
+    # A recent ok run but the newest run unfinished and uncovered: WARN, not OK.
+    _pq_runs(engine, [
+        _ok("pq-cron-early", THU.replace(hour=5)),
+        _stopped("pq-cron-early", THU.replace(hour=8, minute=30)),
+    ])
+    assert _run_db(engine, FRIDAY)["PQ cron: pq-cron-early"].status == hc.WARN
     # once a later run of the same service finishes, the stopped run no longer shows
     _pq_runs(engine, [
         _ok("pq-cron-early", TUE.replace(hour=8, minute=30)),
@@ -349,6 +371,20 @@ def test_stopped_runs_without_a_later_sweep_warn_not_fail():
     assert early.status == hc.OK and "finish time" not in early.detail
 
 
+def test_hung_run_is_not_covered_for_ever():
+    # Railway skips the next runs while one is still running: one unfinished row since 16 Oct.
+    engine = _fresh_engine(FRIDAY)
+    _pq_runs(engine, [
+        _ok("pq-cron-early", datetime(2026, 10, 15, 8, 30)),
+        _stopped("pq-cron-early", datetime(2026, 10, 16, 8, 30)),
+        _ok("pq-cron-morning", THU.replace(hour=9, minute=30)),
+        _ok("pq-cron-afternoon", THU.replace(hour=14)),
+    ])
+    early = _run_db(engine, FRIDAY)["PQ cron: pq-cron-early"]
+    assert early.status == hc.FAIL
+    assert "covered by" not in early.detail and "has no finish time after 6d 23h" in early.detail
+
+
 def test_repeated_stopped_runs_warn_even_when_covered():
     engine = _fresh_engine(FRIDAY)
     _pq_runs(engine, [
@@ -357,8 +393,15 @@ def test_repeated_stopped_runs_warn_even_when_covered():
         _ok("pq-cron-afternoon", THU.replace(hour=14)),
     ])
     early = _run_db(engine, FRIDAY)["PQ cron: pq-cron-early"]
-    assert early.status == hc.WARN
+    assert early.status == hc.FAIL                   # last ok a week ago
     assert "3 runs in a row never finished" in early.detail
+    _pq_runs(engine, [
+        _ok("pq-cron-early", datetime(2026, 10, 9, 8, 30)),
+        *[_stopped("pq-cron-early", datetime(2026, 10, d, 8, 30)) for d in (19, 20, 21, 22)],
+        _ok("pq-cron-afternoon", THU.replace(hour=14)),
+    ])
+    early = _run_db(engine, FRIDAY)["PQ cron: pq-cron-early"]
+    assert early.status == hc.FAIL and "4 runs in a row never finished" in early.detail
 
 
 def test_failed_run_after_last_ok_is_still_graded():
@@ -388,6 +431,17 @@ def test_ungrouped_cron_stopped_run_warns_until_next_run():
         conn.execute(cron.insert(), [{"service_name": "edm-cron", "started_at": TUESDAY - timedelta(hours=1),
                                       "finished_at": TUESDAY - timedelta(minutes=50), "status": "ok"}])
     assert _run_db(engine, TUESDAY)["EDM cron"].status == hc.OK
+
+
+def test_skipped_quick_checks_are_counted():
+    engine = _fresh_engine(TUESDAY)
+    with engine.begin() as conn:
+        conn.execute(m.HaCronRun.__table__.insert(), [{
+            "service_name": "pq-quickcheck", "started_at": TUESDAY - timedelta(minutes=30 * i),
+            "finished_at": TUESDAY - timedelta(minutes=30 * i - 1), "status": "skipped"} for i in range(1, 4)])
+    res = _run_db(engine, TUESDAY)["PQ cron: pq-quickcheck"]
+    assert res.status == hc.OK
+    assert "3 run(s) skipped in last 24h (another PQ run in progress)" in res.detail
 
 
 def test_run_in_progress_is_not_flagged():
@@ -437,6 +491,9 @@ def test_newest_questions_without_headings_are_not_counted():
     assert res.status == hc.OK
     assert res.detail.startswith("1 of 41 tabled 2026-10-09 to 2026-10-19 (2.4%)")
     assert "30 tabled since 2026-10-20 not counted" in res.detail
+    # Thursday: the counted window ends on the Friday before, not on a Sunday
+    thursday = _run_db(engine, datetime(2026, 10, 22, 7, 30))["Written questions: missing headings"]
+    assert " to 2026-10-16 (" in thursday.detail
 
 
 def test_no_recent_answers_warns():

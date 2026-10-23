@@ -26,6 +26,9 @@ def test_last_pq_update_reads_the_recorded_cron_names(app):  # noqa: F811
                       finished_at=datetime(2026, 10, 22, 23), status="ok"),
             HaCronRun(service_name="manual", started_at=datetime(2026, 10, 23, 1),
                       finished_at=datetime(2026, 10, 23, 2), status="ok"),
+            # an ok row without a finish time (Postgres sorts NULL first in DESC)
+            HaCronRun(service_name="pq-quickcheck", started_at=datetime(2026, 10, 23, 6, 15),
+                      finished_at=None, status="ok"),
         ])
         db.session.commit()
         assert _last_pq_update() == "22 Oct 2026 14:41 UTC"

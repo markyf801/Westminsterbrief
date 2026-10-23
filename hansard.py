@@ -229,21 +229,16 @@ def _oldest_pq_date() -> str:
         return ''
 
 
-# ha_cron_run names of the scheduled PQ crons (docs/ops/railway-services.md).
-# One-off runs (pq-catchup, backfill, manual) don't count as an archive update.
-_PQ_SCHEDULED_RUNS = ('pq-cron-early', 'pq-cron-morning', 'pq-cron-afternoon', 'pq-cron-monday',
-                      'pq-quickcheck', 'pq-weekly-refresh')
-
-
 def _last_pq_update():
     """Return the most recent successful PQ cron run time, or None."""
     try:
-        from hansard_archive.models import HaCronRun
+        from hansard_archive.models import PQ_SCHEDULED_RUNS, HaCronRun
         run = (
             HaCronRun.query
             .filter(
-                HaCronRun.service_name.in_(_PQ_SCHEDULED_RUNS),
+                HaCronRun.service_name.in_(PQ_SCHEDULED_RUNS),
                 HaCronRun.status == 'ok',
+                HaCronRun.finished_at.isnot(None),
             )
             .order_by(HaCronRun.finished_at.desc())
             .first()
