@@ -5,7 +5,7 @@ whole tag table.
 
 Run once on Railway as a one-shot service, like migrations/tagging_support.py:
 
-    python migrations/topic_tag_trgm_indexes.py              # dry run: prints target DB + SQL
+    python migrations/topic_tag_trgm_indexes.py              # dry run: prints target DB, SQL, index state
     python migrations/topic_tag_trgm_indexes.py --execute    # apply
 
 What it does (additive only — touches no rows):
@@ -18,10 +18,11 @@ What it does (additive only — touches no rows):
 The site works without them: each topic page's first view in a worker is just
 slower (a full scan of the tag tables), then cached for 30 minutes.
 
-If a CONCURRENTLY build is interrupted it leaves an INVALID index. Check with
-    SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
-and, if one of these is listed, DROP INDEX CONCURRENTLY it by name (Mark's
-call — CLAUDE.md "Destructive operations") and re-run this script.
+If a CONCURRENTLY build is interrupted it leaves an INVALID index, and IF NOT
+EXISTS would then skip it silently on a re-run. So after each index step the
+script checks pg_index.indisvalid and stops with exit code 1 if the index is
+missing or INVALID. To fix: DROP INDEX CONCURRENTLY it by name (Mark's call —
+CLAUDE.md "Destructive operations") and re-run this script.
 
 Idempotent (IF NOT EXISTS). No downgrade. Postgres only: on SQLite it does nothing.
 """
@@ -38,18 +39,49 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-def steps(dialect: str) -> list[tuple[str, str]]:
+def steps(dialect: str) -> list[tuple[str, str, str | None]]:
+    """(label, SQL, index name to check afterwards or None)."""
     if dialect != "postgresql":
         return []
     return [
-        ("Enable pg_trgm", "CREATE EXTENSION IF NOT EXISTS pg_trgm"),
+        ("Enable pg_trgm", "CREATE EXTENSION IF NOT EXISTS pg_trgm", None),
         ("Trigram index lower(ha_pq_theme.theme)",
          "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_ha_pq_theme_lower_theme_trgm "
-         "ON ha_pq_theme USING gin (lower(theme) gin_trgm_ops)"),
+         "ON ha_pq_theme USING gin (lower(theme) gin_trgm_ops)",
+         "ix_ha_pq_theme_lower_theme_trgm"),
         ("Trigram index lower(ha_session_theme.theme)",
          "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_ha_session_theme_lower_theme_trgm "
-         "ON ha_session_theme USING gin (lower(theme) gin_trgm_ops)"),
+         "ON ha_session_theme USING gin (lower(theme) gin_trgm_ops)",
+         "ix_ha_session_theme_lower_theme_trgm"),
     ]
+
+
+_VALID_SQL = """
+    SELECT i.indisvalid FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = :name
+"""
+
+
+def index_valid(conn, name: str) -> bool | None:
+    """True / False from pg_index.indisvalid; None when the index does not exist."""
+    row = conn.execute(text(_VALID_SQL), {"name": name}).first()
+    return None if row is None else bool(row[0])
+
+
+def apply(engine) -> list[str]:
+    """Run every step (autocommit: CREATE INDEX CONCURRENTLY can't run in a
+    transaction). Returns problems: indexes missing or INVALID after their step."""
+    problems = []
+    for label, sql, index in steps(engine.dialect.name):
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text(sql))
+            valid = index_valid(conn, index) if index else True
+        if valid is not True:
+            problems.append(f"{label}: {index} is {'missing' if valid is None else 'INVALID'}")
+            break
+        print(f"[trgm-migration] OK  {label}", flush=True)
+    return problems
 
 
 def main() -> None:
@@ -70,14 +102,21 @@ def main() -> None:
             return
         if not args.execute:
             print("=== DRY RUN — pass --execute to apply ===\n", flush=True)
-            for label, sql in planned:
-                print(f"-- {label}\n{sql.strip()}\n", flush=True)
+            with engine.connect() as conn:
+                for label, sql, index in planned:
+                    print(f"-- {label}\n{sql.strip()}", flush=True)
+                    if index:
+                        state = {None: "not there yet", True: "exists, valid",
+                                 False: "exists, INVALID"}[index_valid(conn, index)]
+                        print(f"--   {index}: {state}", flush=True)
+                    print(flush=True)
             return
-        for label, sql in planned:
-            # CREATE INDEX CONCURRENTLY can't run inside a transaction.
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-                conn.execute(text(sql))
-            print(f"[trgm-migration] OK  {label}", flush=True)
+        problems = apply(engine)
+        if problems:
+            for p in problems:
+                print(f"[trgm-migration] FAILED {p}. Drop it with DROP INDEX CONCURRENTLY "
+                      "<name>; then re-run.", flush=True)
+            sys.exit(1)
         print("[trgm-migration] Done.", flush=True)
 
 
