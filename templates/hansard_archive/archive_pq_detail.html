@@ -23,7 +23,9 @@
 
 {% block extra_head %}<style>
 body { background: #f0f2f5; }
-.pq-same-uin ul { margin: 6px 0 0; padding-left: 18px; }
+.pq-same-uin { max-width: 720px; margin: 14px 30px 0; font-size: 13px; color: #5a6675; }
+.pq-same-uin ul { margin: 4px 0 0; padding-left: 18px; }
+.pq-same-uin a { color: #2f6690; }
 
 /* Related parliamentary activity panel — matches .sd-transcript alignment */
 .rpa-panel {
@@ -121,6 +123,17 @@ body { background: #f0f2f5; }
         </div>
         {% endif %}
     </div>
+
+    {% if same_uin %}
+    <div class="pq-same-uin">
+        Parliament reuses question numbers every session. Other written questions numbered {{ pq.uin }}:
+        <ul>
+            {% for o in same_uin %}
+            <li><a href="{{ o.url }}">{{ o.heading }}</a>{% if o.human_date %} · tabled {{ o.human_date }}{% endif %}{% if o.asking_member %} · {{ o.asking_member }}{% endif %}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
 
     {# --- Q&A as transcript-style blocks --- #}
     <div class="sd-transcript">
@@ -302,17 +315,6 @@ body { background: #f0f2f5; }
             {% endfor %}
         </div>
         {% endif %}
-    </div>
-    {% endif %}
-
-    {% if same_uin %}
-    <div class="sd-source-note pq-same-uin">
-        Parliament reuses question numbers every session. Other written questions numbered {{ pq.uin }}:
-        <ul>
-            {% for o in same_uin %}
-            <li><a href="{{ o.url }}">{{ o.heading }}</a>{% if o.human_date %} · tabled {{ o.human_date }}{% endif %}{% if o.asking_member %} · {{ o.asking_member }}{% endif %}</li>
-            {% endfor %}
-        </ul>
     </div>
     {% endif %}
 

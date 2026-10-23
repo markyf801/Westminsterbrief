@@ -2959,19 +2959,32 @@ def _earliest_pq_for_uin(uin: str) -> HaPQ | None:
     which question an old link opens."""
     pq = HaPQ.query.filter_by(uin=uin.upper()).order_by(HaPQ.id).first()
     if pq is None:
-        pq = HaPQ.query.filter_by(uin=uin).order_by(HaPQ.id).first()
+        pq = HaPQ.query.filter_by(uin=uin.lower()).order_by(HaPQ.id).first()
     return pq
+
+
+def pq_legacy_location(uin: str, query_string: str = "") -> str | None:
+    """Where the old /archive/pq/<uin> address points: the dated page of the
+    earliest-stored question with that UIN (any case), query string kept.
+    None if no question has that UIN. flask_app.enforce_canonical_url calls
+    this before its slash/case rules so the old address is one 301, not two
+    or three. Keep the old address working forever: it is in search results."""
+    pq = _earliest_pq_for_uin(uin[:50])
+    if pq is None:
+        return None
+    return pq.url_path + (f"?{query_string}" if query_string else "")
 
 
 @archive_bp.route("/pq/<string:uin>")
 def pq_legacy_redirect(uin: str):
     """Old address. UINs restart every session (INC-008), so the UIN alone does
     not identify a question: 301 to the dated address of the question this URL
-    has always shown. That page lists any other questions with the same number."""
-    pq = _earliest_pq_for_uin(uin[:50])
-    if pq is None:
+    has always shown. That page lists any other questions with the same number.
+    (On the full site enforce_canonical_url answers first, via pq_legacy_location.)"""
+    target = pq_legacy_location(uin, request.query_string.decode())
+    if target is None:
         abort(404)
-    return redirect(pq.url_path, code=301)
+    return redirect(target, code=301)
 
 
 @archive_bp.route("/pq/<string:tabled>/<string:uin>")
@@ -2989,7 +3002,8 @@ def pq_detail(tabled: str, uin: str):
     if pq is None:
         abort(404)
     if request.path != pq.url_path:
-        return redirect(pq.url_path, code=301)
+        qs = request.query_string.decode()
+        return redirect(pq.url_path + (f"?{qs}" if qs else ""), code=301)
 
     same_uin = [
         {"url": other.url_path, "heading": other.display_heading,

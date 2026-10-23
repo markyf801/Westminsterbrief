@@ -33,6 +33,7 @@ def client(fa):
         db.session.commit()
         fa._sitemap_pqs_month_caches.clear()
         fa._sitemap_index_cache.update(xml=None, ts=0.0)
+        fa._sitemap_pq_month_summary.update(data=None, ts=0.0)
 
     with fa.app.app_context():
         _clear()
@@ -107,6 +108,42 @@ def test_old_url_301s_to_dated_url(client):
     assert r.headers["Location"].endswith("/archive/pq/2026-06-04/hl1234")
 
 
+@pytest.mark.parametrize("path", ["/archive/pq/hl1234", "/archive/pq/HL1234", "/archive/pq/Hl1234/",
+                                  "/archive/pq/hl1234/", "/archive/pq/HL1234//"])
+def test_old_url_is_one_301_in_any_case_or_trailing_slash(client, path):
+    _add("HL1234", date(2026, 6, 4), "Rail: North")
+    r = client.get(path)
+    assert r.status_code == 301
+    assert r.headers["Location"].endswith("/archive/pq/2026-06-04/hl1234")
+    final = client.get(r.headers["Location"].replace("http://localhost", ""))
+    assert final.status_code == 200                               # one hop, then the page
+
+
+def test_old_url_keeps_the_query_string(client):
+    _add("HL1234", date(2026, 6, 4), "Rail: North")
+    r = client.get("/archive/pq/HL1234/?utm_source=x&b=2")
+    assert r.status_code == 301
+    assert r.headers["Location"].endswith("/archive/pq/2026-06-04/hl1234?utm_source=x&b=2")
+
+
+def test_old_url_unknown_uin_is_404_in_any_form(client):
+    for path in ("/archive/pq/nope", "/archive/pq/NOPE/"):
+        assert client.get(path).status_code == 404
+
+
+def test_dated_url_with_case_and_slash_is_one_301(client):
+    _add("HL1234", date(2026, 6, 4), "Rail: North")
+    r = client.get("/archive/pq/2026-06-04/HL1234/?ref=1")
+    assert r.status_code == 301
+    assert r.headers["Location"].endswith("/archive/pq/2026-06-04/hl1234?ref=1")
+
+
+def test_other_paths_need_one_redirect_for_case_and_slash(client):
+    r = client.get("/Archive/Search/")
+    assert r.status_code == 301
+    assert r.headers["Location"].endswith("/archive/search")
+
+
 def test_repeated_uin_old_url_keeps_the_question_it_always_showed(client):
     """The old address showed the earliest-stored row. A question stored later
     with the same UIN (e.g. the backfill of 2024 questions) must not take it
@@ -123,6 +160,7 @@ def test_repeated_uin_old_url_keeps_the_question_it_always_showed(client):
     assert '<h1 class="sd-title">Rail punctuality</h1>' in a
     assert '<h1 class="sd-title">Bus fares</h1>' in b
     assert "Other written questions numbered 6978" in a
+    assert a.index("Other written questions numbered") < a.index('class="sd-transcript"')   # near the top
     assert 'href="/archive/pq/2024-09-10/6978">Bus fares</a>' in a
     assert "B Member" in a
     assert 'href="/archive/pq/2026-06-04/6978">Rail punctuality</a>' in b
@@ -137,24 +175,30 @@ def test_single_question_page_has_no_same_number_list(client):
 # ── sitemap ───────────────────────────────────────────────────────────────────
 
 def test_sitemap_one_chunk_per_month_with_dated_urls(client):
+    # updated_at is ignored: bulk scripts stamp it on unchanged rows
     _add("6978", date(2026, 6, 4), "Rail", is_answered=True, answer_date=date(2026, 6, 9),
-         updated_at=datetime(2026, 6, 5, 8, 0))
-    _add("6978", date(2024, 9, 10), "Bus fares", updated_at=datetime(2024, 9, 11, 8, 0))
-    _add("HL22", date(2026, 6, 30), "Lords question", chamber="Lords",
-         updated_at=datetime(2026, 7, 2, 8, 0))
+         updated_at=datetime(2026, 10, 20, 8, 0))
+    _add("6978", date(2024, 9, 10), "Bus fares", updated_at=datetime(2026, 10, 20, 8, 0))
+    _add("HL22", date(2026, 6, 30), "Lords question", chamber="Lords", is_answered=True,
+         answer_date=date(2026, 7, 2), answer_corrected_date=date(2026, 7, 9),
+         updated_at=datetime(2026, 10, 20, 8, 0))
 
     index = client.get("/sitemap.xml").get_data(as_text=True)
     assert "https://westminsterbrief.co.uk/sitemap-pqs-2026-06.xml" in index
     assert "https://westminsterbrief.co.uk/sitemap-pqs-2024-09.xml" in index
     assert "sitemap-pqs-1.xml" not in index
     assert index.index("sitemap-pqs-2026-06.xml") < index.index("sitemap-pqs-2024-09.xml")
+    chunk_lastmod = dict(re.findall(r"<loc>https://westminsterbrief.co.uk/(sitemap-pqs-[\d-]+\.xml)</loc>"
+                                    r"\s*<lastmod>(.*?)</lastmod>", index))
+    assert chunk_lastmod == {"sitemap-pqs-2026-06.xml": "2026-07-09",     # latest in the month
+                             "sitemap-pqs-2024-09.xml": "2024-09-10"}
 
     june = client.get("/sitemap-pqs-2026-06.xml").get_data(as_text=True)
     locs = re.findall(r"<loc>(.*?)</loc>", june)
     assert locs == ["https://westminsterbrief.co.uk/archive/pq/2026-06-04/6978",
                     "https://westminsterbrief.co.uk/archive/pq/2026-06-30/hl22"]
     lastmods = re.findall(r"<lastmod>(.*?)</lastmod>", june)
-    assert lastmods == ["2026-06-09", "2026-07-02"]       # answered / updated after tabling
+    assert lastmods == ["2026-06-09", "2026-07-09"]       # answered / corrected after tabling
 
     sept = client.get("/sitemap-pqs-2024-09.xml").get_data(as_text=True)
     assert re.findall(r"<loc>(.*?)</loc>", sept) == [
@@ -165,6 +209,12 @@ def test_sitemap_one_chunk_per_month_with_dated_urls(client):
                                   "/sitemap-pqs-2026-6.xml", "/sitemap-pqs-1999-01.xml"])
 def test_bad_sitemap_chunk_names_are_404(client, path):
     assert client.get(path).status_code == 404
+
+
+def test_sitemap_month_with_no_questions_is_404(client):
+    _add("6978", date(2026, 6, 4), "Rail")
+    assert client.get("/sitemap-pqs-2026-06.xml").status_code == 200
+    assert client.get("/sitemap-pqs-2026-05.xml").status_code == 404
 
 
 # ── links elsewhere ───────────────────────────────────────────────────────────
