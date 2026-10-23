@@ -273,7 +273,11 @@ def _titles(html):
 
 
 def _hrefs(html):
-    return re.findall(r'class="ah-card-title" href="([^"]+)"', html)
+    """Card links, with the date dropped from written-question addresses
+    (/archive/pq/<yyyy-mm-dd>/<uin> -> /archive/pq/<uin>) so tests name UINs only."""
+    hrefs = re.findall(r'class="ah-card-title" href="([^"]+)"', html)
+    assert not any(re.fullmatch(r"/archive/pq/[^/]+", h) for h in hrefs), "undated PQ link"
+    return [re.sub(r"^/archive/pq/\d{4}-\d{2}-\d{2}/", "/archive/pq/", h) for h in hrefs]
 
 
 def _get(client, url):

@@ -570,7 +570,7 @@ def related_items(slugs: list[str], now: datetime | None = None) -> dict:
     """
     from hansard_archive.models import (
         HaBill, HaBillTheme, HaPQ, HaPQTheme, HansardSession, HansardSessionTheme,
-        THEME_TYPE_POLICY_AREA,
+        THEME_TYPE_POLICY_AREA, pq_url_path,
     )
 
     names = sorted({n for s in slugs for n in _pa.hansard_names_for_slug(s)})
@@ -606,7 +606,7 @@ def related_items(slugs: list[str], now: datetime | None = None) -> dict:
                .limit(_RELATED_MAX).all())
         out["pqs"] = [{
             "title": heading or _excerpt(start or "", 100) or f"Written question {uin}",
-            "url": f"/archive/pq/{(uin or '').lower()}",
+            "url": pq_url_path(tabled, uin),
             "meta": " · ".join(x for x in (body or "", _human_date(tabled)) if x),
         } for uin, heading, start, tabled, body in pqs]
 

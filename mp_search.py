@@ -285,7 +285,7 @@ def _fetch_pqs(member_id: int, dept: str, start_date: str, end_date: str, topic:
                 'text': pq.question_text or '',
                 'date': pq.tabled_date.isoformat() if pq.tabled_date else '',
                 'status': 'ANSWERED' if pq.is_answered else 'UNANSWERED',
-                'link': f"/archive/pq/{(pq.uin or '').lower()}",
+                'link': pq.url_path,
             }
             for pq in rows
         ]

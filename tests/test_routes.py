@@ -317,9 +317,12 @@ class TestArchiveRoutes:
         assert r.status_code == 200
 
     def test_archive_pq_detail(self, client):
-        """Seeded UIN TEST001 must render without error."""
-        r = client.get('/archive/pq/TEST001')
+        """Seeded UIN TEST001 renders at its dated address; the old one redirects there."""
+        r = client.get('/archive/pq/2026-01-01/test001')
         assert r.status_code == 200
+        old = client.get('/archive/pq/TEST001')
+        assert old.status_code == 301
+        assert old.headers['Location'].endswith('/archive/pq/2026-01-01/test001')
 
     def test_archive_debate_detail(self, client):
         """Seeded session slug 'test-session' on 1 Jan 2026 must render without error."""
@@ -335,11 +338,11 @@ class TestArchiveRoutes:
         assert ('<span class="rpa-title">What is the government doing about test issues?</span>'
                 in html)
         assert '<span class="rpa-title">TEST001</span>' not in html
-        assert 'href="/archive/pq/test001"' in html
+        assert 'href="/archive/pq/2026-01-01/test001"' in html
         # Order: specific 'Bus services' (TEST002 Feb, TEST001 Jan), then policy-area TEST010
-        i2 = html.index('href="/archive/pq/test002"')
-        i1 = html.index('href="/archive/pq/test001"')
-        i10 = html.index('href="/archive/pq/test010"')
+        i2 = html.index('href="/archive/pq/2026-02-02/test002"')
+        i1 = html.index('href="/archive/pq/2026-01-01/test001"')
+        i10 = html.index('href="/archive/pq/2026-03-01/test010"')
         assert i2 < i1 < i10
         assert 'Department for Transport' in html
         # The policy-area fill is labelled as a broader match, after the topic matches
@@ -347,26 +350,26 @@ class TestArchiveRoutes:
         assert i1 < i_broad < i10
         assert 'Broader match: same policy area' in html
         # Outside the ±180-day window
-        assert 'href="/archive/pq/test011"' not in html
+        assert 'href="/archive/pq/2024-01-01/test011"' not in html
 
     def test_pq_page_related_by_shared_topic(self, client):
         """PQ page: related items come from shared specific topics, not heading text."""
-        html = client.get('/archive/pq/TEST001').get_data(as_text=True)
+        html = client.get('/archive/pq/TEST001', follow_redirects=True).get_data(as_text=True)
         assert 'Debates on the same topic' in html
         assert 'href="/archive/debate/1-january-2026/test-session"' in html
         assert 'Written Questions on the same topic' in html
-        assert 'href="/archive/pq/test002"' in html          # shares 'Bus services'
+        assert 'href="/archive/pq/2026-02-02/test002"' in html          # shares 'Bus services'
         assert 'questions matched on shared topic tags' in html
         # Free slots are filled from the main policy area, in a separately labelled section
-        assert html.index('href="/archive/pq/test002"') < html.index('In the same policy area (Transport)')
+        assert html.index('href="/archive/pq/2026-02-02/test002"') < html.index('In the same policy area (Transport)')
 
     def test_pq_page_related_matches_across_topic_family(self, client):
         """'send funding' (child) and 'send' (parent alias) are the same family."""
-        html = client.get('/archive/pq/SCHB01').get_data(as_text=True)
-        assert 'href="/archive/pq/schb00"' in html
+        html = client.get('/archive/pq/SCHB01', follow_redirects=True).get_data(as_text=True)
+        assert 'href="/archive/pq/2025-07-01/schb00"' in html
 
     def test_pq_page_policy_area_fallback_is_labelled(self, client):
-        html = client.get('/archive/pq/TEST010').get_data(as_text=True)   # policy area only
+        html = client.get('/archive/pq/TEST010', follow_redirects=True).get_data(as_text=True)   # policy area only
         assert 'In the same policy area (Transport)' in html
         assert 'Broader match: same policy area' in html
         assert 'href="/archive/debate/1-january-2026/test-session"' in html
@@ -387,7 +390,7 @@ class TestArchiveRoutes:
                           now=datetime(2026, 3, 2, 9, 0))
             pq_id = pq.id
         try:
-            html = client.get('/archive/pq/ORDER1').get_data(as_text=True)
+            html = client.get('/archive/pq/ORDER1', follow_redirects=True).get_data(as_text=True)
             assert 'In the same policy area (Transport)' in html     # not "Economy" (A-Z first)
         finally:
             with app.app_context():
@@ -482,8 +485,8 @@ class TestBriefRoutes:
         r = client.get('/brief/special-educational-needs')
         html = r.get_data(as_text=True)
         assert r.status_code == 200
-        assert 'href="/archive/pq/schb00"' in html      # tagged 'send'
-        assert 'href="/archive/pq/schb01"' in html      # tagged 'send funding' (child topic)
+        assert 'href="/archive/pq/2025-07-01/schb00"' in html      # tagged 'send'
+        assert 'href="/archive/pq/2025-07-02/schb01"' in html      # tagged 'send funding' (child topic)
         assert '2 written questions on this topic' in html
 
     def test_child_topic_page_and_alias_redirect(self, client):
@@ -491,8 +494,8 @@ class TestBriefRoutes:
         assert r.status_code == 301
         assert r.headers['Location'].endswith('/brief/special-educational-needs-funding')
         html = client.get('/brief/special-educational-needs-funding').get_data(as_text=True)
-        assert 'href="/archive/pq/schb01"' in html
-        assert 'href="/archive/pq/schb00"' not in html  # parent-only row stays on the parent
+        assert 'href="/archive/pq/2025-07-02/schb01"' in html
+        assert 'href="/archive/pq/2025-07-01/schb00"' not in html  # parent-only row stays on the parent
 
     def test_education_page_is_education_only_and_children_has_its_own(self):
         from hansard_archive import policy_areas
@@ -504,14 +507,14 @@ class TestBriefRoutes:
         html = r.get_data(as_text=True)
         assert r.status_code == 200
         assert 'Chagos Islands question 2' in html
-        assert 'href="/archive/pq/test004"' in html
+        assert 'href="/archive/pq/2026-02-04/test004"' in html
         assert '3 written questions on this topic' in html
         assert _INDEX in html
 
     def test_topic_with_debates_and_pqs_shows_both(self, client):
         html = client.get('/brief/bus-services').get_data(as_text=True)
         assert 'href="/archive/debate/1-january-2026/test-session"' in html
-        assert 'href="/archive/pq/test001"' in html
+        assert 'href="/archive/pq/2026-01-01/test001"' in html
         assert '1 session and 2 written questions on this topic' in html
         assert _INDEX in html
 
@@ -521,7 +524,7 @@ class TestBriefRoutes:
         html = r.get_data(as_text=True)
         assert r.status_code == 200
         assert 'test-session' in html
-        assert 'href="/archive/pq/test001"' in html
+        assert 'href="/archive/pq/2026-01-01/test001"' in html
 
     def test_slug_with_punctuation_resolves(self, client):
         r = client.get('/brief/womens-pensions')
@@ -615,7 +618,7 @@ class TestGetRelatedContentParams:
 # ── Search fixes: GET WQ search, sort, true WQ count, page caps ───────────────
 
 def _pq_uins(html):
-    return [u.upper() for u in re.findall(r'href="/archive/pq/([a-z0-9]+)"', html)]
+    return [u.upper() for u in re.findall(r'href="/archive/pq/\d{4}-\d{2}-\d{2}/([a-z0-9]+)"', html)]
 
 
 class TestWrittenQuestionsSearch:

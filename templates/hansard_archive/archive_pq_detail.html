@@ -16,13 +16,14 @@
   "datePublished": "{{ pq.tabled_date.isoformat() if pq.tabled_date else '' }}",
   "description": {{ meta_desc|tojson }},
   "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
-  "url": "https://westminsterbrief.co.uk/archive/pq/{{ pq.uin|lower }}"
+  "url": "https://westminsterbrief.co.uk{{ canonical_path }}"
 }
 </script>
 {% endblock %}
 
 {% block extra_head %}<style>
 body { background: #f0f2f5; }
+.pq-same-uin ul { margin: 6px 0 0; padding-left: 18px; }
 
 /* Related parliamentary activity panel — matches .sd-transcript alignment */
 .rpa-panel {
@@ -301,6 +302,17 @@ body { background: #f0f2f5; }
             {% endfor %}
         </div>
         {% endif %}
+    </div>
+    {% endif %}
+
+    {% if same_uin %}
+    <div class="sd-source-note pq-same-uin">
+        Parliament reuses question numbers every session. Other written questions numbered {{ pq.uin }}:
+        <ul>
+            {% for o in same_uin %}
+            <li><a href="{{ o.url }}">{{ o.heading }}</a>{% if o.human_date %} · tabled {{ o.human_date }}{% endif %}{% if o.asking_member %} · {{ o.asking_member }}{% endif %}</li>
+            {% endfor %}
+        </ul>
     </div>
     {% endif %}
 

@@ -285,7 +285,7 @@ def app_ctx(app):
 
 def _pq_uins(html):
     import re
-    return sorted(u.upper() for u in re.findall(r'href="/archive/pq/([a-z0-9]+)"', html))
+    return sorted(u.upper() for u in re.findall(r'href="/archive/pq/\d{4}-\d{2}-\d{2}/([a-z0-9]+)"', html))
 
 
 def test_wq_tab_honours_the_date_filter(app):

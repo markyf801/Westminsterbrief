@@ -13,11 +13,14 @@ Routes:
   GET /archive/department/<slug>             sessions by answering department
   GET /archive/policy/<slug>                 sessions by GOV.UK policy area tag
   GET /archive/theme/<slug>                  sessions by specific theme tag
-  GET /archive/pq/<uin>                      Written Question detail page
+  GET /archive/pq/<yyyy-mm-dd>/<uin>         Written Question detail page
+  GET /archive/pq/<uin>                      301 to the above (old address)
 
 URL conventions (locked — do not change after indexing):
   date format: 22-july-2025  (day no leading zero, lowercase full month, 4-digit year)
   slug format: {title-slug}-{4-char-hex}
+  written questions: ISO tabled date + lowercase UIN, /archive/pq/2026-06-04/hl1234
+  (Parliament's own scheme; HaPQ.url_path)
 """
 
 import os
@@ -55,6 +58,7 @@ from hansard_archive.models import (
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
     UpcomingRelease,
+    pq_url_path,
 )
 from hansard_archive import policy_areas as _pa
 from hansard_archive import search_terms as _st
@@ -530,7 +534,7 @@ def _related_pqs_on(day, policy_areas: list[str], specific_topics: list[str],
             "human_date":    _human_date(r.tabled_date),
             "department":    r.answering_body or "",
             "is_answered":   bool(r.is_answered),
-            "url":           f"/archive/pq/{(r.uin or '').lower()}",
+            "url":           pq_url_path(r.tabled_date, r.uin),
             "broad":         broad_from is not None and i >= broad_from,
         }
         for i, r in enumerate(rows)
@@ -1678,6 +1682,7 @@ def _build_pq_items(pqs: list) -> list:
     return [
         {
             "uin":            pq.uin,
+            "url":            pq.url_path,
             "heading":        pq.display_heading,
             "asking_member":  pq.asking_member or "",
             "answering_body": pq.answering_body or "",
@@ -2561,13 +2566,14 @@ def _pq_fts_search(q_raw: str, limit: int = 20, policy_filter: str = "",
          snippet, question_text, _phrase_hit) = row
         results.append({
             "result_type":   "pq",
+            "id":            pq_id,
             "uin":           uin,
             "heading":       heading or uin,
             "asking_member": asking or "",
             "answering_body":answering or "",
             "tabled_date":   tabled,
             "is_answered":   is_answered,
-            "url":           f"/archive/pq/{(uin or '').lower()}",
+            "url":           pq_url_path(tabled, uin),
             "human_date":    _human_date(tabled) if tabled else "",
             "snippet":       Markup(snippet) if snippet else None,
             "question_text": question_text or "",
@@ -2627,13 +2633,14 @@ def _pq_ilike_search(q_raw: str, limit: int = 20, sort: str = "relevance",
     results = [
         {
             "result_type":   "pq",
+            "id":            p.id,
             "uin":           p.uin,
             "heading":       p.heading or p.uin,
             "asking_member": p.asking_member or "",
             "answering_body":p.answering_body or "",
             "tabled_date":   p.tabled_date,
             "is_answered":   p.is_answered,
-            "url":           f"/archive/pq/{(p.uin or '').lower()}",
+            "url":           p.url_path,
             "human_date":    _human_date(p.tabled_date) if p.tabled_date else "",
             "snippet":       None,
             "question_text": p.question_text or "",
@@ -2691,7 +2698,7 @@ def _bill_fts_search(q_raw: str, limit: int = 5) -> list:
     return results
 
 
-def get_related_content(topic_keywords: str, exclude_uin: str | None = None, limit: int = 8) -> dict:
+def get_related_content(topic_keywords: str, exclude_id: int | None = None, limit: int = 8) -> dict:
     """
     Find related debates, PQs, and bills for a topic keyword string,
     sorted newest-first within FTS-matched results.
@@ -2716,7 +2723,7 @@ def get_related_content(topic_keywords: str, exclude_uin: str | None = None, lim
     try:
         pqs_raw = _pq_fts_search(topic_keywords, limit=limit)
         pqs = sorted(
-            [r for r in pqs_raw if r["uin"] != exclude_uin],
+            [r for r in pqs_raw if exclude_id is None or r["id"] != exclude_id],
             key=lambda r: r["tabled_date"] or "",
             reverse=True,
         )[:limit]
@@ -2938,20 +2945,62 @@ def archive_search():
 
 
 # ---------------------------------------------------------------------------
-# Written Question detail — /archive/pq/<uin>
+# Written Question detail — /archive/pq/<yyyy-mm-dd>/<uin>
 # ---------------------------------------------------------------------------
 
-@archive_bp.route("/pq/<string:uin>")
-def pq_detail(uin: str):
-    # UINs repeat across sessions (INC-008). Until the Phase 4 (date, uin) URLs
-    # exist, a repeated UIN resolves to the earliest-ingested row, so existing
-    # URLs keep showing the question they always showed.
+_PQ_URL_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_SAME_UIN_MAX = 10
+
+
+def _earliest_pq_for_uin(uin: str) -> HaPQ | None:
+    """The question the old /archive/pq/<uin> address has always shown: the
+    earliest-stored row with that UIN. ids only grow, so rows added later with
+    the same UIN (a new session, or a backfill of older questions) never change
+    which question an old link opens."""
     pq = HaPQ.query.filter_by(uin=uin.upper()).order_by(HaPQ.id).first()
     if pq is None:
-        # Try as-is (some UIDs may not be uppercase)
         pq = HaPQ.query.filter_by(uin=uin).order_by(HaPQ.id).first()
+    return pq
+
+
+@archive_bp.route("/pq/<string:uin>")
+def pq_legacy_redirect(uin: str):
+    """Old address. UINs restart every session (INC-008), so the UIN alone does
+    not identify a question: 301 to the dated address of the question this URL
+    has always shown. That page lists any other questions with the same number."""
+    pq = _earliest_pq_for_uin(uin[:50])
     if pq is None:
         abort(404)
+    return redirect(pq.url_path, code=301)
+
+
+@archive_bp.route("/pq/<string:tabled>/<string:uin>")
+def pq_detail(tabled: str, uin: str):
+    if not _PQ_URL_DATE_RE.fullmatch(tabled):
+        abort(404)
+    try:
+        day = date_type.fromisoformat(tabled)
+    except ValueError:
+        abort(404)
+    # Same expression as the unique index uq_ha_pq_date_uin (tabled_date, lower(uin)).
+    pq = (HaPQ.query
+          .filter(HaPQ.tabled_date == day, func.lower(HaPQ.uin) == uin[:50].lower())
+          .order_by(HaPQ.id).first())
+    if pq is None:
+        abort(404)
+    if request.path != pq.url_path:
+        return redirect(pq.url_path, code=301)
+
+    same_uin = [
+        {"url": other.url_path, "heading": other.display_heading,
+         "human_date": _human_date(other.tabled_date) if other.tabled_date else "",
+         "asking_member": other.asking_member or ""}
+        for other in (HaPQ.query
+                      .filter(HaPQ.uin.in_({pq.uin, pq.uin.upper(), pq.uin.lower()}),
+                              HaPQ.id != pq.id)
+                      .order_by(HaPQ.tabled_date.desc(), HaPQ.id)
+                      .limit(_SAME_UIN_MAX).all())
+    ]
 
     themes = HaPQTheme.query.filter_by(pq_id=pq.id).all()
     policy_areas = sorted({t.theme for t in themes if t.theme_type == THEME_TYPE_POLICY_AREA})
@@ -3000,7 +3049,7 @@ def pq_detail(uin: str):
     # policy area as a labelled broader fallback. Untagged questions fall back
     # to a heading text search, labelled as such. Bills always come from text.
     related = _pq_related_by_tags(pq, policy_ranked, specific_topics) if themes else None
-    text_related = get_related_content(pq.heading or "", exclude_uin=pq.uin)
+    text_related = get_related_content(pq.heading or "", exclude_id=pq.id)
     if related is None or not (related["debates"] or related["pqs"] or related["debates_broad"]
                                or related["pqs_broad"]):
         related = {**text_related, "debates_broad": [], "pqs_broad": [], "broad_area": "",
@@ -3031,7 +3080,8 @@ def pq_detail(uin: str):
             f"Written Question {pq.uin} — {page_heading} "
             f"tabled by {asking_name or 'an MP'} to {pq.answering_body or 'a department'}."
         ),
-        canonical_path  = f"/archive/pq/{(pq.uin or '').lower()}",
+        canonical_path  = pq.url_path,
+        same_uin        = same_uin,
     )
 
 
@@ -3521,6 +3571,7 @@ def _compute_party_data(slug: str) -> dict | None:
             recent_pqs = [
                 {
                     "uin":           pq.uin,
+                    "url":           pq.url_path,
                     "heading":       pq.display_heading,
                     "asking_member": pq.asking_member or "",
                     "answering_body":pq.answering_body or "",

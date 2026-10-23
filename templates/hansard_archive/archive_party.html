@@ -364,7 +364,7 @@ body { background: #f0f2f5; }
                     {% if pq.answering_body %}<span class="archive-dept-badge">{{ pq.answering_body }}</span>{% endif %}
                     {% if pq.is_answered %}<span class="ah-card-contribs">Answered</span>{% endif %}
                 </div>
-                <a class="ah-card-title" href="/archive/pq/{{ pq.uin|lower }}">{{ pq.heading }}</a>
+                <a class="ah-card-title" href="{{ pq.url }}">{{ pq.heading }}</a>
             </div>
             {% endfor %}
         </div>

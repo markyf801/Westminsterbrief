@@ -40,7 +40,7 @@ def wq_client(app):  # noqa: F811
 
 def _page_uins(html):
     """UINs on the page (each card is rendered in both the flat and grouped views)."""
-    return set(re.findall(r"""data-wq='\{"uin": "([A-Z0-9]+)"\}'""", html))
+    return set(re.findall(r"""data-wq='\{"tabled": "\d{4}-\d{2}-\d{2}", "uin": "([A-Z0-9]+)"\}'""", html))
 
 
 def _href(url):
@@ -99,7 +99,7 @@ def test_no_matches_has_no_pager(wq_client):
 def test_long_answer_is_truncated_short_answer_in_full(wq_client):
     html = wq_client.get('/questions?q=pagination+probe').get_data(as_text=True)
     assert 'FINAL-SENTENCE' not in html
-    assert '<a href="/archive/pq/pgp000" target="_blank">Read full answer &rarr;</a>' in html
+    assert '<a href="/archive/pq/2026-03-01/pgp000" target="_blank">Read full answer &rarr;</a>' in html
     assert 'The department keeps funding under review.' in html
     assert _SHORT_ANSWER in html
 

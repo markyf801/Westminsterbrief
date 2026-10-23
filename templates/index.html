@@ -11,7 +11,7 @@
 <div class="result-card" style="border-left: 4px solid {% if r.is_withdrawn %}#6c757d{% elif r.is_holding %}#fd7e14{% elif r.answered %}#28a745{% else %}#d9534f{% endif %};">
     <div class="result-card-header" style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
         <input type="checkbox" class="wq-select"
-               data-wq='{{ {"uin": r.uin} | tojson }}'
+               data-wq='{{ {"uin": r.uin, "tabled": r.tabled_iso} | tojson }}'
                onchange="updateSelectionBar()"
                onclick="event.stopPropagation()"
                style="cursor:pointer; flex-shrink:0; width:15px; height:15px;">
@@ -35,7 +35,7 @@
             <summary class="wq-answer-summary">Answered{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %}{% if r.date_answered %} &middot; {{ r.date_answered }}{% endif %}</summary>
             {% if r.answer_truncated %}
             <div class="wq-answer-text"><p>{{ r.answer_excerpt }}</p>
-                <p><a href="/archive/pq/{{ r.uin|lower }}" target="_blank">Read full answer &rarr;</a></p></div>
+                <p><a href="{{ r.archive_url }}" target="_blank">Read full answer &rarr;</a></p></div>
             {% else %}
             <div class="wq-answer-text">{{ r.answer_text | safe }}</div>
             {% endif %}
@@ -43,7 +43,7 @@
         {% elif r.answered %}
         <p class="wq-answered-note">Answered{% if r.date_answered %} {{ r.date_answered }}{% endif %}{% if r.answering_minister %} by {{ r.answering_minister }}{% if r.answering_minister_role %} &middot; <span class="wq-minister-role">{{ r.answering_minister_role }}</span>{% endif %}{% endif %} &mdash; <a href="{{ r.url }}" target="_blank">read on Parliament.uk</a></p>
         {% endif %}
-        <a href="/archive/pq/{{ r.uin|lower }}" target="_blank" class="result-card-link">View question &rarr;</a>
+        <a href="{{ r.archive_url }}" target="_blank" class="result-card-link">View question &rarr;</a>
         <a href="{{ r.url }}" target="_blank" class="result-card-source-link">Source on Parliament.uk &rarr;</a>
     </div>
 </div>
