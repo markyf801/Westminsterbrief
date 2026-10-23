@@ -27,8 +27,10 @@ Rules
   saved as soon as a run starts and after every day.
 - Tagging (on by default) one PQ at a time with tag_pq, limited to the backfill
   range, after each day and for any leftovers at the start of a run, so the PQ
-  cron (which tags every untagged PQ with no cap) never finds a large backlog.
-  --max-tag caps PQs sent to Gemini per run. A PQ that cannot be tagged is
+  crons (which tag up to 500 untagged PQs a run, env PQ_TAG_LIMIT, newest
+  first) never have a large backlog to work through.
+  --max-tag caps PQs sent to Gemini per run (default 3000; the run stops when
+  it is reached, so raise it for the full backfill, e.g. --max-tag 60000). A PQ that cannot be tagged is
   skipped after 2 counted failures and never blocks the run (see TagBudget in
   scripts/backfill_parliament_start.py); only a confirmed Gemini outage stops it.
 - Same cron-window guard as scripts/backfill_parliament_start.py, checked
@@ -141,7 +143,7 @@ def make_fetch_individual(sleep):
                 if resp.status_code in (401, 403, 429):
                     raise ApiRefused(f"individual endpoint {resp.status_code} for id={api_id}")
                 if resp.status_code == 404:
-                    return None                    # removed at source: keep the bulk record
+                    return pq_ingestor._RECORD_GONE   # removed at source: keep the bulk record
                 last = f"HTTP {resp.status_code}"
             except ApiRefused:
                 raise
@@ -245,6 +247,9 @@ def process_day(day: date, dry_run: bool, delay: float, stats: RunStats, sleep) 
     except (WouldUpdate, DayIncomplete, ApiRefused):
         db.session.rollback()               # drop this page's uncommitted writes
         raise
+    except pq_ingestor.PQRateLimitedError as exc:
+        db.session.rollback()               # 429 on a list page: stop at once, never retry
+        raise ApiRefused(str(exc)) from exc
     except pq_ingestor.PQIngestAborted as exc:
         db.session.rollback()
         raise DayIncomplete(str(exc)) from exc
@@ -307,7 +312,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-days", type=int, default=0)
     p.add_argument("--max-minutes", type=int, default=0)
     p.add_argument("--no-tag", action="store_true",
-                   help="Do not tag (the PQ cron will then tag them, uncapped)")
+                   help="Do not tag (the PQ crons then tag them, up to PQ_TAG_LIMIT a run)")
     p.add_argument("--max-tag", type=int, default=3000, help="PQs sent to Gemini this run")
     p.add_argument("--delay", type=float, default=DEFAULT_DELAY)
     p.add_argument("--no-resume", action="store_true")

@@ -34,9 +34,15 @@ for each step and redeploy. Pushing to master stops a run; just run it again.
 
 ## Before every run
 
-1. **Volume free space.** The Postgres volume is 5 GB (1.86 GB used before the
-   backfill). Check usage in the Railway dashboard. Stop and resize if it passes
-   3.5 GB (70%) — vacuum, index builds and backup/restore need headroom.
+1. **Volume free space.** The Postgres volume is 5 GB (2.1 GB used on 23 Oct
+   2026, after that day's release). The two backfills add roughly 0.85 GB
+   (debates ~0.65 GB, questions ~0.2 GB), so with index bloat the database ends
+   at about 3.1–3.3 GB — 62–66% of 5 GB, and past the 70% line within a few
+   months of normal growth. **Grow the volume to 10 GB before the questions
+   backfill** (live resize, no downtime on paid plans; see
+   `railway-services.md` → "Bulk migrations and volume size"). Check usage in
+   the Railway dashboard before every run; stop and resize if it passes 70% —
+   vacuum, index builds and backup/restore need headroom.
 2. **The 03:00 backup still finishes in time.** After ~1 GB of growth the nightly
    `pg_dump` takes longer. Check the latest `backup-cron-r2` log: status `ok`, the
    dump size, and that it finished before 03:30 UTC (the backfill keeps clear of
@@ -61,8 +67,10 @@ SELECT MIN(date) FROM ha_session;  SELECT MIN(tabled_date) FROM ha_pq;
 2. `python scripts/backfill_parliament_start.py --dry-run --max-days 14`
 3. `python scripts/backfill_parliament_start.py --max-days 7 --max-tag 300`
    → spot-check a few July 2024 sessions (type, tags, links) and the size growth.
-4. `python scripts/backfill_parliament_start.py --max-days 31 --max-minutes 360 --max-tag 1500`
-   — repeat until the log says `range complete`.
+4. `python scripts/backfill_parliament_start.py --max-tag 5000`
+   — repeat until the log says `range complete`. Always pass a large
+   `--max-tag`: the default (600) stops the whole run, ingest included, once
+   600 sessions are tagged (about 3,800 to tag in all).
 5. `python scripts/backfill_parliament_start.py --tag-only --max-tag 1000`
    — repeat until `still_untagged=0` (sessions that cannot be tagged are counted
    as `skipped`).
@@ -78,8 +86,10 @@ SELECT MIN(date) FROM ha_session;  SELECT MIN(tabled_date) FROM ha_pq;
    tabled date are skipped and listed as `unusable` (the crons can't store
    them either).
 7. `python scripts/backfill_pq_parliament_start.py --max-days 3 --max-tag 1000`
-8. `python scripts/backfill_pq_parliament_start.py --max-days 30 --max-minutes 360 --max-tag 6000`
-   — repeat until `range complete`.
+8. `python scripts/backfill_pq_parliament_start.py --max-tag 60000`
+   — repeat until `range complete`. Always pass a large `--max-tag`: the
+   default (3000) stops the run once 3,000 questions are tagged (57,630 to
+   tag in all).
 9. Copy changes ("from July 2024") and the bill-page archive start date
    (`hansard_archive/bill_session_match.py` `_DEFAULT_ARCHIVE_START`).
 

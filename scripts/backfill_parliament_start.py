@@ -26,8 +26,10 @@ How it works
   one-off can be re-run and carries on where it stopped. No local files needed.
 - Tagging (on by default): each day's new sessions are tagged straight after
   ingest, and any untagged sessions left in the range are tagged first. The
-  per-run cap ``--max-tag`` stops the run cleanly when reached, so a large
-  untagged backlog never builds up for the hourly cron's unlimited tagger.
+  per-run cap ``--max-tag`` (default 600) stops the whole run cleanly when
+  reached, so raise it for the full backfill (e.g. --max-tag 5000). Tagging
+  here keeps a large untagged backlog away from the hourly archive cron, which
+  tags at most 200 sessions a run (env ARCHIVE_TAG_CAP), newest first.
   A session that cannot be tagged is not retried within a run, and after
   TAG_MAX_ATTEMPTS counted failures (kept in the checkpoint) it is skipped for
   good, so it never blocks the backfill. Failures only stop the run when a
@@ -696,8 +698,9 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
                   "updating before it can tag", flush=True)
             return EXIT_TAG_FAILED
     if args.no_tag and not args.dry_run:
-        print("[backfill] WARNING: --no-tag. The hourly archive cron tags EVERY untagged session "
-              "with no cap, so it will pick these up on its next run.", flush=True)
+        print("[backfill] WARNING: --no-tag. The hourly archive cron tags untagged sessions "
+              "(up to ARCHIVE_TAG_CAP, default 200, a run, newest first), so it will work "
+              "through these over its next runs.", flush=True)
 
     mode = "DRY RUN" if args.dry_run else ("TAG ONLY" if args.tag_only else "INGEST")
     print(f"[backfill] === START {mode} === {args.since} -> {args.until} newest-first, "

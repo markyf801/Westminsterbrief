@@ -3,7 +3,8 @@ Tests for scripts/backfill_pq_parliament_start.py — mocked WQ API + in-memory 
 
 Covers: insert-only newest-first ingest with checkpoint, idempotent re-run,
 stored rows kept unchanged (even when the API differs), abort on identity
-mismatch, failing individual fetch rolls the day back, 429 aborts, dry run
+mismatch, failing individual fetch rolls the day back, 429 aborts (individual
+record or list page, never retried), 404 counted as gone, dry run
 writes nothing, capped tagging, an untaggable PQ never blocks, resume ignores a
 run that died before saving, refuses while the debates backfill runs.
 
@@ -65,10 +66,13 @@ class FakeWQ:
     def __init__(self):
         self.calls: list[str] = []
         self.individual_status: dict[int, int] = {}   # api_id -> status (always)
+        self.bulk_status: int | None = None            # list endpoint status (always)
 
     def __call__(self, url, params=None, timeout=None):
         self.calls.append(url)
         if url == BULK:
+            if self.bulk_status is not None:
+                return _Resp(status=self.bulk_status)
             day = params["tabledWhenFrom"][:10]
             rows = DAYS.get(day, [])
             return _Resp({"totalResults": len(rows),
@@ -152,9 +156,9 @@ def fake_tagger(monkeypatch):
     return _tagger(monkeypatch)
 
 
-def _run(*argv, now=SATURDAY_NOON):
+def _run(*argv, now=SATURDAY_NOON, sleep=lambda s: None):
     args = bpq.build_parser().parse_args(["--since", "2024-12-01", "--until", "2024-12-03", *argv])
-    return bpq.run(args, sleep=lambda s: None, now=lambda: now)
+    return bpq.run(args, sleep=sleep, now=lambda: now)
 
 
 def _rows():
@@ -306,10 +310,31 @@ def test_individual_404_keeps_bulk_record(env):
     assert HaPQ.query.filter_by(api_id=5004).one().answer_text is None   # bulk answer never stored
 
 
+def test_individual_404_is_reported_as_gone(env):
+    fetch = bpq.make_fetch_individual(lambda s: None)
+    env.individual_status[5004] = 404
+    assert fetch(5004) is pq_ingestor._RECORD_GONE
+    res = bpq.process_day(date(2024, 12, 3), False, 0.3, bpq.RunStats(), lambda s: None)
+    assert res["full_missing"] == 1 and res["full_fetch_failed"] == 0
+    assert res["inserted"] == 2
+
+
 def test_rate_limit_aborts(env):
     env.individual_status[5003] = 429
     assert _run("--no-tag") == bpq.EXIT_REFUSED
     assert sum(1 for u in env.calls if u.endswith("/5003")) == 1
+
+
+def test_list_page_rate_limit_stops_at_once(env):
+    from hansard_archive.models import HaPQ
+    slept = []
+    env.bulk_status = 429
+    assert _run("--no-tag", sleep=slept.append) == bpq.EXIT_REFUSED
+    assert sum(1 for u in env.calls if u == BULK) == 1          # never retried
+    assert bpq.DAY_RETRY_PAUSE not in slept                     # no day retry either
+    assert HaPQ.query.count() == 0
+    _, state = _checkpoint()
+    assert state["frontier"] is None and "API refused" in state["stop_reason"]
 
 
 def test_dry_run_writes_nothing(env, capsys):
