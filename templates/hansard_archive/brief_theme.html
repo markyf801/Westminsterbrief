@@ -122,7 +122,7 @@
                 {% endif %}
                 <span class="archive-dtype-badge {% if pq.is_answered %}archive-dtype-debate{% else %}archive-dtype-other{% endif %}">{% if pq.is_answered %}Answered{% else %}Awaiting answer{% endif %}</span>
             </div>
-            <a class="ah-card-title" href="/archive/pq/{{ pq.uin|lower }}">{{ pq.heading }}</a>
+            <a class="ah-card-title" href="{{ pq.url }}">{{ pq.heading }}</a>
             {% if pq.asking_member %}
             <div class="ah-card-contribs">Asked by {{ pq.asking_member }}</div>
             {% endif %}

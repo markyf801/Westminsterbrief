@@ -278,20 +278,20 @@ class TestPqPage:
     def test_whip_title_gone_post_on_answer_date_shown(self, app, no_http):
         _member(4653, "Stephen Morgan", posts=MORGAN_POSTS, stale_role=STALE_WHIP)
         _answered_pq("11212", 4653, date(2026, 10, 16))
-        html = app.test_client().get("/archive/pq/11212").get_data(as_text=True)
+        html = app.test_client().get("/archive/pq/11212", follow_redirects=True).get_data(as_text=True)
         assert "Government Whip" not in html
         assert f"Parliamentary Under-Secretary ({DEFRA})" in html
 
     def test_meta_description_uses_cached_name(self, app):
         _member(5299, "Monica Harding", posts=[], party="Liberal Democrat", constituency="Esher and Walton")
         _answered_pq("820", None, date(2026, 5, 20), asking_id=5299, asking_name=None, answering_name=None)
-        html = app.test_client().get("/archive/pq/820").get_data(as_text=True)
+        html = app.test_client().get("/archive/pq/820", follow_redirects=True).get_data(as_text=True)
         assert "tabled by Monica Harding to" in html
 
     def test_no_dated_record_shows_constituency_not_stale_role(self, app):
         _member(4653, "Stephen Morgan", posts=None, detailed=False, stale_role=STALE_WHIP)
         _answered_pq("19869", 4653, date(2026, 9, 1))
-        html = app.test_client().get("/archive/pq/19869").get_data(as_text=True)
+        html = app.test_client().get("/archive/pq/19869", follow_redirects=True).get_data(as_text=True)
         assert "Government Whip" not in html
         assert "MP for Portsmouth South" in html
 
@@ -300,7 +300,7 @@ class TestPqPage:
         _member(4520, "Matthew Pennycook", posts=[], constituency="Greenwich and Woolwich")
         _answered_pq("816", 4520, date(2026, 5, 20), asking_id=5299, asking_name=None,
                      answering_name=None, body="Ministry of Housing, Communities and Local Government")
-        html = app.test_client().get("/archive/pq/816").get_data(as_text=True)
+        html = app.test_client().get("/archive/pq/816", follow_redirects=True).get_data(as_text=True)
         assert '<span class="sd-speaker-name">Monica Harding</span>' in html
         assert '<span class="sd-speaker-name">Matthew Pennycook</span>' in html
 

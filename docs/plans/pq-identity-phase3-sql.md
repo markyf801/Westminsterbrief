@@ -365,7 +365,9 @@ step 3's undo).
 
 ## 8. Optional
 
-**Legacy UIN map for the Phase 4 redirects** — only while `b_dup_uin_groups = 0`
+**Legacy UIN map for the Phase 4 redirects** — *not needed: Phase 4 redirects
+to the earliest-stored row, which is what this table would freeze (see
+"Phase 4" below). Kept for reference only.* Only while `b_dup_uin_groups = 0`
 (i.e. after step 3 and before the first cross-session collision, early
 December); otherwise the primary key fails:
 
@@ -392,13 +394,54 @@ Undo: `ALTER TABLE ha_pq ALTER COLUMN api_id DROP NOT NULL;`
 
 ---
 
-## Phase 4 must land before December
+## Phase 4 — date + UIN URLs (built 23 Oct 2026, branch `feature/pq-date-uin-urls`)
 
-Until the date + UIN URLs (`/archive/pq/<date>/<uin>`, plan §4) ship,
-`/archive/pq/<uin>` opens the earliest-stored row with that UIN. Once a new
-question reuses an old UIN (first expected late November / early December)
-the new question's page, sitemap entry and list links open the OLD question.
-The data is right after this work; the URLs are not until Phase 4.
+Must be live **before** `scripts/backfill_pq_parliament_start.py` runs and
+before the first cross-session collision (late November / early December):
+until then `/archive/pq/<uin>` opens the earliest-stored row with that UIN, so a
+new or backfilled question that reuses a UIN would have its page, sitemap
+entry and list links open the OLD question.
+
+What it does (no schema change, no migration):
+
+- Question pages: `/archive/pq/<yyyy-mm-dd>/<uin>` (tabled date, lowercase
+  UIN — Parliament's own scheme). Looked up by `tabled_date` +
+  `lower(uin)`, the expression of `uq_ha_pq_date_uin` (step 4); until that
+  index exists the plain `tabled_date` index serves it (a few hundred rows a
+  day). Malformed or impossible dates and unknown questions are 404.
+- Old `/archive/pq/<uin>`: one 301 (any case, with or without a trailing
+  slash, query string kept) to the dated page of the earliest-stored row
+  with that UIN — exactly the question that URL has always shown. Row ids only
+  grow, so later rows sharing the UIN (new session, backfill) never take an
+  old link over. This is what the frozen `ha_pq_legacy_uin` map in step 8
+  would have recorded, so **step 8's legacy table is not needed**. Instead of
+  a separate disambiguation page, every question page lists (near the top) the other
+  questions with the same number (date, heading, asker), so a reader who
+  typed a UIN can reach the one they meant.
+- Every link, canonical tag, `og:url`, JSON-LD `url`, related panels,
+  search results, party/topic pages, consultation/statement related lists and
+  the MP research tool use `HaPQ.url_path` / `pq_url_path()`. The WQ page's
+  "download selected" now posts the tabled date with the UIN so it exports
+  the right question. Word/CSV exports link to Parliament's record (already
+  dated), unchanged.
+- Sitemap: one chunk per tabled month, `/sitemap-pqs-YYYY-MM.xml`, sorted by
+  (tabled_date, id), `lastmod` = latest of tabled/answered/updated. Removes
+  the 100K cap. `/sitemap-pqs-1.xml` … `-4.xml` are gone (404), and so is a
+  month with no stored questions.
+- Sitemap `lastmod` = latest of tabled, answered and corrected dates (not
+  `updated_at`, which `backfill_pq_api_id.py` stamped on every row it
+  touched); the index gives each month chunk the latest of those in the month.
+
+**Rollback: none once live — fix forward.** A `git revert` would put the
+undated URLs back as the canonical ones while Google holds the dated ones
+(they would 404) and old links would open the wrong question again after the
+backfill. Keep the old `/archive/pq/<uin>` redirect forever: it is in search
+results, bookmarks and other sites' links.
+
+After deploying: resubmit `https://westminsterbrief.co.uk/sitemap.xml` in
+Google Search Console. Expect the old URLs to show as "Page with redirect"
+and the dated ones to be discovered and indexed over the following weeks;
+the old sitemap chunk URLs may show as fetch errors until Google drops them.
 
 ## After everything
 

@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from cache_models import CachedMember
 from extensions import db
 from hansard_archive.html_sanitizer import to_plain_text
+from hansard_archive.models import pq_url_path
 
 hansard_bp = Blueprint('hansard', __name__)
 
@@ -379,6 +380,8 @@ def _pq_result(pq, histories=None) -> dict:
 
     return {
         'uin':                    pq.uin,
+        'tabled_iso':             tabled_str,
+        'archive_url':            pq_url_path(pq.tabled_date, pq.uin),
         'url':                    question_url,
         'dept':                   pq.answering_body or '',
         'name':                   pq.asking_member or api_name or 'Unknown',
@@ -401,7 +404,7 @@ def _pq_result(pq, histories=None) -> dict:
 def _add_answer_preview(r: dict, answer_len) -> None:
     """
     Short answers stay as full HTML. Long ones (or any with a table) become a
-    plain-text excerpt; the full answer is on /archive/pq/<uin>.
+    plain-text excerpt; the full answer is on the archive page (r['archive_url']).
     """
     head = r['answer_text']
     r['answer_truncated'] = False
@@ -653,21 +656,29 @@ def index():
 
 def _selected_results(items: list) -> list[dict]:
     """
-    Full records for ticked questions, read from the archive by UIN (the page
-    only carries UINs and truncated answers). Items whose UIN isn't in the
-    archive fall back to the posted fields, for pages rendered before this change.
+    Full records for ticked questions, read from the archive by tabled date +
+    UIN (the page only carries those and truncated answers; UINs restart every
+    session, so the UIN alone can match another question). An item without a
+    date (a page rendered before dates were posted) takes the earliest-stored
+    question with its UIN, as the old /archive/pq/<uin> address did. Items not
+    in the archive fall back to the posted fields.
     """
     from hansard_archive.models import HaPQ
     items = [i for i in items if isinstance(i, dict)][:WQ_MAX_RESULTS]
-    uins = [str(i.get('uin')) for i in items if i.get('uin')]
-    by_uin = {pq.uin: pq for pq in HaPQ.query.filter(HaPQ.uin.in_(uins)).all()} if uins else {}
-    prefetch_members(list({pq.asking_mnis_id for pq in by_uin.values() if pq.asking_mnis_id}))
-    histories = _answer_histories(list(by_uin.values()))
-    out = []
+    uins = list({str(i.get('uin')) for i in items if i.get('uin')})
+    rows = HaPQ.query.filter(HaPQ.uin.in_(uins)).order_by(HaPQ.id).all() if uins else []
+    by_key, by_uin = {}, {}
+    for pq in rows:
+        by_key.setdefault((pq.uin, pq.tabled_date.isoformat() if pq.tabled_date else ''), pq)
+        by_uin.setdefault(pq.uin, pq)
+    picked = []
     for item in items:
-        pq = by_uin.get(str(item.get('uin')))
-        out.append(_pq_result(pq, histories) if pq else item)
-    return out
+        uin, tabled = str(item.get('uin')), str(item.get('tabled') or '')
+        picked.append(by_key.get((uin, tabled)) if tabled else by_uin.get(uin))
+    found = [pq for pq in picked if pq]
+    prefetch_members(list({pq.asking_mnis_id for pq in found if pq.asking_mnis_id}))
+    histories = _answer_histories(found)
+    return [_pq_result(pq, histories) if pq else item for pq, item in zip(picked, items)]
 
 
 @hansard_bp.route('/questions/download_selected', methods=['POST'])

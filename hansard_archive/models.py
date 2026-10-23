@@ -240,6 +240,19 @@ def pq_display_heading(heading: str | None, question_text: str | None,
     return cut.rstrip(" ,;:.-") + "…"
 
 
+def pq_url_path(tabled_date, uin: str | None) -> str:
+    """Site path of a Written Question page: /archive/pq/<yyyy-mm-dd>/<uin>,
+    UIN lowercase. UINs restart every session, so the tabled date is part of
+    the address (Parliament's own scheme). tabled_date may be a date, a
+    datetime or an ISO string (raw SQL rows on SQLite). With no date, the old
+    /archive/pq/<uin> form, which redirects to the earliest-stored question."""
+    uin_lc = (uin or "").strip().lower()
+    if isinstance(tabled_date, datetime):
+        tabled_date = tabled_date.date()
+    day = tabled_date.isoformat() if hasattr(tabled_date, "isoformat") else str(tabled_date or "")[:10]
+    return f"/archive/pq/{day}/{uin_lc}" if day else f"/archive/pq/{uin_lc}"
+
+
 class HaPQ(db.Model):
     """A Written Question ingested from the Parliament WQ API."""
 
@@ -292,6 +305,11 @@ class HaPQ(db.Model):
     def display_heading(self) -> str:
         """Heading for titles and lists; never the bare UIN (see pq_display_heading)."""
         return pq_display_heading(self.heading, self.question_text)
+
+    @property
+    def url_path(self) -> str:
+        """Canonical page path, /archive/pq/<yyyy-mm-dd>/<uin> (see pq_url_path)."""
+        return pq_url_path(self.tabled_date, self.uin)
 
     def __repr__(self):
         return f"<HaPQ {self.uin} {self.tabled_date} {(self.heading or '')[:60]!r}>"

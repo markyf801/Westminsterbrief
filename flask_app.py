@@ -964,10 +964,8 @@ def robots():
     return app.send_static_file('robots.txt')
 
 _sitemap_core_cache:  dict = {'xml': None, 'ts': 0.0}
-_sitemap_pqs1_cache:  dict = {'xml': None, 'ts': 0.0}
-_sitemap_pqs2_cache:  dict = {'xml': None, 'ts': 0.0}
-_sitemap_pqs3_cache:  dict = {'xml': None, 'ts': 0.0}
-_sitemap_pqs4_cache:  dict = {'xml': None, 'ts': 0.0}
+_sitemap_pqs_month_caches: dict = {}  # 'YYYY-MM' -> {'xml', 'ts'}; one chunk per tabled month
+_sitemap_pq_month_summary: dict = {'data': None, 'ts': 0.0}  # {'YYYY-MM': lastmod}
 _sitemap_index_cache: dict = {'xml': None, 'ts': 0.0}
 _sitemap_edms_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_consultations_cache: dict = {'xml': None, 'ts': 0.0}
@@ -976,7 +974,6 @@ _sitemap_written_statements_cache: dict = {'xml': None, 'ts': 0.0}
 _sitemap_divisions_cache: dict = {'xml': None, 'ts': 0.0}
 _SITEMAP_TTL    = 3600   # 1h — core + index
 _SITEMAP_PQ_TTL = 86400  # 24h — PQ chunks
-_PQ_CHUNK_SIZE  = 25_000  # 25k per chunk; 4 chunks covers ~100k PQs
 
 _SITEMAP_MONTHS = [
     "", "january", "february", "march", "april", "may", "june",
@@ -1111,21 +1108,63 @@ def _build_sitemap_core_xml() -> str:
     return '\n'.join(lines)
 
 
-def _build_sitemap_pqs_xml(offset: int, limit: int) -> str:
+def _pq_lastmod(*days):
+    """Latest of a question's tabled / answered / corrected dates. Not
+    updated_at: bulk scripts stamp it on rows whose content didn't change."""
+    return max(d for d in days if d)
+
+
+def _sitemap_pq_months(refresh: bool = False) -> dict:
+    """{'YYYY-MM': lastmod} for every month with a stored written question,
+    newest first. One GROUP BY over ha_pq, cached for an hour like the index.
+    refresh=True rebuilds early (a chunk asked for a month not in the list,
+    e.g. on the 1st), at most once a minute so unknown months can't force a
+    rebuild on every request."""
+    import time as _t
+    from sqlalchemy import func as sqlfunc
     from hansard_archive.models import HaPQ
+    cache = _sitemap_pq_month_summary
+    age = _t.time() - cache['ts']
+    if cache['data'] is not None and age < _SITEMAP_TTL and not (refresh and age >= 60):
+        return cache['data']
+    months: dict = {}
+    for tabled, answered, corrected in (
+            db.session.query(HaPQ.tabled_date, sqlfunc.max(HaPQ.answer_date),
+                             sqlfunc.max(HaPQ.answer_corrected_date))
+            .group_by(HaPQ.tabled_date).all()):
+        if not tabled:
+            continue
+        key = f"{tabled.year:04d}-{tabled.month:02d}"
+        last = _pq_lastmod(tabled, answered, corrected)
+        months[key] = max(months.get(key, last), last)
+    data = dict(sorted(months.items(), reverse=True))
+    cache.update(data=data, ts=_t.time())
+    return data
+
+
+def _build_sitemap_pqs_xml(month: str) -> str:
+    """Written questions tabled in one month ('YYYY-MM'), at their dated
+    addresses. One chunk per month: no overall cap, and a question stays in
+    the same chunk. lastmod = the latest of tabled, answered and corrected."""
+    from datetime import date as _date
+    from hansard_archive.models import HaPQ, pq_url_path
     BASE = "https://westminsterbrief.co.uk"
-    rows = (db.session.query(HaPQ.uin, HaPQ.tabled_date)
-            .order_by(HaPQ.tabled_date.desc())
-            .offset(offset).limit(limit).all())
+    year, mon = int(month[:4]), int(month[5:])
+    start = _date(year, mon, 1)
+    end = _date(year + mon // 12, mon % 12 + 1, 1)
+    rows = (db.session.query(HaPQ.uin, HaPQ.tabled_date, HaPQ.answer_date,
+                             HaPQ.answer_corrected_date)
+            .filter(HaPQ.tabled_date >= start, HaPQ.tabled_date < end)
+            .order_by(HaPQ.tabled_date, HaPQ.id).all())
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ]
-    for uin, tabled in rows:
+    for uin, tabled, answered, corrected in rows:
+        lastmod = _pq_lastmod(tabled, answered, corrected)
         lines.append('  <url>')
-        lines.append(f'    <loc>{BASE}/archive/pq/{(uin or "").lower()}</loc>')
-        if tabled:
-            lines.append(f'    <lastmod>{tabled.isoformat()}</lastmod>')
+        lines.append(f'    <loc>{BASE}{pq_url_path(tabled, uin)}</loc>')
+        lines.append(f'    <lastmod>{lastmod.isoformat()}</lastmod>')
         lines.append('  </url>')
     lines.append('</urlset>')
     return '\n'.join(lines)
@@ -1135,9 +1174,9 @@ def _build_sitemap_index_xml() -> str:
     from datetime import date as _date
     BASE = "https://westminsterbrief.co.uk"
     today = _date.today().isoformat()
-    chunks = ['sitemap-core.xml', 'sitemap-members.xml',
-              'sitemap-pqs-1.xml', 'sitemap-pqs-2.xml',
-              'sitemap-pqs-3.xml', 'sitemap-pqs-4.xml']
+    chunks = ['sitemap-core.xml', 'sitemap-members.xml']
+    # (name, lastmod): PQ months carry their own; the others keep today
+    pq_chunks = [(f'sitemap-pqs-{m}.xml', d.isoformat()) for m, d in _sitemap_pq_months().items()]
     if feature_enabled('FEATURE_EDMS'):
         chunks.append('sitemap-edms.xml')
     if feature_enabled('FEATURE_CONSULTATIONS'):
@@ -1152,11 +1191,12 @@ def _build_sitemap_index_xml() -> str:
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ]
-    for name in chunks:
+    entries = [(name, today) for name in chunks[:2]] + pq_chunks + [(name, today) for name in chunks[2:]]
+    for name, lastmod in entries:
         lines += [
             '  <sitemap>',
             f'    <loc>{BASE}/{name}</loc>',
-            f'    <lastmod>{today}</lastmod>',
+            f'    <lastmod>{lastmod}</lastmod>',
             '  </sitemap>',
         ]
     lines.append('</sitemapindex>')
@@ -1197,28 +1237,22 @@ def sitemap():
 def sitemap_core():
     return _serve_xml(_sitemap_core_cache, _build_sitemap_core_xml, _SITEMAP_TTL, _XML_EMPTY_URLSET)
 
-@app.route('/sitemap-pqs-1.xml')
-def sitemap_pqs_1():
-    return _serve_xml(_sitemap_pqs1_cache,
-                      lambda: _build_sitemap_pqs_xml(0 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
-                      _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
-
-@app.route('/sitemap-pqs-2.xml')
-def sitemap_pqs_2():
-    return _serve_xml(_sitemap_pqs2_cache,
-                      lambda: _build_sitemap_pqs_xml(1 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
-                      _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
-
-@app.route('/sitemap-pqs-3.xml')
-def sitemap_pqs_3():
-    return _serve_xml(_sitemap_pqs3_cache,
-                      lambda: _build_sitemap_pqs_xml(2 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
-                      _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
-
-@app.route('/sitemap-pqs-4.xml')
-def sitemap_pqs_4():
-    return _serve_xml(_sitemap_pqs4_cache,
-                      lambda: _build_sitemap_pqs_xml(3 * _PQ_CHUNK_SIZE, _PQ_CHUNK_SIZE),
+@app.route('/sitemap-pqs-<string:month>.xml')
+def sitemap_pqs_month(month: str):
+    import re as _re
+    # 'YYYY-MM' in 2000-2099 only: bounds how many chunks can be cached
+    if not _re.fullmatch(r'20\d\d-(0[1-9]|1[0-2])', month):
+        abort(404)
+    try:
+        known = month in _sitemap_pq_months() or month in _sitemap_pq_months(refresh=True)
+    except Exception as exc:   # serve the cached (or empty) chunk rather than fail
+        print(f'[SITEMAP] PQ month list error: {exc}', flush=True)
+        db.session.rollback()
+        known = True
+    if not known:              # a month with no stored questions
+        abort(404)
+    cache = _sitemap_pqs_month_caches.setdefault(month, {'xml': None, 'ts': 0.0})
+    return _serve_xml(cache, lambda: _build_sitemap_pqs_xml(month),
                       _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/sitemap-edms.xml')
@@ -1346,12 +1380,19 @@ def enforce_canonical_url():
     # /home → / (canonical home URL is /)
     if path == '/home':
         return redirect('/' + qs, code=301)
-    # Trailing slash (preserve root /)
-    if path != '/' and path.endswith('/'):
-        return redirect(path.rstrip('/') + qs, code=301)
-    # Uppercase characters in path
-    if path != path.lower():
-        return redirect(path.lower() + qs, code=301)
+    # Old undated written-question address /archive/pq/<uin>, any case, with or
+    # without a trailing slash: one 301 straight to the dated page.
+    parts = path.rstrip('/').split('/')
+    if len(parts) == 4 and parts[:3] == ['', 'archive', 'pq'] and parts[3]:
+        from hansard_archive.views import pq_legacy_location
+        target = pq_legacy_location(parts[3], request.query_string.decode())
+        if target is None:
+            abort(404)
+        return redirect(target, code=301)
+    # Trailing slash (preserve root /) and uppercase characters: one redirect
+    canonical = (path.rstrip('/') or '/').lower()
+    if canonical != path:
+        return redirect(canonical + qs, code=301)
 
 
 @app.before_request

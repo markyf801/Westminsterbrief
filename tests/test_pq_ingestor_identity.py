@@ -506,7 +506,7 @@ def test_pq_page_title_never_bare_uin(db, app):
                                      "he is taking to improve rail punctuality in the North."))
     db.session.commit()
 
-    html = app.test_client().get("/archive/pq/6978").get_data(as_text=True)
+    html = app.test_client().get("/archive/pq/6978", follow_redirects=True).get_data(as_text=True)
 
     title = re.search(r"<title>(.*?)</title>", html, re.S).group(1).strip()
     h1 = re.search(r'<h1 class="sd-title">(.*?)</h1>', html, re.S).group(1).strip()
@@ -1097,15 +1097,15 @@ def test_pq_page_shows_holding_and_corrected_answers(db, app):
     db.session.commit()
     client = app.test_client()
 
-    holding = client.get("/archive/pq/35741").get_data(as_text=True)
+    holding = client.get("/archive/pq/35741", follow_redirects=True).get_data(as_text=True)
     assert "Holding answer" in holding and "will reply in full later" in holding
     assert "Corrected" not in holding
 
-    corrected = client.get("/archive/pq/23043").get_data(as_text=True)
+    corrected = client.get("/archive/pq/23043", follow_redirects=True).get_data(as_text=True)
     assert "Corrected on 20 October 2026" in corrected
     assert "This answer was corrected on 20 October 2026" in corrected
     assert "Holding answer" not in corrected
 
-    plain = client.get("/archive/pq/36000").get_data(as_text=True)
+    plain = client.get("/archive/pq/36000", follow_redirects=True).get_data(as_text=True)
     assert "Holding answer" not in plain and "Corrected" not in plain
     assert "Answered" in plain
