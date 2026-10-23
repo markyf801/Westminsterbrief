@@ -523,6 +523,11 @@ normally empty):
   stats — the stats-refresh job is intentionally not scheduled yet, so a stale
   headline table shows SKIPPED with its age; set `CONFIG["headline_stats"]["scheduled"]
   = True` once that service exists
+- Search locale: `SELECT to_tsvector('english', 'Starmer’s')::text` must contain
+  `'starmer'` (FAIL otherwise). Archive search relies on Postgres treating the curly
+  apostrophe as punctuation, which depends on the database locale (production is
+  `en_US.utf8`); a restore into a "C"-locale cluster would silently stop most
+  possessives matching. The line shows the database `LC_CTYPE`. SKIPPED on SQLite
 - Committee evidence cron, backup cron record, newest R2 object, live `/ping` + `/health`
 
 ### Committees and APPGs (`scripts/ingest_committees.py`, `scripts/ingest_appgs.py`) — not yet set up

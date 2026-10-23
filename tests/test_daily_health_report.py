@@ -184,7 +184,7 @@ def test_fresh_data_all_ok():
     bad = [(r.name, r.status, r.detail) for r in results if r.status not in (hc.OK, hc.SKIPPED)]
     assert bad == []
     skipped = {r.name for r in results if r.status == hc.SKIPPED}
-    assert skipped == set()
+    assert skipped == {"Search: curly apostrophes (database locale)"}   # Postgres only
     assert hc.count_problems(results) == 0
 
 
@@ -882,3 +882,50 @@ def test_tagging_coverage_ok_and_counts_attempts():
         conn.execute(m.HaTagAttempt.__table__.insert(), [{"item_kind": "pq", "item_id": 99, "attempts": 3}])
     pq = _run_db(engine, TUESDAY)["Tagging: recent written questions tagged"]
     assert pq.status == hc.OK and "20 of 20" in pq.detail and "1 item(s) with failed" in pq.detail
+
+
+# ---------------------------------------------------------------------------
+# Search locale (curly apostrophes)
+# ---------------------------------------------------------------------------
+
+class _PgConn:
+    """Stands in for a Postgres connection: answers the two locale-check queries."""
+
+    def __init__(self, tsvector, ctype="en_US.utf8"):
+        self.dialect = type("D", (), {"name": "postgresql"})()
+        self.answers = {"to_tsvector": tsvector, "datctype": ctype}
+        self.params = []
+
+    def execute(self, stmt, params=None):
+        self.params.append(params)
+        sql = str(stmt)
+        value = next(v for k, v in self.answers.items() if k in sql)
+        return MagicMock(scalar=MagicMock(return_value=value))
+
+
+def _locale_ctx(conn):
+    return type("Ctx", (), {"conn": conn, "config": hc.CONFIG})()
+
+
+def test_search_locale_skipped_on_sqlite():
+    res = _run_db(_engine(), TUESDAY)["Search: curly apostrophes (database locale)"]
+    assert res.status == hc.SKIPPED and "not Postgres" in res.detail
+
+
+def test_search_locale_ok_when_apostrophe_is_punctuation():
+    conn = _PgConn("'starmer':1")
+    res = hc.check_search_locale(_locale_ctx(conn))
+    assert res.status == hc.OK
+    assert "= 'starmer':1" in res.detail and "en_US.utf8" in res.detail
+    assert conn.params[0] == {"w": "Starmer’s"}
+
+
+@pytest.mark.parametrize("tsvector", ["'starmer’s':1", "'starmers':1", "", None])
+def test_search_locale_fails_on_c_locale_style_result(tsvector):
+    res = hc.check_search_locale(_locale_ctx(_PgConn(tsvector, ctype="C")))
+    assert res.status == hc.FAIL
+    assert "possessives won't match" in res.detail and "LC_CTYPE C" in res.detail
+
+
+def test_search_locale_is_registered():
+    assert hc.check_search_locale in hc.DB_CHECKS

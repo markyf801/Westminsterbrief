@@ -147,6 +147,10 @@ Or manually check:
 - `/health` returns 200
 - `/questions` returns results
 - Log in with a known account and verify preferences are intact
+- Search locale: on the new database, `SELECT to_tsvector('english', 'Starmer’s')::text`
+  must contain `'starmer'`. If not, the new cluster's locale (e.g. "C") breaks archive
+  search for possessives; create it with an `en_US.utf8` locale instead. The daily
+  health report checks this too ("Search: curly apostrophes").
 
 If the smoke test passes, recovery is complete.
 
