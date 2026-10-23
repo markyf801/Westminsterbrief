@@ -98,6 +98,64 @@ requests (`take=1`); a narrow pass adds 1–4 list pages plus one request per ne
 question or new answer. It emails on the 2nd failed run in a row only. Skipped
 runs (another PQ run in progress) are recorded as `skipped`.
 
+**API trouble.** A list page that fails with a 5xx or a timeout is tried up to
+5 times (pauses of 15, 30, 60 and 120 s plus jitter), then as pages of 100. A
+429 is never retried: the run stops. Three pages failing in a row stop a pass
+(the API is down); the rows already stored are still tagged and the run is
+reported as failed, with an email. Every pass fetches a question's full record
+only when it is new, its stored question text is cut (the list endpoint cuts
+it at 255 characters) or its answer is new or changed.
+
+**Long catch-ups: chunked mode (one-shot).** A long `--answered-days` window
+pages deep into the API, which returns HTTP 500 on deep pages and drops rows
+as pages shift; a 541-day catch-up on 2026-10-22/23 aborted three times
+(skip 7,000 / 33,500 / 39,500). Use date chunks instead:
+`--answered-from` / `--answered-to` (or `--tabled-from` / `--tabled-to`) with
+`--chunk-days` (default 7). Chunks are walked newest first, so if the run
+stops the most-read questions are already done. Progress and a heartbeat are
+saved in the run's `ha_cron_run.notes` after every page; **running the same
+command again carries on** from where an unfinished run stopped (a deploy to
+`master` kills a running one-shot: just run it again) and retries the chunks
+that failed. A failed chunk is retried at the end and doesn't stop the run;
+3 failed chunks in a row, a 429 or more than 5 identity mismatches in a chunk
+do. If a chunk's API total is above the unique questions seen, the chunk is
+walked once more (listed as `short=` if still short; not a failure). While it
+runs, quick-checks are skipped (soft lock, kept alive by the heartbeat; a
+crashed run stops blocking after 2 hours without progress). The scheduled
+sweeps carry on as normal.
+
+Finish the stale-answer catch-up (answered 2025-05-01 → 2026-10-23, 78
+chunks) as a one-shot service (see "One-shot services" below): branch
+`master`, Dockerfile Path `Dockerfile.cron`, restart policy Never, no
+schedule, `SKIP_MIGRATIONS=1`, `DATABASE_URL=${{Postgres.DATABASE_URL}}`,
+`POSTMARK_SERVER_TOKEN` and `ADMIN_EMAIL` / `CRON_ALERT_EMAIL` as on the other
+PQ crons (alerts). No `GEMINI_API_KEY` needed: `--no-tag`, and the next
+scheduled sweep tags any untagged rows.
+
+1. Dry run of one week from the middle of the backlog (writes nothing, no run
+   record; makes the same requests a real run would for that week, so allow
+   up to ~15 minutes):
+   `python scripts/ingest_pq_cron.py --answered-from 2025-10-13 --answered-to 2025-10-19 --chunk-days 7 --service-name pq-catchup --no-tag --dry-run`
+   Read the log: `Chunk ... done — inserted=… updated=…` (updated = stale
+   answers it would fix), `page_errors=0`.
+2. The real run (start command):
+   `python scripts/ingest_pq_cron.py --answered-from 2025-05-01 --answered-to 2026-10-23 --chunk-days 7 --service-name pq-catchup --no-tag`
+3. Progress (DBeaver, read-only):
+   `SELECT id, status, started_at, finished_at, notes FROM ha_cron_run WHERE service_name = 'pq-catchup' ORDER BY id DESC LIMIT 3;`
+   — `done=N/78`, `next=` (next chunk), `failed=` (to retry), `beat=` (last
+   progress, UTC). Finished when `next=end | done=78/78 | failed=-`. If it
+   stopped (status `failed`, or the container died), run the same command
+   again. Keep the dates exactly the same, or it starts a new plan.
+4. Capture the log, then delete the service (see "One-shot services").
+
+Estimated duration: about 110k answered questions in 78 chunks, about 225
+list pages. A page whose rows are already up to date costs one list request
+(20–50 s while the API is slow) plus a DB lookup per row; each stale answer
+costs one extra request (~0.4 s; a fully stale page of 500 takes ~3.5 min).
+So roughly 2–3 h of list requests plus 2.3 h per 20,000 stale answers: about
+4–5 h if 20k are still stale, 8 h if 50k, up to ~15 h if nearly all are. API
+retries add to that on a bad day.
+
 **Timing rationale:** `/questions` queries `ha_pq` (local DB), not Parliament's
 API directly (refactored at commit `57e7273`). The early + morning pair means
 users checking new PQs at 09:30–10:00 UK see that day's questions already in the
