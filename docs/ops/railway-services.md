@@ -88,12 +88,18 @@ not carried; the log says how many were dropped — re-tag those with
 short: `scripts/refresh_partial_debates.py` (one-off, dry run by default).
 Duplicate and swallowing debates (provisional copies Hansard later split or
 re-keyed): the cron logs `DUPLICATE?` / `SWALLOWED?` and counts them in
-`ha_cron_run.notes` (`swallowed=… duplicates=…`) but never deletes. Clean-up,
-all one-shots, dry run first: `scripts/find_duplicate_debates.py` (read-only;
-CSV in the log) → review → `migrations/session_redirect_table.py --execute` →
-`scripts/delete_duplicate_debates.py` (undo tables, old URLs 301 to the kept
-copy) → `scripts/refresh_partial_debates.py --accept-shrink --ext-id …` for the
-reviewed swallowers → `scripts/retag.py --ids …` as printed.
+`ha_cron_run.notes` (`swallowed=… duplicates=…`; a parent holding its own
+child debate is logged as `(parent/child)` and not counted) but never deletes.
+Clean-up, all one-shots, dry run first: `scripts/find_duplicate_debates.py`
+(read-only; CSV in the log) → review → `migrations/session_redirect_table.py
+--execute` → `scripts/delete_duplicate_debates.py` (only dead ids with a live
+twin; undo tables; old URLs 302 to the kept copy until `ARCHIVE_REDIRECT_CODE=301`
+is set on the web service) → `scripts/refresh_partial_debates.py --accept-shrink
+--ext-id …` (add `--allow-empty` only for reviewed headings Hansard now has
+empty) for the reviewed swallowers → `scripts/retag.py --ids …` as printed.
+Rehearse on a Postgres copy first; the delete script's docstring lists the
+before/after SQL checks, `curl -I`, the Cloudflare purge, and why the affected
+days must not be re-ingested afterwards.
 
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)
 
