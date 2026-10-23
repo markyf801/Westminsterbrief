@@ -698,7 +698,8 @@ class TestArchiveSearchFixes:
         html = client.get('/archive/search?q=school+funding').get_data(as_text=True)
         assert len(_pq_uins(html)) == 20
         assert '<span class="as-tab-count">24</span>' in html
-        assert 'href="/written-questions?q=school+funding">See all 24 written questions' in html
+        assert 'Showing the top 20 of 24 written questions.' in html
+        assert 'href="/written-questions?q=school+funding">See them all' in html
 
     def test_wq_count_is_capped_on_postgres(self, client):
         from unittest.mock import patch
@@ -715,7 +716,7 @@ class TestArchiveSearchFixes:
             html = client.get('/archive/search?q=school&sort=newest').get_data(as_text=True)
         assert mock_fts.call_args.kwargs['sort'] == 'newest'
         assert mock_pq.call_args.kwargs['sort'] == 'newest'
-        assert 'See all 10,000+ written questions' in html
+        assert 'Showing the top 20 of 10,000+ written questions.' in html
 
     def test_huge_page_is_404_not_500(self, client):
         r = client.get('/archive/search?q=school+funding&page=99999999999999999999')
@@ -736,16 +737,17 @@ class TestArchiveSearchFixes:
                 fn('school funding', **kw)
                 return [str(c.args[0]) for c in ex.call_args_list]
 
-        with app.app_context():
+        with app.app_context(), patch.object(views._st, 'name_guard', return_value=None):
             rel = run(views._fts_search, page=1)[-1]
             new = run(views._fts_search, page=1, sort='newest')[-1]
             pq_rel = run(views._pq_fts_search)[0]
             pq_new = run(views._pq_fts_search, sort='newest')[0]
             count = run(views._pq_fts_count)[0]
         assert 'CURRENT_DATE - s.date' in rel
-        assert 'ORDER BY final_rank DESC, s.date DESC' in rel
-        assert 'ORDER BY s.date DESC, final_rank DESC' in new
+        # Phrase matches first, then rank (tests/test_archive_search_noise.py)
+        assert 'ORDER BY phrase_hit DESC, final_rank DESC, date DESC' in rel
+        assert 'ORDER BY date DESC, final_rank DESC' in new
         assert 'CURRENT_DATE - p.tabled_date' in pq_rel
-        assert 'ORDER BY rank DESC' in pq_rel
+        assert 'ORDER BY phrase_hit DESC, rank DESC' in pq_rel
         assert 'ORDER BY p.tabled_date DESC' in pq_new
         assert 'LIMIT :cap' in count
