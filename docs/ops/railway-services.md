@@ -38,7 +38,8 @@ each consumer service keeps the old password until redeployed.
    - `pq-cron-morning`
    - `pq-cron-afternoon`
    - `pq-cron-monday`
-   - `pq-cron-quickcheck` (once created)
+   - `pq-cron-quickcheck`
+   - `pq-cron-weekly` (once created)
    - `backup-cron-r2`
    - `member-cache-refresh`
    - `minister-refresh` (once created)
@@ -58,6 +59,9 @@ from `beta` on 2026-10-20).
 | `archive-cron-morning` | `0 8 * * 1-5` | 09:00 Mon–Fri | 08:00 Mon–Fri | Morning catch-up, 3-day window |
 | `archive-cron-daytime-mth` | `0 11-23 * * 1-4` | 12:00–midnight Mon–Thu | 11:00–23:00 Mon–Thu | Hourly during sittings |
 | `archive-cron-daytime-fri` | `0 9-19 * * 5` | 10:00–20:00 Fri | 09:00–19:00 Fri | Hourly during Friday sittings |
+
+Run-record names (`--service-name`, see `docs/railway-cron-setup.md`):
+`morning-catchup`, `daytime-mth`, `daytime-fri`.
 
 Oral ministerial statements are classified within the same Hansard ingestion
 (`debate_type='ministerial_statement'`). Written ministerial statements are a
@@ -91,7 +95,57 @@ short: `scripts/refresh_partial_debates.py` (one-off, dry run by default).
 | `pq-cron-morning` | `30 9 * * 1-5` | 10:30 Mon–Fri | 09:30 Mon–Fri | Safety net for late-published questions |
 | `pq-cron-afternoon` | `0 14 * * 1-5` | 15:00 Mon–Fri | 14:00 Mon–Fri | Captures answers published mid-afternoon |
 | `pq-cron-monday` | `0 9 * * 1` | 10:00 Monday | 09:00 Monday | Post-weekend backlog catch-up |
-| `pq-cron-quickcheck` *(proposed, not created yet)* | `15,45 6-19 * * 1-5` | 07:15–20:45 | 06:15–19:45 | `--quick-check --service-name pq-quickcheck`: 3 count calls; exits in seconds if nothing new, else ingests only the windows that grew. Its counts feed `scripts/pq_publication_times.py`; narrow the hours once that report has 4+ sitting weeks |
+| `pq-cron-quickcheck` | `15,45 6-19 * * 1-5` | 07:15–20:45 | 06:15–19:45 | `--quick-check --service-name pq-quickcheck`: 3 count calls; exits in seconds if nothing new, else ingests only the windows that grew. Its counts feed `scripts/pq_publication_times.py`; narrow the hours once that report has 4+ sitting weeks |
+| `pq-cron-weekly` *(proposed, not created yet)* | `0 6 * * 6` | 07:00 Saturday | 06:00 Saturday | Headings safety net: re-reads questions tabled in the last 30 days from the bulk list only (see below) |
+
+**Run-record names.** Each run writes a row in `ha_cron_run` named by its
+`--service-name`, which the daily health report and the "Archive updated" line
+on `/questions` read. For the four sweeps it is the Railway name
+(`pq-cron-early`, `pq-cron-morning`, `pq-cron-afternoon`, `pq-cron-monday`);
+the quick-check records `pq-quickcheck` and the weekly refresh
+`pq-cron-weekly`. Runs started by hand use their own name (e.g. `pq-catchup`
+for a one-off catch-up, `pq-retag` for a one-off tagging run); the health report lists those for information only once
+they are in `CONFIG["pq_crons"]["one_off"]`, and warns about any other `pq-*` name.
+A new scheduled PQ service needs its name added to `CONFIG["pq_crons"]["known"]`
+in `hansard_archive/health_checks.py` and to `PQ_SCHEDULED_RUNS` in
+`hansard_archive/models.py` (the "updated" times on `/questions` and `/written-questions/today`).
+
+**Headings.** Parliament adds a question's heading 2–3 working days after it
+is tabled (checked 23 Oct 2026: questions tabled the day before had none, three
+days before about 80%, a week before all). The sweeps refresh `heading` on every
+question in their 7-day tabled window (and on any question answered in the
+last 7 days), so headings fill in as long as sweeps finish. When they don't
+for several days (deploys, Railway outages, a slow Parliament API), questions
+age out of the window without one. `pq-cron-weekly` closes that gap cheaply. It does a different job from
+`pq-cron-monday` with `--full-refresh` (on fix/pq-resilience): the weekly run re-reads 30 days of list
+records only, for headings; `--full-refresh` fetches full records for the 7-day window.
+
+| Setting | Value |
+|---|---|
+| Service name | `pq-cron-weekly` |
+| Source | this repo, branch `master` |
+| Dockerfile Path | `Dockerfile.cron` |
+| Start command | `python scripts/ingest_pq_cron.py --days 30 --answered-days 0 --skip-answer-fetch --no-tag --service-name pq-cron-weekly` |
+| Cron schedule | `0 6 * * 6` (Saturday 06:00 UTC; no other PQ run then) |
+| Restart policy | Never |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `SKIP_MIGRATIONS` | `1` |
+| `POSTMARK_SERVER_TOKEN`, `ADMIN_EMAIL` / `CRON_ALERT_EMAIL` | as the other PQ crons (failure alerts) |
+
+Bulk list pages only (`--skip-answer-fetch`: no per-question requests, stored
+text never replaced, answer text never written), so about 20–30 requests of
+500 questions: a few minutes normally, up to ~20 minutes when the API is slow.
+`--no-tag`: the weekday sweeps tag anything it inserts. First run: add
+`--dry-run`, press Run Now, check the log shows mostly `updated` (headings) and
+0 identity mismatches, then remove it. The health report skips this service
+until its first run, then expects a run every Saturday.
+
+For a gap that is already there, run `scripts/backfill_pq_headings.py` once as
+a one-shot (same bulk-only rules; dry run by default, `--apply` writes), e.g.
+`python scripts/backfill_pq_headings.py --since 2026-10-01` then the same with
+`--apply`. Its default `--since` is the start of the session (2026-05-13, ~42,000
+questions, ~95 requests at 1 s spacing: about 20–45 minutes, longer when the API is
+slow). Run it outside the quick-check hours (after 20:00 UTC or at the weekend).
 
 Each full sweep runs three passes: tabled in the last 7 days, answered in the
 last 7 days, and answers corrected in the last 7 days (`--corrected-days`,
@@ -102,7 +156,7 @@ corrected pass adds one list request per run plus one request per newly
 corrected answer. `--dry-run` also works for full sweeps (no writes, no run
 record, no tagging, no email; same API requests as a real run).
 
-**`pq-cron-quickcheck` setup (not created yet).** Create it only after the PQ
+**`pq-cron-quickcheck` setup.** Create it only after the PQ
 identity steps 2–4 in `docs/plans/pq-identity-phase3-sql.md` (code deployed,
 duplicates merged, unique indexes on `api_id` and `(tabled_date, lower(uin))`):
 the indexes are what make an overlap with a full sweep safe. Settings as the
@@ -333,9 +387,19 @@ What it checks (thresholds in `CONFIG` at the top of
 `hansard_archive/health_checks.py`; `RECESS_PERIODS` there is a manual override,
 normally empty):
 
-- Hansard archive newest session per House; archive and PQ cron runs (`ha_cron_run`)
+- Hansard archive newest session per House; archive and PQ cron runs (`ha_cron_run`,
+  by the run-record names above). A run with no finish time after 3 hours was stopped
+  by a deploy or restart (or is hung): the line says so. For the four PQ sweeps another
+  sweep finishing after it covers it (OK) while the unfinished run is under 26 Mon–Fri
+  hours old (Railway skips a cron's next run while one is still running, so a hung run
+  must not stay covered); after that, three unfinished runs in a row, or no sweep
+  finishing since, the service is graded by the age of its last ok run (WARN, then
+  FAIL). One-off runs (`pq-catchup`) are listed for information only; any other
+  `pq-*` name not in the config is a WARN. Skipped quick-check runs are counted
+- Bank holidays: not known to the report; "working days" below count them
 - Written questions: newest tabled per House, last write, recent answers, missing
-  headings (last 14 days, WARN at 5%), all-time missing headings (count only — should
+  headings (tabled in the last 14 days except the last 3 working days, which
+  Parliament hasn't headed yet; WARN at 5%), all-time missing headings (count only — should
   fall after the heading backfill), and integrity: duplicate groups by `api_id` and by
   `(tabled_date, lower(uin))` must be 0 (FAIL otherwise), and `uq_ha_pq_api_id` /
   `uq_ha_pq_date_uin` must exist and be valid (WARN otherwise)
@@ -375,7 +439,10 @@ fails and the stored edition is under 12 weeks old, the run is logged as `failed
 
 ### Other
 
-- `backup-cron-r2` — daily pg_dump to Cloudflare R2
+- `backup-cron-r2` — daily pg_dump to Cloudflare R2; records `backup-r2` in `ha_cron_run`
+- `committee-evidence-cron` (`scripts/committee_evidence_cron.py`, script header says Mondays 06:00 UTC) —
+  records `committee-evidence-cron`; the health report and `/health` expect a run every 8 days.
+  Not otherwise documented here: confirm in the Railway dashboard that the service exists
 - **Stakeholder directory:** no automated cron. Ministerial meetings loaded via CSV upload + `stakeholder_directory/pipeline.py` when GOV.UK publishes quarterly transparency data. Committee evidence triggered manually via `/admin`. Lobbying register also manual.
 
 ## One-shot services

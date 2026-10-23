@@ -232,12 +232,13 @@ def _oldest_pq_date() -> str:
 def _last_pq_update():
     """Return the most recent successful PQ cron run time, or None."""
     try:
-        from hansard_archive.models import HaCronRun
+        from hansard_archive.models import PQ_SCHEDULED_RUNS, HaCronRun
         run = (
             HaCronRun.query
             .filter(
-                HaCronRun.service_name.in_(['pq-morning', 'pq-afternoon', 'pq-monday', 'pq-quickcheck']),
+                HaCronRun.service_name.in_(PQ_SCHEDULED_RUNS),
                 HaCronRun.status == 'ok',
+                HaCronRun.finished_at.isnot(None),
             )
             .order_by(HaCronRun.finished_at.desc())
             .first()
