@@ -45,27 +45,32 @@ _TITLE_TSV = "'baro':3 'baron':7 'countess':2 'duchess':6 'duke':11 'earl':10 'l
 _TITLE_Q = "( 'baro' | 'baron' | 'countess' | 'duchess' | 'duke' | 'earl' | 'ladi' | 'lord' )"
 _PEER_RE = r"(?:Viscountess|Viscount|Countess|Baroness|Marquess|Duchess|Baron|Lord|Lady|Earl|Duke)\s+"
 
-# (kind, phrase, phrase tsquery, tsquery of the part before " of ") as member_profile gives them
+# As member_profile gives them: (kind, phrase, phrase tsquery,
+# stems that make it removable, stems that keep it, surname)
 _ROWS = [
-    ("mp", "Cat Smith", "'cat' <-> 'smith'", "'cat' <-> 'smith'"),
-    ("mp", "Cat Eccles", "'cat' <-> 'eccl'", "'cat' <-> 'eccl'"),
-    ("mp", "Jeremy Hunt", "'jeremi' <-> 'hunt'", "'jeremi' <-> 'hunt'"),
-    ("mp", "Hunt", "'hunt'", "'hunt'"),                       # one word: never removed
-    ("peer", "Stroud", "'stroud'", "'stroud'"),               # Baroness Stroud
-    ("peer", "Price", "'price'", "'price'"),                  # Lord Price
-    ("peer", "Black of Brentwood", "'black' <2> 'brentwood'", "'black'"),
-    ("peer", "of Kinnoull", "'kinnoul'", "''"),              # The Earl of Kinnoull
-    ("seat", "Forest of Dean", "'forest' <2> 'dean'", None),
-    ("seat", "Stroud", "'stroud'", None),
+    ("mp", "Cat Smith", "'cat' <-> 'smith'", "'cat':1", "'smith':1", "Smith"),
+    ("mp", "Cat Eccles", "'cat' <-> 'eccl'", "'cat':1", "'eccl':1", "Eccles"),
+    ("mp", "Kemi Badenoch", "'kemi' <-> 'badenoch'", "'kemi':1", "'badenoch':1", "Badenoch"),
+    ("mp", "Liz Saville Roberts", "'liz' <-> 'savill' <-> 'robert'", "'liz':1",
+     "'robert':2 'savill':1", "Saville Roberts"),
+    ("mp", "Hunt", "'hunt'", "", "'hunt':1", "Hunt"),               # one word: never removed
+    ("peer", "Stroud", "'stroud'", "", "'stroud':1", "Stroud"),       # Baroness Stroud
+    ("peer", "Frost", "'frost'", "", "'frost':1", "Frost"),           # Lord Frost
+    ("peer", "Black of Brentwood", "'black' <2> 'brentwood'", "'brentwood':1", "'black':1",
+     "Black"),
+    ("peer", "of Kinnoull", "'kinnoul'", "'kinnoul':1", "", ""),     # The Earl of Kinnoull
+    ("seat", "Forest of Dean", "'forest' <2> 'dean'", "'dean':3 'forest':1", "", ""),
+    ("seat", "Kingston upon Hull East", "'kingston' <-> 'upon' <-> 'hull' <-> 'east'",
+     "'east':4 'hull':3 'kingston':1 'upon':2", "", ""),
 ]
-_STEMS = {"cats": "cat", "kinnoull": "kinnoul", "pricing": "price", "hunting": "hunt",
-          "jeremy": "jeremi"}
+_STEMS = {"cats": "cat", "kinnoull": "kinnoul", "pricing": "price", "saville": "savill"}
 
 
 def _index_from(rows=_ROWS):
     st._index.update(at=None, entries=())
     with patch.object(st.db.session, "execute") as ex:
-        ex.side_effect = [MagicMock(scalar=lambda: _TITLE_TSV), MagicMock(fetchall=lambda: rows)]
+        ex.side_effect = [MagicMock(one=lambda: (_TITLE_TSV, True)),
+                          MagicMock(fetchall=lambda: rows)]
         entries = st._member_index()
     st._index.update(at=None, entries=())
     return entries
@@ -80,44 +85,47 @@ def _lookup_with(q, rows=_ROWS):
         return st._lookup(words, q)
 
 
-def test_index_keeps_only_safe_name_forms():
+def test_index_keeps_only_forms_with_a_removable_part():
     by_phrase = {(e.kind, e.phrase): e for e in _index_from()}
-    assert ("mp", "Hunt") not in by_phrase              # a lone word is not a name form
-    assert ("peer", "of Kinnoull") not in by_phrase     # a territorial title
-    stroud = by_phrase[("peer", "Stroud")]
-    assert stroud.regex == _PEER_RE + "Stroud"          # only with a title in front
-    assert stroud.tsquery == f"{_TITLE_Q} <-> ( 'stroud' )"
-    assert by_phrase[("peer", "Black of Brentwood")].regex == (
-        _PEER_RE + r"Black(?:\s+of\s+Brentwood)?")
+    # Nothing but a surname or a peer's name: never removed
+    for key in (("mp", "Hunt"), ("peer", "Stroud"), ("peer", "Frost"), ("peer", "of Kinnoull")):
+        assert key not in by_phrase, key
+    black = by_phrase[("peer", "Black of Brentwood")]
+    assert black.regex == _PEER_RE + r"Black\s+of\s+Brentwood"   # only the form with the place
+    assert black.tsquery == f"{_TITLE_Q} <-> ( 'black' <2> 'brentwood' )"
+    assert (black.trigger, black.keep) == ({"brentwood"}, {"black"})
     assert by_phrase[("mp", "Cat Smith")].regex == r"Cat\s+Smith"
 
 
-def test_lookup_builds_guard_for_member_names():
+def test_first_name_search_removes_the_name():
     guard = _lookup_with("cats")
     assert guard.tsquery == "( 'cat' <-> 'eccl' ) | ( 'cat' <-> 'smith' )"
     assert guard.pattern == r"\m(?:Cat\s+(?:Eccles|Smith))\M"
 
 
-def test_names_regex_groups_by_first_word():
-    assert st._names_regex({"Cat Smith", "Cat Eccles", "Bill Esterson"}) == (
-        r"Bill\s+Esterson|Cat\s+(?:Eccles|Smith)")
+def test_surname_or_peer_name_search_never_removes_it():
+    for q in ("badenoch", "starmer", "smith", "frost", "stroud", "price", "hunt", "black",
+              "saville", "roberts"):
+        assert _lookup_with(q) is None, q
 
 
-def test_one_word_peer_is_removed_only_with_a_title():
-    guard = _lookup_with("stroud")
-    # The Stroud seat is named in full by the search, so only "Baroness/Lady Stroud" goes
-    assert guard.pattern == r"\m(?:" + _PEER_RE + r"(?:Stroud))\M"
-    assert guard.tsquery == f"( {_TITLE_Q} <-> ( 'stroud' ) )"
-    assert _lookup_with("pricing").pattern == r"\m(?:" + _PEER_RE + r"(?:Price))\M"
+def test_place_and_seat_searches_remove_the_attribution():
+    assert _lookup_with("brentwood").pattern == r"\m(?:" + _PEER_RE + r"Black\s+of\s+Brentwood)\M"
+    assert _lookup_with("hull").pattern == (
+        r"\m(?:Members?|MP)\s+for\s+(?:Kingston\s+upon\s+Hull\s+East)\M")
 
 
 def test_naming_the_member_or_seat_keeps_it_searchable():
-    assert "Smith" not in _lookup_with("cat smith").pattern
-    for q in ("lady stroud", "baroness stroud", "lord price", "lord black"):
-        assert _lookup_with(q) is None, q
+    guard = _lookup_with("cat smith")
+    assert "Smith" not in guard.pattern and r"Cat\s+Eccles" in guard.pattern
     assert _lookup_with("forest of dean") is None
-    assert r"Black(?:\s+of\s+Brentwood)?" in _lookup_with("black").pattern
-    assert r"(?:Members?|MP)\s+for\s+(?:Forest\s+of\s+Dean)" in _lookup_with("forest").pattern
+    assert _lookup_with("black brentwood") is None
+    assert r"Forest\s+of\s+Dean" in _lookup_with("forest").pattern
+
+
+def test_names_regex_groups_by_first_word():
+    assert st._names_regex({"Cat Smith", "Cat Eccles", "Bill Esterson"}) == (
+        r"Bill\s+Esterson|Cat\s+(?:Eccles|Smith)")
 
 
 def test_lookup_none_when_no_member_matches():
@@ -404,6 +412,9 @@ class TestOnLocalPostgres:
         ("Karl Turner", "Commons", "Kingston upon Hull East"),
         ("Sarah Green", "Commons", "Chesham and Amersham"), ("Earl Attlee", "Lords", "Hereditary"),
         ("Lord Black of Brentwood", "Lords", "Life peer"),
+        ("Mrs Kemi Badenoch", "Commons", "North West Essex"),
+        ("Sir Keir Starmer", "Commons", "Holborn and St Pancras"),
+        ("Lord Frost", "Lords", "Life peer"), ("Alex Burghart", "Commons", "Brentwood and Ongar"),
     ]
     # (search, session title that must be found, speeches, date)
     FOUND = [
@@ -437,6 +448,16 @@ class TestOnLocalPostgres:
         ("lady stroud", "Online Safety",
          ["I support the amendment of the noble Baroness, Lady Stroud."], None),
         ("cat smith", "Committee", ["Ordered, That Cat Smith be a member."], None),
+        # Surnames and peers' names are how people search for a person: never removed
+        ("badenoch", "Stamp Duty", ["The Leader of the Opposition, Kemi Badenoch, was right."], None),
+        # (straight apostrophe: Postgres reads "Starmer’s" as one token "starmer’")
+        ("starmer", "Chagos", ["Keir Starmer's surrender of the Chagos islands is a disgrace."], None),
+        ("frost", "Brexit Deal", ["The deal negotiated by Lord Frost was flawed."], None),
+        ("price", "Lords Business", ["My Lords, the noble Lord, Lord Price, is not in his place."],
+         None),
+        ("stroud", "Amendments", ["The noble Baroness, Lady Stroud, moved the amendment."], None),
+        ("black", "Press", ["The noble Lord, Lord Black of Brentwood, made a fair point."], None),
+        ("green", "Energy", ["As Ms Green said, energy matters."], None),
         ("factory farming", "State of Climate", ["A contributory factor is factory farming."],
          "2025-07-21"),
     ]
@@ -446,9 +467,9 @@ class TestOnLocalPostgres:
          ["Ordered, That Ann Davies, Cat Eccles, Cat Smith be members of the Committee."]),
         ("cats", "Waste Management Sites",
          ["The Member for Lancaster and Wyre (Cat Smith) has constituents nearby."]),
-        ("price", "Lords Business", ["My Lords, the noble Lord, Lord Price, is not in his place."]),
-        ("stroud", "Amendments", ["The noble Baroness, Lady Stroud, moved the amendment."]),
-        ("black", "Press", ["The noble Lord, Lord Black of Brentwood, made a fair point."]),
+        ("brentwood", "Media Bill", ["Lord Black of Brentwood spoke on the press."]),
+        ("hull", "Ports Committee",
+         ["The Member for Kingston upon Hull East (Karl Turner) spoke."]),
         ("reading", "Transport Questions",
          ["The hon. Member for Reading Central (Matt Rodda) asked a question."]),
     ]
@@ -462,6 +483,7 @@ class TestOnLocalPostgres:
         ("P2", "Cats", "Cats question", "2025-01-01", "Commons"),
         ("P3", "Medicines", "Will the Minister meet Lord Price?", "2026-10-01", "Lords"),
         ("P4", "Medicines: Prices", "What is the price of insulin?", "2026-10-01", "Commons"),
+        ("P5", "Committees", "Has the Minister met Cat Smith?", "2026-10-01", "Commons"),
     ]
 
     @pytest.fixture(scope="class")
@@ -553,8 +575,47 @@ class TestOnLocalPostgres:
         with pg.app_context():
             assert [p["uin"] for p in views._pq_fts_search("cats", date_from="2026-01-01")] == ["P1"]
             assert views._pq_fts_count("cats", date_to="2025-12-31") == 1
-            assert [p["uin"] for p in views._pq_fts_search("price")] == ["P4"]
-            assert {p["uin"] for p in views._pq_fts_search("lord price")} == {"P3"}
+            assert {p["uin"] for p in views._pq_fts_search("price")} == {"P3", "P4"}
+            assert {p["uin"] for p in views._pq_fts_search("cats")} == {"P1", "P2"}  # not P5
+            assert {p["uin"] for p in views._pq_fts_search("cat smith")} == {"P5"}
+
+    def test_policy_filter_counts_each_session_once(self, pg):
+        from sqlalchemy import text
+        from extensions import db
+        from hansard_archive import views
+        with pg.app_context():
+            sid = db.session.execute(text(
+                "SELECT id FROM ha_session WHERE title = 'Animal Rescue Centres'")).scalar()
+            for _ in range(2):   # the same tag twice: no unique constraint stops it
+                db.session.execute(text(
+                    "INSERT INTO ha_session_theme (session_id, theme, theme_type)"
+                    " VALUES (:s, 'Animals', 'policy_area')"), {"s": sid})
+            db.session.commit()
+            results, total = views._fts_search("cats", 1, policy_filter="Animals")
+            assert total == 1 and [r["title"] for r in results] == ["Animal Rescue Centres"]
+            db.session.execute(text("DELETE FROM ha_session_theme"))
+            db.session.commit()
+
+    def test_failed_name_lookup_keeps_the_timeout(self, pg):
+        from sqlalchemy import text
+        from extensions import db
+        from hansard_archive import views
+
+        def broken():
+            db.session.execute(text("SELECT * FROM no_such_table_for_test"))
+
+        with pg.app_context():
+            st._cache.clear()
+            st._failed["until"] = 0.0
+            views._limit_search_time()
+            with patch.object(st, "_member_index", side_effect=broken):
+                assert st.name_guard("cats") is None
+            # The savepoint undid only the lookup: the search carries on, still capped
+            assert db.session.execute(text("SHOW statement_timeout")).scalar() == "8s"
+            assert views._fts_search("cats", 1)[1] >= 1
+            db.session.rollback()
+            st._failed["until"] = 0.0
+            st._cache.clear()
 
     def test_statement_timeout_is_set(self, pg):
         from sqlalchemy import text

@@ -1927,15 +1927,17 @@ def _fts_search(
     effective_lim = lim if lim is not None else _PER_PAGE
     offset = (page - 1) * effective_lim
 
-    policy_join = (
-        "JOIN ha_session_theme sth ON sth.session_id = s.id"
-        "  AND sth.theme = :policy AND sth.theme_type = 'policy_area'"
-        if policy_filter else ""
-    )
+    policy_join = ""
 
     # Build optional WHERE conditions for extra filters
     extra_where_parts = []
     extra_params: dict = {}
+
+    if policy_filter:
+        # EXISTS, not JOIN: a duplicated tag must not duplicate a result or the count
+        extra_where_parts.append(
+            "AND EXISTS (SELECT 1 FROM ha_session_theme sth WHERE sth.session_id = s.id"
+            " AND sth.theme = :policy AND sth.theme_type = 'policy_area')")
 
     if house_filter in ("Commons", "Lords"):
         extra_where_parts.append("AND s.house = :house")
@@ -2059,17 +2061,16 @@ def _fts_search(
 
 def _pq_filters(date_from: str = "", date_to: str = "", house_filter: str = "",
                 policy_filter: str = "") -> tuple[str, str, dict]:
-    """(join SQL, AND-clauses SQL, params) for the Written Questions filters.
+    """(join SQL — now always empty, AND-clauses SQL, params) for the WQ filters.
 
     Dates are the tabled date, the date shown on each result (the same as the
     /written-questions scanner and the Research Tool)."""
-    join = (
-        "JOIN ha_pq_theme pth ON pth.pq_id = p.id"
-        "  AND pth.theme = :policy AND pth.theme_type = 'policy_area'"
-        if policy_filter else ""
-    )
+    join = ""
     parts, params = [], {}
     if policy_filter:
+        # EXISTS, not JOIN: a duplicated tag must not duplicate a question
+        parts.append("AND EXISTS (SELECT 1 FROM ha_pq_theme pth WHERE pth.pq_id = p.id"
+                     " AND pth.theme = :policy AND pth.theme_type = 'policy_area')")
         params["policy"] = policy_filter
     if date_from:
         parts.append("AND p.tabled_date >= :pq_from")
@@ -2256,7 +2257,8 @@ def _bill_fts_search(q_raw: str, limit: int = 5) -> list:
     """)
     try:
         rows = db.session.execute(sql, {"q": q_clean, "lim": limit}).fetchall()
-    except Exception:
+    except Exception as exc:
+        _search_failed(exc, "bill_fts_search")   # roll back so the page can carry on
         return []
     results = []
     for row in rows:
@@ -2290,10 +2292,18 @@ def get_related_content(topic_keywords: str, exclude_uin: str | None = None, lim
     """
     if not _is_postgres():
         return {"debates": [], "pqs": [], "bills": [], "query": topic_keywords}
+
+    def _recover(exc):
+        # A failed or timed-out query aborts the transaction: roll back, re-cap
+        _search_failed(exc, "related_content")
+        _limit_search_time()
+
+    _limit_search_time()
     try:
         debates_raw, _ = _fts_search(topic_keywords, page=1, skip_count=True, lim=limit)
         debates = sorted(debates_raw, key=lambda r: r["date"] or "", reverse=True)[:limit]
-    except Exception:
+    except Exception as exc:
+        _recover(exc)
         debates = []
     try:
         pqs_raw = _pq_fts_search(topic_keywords, limit=limit)
@@ -2302,11 +2312,13 @@ def get_related_content(topic_keywords: str, exclude_uin: str | None = None, lim
             key=lambda r: r["tabled_date"] or "",
             reverse=True,
         )[:limit]
-    except Exception:
+    except Exception as exc:
+        _recover(exc)
         pqs = []
     try:
         bills = _bill_fts_search(topic_keywords, limit=5)
-    except Exception:
+    except Exception as exc:
+        _recover(exc)
         bills = []
     return {"debates": debates, "pqs": pqs, "bills": bills, "query": topic_keywords}
 
