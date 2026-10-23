@@ -27,7 +27,10 @@ Contributions are stored flat (responds_to_id NULL — Q&A pairing is Week 2 wor
 Deferred Divisions (procedural voting records) are excluded from stored sessions
 but their chain links are followed so traversal continues through them.
 
-All functions are safe to re-run: sessions are skipped if ext_id already exists.
+All functions are safe to re-run: a session whose ext_id already exists is
+never inserted twice. By default it is skipped; with refresh_existing=True
+(the archive cron) it is brought up to date in place when Hansard's copy has
+changed (hansard_archive/refresh.py).
 """
 
 import logging
@@ -37,9 +40,6 @@ from datetime import date, timedelta
 from typing import Optional
 
 import requests
-
-_log = logging.getLogger(__name__)
-
 from sqlalchemy.exc import IntegrityError
 
 from extensions import db
@@ -58,6 +58,8 @@ from hansard_archive.models import (
     HansardContribution,
     HansardSession,
 )
+
+_log = logging.getLogger(__name__)
 
 HANSARD_API_BASE = "https://hansard-api.parliament.uk"
 _REQUEST_TIMEOUT = 30       # increased from 15 — Commons API is genuinely slow
@@ -753,11 +755,49 @@ def _write_contributions(session: HansardSession, contributions: list[dict]) -> 
     return count
 
 
+def _refresh_existing(session: HansardSession, overview: dict, contributions: list[dict],
+                      stats: dict, verbose: bool) -> None:
+    """
+    Bring one stored session up to date with the copy just downloaded. Commits
+    a refresh; rolls back otherwise (releasing the row lock refresh_session
+    takes). Raises on a DB error, for the caller to count.
+    """
+    from hansard_archive.refresh import STATE_CHANGED, STATE_UNCHANGED, refresh_session
+
+    label = f"{session.title[:60]!r} ({session.ext_id[:20]}...)"
+    ext_id = session.ext_id
+    res = refresh_session(session, contributions, strict=True,
+                          debate_type_label=overview.get("_DebateTypeLabel") or "")
+    if res.state != STATE_CHANGED:
+        db.session.rollback()
+        if res.state == STATE_UNCHANGED:
+            stats["unchanged"] += 1
+            if verbose:
+                print(f"[archive]   SKIP {ext_id[:20]}... (already ingested, unchanged)", flush=True)
+        else:
+            stats["held"] += 1
+            print(f"[archive]   HOLD {label} — Hansard now has {res.named_after} named "
+                  f"contribution(s), we have {res.named_before}: left unchanged ({res.state})",
+                  flush=True)
+        return
+    session_id = session.id
+    db.session.commit()
+    stats["refreshed"] += 1
+    if res.needs_retag:
+        stats["retag_ids"].append(session_id)
+    print(f"[archive]   REFRESHED {label} — {res.summary()}", flush=True)
+
+
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
 
-def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True) -> int:
+def _new_refresh_stats() -> dict:
+    return {"refreshed": 0, "unchanged": 0, "held": 0, "refresh_errors": 0, "retag_ids": []}
+
+
+def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True,
+                refresh_existing: bool = False, refresh_stats: dict | None = None) -> int:
     """
     Ingest all sessions for a single sitting day.
 
@@ -767,8 +807,16 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
     Returns the number of NEW sessions ingested (0 for non-sitting days or if
     all sessions were already in the DB).
 
+    refresh_existing=True (the archive cron): a session already stored is
+    compared with the copy just downloaded and, if Hansard's copy changed,
+    its contributions are brought up to date in place (hansard_archive/
+    refresh.py). Otherwise stored sessions are skipped, as before. Counts go
+    into refresh_stats (see _new_refresh_stats) when given.
+
     Expects to run inside a Flask app context with an active DB session.
     """
+    if refresh_stats is None:
+        refresh_stats = _new_refresh_stats()
     if verbose:
         print(f"[archive] {sitting_date} {house} — fetching seeds...", flush=True)
 
@@ -810,8 +858,16 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
 
     for ext_id, (overview, contributions) in all_sessions.items():
         try:
-            if HansardSession.query.filter_by(ext_id=ext_id).first():
-                if verbose:
+            existing = HansardSession.query.filter_by(ext_id=ext_id).first()
+            if existing:
+                if refresh_existing and not existing.is_container:
+                    try:
+                        _refresh_existing(existing, overview, contributions, refresh_stats, verbose)
+                    except Exception as e:
+                        _safe_rollback()
+                        refresh_stats["refresh_errors"] += 1
+                        print(f"[archive]   ERROR refreshing {ext_id}: {e}", flush=True)
+                elif verbose:
                     print(f"[archive]   SKIP {ext_id[:20]}... (already ingested)", flush=True)
                 continue
 
@@ -904,6 +960,7 @@ def ingest_date_range(
     end: date,
     house: str = "Commons",
     verbose: bool = True,
+    refresh_existing: bool = False,
 ) -> dict:
     """
     Ingest all sessions for a date range (inclusive).
@@ -911,16 +968,20 @@ def ingest_date_range(
     Walks forwards from start to end, one day at a time.
     Non-sitting days produce 0 sessions and are skipped cleanly.
 
-    Returns a summary dict: {total_days, sitting_days, total_sessions, errors}.
+    Returns a summary dict: {total_days, sitting_days, total_sessions, errors,
+    refreshed, unchanged, held, refresh_errors, retag_ids} (the refresh counts stay 0 unless
+    refresh_existing=True; see ingest_date).
     """
     total_sessions = 0
     sitting_days = 0
     errors = 0
+    refresh_stats = _new_refresh_stats()
     current = start
 
     while current <= end:
         try:
-            count = ingest_date(current, house=house, verbose=verbose)
+            count = ingest_date(current, house=house, verbose=verbose,
+                                refresh_existing=refresh_existing, refresh_stats=refresh_stats)
             if count > 0:
                 sitting_days += 1
                 total_sessions += count
@@ -940,4 +1001,5 @@ def ingest_date_range(
         "sitting_days": sitting_days,
         "total_sessions": total_sessions,
         "errors": errors,
+        **refresh_stats,
     }

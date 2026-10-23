@@ -3,8 +3,13 @@ Hansard Archive incremental ingestion — cron entry point.
 
 Ingest the last N days for both Commons and Lords, then theme-tag any newly
 ingested sessions. Designed to run hourly during sitting-day windows.
-Safe to re-run: sessions already in the DB are skipped; already-tagged
-sessions are skipped by the tagger.
+Safe to re-run: a session already in the DB is never stored twice. If
+Hansard's copy of it has changed since (a debate stored while still going on,
+or before Hansard finished publishing it), its contributions are brought up to
+date in place — same id, slug and tags — and, when the text changed
+materially, it is re-tagged (old tags kept if the new ones don't verify).
+See hansard_archive/refresh.py. Already-tagged sessions are otherwise skipped
+by the tagger.
 
 Three Railway Cron Job services use this script with different schedules:
 
@@ -36,6 +41,7 @@ sys.path.insert(0, ".")
 
 from flask_app import app
 from hansard_archive.ingestion import ingest_date_range
+from hansard_archive.refresh import retag_refreshed
 from hansard_archive.tagger import tag_all_untagged
 from hansard_archive.models import HaCronRun
 from extensions import db
@@ -47,6 +53,68 @@ _LOG_RETENTION_DAYS = 90
 # instead of one run spending an hour on it. Override with ARCHIVE_TAG_CAP.
 _TAG_CAP = int(os.environ.get("ARCHIVE_TAG_CAP", "200"))
 
+# Refreshed sessions re-tagged per run (only those already tagged whose text
+# changed materially; see hansard_archive/refresh.py). Override with
+# ARCHIVE_RETAG_CAP.
+_RETAG_CAP = int(os.environ.get("ARCHIVE_RETAG_CAP", "30"))
+
+# Re-tags left over (over the cap, transient API failures) are written to the
+# run's ha_cron_run.notes as a "retag_pending: <id>:<times carried>,..." first
+# line and picked up by the next archive run, whichever service it is. An id is
+# dropped after it has been carried _RETAG_MAX_CARRIES times, and the line is
+# kept within _RETAG_PENDING_CHARS so the notes' 2000-character cut never
+# splits an id.
+_RETAG_MAX_CARRIES = 3
+_RETAG_PENDING_CHARS = 1500
+_RETAG_PENDING_PREFIX = "retag_pending: "
+_ARCHIVE_SERVICES = ("morning-catchup", "daytime-mth", "daytime-fri")
+
+
+def _previous_retag_pending(service_name: str) -> dict[int, int]:
+    """{session id: times carried} the newest finished archive run left to re-tag."""
+    try:
+        row = (HaCronRun.query
+               .filter(HaCronRun.service_name.in_(set(_ARCHIVE_SERVICES) | {service_name}),
+                       HaCronRun.finished_at.isnot(None))
+               .order_by(HaCronRun.finished_at.desc(), HaCronRun.id.desc())
+               .first())
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[cron] Warning: could not read pending re-tags: {exc}", flush=True)
+        return {}
+    for line in ((row.notes or "") if row else "").splitlines():
+        if line.startswith(_RETAG_PENDING_PREFIX):
+            return _parse_pending(line[len(_RETAG_PENDING_PREFIX):])
+    return {}
+
+
+def _parse_pending(text: str) -> dict[int, int]:
+    out: dict[int, int] = {}
+    for token in text.split(","):
+        sid, _, times = token.strip().partition(":")
+        if sid.isdigit():
+            out[int(sid)] = int(times) if times.isdigit() else 1
+    return out
+
+
+def _pending_line(pending: list[int], carried: dict[int, int]) -> tuple[str, int]:
+    """
+    The notes line for ids still to re-tag, and how many were dropped (carried
+    too often, or no room left). Each id's count goes up by one per carry.
+    """
+    tokens: list[str] = []
+    length = len(_RETAG_PENDING_PREFIX)
+    dropped = 0
+    for sid in dict.fromkeys(pending):
+        times = carried.get(sid, 0) + 1
+        token = f"{sid}:{times}"
+        if times > _RETAG_MAX_CARRIES or length + len(token) + 1 > _RETAG_PENDING_CHARS:
+            dropped += 1
+            continue
+        tokens.append(token)
+        length += len(token) + 1
+    return (_RETAG_PENDING_PREFIX + ",".join(tokens) if tokens else ""), dropped
+
 
 def _alert_email() -> str:
     return os.environ.get("CRON_ALERT_EMAIL") or os.environ.get("ADMIN_EMAIL", "")
@@ -56,7 +124,7 @@ def _send_failure_alert(service_name: str, subject: str, body: str) -> None:
     """Send a failure alert email. Silently no-ops if Postmark isn't configured."""
     recipient = _alert_email()
     if not recipient:
-        print(f"[cron] ALERT: no recipient configured (set ADMIN_EMAIL or CRON_ALERT_EMAIL)", flush=True)
+        print("[cron] ALERT: no recipient configured (set ADMIN_EMAIL or CRON_ALERT_EMAIL)", flush=True)
         return
     try:
         from email_service import send_email
@@ -104,6 +172,11 @@ def main() -> None:
     total_sessions = 0
     total_errors = 0
     total_tagged = 0
+    total_refreshed = 0
+    total_held = 0
+    retag_ids: list[int] = []
+    retag_pending: list[int] = []
+    refresh_notes = ""
     tag_notes = ""
     tag_aborted = ""
     run_record_id: int | None = None
@@ -125,29 +198,65 @@ def main() -> None:
             db.session.rollback()
 
         _prune_old_runs()
+        # Re-tags the previous archive run left over; kept in this run's notes
+        # even if it crashes before re-tagging.
+        carried = _previous_retag_pending(args.service_name)
+        retag_pending = list(carried)
 
         try:
             # --- Ingestion ---
             for house in ("Commons", "Lords"):
                 print(f"[cron] === {house} ===", flush=True)
-                result = ingest_date_range(start, today, house=house, verbose=True)
+                result = ingest_date_range(start, today, house=house, verbose=True,
+                                           refresh_existing=True)
                 house_sessions = result["total_sessions"]
                 house_errors = result["errors"]
                 total_sessions += house_sessions
                 total_errors += house_errors
+                total_refreshed += result["refreshed"]
+                total_held += result["held"]
+                total_errors += result["refresh_errors"]
+                retag_ids.extend(result["retag_ids"])
+                retag_pending = list(dict.fromkeys(retag_ids + list(carried)))
                 print(
                     f"[cron] {house} done — "
                     f"{house_sessions} new sessions, "
+                    f"{result['refreshed']} refreshed, {result['held']} held, "
+                    f"{result['refresh_errors']} refresh error(s), "
                     f"{result['sitting_days']} sitting day(s), "
                     f"{house_errors} error(s)",
                     flush=True,
                 )
+            refresh_notes = f"refresh: refreshed={total_refreshed} held={total_held}"
+
+            # --- Re-tag refreshed sessions whose text changed materially ---
+            # (plus any the previous run left over; this run's own come first)
+            db.session.rollback()
+            retag_ids = list(dict.fromkeys(retag_ids + list(carried)))
+            if retag_ids:
+                try:
+                    retag = retag_refreshed(retag_ids, limit=_RETAG_CAP)
+                except Exception as exc:  # never let re-tagging stop new sessions being tagged
+                    db.session.rollback()
+                    retag = {"retagged": 0, "kept_old": 0, "untagged": 0, "over_cap": 0,
+                             "api_errors": 0, "errors": 1, "pending": retag_ids,
+                             "aborted": f"{type(exc).__name__}: {exc}"}
+                total_errors += retag["api_errors"] + retag["errors"]
+                retag_pending = list(retag["pending"])
+                refresh_notes += (
+                    f" retag: carried_in={len(carried)} retagged={retag['retagged']} "
+                    f"kept_old={retag['kept_old']} untagged={retag['untagged']} "
+                    f"over_cap={retag['over_cap']} api_errors={retag['api_errors']} "
+                    f"errors={retag['errors']} pending={len(retag_pending)}"
+                    + (f" ABORTED: {retag['aborted']}" if retag["aborted"] else "")
+                )
+            print(f"[cron] {refresh_notes}", flush=True)
 
             # --- Theme tagging ---
             if total_sessions > 0:
                 print(f"[cron] Tagging {total_sessions} new session(s)…", flush=True)
             else:
-                print(f"[cron] No new sessions — running tagger for any missed sessions…", flush=True)
+                print("[cron] No new sessions — running tagger for any missed sessions…", flush=True)
 
             db.session.rollback()  # clear any poisoned state from ingestion errors
             tag_result = tag_all_untagged(limit=_TAG_CAP, verbose=True)
@@ -183,7 +292,15 @@ def main() -> None:
                     record.sessions_tagged = total_tagged
                     record.errors = total_errors
                     record.status = final_status
-                    notes = "\n".join(n for n in (fatal_error, tag_notes) if n)
+                    # The pending line goes first (and fits in 1500 characters) so the
+                    # 2000-character cut never loses or splits it.
+                    pending_line, pending_dropped = _pending_line(retag_pending, carried)
+                    if pending_dropped:
+                        print(f"[cron] {pending_dropped} pending re-tag(s) dropped (carried "
+                              f"{_RETAG_MAX_CARRIES} times, or no room); scripts/retag.py "
+                              f"can re-tag them by hand", flush=True)
+                    notes = "\n".join(n for n in (pending_line, fatal_error, refresh_notes, tag_notes)
+                                      if n)
                     if notes:
                         record.notes = notes[:2000]
                     db.session.commit()
@@ -194,7 +311,8 @@ def main() -> None:
         # --- Summary ---
         print(
             f"[cron] === END === status={final_status} "
-            f"ingested={total_sessions} tagged={total_tagged} errors={total_errors} "
+            f"ingested={total_sessions} refreshed={total_refreshed} held={total_held} "
+            f"tagged={total_tagged} errors={total_errors} "
             f"elapsed={elapsed:.1f}s",
             flush=True,
         )
@@ -214,6 +332,7 @@ def main() -> None:
             f"Schedule:  {run_start.strftime('%Y-%m-%d %H:%M')} UTC\n"
             f"Window:    {start} → {today} ({args.days} days)\n"
             f"Ingested:  {total_sessions} sessions\n"
+            f"Refreshed: {refresh_notes or 'not run'}\n"
             f"Tagged:    {total_tagged} sessions\n"
             f"Tagging:   {tag_notes or 'not run'}\n"
             f"Errors:    {total_errors}\n"
