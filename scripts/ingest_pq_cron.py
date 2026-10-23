@@ -59,8 +59,12 @@ stopped and retries the chunks that failed. A failed chunk doesn't stop the
 run; 3 failed chunks in a row, a 429 or too many identity mismatches do. See
 hansard_archive/pq_chunks.py and docs/ops/railway-services.md.
 
-If the API fails during a pass (pages failing after all retries), the run
-still tags what it stored before stopping, and is reported as failed.
+If the API fails during a pass (pages failing after all retries), or a sweep
+reaches its time budget (--max-minutes, default 50), the run still tags what
+it stored before stopping, and is reported as failed. --full-refresh (used
+weekly by pq-cron-monday) fetches the full record for every question in the
+tabled window, as a safety net for changes the "only when needed" rule can't
+see (see docs/ops/railway-services.md, "API trouble").
 
 The --no-tag flag skips theme tagging. Use it for backfill runs — tagging
 ~70k rows inline would take 2-4 hours. Run tagging as a separate pass instead.
@@ -98,7 +102,8 @@ from extensions import db
 
 _LOG_RETENTION_DAYS = 90
 _PASS_KEYS = ("inserted", "updated", "unchanged", "identity_mismatch",
-              "failed", "page_errors", "rolled_back", "errors")
+              "failed", "page_errors", "rolled_back", "full_fetched",
+              "full_fetch_failed", "errors")
 
 _QUICK_NOTE = "quick-check"     # HaCronRun.notes prefix for quick-check runs
 _QUICK_TIMEOUT = 60             # count calls have taken 40+ s while the API is slow
@@ -107,6 +112,12 @@ _ACTIVE_RUN_MINUTES = 120       # a "running" record with no progress for this l
 _FULL_WAIT_SECONDS = 15 * 60    # a full sweep waits this long for a running quick-check
 _FULL_WAIT_POLL = 30
 _CHUNK_FAILS_TO_STOP = 3        # chunked run: this many failed chunks in a row stop it
+_RUN_MAX_IDENTITY_MISMATCHES = 20   # chunked run: more than this in the whole run stop it
+_MAX_CHUNKS = 200               # bigger plans: use longer chunks (keeps the notes small)
+_HEARTBEAT_SECONDS = 60         # chunked run: progress saved at most this often mid-chunk
+# Scheduled sweeps stop starting new work after this many minutes (0 = no
+# limit), so a hanging API can't make one run into the next.
+_RUN_BUDGET_MINUTES = int(os.environ.get("PQ_RUN_BUDGET_MINUTES", "50") or 50)
 
 
 class QuickCheckError(RuntimeError):
@@ -132,10 +143,19 @@ def _run_pass(label: str, date_from: date, date_to: date,
         f"unchanged={counts['unchanged']} "
         f"identity_mismatch={counts['identity_mismatch']} "
         f"failed={counts['failed']} page_errors={counts['page_errors']} "
-        f"rolled_back={counts['rolled_back']} errors={counts['errors']}",
+        f"rolled_back={counts['rolled_back']} full_fetched={counts['full_fetched']} "
+        f"full_fetch_failed={counts['full_fetch_failed']} errors={counts['errors']}",
         flush=True,
     )
     return counts, abort, exc_out
+
+
+def _pass_notes(passes: dict) -> str:
+    """One line per run for ha_cron_run.notes: what each pass wrote and how
+    many full records it fetched."""
+    return "passes: " + "; ".join(
+        f"{label} ins={c['inserted']} upd={c['updated']} full_fetched={c['full_fetched']} "
+        f"fetch_failed={c['full_fetch_failed']}" for label, c in passes.items())
 
 
 def _tag_after_abort(exc: PQIngestAborted | None) -> bool:
@@ -422,7 +442,8 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
                                           skip_answer_fetch=args.skip_answer_fetch,
                                           date_field=kind,
                                           fetch_only_new_answers=True,
-                                          dry_run=args.dry_run)
+                                          dry_run=args.dry_run,
+                                          deadline=args.deadline)
         passes[kind] = res
         out["inserted"] += res["inserted"]
         out["updated"] += res["updated"]
@@ -441,8 +462,10 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
         out.update(_run_tagger(args.no_tag, new_rows))
         out["errors"] += out["tag_errors"]
 
+    fetched = sum(p["full_fetched"] for p in passes.values())
     out["notes"] = (f"{_QUICK_NOTE}: ran {', '.join(ran)} "
-                    f"ins={out['inserted']} upd={out['updated']} ({summary})")
+                    f"ins={out['inserted']} upd={out['updated']} full_fetched={fetched} "
+                    f"({summary})")
     return out
 
 
@@ -483,11 +506,14 @@ def _run_full(args, date_from: date, today: date, answered_days: int, passes: di
     print(f"[pq-cron] Ingesting WQs {date_from} → {today}…", flush=True)
     # fetch_only_new_answers: the full record only for new rows, cut question
     # text and new/changed answers (it used to be fetched for every row in the
-    # window, about 3,500 requests a run).
+    # window, about 3,500 requests a run). --full-refresh (pq-cron-monday)
+    # fetches every row once a week, as before, as a safety net for changes
+    # that rule can't see.
     result, abort, abort_exc = _run_pass("Tabled pass", date_from, today,
                                          skip_answer_fetch=args.skip_answer_fetch,
-                                         fetch_only_new_answers=True,
-                                         dry_run=args.dry_run)
+                                         fetch_only_new_answers=not args.full_refresh,
+                                         dry_run=args.dry_run,
+                                         deadline=args.deadline)
     passes["tabled"] = result
     out = {"inserted": result["inserted"], "updated": result["updated"],
            "errors": result["errors"], "tagged": 0, "tag_errors": 0,
@@ -506,12 +532,14 @@ def _run_full(args, date_from: date, today: date, answered_days: int, passes: di
                                           skip_answer_fetch=args.skip_answer_fetch,
                                           date_field=kind,
                                           fetch_only_new_answers=True,
-                                          dry_run=args.dry_run)
+                                          dry_run=args.dry_run,
+                                          deadline=args.deadline)
         passes[kind] = res
         out["inserted"] += res["inserted"]
         out["updated"] += res["updated"]
         out["errors"] += res["errors"]
     out["abort"] = abort
+    out["notes"] = _pass_notes(passes)
 
     # --- Theme tagging ---
     # After an API failure the rows already stored are still tagged; the run
@@ -529,7 +557,8 @@ def _tag_at_end(args, out: dict, abort_exc: PQIngestAborted | None) -> None:
         print("[pq-cron] Tagging skipped (--dry-run)", flush=True)
     else:
         if out["abort"] and not args.no_tag:
-            print("[pq-cron] Ingest stopped early (API failing) — tagging what was stored",
+            print("[pq-cron] Ingest stopped early (API failing or time budget) — tagging "
+                  "what was stored",
                   flush=True)
         out.update(_run_tagger(args.no_tag, out["inserted"] + out["updated"]))
         out["errors"] += out["tag_errors"]
@@ -567,7 +596,7 @@ def _save_progress(run_record_id: int | None, notes: str) -> None:
         print(f"[pq-cron] Warning: could not save progress: {exc}", flush=True)
 
 
-def _walk_chunk(args, kind: str, c_from: date, c_to: date, on_page,
+def _walk_chunk(args, kind: str, c_from: date, c_to: date, on_progress,
                 page_size: int | None = None, seen: set | None = None):
     """One ingest of one chunk. Returns (counts, abort_exc, seen_ids). An
     unexpected error (a dropped DB connection, say) fails the chunk, not the
@@ -577,7 +606,7 @@ def _walk_chunk(args, kind: str, c_from: date, c_to: date, on_page,
         counts = ingest_pq_date_range(
             c_from, c_to, verbose=True, skip_answer_fetch=args.skip_answer_fetch,
             date_field=kind, fetch_only_new_answers=True, dry_run=args.dry_run,
-            page_size=page_size, seen_ids=seen, on_page=on_page)
+            page_size=page_size, seen_ids=seen, on_progress=on_progress)
         return counts, None, seen
     except PQIngestAborted as exc:
         return exc.counts, exc, seen
@@ -599,7 +628,10 @@ def _run_chunked(args, run_record_id: int | None, passes: dict, progress_out: di
     failures, or something unexpected went wrong; it is retried once after the
     walk, and a later run of the same command retries what still fails.
     _CHUNK_FAILS_TO_STOP failed chunks in a row stop the run (the API is down).
-    A 429 or an identity-mismatch abort stops the run at once.
+    A 429 or an identity-mismatch abort stops the run at once, and so do more
+    than _RUN_MAX_IDENTITY_MISMATCHES identity mismatches in the whole run. A
+    chunk where some full-record requests failed also counts as failed (its
+    stale answers would otherwise never be revisited).
 
     After a chunk, the API's totalResults is compared with the unique
     questions seen; if fewer were seen (rows shifting between pages), the
@@ -613,19 +645,24 @@ def _run_chunked(args, run_record_id: int | None, passes: dict, progress_out: di
     kind = progress.kind
     out = {"inserted": 0, "updated": 0, "errors": 0, "tagged": 0, "tag_errors": 0,
            "tag_aborted": "", "tag_notes": "", "abort": None}
-    totals = {k: 0 for k in (*_PASS_KEYS, "full_fetch_failed")}
+    totals = {k: 0 for k in _PASS_KEYS}
 
     def save():
         progress_out["notes"] = progress.format(datetime.utcnow())
         _save_progress(run_record_id, progress_out["notes"])
 
     prev = _previous_chunked_run(args.service_name, progress.key, run_record_id)
-    if prev is not None and prev.status == "running" and \
+    if prev is not None and prev.status == "running" and not args.take_over and \
             _last_progress(prev) >= datetime.utcnow() - timedelta(minutes=_ACTIVE_RUN_MINUTES):
-        out["abort"] = (f"another run of this catch-up is still running (run id {prev.id}, "
-                        f"last progress {_last_progress(prev):%Y-%m-%d %H:%M} UTC) - not started")
-        print(f"[pq-cron] {out['abort']}", flush=True)
-        out["errors"] += 1
+        # Not a failure (no email): either it really is still running, or its
+        # container was killed (a deploy) less than 2 hours ago.
+        out["skipped"] = True
+        out["notes"] = (f"chunked catch-up not started: run id {prev.id} of the same plan "
+                        f"is still marked running (last progress "
+                        f"{_last_progress(prev):%Y-%m-%d %H:%M} UTC). If its container has "
+                        f"stopped (a deploy kills it), run again with --take-over, or wait "
+                        f"{_ACTIVE_RUN_MINUTES} minutes from its last progress")
+        print(f"[pq-cron] {out['notes']}", flush=True)
         return out
     saved = parse_progress(prev.notes) if prev is not None else None
     if saved is not None and not saved.is_complete():
@@ -636,9 +673,10 @@ def _run_chunked(args, run_record_id: int | None, passes: dict, progress_out: di
               f"{', '.join(map(str, progress.failed)) or 'none'}", flush=True)
         if prev.status == "running" and not args.dry_run:
             # It stopped without finishing (container killed): no heartbeat
-            # for _ACTIVE_RUN_MINUTES. Close it so it no longer looks active.
+            # for _ACTIVE_RUN_MINUTES, or --take-over. Close it so it no
+            # longer looks active.
             HaCronRun.query.filter_by(id=prev.id).update(
-                {"status": "failed", "notes": (prev.notes or "")[:1800]
+                {"status": "failed", "notes": (prev.notes or "")
                  + f" | abandoned, resumed by run {run_record_id}"},
                 synchronize_session=False)
             db.session.commit()
@@ -646,8 +684,12 @@ def _run_chunked(args, run_record_id: int | None, passes: dict, progress_out: di
         print(f"[pq-cron] Starting {progress.key}: {len(progress.chunks())} chunks", flush=True)
     save()
 
+    beat = {"at": 0.0}
+
     def heartbeat(_skip, _rows):
-        save()
+        if time.monotonic() - beat["at"] >= _HEARTBEAT_SECONDS:
+            save()
+            beat["at"] = time.monotonic()
 
     walked = 0
     fails_in_a_row = 0
@@ -660,14 +702,15 @@ def _run_chunked(args, run_record_id: int | None, passes: dict, progress_out: di
         c_from, c_to = chunk
         print(f"[pq-cron] Chunk {kind} {c_from} → {c_to}…", flush=True)
         counts, exc, seen = _walk_chunk(args, kind, c_from, c_to, heartbeat)
-        ok = exc is None and not counts.get("page_errors")
+        ok = exc is None and not counts.get("page_errors") and not counts.get("full_fetch_failed")
         api_total = counts.get("api_total")
         if ok and api_total and len(seen) < api_total:
             print(f"[pq-cron] Chunk {c_from}..{c_to}: API said {api_total}, saw {len(seen)} "
                   f"unique — walking it once more", flush=True)
             _add(totals, counts)
             counts, exc, seen = _walk_chunk(args, kind, c_from, c_to, heartbeat, seen=seen)
-            ok = exc is None and not counts.get("page_errors")
+            ok = (exc is None and not counts.get("page_errors")
+                  and not counts.get("full_fetch_failed"))
             if ok and len(seen) < (counts.get("api_total") or 0):
                 print(f"[pq-cron] Chunk {c_from}..{c_to} still short after the second walk: "
                       f"API said {counts['api_total']}, saw {len(seen)} unique", flush=True)
@@ -675,9 +718,14 @@ def _run_chunked(args, run_record_id: int | None, passes: dict, progress_out: di
         _add(totals, counts)
         if isinstance(exc, (PQRateLimitedError, PQIdentityMismatchError)):
             stop, stop_exc = f"{type(exc).__name__}: {exc}", exc
+        elif totals["identity_mismatch"] > _RUN_MAX_IDENTITY_MISMATCHES:
+            stop = (f"{totals['identity_mismatch']} identity mismatches in this run "
+                    f"(limit {_RUN_MAX_IDENTITY_MISMATCHES})")
+            stop_exc = PQIdentityMismatchError(stop, counts)
         print(f"[pq-cron] Chunk {c_from}..{c_to} {'done' if ok else 'FAILED'} — "
               f"inserted={counts.get('inserted', 0)} updated={counts.get('updated', 0)} "
               f"unchanged={counts.get('unchanged', 0)} page_errors={counts.get('page_errors', 0)} "
+              f"full_fetched={counts.get('full_fetched', 0)} "
               f"full_fetch_failed={counts.get('full_fetch_failed', 0)}"
               + (f" ({type(exc).__name__}: {exc})" if exc else ""), flush=True)
         return ok
@@ -688,7 +736,7 @@ def _run_chunked(args, run_record_id: int | None, passes: dict, progress_out: di
         progress.mark(chunk, ok)
         fails_in_a_row = 0 if ok else fails_in_a_row + 1
         for key, src in (("ins", "inserted"), ("upd", "updated"), ("same", "unchanged"),
-                         ("fetch_failed", "full_fetch_failed")):
+                         ("full", "full_fetched"), ("fetch_failed", "full_fetch_failed")):
             progress.totals[key] = progress_totals_base[key] + totals[src]
         save()
 
@@ -788,6 +836,17 @@ def main() -> None:
                         help="Chunked catch-up: ... to this date (inclusive)")
     parser.add_argument("--chunk-days", type=int, default=None,
                         help="Chunked catch-up: days per window, walked newest first (default: 7)")
+    parser.add_argument("--take-over", action="store_true",
+                        help="Chunked catch-up: resume even though the previous run of the "
+                             "same plan is still marked running (use only when its container "
+                             "has stopped, e.g. after a deploy)")
+    parser.add_argument("--full-refresh", action="store_true",
+                        help="Full sweep: fetch the full record for every question in the "
+                             "tabled window, not only those that need it (weekly safety net)")
+    parser.add_argument("--max-minutes", type=int, default=_RUN_BUDGET_MINUTES,
+                        help="Full sweep / quick-check: start no new page or full-record "
+                             "request after this many minutes (default 50, env "
+                             "PQ_RUN_BUDGET_MINUTES; 0 = no limit; not used by chunked runs)")
     parser.add_argument("--max-chunks", type=int, default=0,
                         help="Chunked catch-up: stop after this many chunks this run "
                              "(0 = no limit); the same command carries on later")
@@ -811,13 +870,21 @@ def main() -> None:
             parser.error("--chunk-days must be 1-31")
         if args.max_chunks < 0:
             parser.error("--max-chunks must be >= 0")
+        n_chunks = len(_chunk_plan(args).chunks())
+        if n_chunks > _MAX_CHUNKS:
+            parser.error(f"{n_chunks} chunks is too many (limit {_MAX_CHUNKS}): use a longer "
+                         f"--chunk-days or split the period")
         if not args.dry_run and not args.service_name.startswith("pq-"):
             parser.error("a chunked catch-up needs a --service-name starting with pq- "
                          "(e.g. pq-catchup): that is what pauses quick-checks and lets "
                          "the run resume")
-    elif args.chunk_days is not None or args.max_chunks:
-        parser.error("--chunk-days and --max-chunks need --answered-from/--answered-to "
-                     "or --tabled-from/--tabled-to")
+    elif args.chunk_days is not None or args.max_chunks or args.take_over:
+        parser.error("--chunk-days, --max-chunks and --take-over need "
+                     "--answered-from/--answered-to or --tabled-from/--tabled-to")
+    if args.max_minutes < 0:
+        parser.error("--max-minutes must be >= 0")
+    args.deadline = (time.monotonic() + args.max_minutes * 60
+                     if args.max_minutes and not chunked else None)
 
     run_start = datetime.utcnow()
     today = date.today()
@@ -899,10 +966,13 @@ def main() -> None:
             elif chunked:
                 _wait_for_quick_check(run_record_id)
                 res = _run_chunked(args, run_record_id, passes, chunk_progress)
+                notes = res.get("notes")
+                skipped = res.get("skipped", False)
             else:
                 _wait_for_quick_check(run_record_id)
                 res = _run_full(args, date_from, today, answered_days, passes,
                                 corrected_days=corrected_days)
+                notes = res.get("notes")
             total_inserted = res["inserted"]
             total_updated = res["updated"]
             total_tagged = res["tagged"]
@@ -945,8 +1015,13 @@ def main() -> None:
                     record.status = recorded_status
                     # Counts first, so scripts/pq_publication_times.py can
                     # still read them when a narrow pass fails.
-                    record.notes = " | ".join(
-                        x for x in (notes, tag_notes, fatal_error) if x)[:2000] or None
+                    tail = " | ".join(x for x in (tag_notes, fatal_error) if x)
+                    if chunked and notes:
+                        # A chunked run's progress is never cut: a rerun resumes from it.
+                        record.notes = notes + (" | " + tail[:1500] if tail else "")
+                    else:
+                        record.notes = " | ".join(
+                            x for x in (notes, tag_notes, fatal_error) if x)[:2000] or None
                     db.session.commit()
             except Exception as db_exc:
                 db.session.rollback()

@@ -137,7 +137,7 @@ def wq(monkeypatch):
         api_id = int(url.rsplit("/", 1)[1])
         state["individual_calls"].append(api_id)
         if api_id not in state["individual"]:
-            return _Resp({}, 404)
+            return _Resp({}, state.get("individual_status", 404))
         return _Resp({"value": state["individual"][api_id]})
 
     monkeypatch.setattr(requests, "get", fake_get)
@@ -303,9 +303,31 @@ def test_same_plan_still_running_is_not_started_twice(db, wq, cron, monkeypatch)
                              notes=prog.format(datetime.utcnow() - timedelta(minutes=5))))
     db.session.commit()
 
-    assert _run(cron, monkeypatch, *CATCHUP) == 1
-    assert wq["calls"] == []
-    assert "another run of this catch-up is still running" in _runs()[-1].notes
+    assert _run(cron, monkeypatch, *CATCHUP) == 0         # refused, but not a failure
+    assert wq["calls"] == [] and cron.alerts == []
+    refused = _runs()[-1]
+    assert refused.status == "skipped"
+    assert refused.notes.startswith("chunked catch-up not started: run id 1") \
+        and "--take-over" in refused.notes
+
+
+def test_take_over_resumes_a_run_killed_by_a_deploy(db, wq, cron, monkeypatch):
+    from hansard_archive.models import HaCronRun
+    from hansard_archive.pq_chunks import ChunkProgress
+    wq["rows"] = _three_weeks()
+    prog = ChunkProgress.fresh("answered", D("2026-09-01"), D("2026-09-21"), 7)
+    prog.advance_past(prog.chunks()[0])
+    db.session.add(HaCronRun(service_name="pq-catchup", days_window=21, status="running",
+                             started_at=datetime.utcnow() - timedelta(minutes=30),
+                             notes=prog.format(datetime.utcnow() - timedelta(minutes=5))))
+    db.session.commit()
+
+    assert _run(cron, monkeypatch, *CATCHUP, "--take-over") == 0
+
+    assert _windows(wq["calls"]) == CHUNKS[1:]
+    old, new = _runs()
+    assert old.status == "failed" and "abandoned, resumed by run" in old.notes
+    assert new.status == "ok" and "| next=end | done=3/3 |" in new.notes
 
 
 def test_failed_chunk_is_logged_retried_and_does_not_stop_the_run(db, wq, cron, monkeypatch):
@@ -545,7 +567,8 @@ def test_individual_record_429_stops_the_pass(db, wq, monkeypatch):
 
 def test_individual_records_failing_in_a_row_stop_the_pass(db, wq):
     import hansard_archive.pq_ingestor as ing
-    wq["rows"] = _three_weeks()                                  # no individual records: 404s
+    wq["rows"] = _three_weeks()
+    wq["individual_status"] = 503
     with pytest.raises(ing.PQPageFailureError) as exc:
         _ingest(skip_answer_fetch=False)
     assert "10 individual record requests failed in a row" in str(exc.value)
@@ -568,17 +591,52 @@ def _tagger(monkeypatch):
 
 
 def test_default_sweep_is_unchanged(db, wq, cron, monkeypatch):
-    assert _run(cron, monkeypatch, "--service-name", "pq-morning", "--no-tag",
-                "--skip-answer-fetch") == 0
-    today, week_ago = date.today().isoformat(), (date.today() - timedelta(days=6)).isoformat()
+    """Same three windows and pages as before; full records only where needed:
+    the new question and the newly answered one, not the stored complete one."""
+    from hansard_archive.models import HaPQ
+    today_d = date.today()
+    today, week_ago = today_d.isoformat(), (today_d - timedelta(days=6)).isoformat()
+    db.session.add(HaPQ(api_id=1, uin="1", tabled_date=today_d, question_text=_SHORT_Q,
+                        is_answered=False, is_holding=False, is_withdrawn=False))
+    db.session.add(HaPQ(api_id=2, uin="2", tabled_date=today_d, question_text=_SHORT_Q,
+                        is_answered=False, is_holding=False, is_withdrawn=False))
+    db.session.commit()
+    answered = _value(2, today, answered=today, answer="<p>Cut answer</p>")
+    wq["rows"] = [_value(1, today), answered, _value(3, today)]
+    full = {"questionText": _SHORT_Q, "answerIsHolding": False, "isWithdrawn": False}
+    wq["individual"] = {2: {**full, "answerText": "<p>Full answer</p>",
+                            "dateAnswered": f"{today}T00:00:00"}, 3: full}
+
+    assert _run(cron, monkeypatch, "--service-name", "pq-cron-morning", "--no-tag") == 0
+
     assert [(next(k for k in c if k.endswith("WhenFrom")), c[next(k for k in c if
              k.endswith("WhenFrom"))], c["skip"], c["take"]) for c in wq["calls"]] == [
         ("tabledWhenFrom", week_ago, 0, 500), ("answeredWhenFrom", week_ago, 0, 500),
         ("correctedWhenFrom", week_ago, 0, 500)]
     assert all(next(v for k, v in c.items() if k.endswith("WhenTo")) == today
                for c in wq["calls"])
+    assert sorted(wq["individual_calls"]) == [2, 3]          # not 1: already complete
+    assert HaPQ.query.filter_by(api_id=2).one().answer_text == "<p>Full answer</p>"
+    db.session.rollback()
     [run] = _runs()
-    assert run.status == "ok" and run.notes is None
+    assert run.status == "ok"
+    assert run.notes == ("passes: tabled ins=1 upd=2 full_fetched=2 fetch_failed=0; "
+                         "answered ins=0 upd=0 full_fetched=0 fetch_failed=0; "
+                         "corrected ins=0 upd=0 full_fetched=0 fetch_failed=0")
+
+
+def test_full_refresh_fetches_every_tabled_row(db, wq, cron, monkeypatch):
+    from hansard_archive.models import HaPQ
+    today_d = date.today()
+    db.session.add(HaPQ(api_id=1, uin="1", tabled_date=today_d, question_text=_SHORT_Q,
+                        is_answered=False, is_holding=False, is_withdrawn=False))
+    db.session.commit()
+    wq["rows"] = [_value(1, today_d.isoformat())]
+    wq["individual"] = {1: {"questionText": _SHORT_Q, "answerIsHolding": False,
+                            "isWithdrawn": False}}
+    assert _run(cron, monkeypatch, "--service-name", "pq-cron-monday", "--no-tag",
+                "--full-refresh") == 0
+    assert wq["individual_calls"] == [1]
 
 
 def test_answered_pass_failing_still_tags_what_was_stored(db, wq, cron, monkeypatch):
@@ -690,3 +748,169 @@ def test_scheduled_tabled_pass_makes_no_full_fetch_for_stored_rows(db, wq, cron,
 
     assert _run(cron, monkeypatch, "--service-name", "pq-cron-morning", "--no-tag") == 0
     assert wq["individual_calls"] == []
+
+
+def test_cut_and_trimmed_question_is_repaired(db, wq):
+    """A bulk text cut at 255 and then trimmed (254) is still "possibly cut": a
+    stored copy equal to it is fetched and replaced by the full text."""
+    from hansard_archive.models import HaPQ
+    cut = (_FULL_Q[:254] + " " + _FULL_Q[255:])[:255].rstrip()     # ends in a space at 255
+    assert len(cut) == 254
+    _stored(db, 1, cut)
+    wq["rows"] = [_tabled_row(1, cut)]
+    wq["individual"] = {1: {"questionText": _FULL_Q, "answerIsHolding": False,
+                            "isWithdrawn": False}}
+    _tabled_pass()
+    assert wq["individual_calls"] == [1]
+    assert HaPQ.query.filter_by(api_id=1).one().question_text == _FULL_Q
+
+
+@pytest.mark.parametrize("length", [245, 250, 255])
+def test_possibly_cut_band(length):
+    from hansard_archive.pq_ingestor import _question_text_complete as ok
+    bulk = _FULL_Q[:length]
+    assert not ok(bulk, bulk, length)
+    assert ok(_FULL_Q, bulk, length)
+
+
+def test_bulk_only_fields_update_when_the_fetch_is_skipped(db, wq):
+    from hansard_archive.models import HaPQ
+    _stored(db, 1, _FULL_Q)
+    r = _tabled_row(1, _CUT_Q)
+    r["value"].update(heading="New heading", askingMember={"name": "Jane Doe"},
+                      askingMemberId=42, answeringBodyName="Department for Transfers",
+                      isWithdrawn=True)
+    wq["rows"] = [r]
+    _tabled_pass()
+    row = HaPQ.query.filter_by(api_id=1).one()
+    assert wq["individual_calls"] == []
+    assert row.heading == "New heading" and row.asking_member == "Jane Doe"
+    assert row.answering_body == "Department for Transfers" and row.is_withdrawn is True
+    assert row.question_text == _FULL_Q
+
+
+def test_holding_answer_replaced_is_fetched_by_the_tabled_pass(db, wq):
+    from hansard_archive.models import HaPQ
+    db.session.add(HaPQ(api_id=1, uin="1", tabled_date=D("2026-09-02"), question_text=_SHORT_Q,
+                        is_answered=True, answer_text="<p>I will reply as soon as possible.</p>",
+                        answer_date=D("2026-09-05"), is_holding=True, is_withdrawn=False))
+    db.session.commit()
+    r = _tabled_row(1, _SHORT_Q)
+    r["value"].update(answerText="<p>Real answer</p>", dateAnswered="2026-09-05T00:00:00",
+                      answerIsHolding=False)
+    wq["rows"] = [r]
+    wq["individual"] = {1: {"questionText": _SHORT_Q, "answerText": "<p>Real answer full</p>",
+                            "answerIsHolding": False, "dateAnswered": "2026-09-05T00:00:00"}}
+    _tabled_pass()
+    assert wq["individual_calls"] == [1]
+    assert "Real answer full" in HaPQ.query.one().answer_text
+
+
+def test_progress_is_reported_inside_a_long_page(db, wq):
+    from hansard_archive.pq_ingestor import ingest_pq_date_range
+    wq["rows"] = [_value(3000 + i, "2026-09-02") for i in range(120)]
+    calls = []
+    ingest_pq_date_range(D("2026-09-01"), D("2026-09-07"), verbose=False,
+                         skip_answer_fetch=True, on_progress=lambda skip, n: calls.append(n))
+    assert calls == [49, 99, 120]                         # every 50 rows, then the page end
+
+
+def test_chunked_heartbeat_is_saved_mid_page(db, wq, cron, monkeypatch):
+    from hansard_archive.models import HaCronRun
+    monkeypatch.setattr(cron, "_HEARTBEAT_SECONDS", 0)
+    wq["rows"] = [_value(3000 + i, "2026-08-20", answered="2026-09-16", answer="<p>A</p>")
+                  for i in range(120)]
+    saved = []
+    real_save = cron._save_progress
+    monkeypatch.setattr(cron, "_save_progress",
+                        lambda run_id, notes: saved.append(notes) or real_save(run_id, notes))
+    assert _run(cron, monkeypatch, *CATCHUP) == 0
+    first_chunk = [n for n in saved if "| next=2026-09-15 |" in n]
+    assert len(first_chunk) >= 4      # start, two mid-page beats, end of page
+    assert HaCronRun.query.count() == 1
+
+
+def test_chunk_with_failed_full_fetches_is_retried(db, wq, cron, monkeypatch):
+    wq["rows"] = [_value(1, "2026-08-20", answered="2026-09-16", answer="<p>A</p>")]
+    wq["individual_status"] = 503
+    args = [a for a in CATCHUP if a != "--skip-answer-fetch"]
+    assert _run(cron, monkeypatch, *args) == 1
+    assert wq["individual_calls"] == [1, 1]                  # walk + retry at the end
+    assert "| failed=2026-09-15 |" in _runs()[-1].notes
+
+
+def test_identity_mismatches_are_limited_across_the_whole_run(db, wq, cron, monkeypatch):
+    from hansard_archive.models import HaPQ
+    rows = []
+    for day in range(5):                                     # 5 per chunk: under the chunk limit
+        for j in range(5):
+            api_id = 5000 + day * 10 + j
+            db.session.add(HaPQ(api_id=api_id, uin=f"X{api_id}", tabled_date=D("2026-08-20"),
+                                question_text=_SHORT_Q, is_answered=False,
+                                is_holding=False, is_withdrawn=False))
+            rows.append(_value(api_id, "2026-08-20", answered=f"2026-09-0{day + 1}",
+                               answer="<p>A</p>"))
+    db.session.commit()
+    wq["rows"] = rows
+    args = ("--answered-from", "2026-09-01", "--answered-to", "2026-09-05", "--chunk-days", "1",
+            "--service-name", "pq-catchup", "--no-tag", "--skip-answer-fetch")
+
+    assert _run(cron, monkeypatch, *args) == 1
+
+    assert len(set(_windows(wq["calls"]))) == 5
+    run = _runs()[-1]
+    assert "25 identity mismatches in this run (limit 20)" in run.notes
+
+
+def test_progress_notes_are_never_cut(db, wq, cron, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("x" * 5000)
+    wq["rows"] = _three_weeks()
+    monkeypatch.setattr(cron, "_tag_at_end", boom)
+    assert _run(cron, monkeypatch, *CATCHUP) == 1
+    run = _runs()[-1]
+    assert run.notes.startswith("pq-chunked: answered") and "| beat=" in run.notes
+    assert "| next=end | done=3/3 |" in run.notes and len(run.notes) < 2500
+
+
+def test_too_many_chunks_are_refused(cron, monkeypatch):
+    assert _run(cron, monkeypatch, "--answered-from", "2025-01-01", "--answered-to",
+                "2026-10-23", "--chunk-days", "1", "--service-name", "pq-catchup") == 2
+
+
+def test_retry_time_for_one_dead_page_is_bounded(db, wq):
+    import hansard_archive.pq_ingestor as ing
+    wq["rows"] = _three_weeks()
+    wq["behaviour"] = lambda params, n: _Resp({}, 503)
+    with pytest.raises(ing.PQPageFailureError):
+        _ingest(max_failed_pages=1)
+    # 5 attempts at 500, then two smaller pages tried twice each: 9 requests.
+    assert len(wq["calls"]) == 9
+    assert sum(wq["sleeps"]) <= (15 + 30 + 60 + 120 + 15 + 15) * 1.2 + 5
+
+
+def test_time_budget_stops_the_pass_and_keeps_what_was_written(db, wq):
+    import time
+    import hansard_archive.pq_ingestor as ing
+    wq["rows"] = _three_weeks()
+    with pytest.raises(ing.PQTimeBudgetError):
+        _ingest(deadline=time.monotonic() - 1)
+    assert wq["calls"] == []
+
+
+def test_scheduled_sweep_over_budget_stops_and_still_tags(db, wq, cron, monkeypatch):
+    import time
+    tagged = _tagger(monkeypatch)
+    wq["rows"] = [_value(1, date.today().isoformat())]
+    clock = {"t": 0.0}
+
+    def fake_monotonic():
+        clock["t"] += 600                    # ten minutes pass between every look
+        return clock["t"]
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+
+    assert _run(cron, monkeypatch, "--service-name", "pq-cron-early", "--skip-answer-fetch",
+                "--max-minutes", "15") == 1
+
+    assert wq["calls"] == [] and tagged == [1]          # stopped before the first page
+    assert "PQTimeBudgetError" in _runs()[-1].notes

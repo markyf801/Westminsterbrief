@@ -353,7 +353,7 @@ def test_full_sweep_is_unchanged_and_makes_no_count_calls(db, api, cron, monkeyp
     assert api["bulk_calls"][2]["correctedWhenFrom"] == week_ago
     assert api["bulk_calls"][2]["correctedWhenTo"] == TODAY.isoformat()
     run = _last_run()
-    assert run.status == "ok" and run.notes is None
+    assert run.status == "ok" and run.notes.startswith("passes: tabled ins=0 upd=0 full_fetched=0")
 
 
 def test_full_sweep_waits_for_a_running_quick_check(db, api, cron, monkeypatch):

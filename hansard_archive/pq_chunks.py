@@ -15,7 +15,7 @@ Progress lives in the run's ha_cron_run.notes (Railway one-off containers
 have no lasting disk), in this form:
 
   pq-chunked: answered 2025-05-01..2026-10-23 every 7d newest-first | next=2026-03-12
-  | failed=2026-09-10,2026-08-27 | short=- | ins=0 upd=1234 same=5000 fetch_failed=3
+  | failed=2026-09-10,2026-08-27 | short=- | ins=0 upd=1234 same=5000 full=1300 fetch_failed=3
   | beat=2026-10-23T12:34:56
 
 (one line). next = start of the next chunk to walk ("end" when every chunk has
@@ -61,7 +61,7 @@ class ChunkProgress:
     failed: list[date] = field(default_factory=list)
     short: list[date] = field(default_factory=list)
     totals: dict = field(default_factory=lambda: {"ins": 0, "upd": 0, "same": 0,
-                                                  "fetch_failed": 0})
+                                                  "full": 0, "fetch_failed": 0})
 
     @classmethod
     def fresh(cls, kind: str, start: date, end: date, chunk_days: int) -> "ChunkProgress":
@@ -121,7 +121,7 @@ class ChunkProgress:
                 f"next={self.next_from.isoformat() if self.next_from else 'end'} | "
                 f"done={self.done_count()}/{len(self.chunks())} | "
                 f"failed={dates(self.failed)} | short={dates(self.short)} | "
-                f"ins={t['ins']} upd={t['upd']} same={t['same']} "
+                f"ins={t['ins']} upd={t['upd']} same={t['same']} full={t['full']} "
                 f"fetch_failed={t['fetch_failed']} | beat={beat:%Y-%m-%dT%H:%M:%S}")
 
 
@@ -130,7 +130,7 @@ _NOTE_RE = re.compile(
     r"(?P<end>\d{4}-\d\d-\d\d) every (?P<days>\d+)d newest-first \| "
     r"next=(?P<next>\d{4}-\d\d-\d\d|end) \|.*?failed=(?P<failed>[-\d,]+) \| "
     r"short=(?P<short>[-\d,]+) \| ins=(?P<ins>\d+) upd=(?P<upd>\d+) same=(?P<same>\d+) "
-    r"fetch_failed=(?P<ff>\d+)"
+    r"full=(?P<full>\d+) fetch_failed=(?P<ff>\d+)"
 )
 
 
@@ -149,7 +149,7 @@ def parse_progress(notes: str | None) -> ChunkProgress | None:
             next_from=None if m["next"] == "end" else date.fromisoformat(m["next"]),
             failed=dates(m["failed"]), short=dates(m["short"]),
             totals={"ins": int(m["ins"]), "upd": int(m["upd"]), "same": int(m["same"]),
-                    "fetch_failed": int(m["ff"])},
+                    "full": int(m["full"]), "fetch_failed": int(m["ff"])},
         )
     except ValueError:
         return None

@@ -69,6 +69,14 @@ _MAX_FULL_FETCH_FAILURES = 10
 
 _BULK_ANSWER_CAP = 258       # bulk endpoint cuts answerText at this length
 _BULK_QUESTION_CAP = 255     # bulk endpoint cuts questionText at this length (no marker)
+# A bulk questionText this long or longer may have been cut (the cut can be
+# followed by a trim, or land a few characters early): it is never taken as
+# the whole question, so a stored copy equal to it is fetched again.
+_QUESTION_MAYBE_CUT = _BULK_QUESTION_CAP - 10
+# Progress callback (and a commit) every this many rows or seconds inside a
+# page, when the caller asks for progress (chunked runs' heartbeat).
+_PROGRESS_ROWS = 50
+_PROGRESS_SECONDS = 300
 # "Looks truncated" window: near the cap and ending in the API's "...".
 _TRUNC_MIN, _TRUNC_MAX = _BULK_ANSWER_CAP - 10, _BULK_ANSWER_CAP + 40
 
@@ -128,6 +136,10 @@ class PQRateLimitedError(PQPageFailureError):
     """Parliament's API answered 429: the run stops at once, nothing retried."""
 
 
+class PQTimeBudgetError(PQIngestAborted):
+    """The pass reached its time budget (deadline=) and stopped early."""
+
+
 class _APIRefused(Exception):
     """A 4xx from the WQ API: never retried."""
 
@@ -171,7 +183,8 @@ def _fetch_individual(api_id: int) -> dict | None:
     """Fetch the full individual question record, which includes fields the
     bulk endpoint omits or truncates (full question and answer text).
 
-    None when the request fails (the answer is left for the next run).
+    None when the request fails (the answer is left for the next run); {}
+    for a 404 (the record has gone: the bulk record is used, not a failure).
     401/403/429 raise _APIRefused: a rate limit or refusal stops the run."""
     url = f"{WQ_API_BASE}/{api_id}"
     try:
@@ -181,6 +194,8 @@ def _fetch_individual(api_id: int) -> dict | None:
         return None
     if resp.status_code in (401, 403, 429):
         raise _APIRefused(resp.status_code, f"individual record id={api_id}")
+    if resp.status_code == 404:
+        return {}
     if resp.status_code != 200:
         return None
     try:
@@ -539,13 +554,16 @@ def _question_text_complete(stored: str | None, bulk: str, bulk_raw_len: int) ->
     """True when the stored question text is the full text of this bulk record.
 
     The bulk endpoint cuts questionText at _BULK_QUESTION_CAP characters with
-    no marker. A shorter bulk text is the whole question, so the stored text
-    must equal it; a cut one must be a strict prefix of the stored text. Text
-    that differs any other way (edited at source, or stored from a cut bulk
-    copy) is fetched again."""
+    no marker. A clearly shorter bulk text is the whole question, so the
+    stored text must equal it. One of _QUESTION_MAYBE_CUT characters or more
+    may be cut (cut and then trimmed, say), so it must be a strict prefix of
+    the stored text: a stored copy equal to it is fetched again. (A question
+    whose full text really is that long is fetched on every pass: a few per
+    cent of questions, the price of never keeping a cut one.) Text that
+    differs any other way (edited at source) is fetched again too."""
     if not stored:
         return False
-    if bulk_raw_len < _BULK_QUESTION_CAP:
+    if bulk_raw_len < _QUESTION_MAYBE_CUT:
         return stored == bulk
     return len(stored) > len(bulk) and stored.startswith(bulk)
 
@@ -621,7 +639,8 @@ def ingest_pq_date_range(
     max_failed_pages: int | None = None,
     page_size: int | None = None,
     seen_ids: set | None = None,
-    on_page: Callable[[int, int], None] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    deadline: float | None = None,
 ) -> dict:
     """
     Fetch and upsert WQs with tabledDate (or, with date_field="answered",
@@ -657,19 +676,25 @@ def ingest_pq_date_range(
     seen_ids: optional set the caller owns; every api_id on the pages fetched
         is added to it (chunked runs compare it with api_total).
     on_outcome: optional callback(fields, outcome) per row, e.g. for sample diffs.
-    on_page: optional callback(skip, rows_on_page) after each page, fetched or
-        not (chunked runs use it as a heartbeat).
+    on_progress: optional callback(skip, rows_done_on_page) after each page,
+        fetched or not, and inside a page every 50 rows or 5 minutes (after a
+        commit, so it may write to the DB itself). Chunked runs use it as a
+        heartbeat.
+    deadline: optional time.monotonic() value; past it no new page or
+        individual-record request is started, what was written is kept and
+        PQTimeBudgetError is raised (scheduled sweeps' time budget).
 
     Each page also refreshes ha_pq_deadline (date due for answer, named day;
     store_deadlines) for its rows, in a separate savepoint so a failure there
     never affects the questions. Not part of the returned counts.
 
     Returns {"inserted", "updated", "unchanged", "identity_mismatch", "failed",
-    "page_errors", "rolled_back", "full_fetch_failed", "errors", "api_total"}
-    — errors = failed + page_errors + identity_mismatch (kept for callers that
-    check a single number). rolled_back: writes discarded by a mismatch abort
-    (not in inserted/updated). full_fetch_failed: individual-record requests
-    that failed (those answers are left for the next run; not an error).
+    "page_errors", "rolled_back", "full_fetched", "full_fetch_failed",
+    "errors", "api_total"} — errors = failed + page_errors + identity_mismatch
+    (kept for callers that check a single number). rolled_back: writes
+    discarded by a mismatch abort (not in inserted/updated). full_fetched /
+    full_fetch_failed: individual-record requests that worked / failed (a
+    failed one leaves that row's text for the next run; not an error).
     api_total: the API's totalResults on the latest page fetched (None if no
     page was). Aborts raise a PQIngestAborted subclass whose .counts has the
     same keys.
@@ -683,7 +708,7 @@ def ingest_pq_date_range(
 
     counts = {"inserted": 0, "updated": 0, "unchanged": 0,
               "identity_mismatch": 0, "failed": 0, "page_errors": 0,
-              "rolled_back": 0, "full_fetch_failed": 0}
+              "rolled_back": 0, "full_fetched": 0, "full_fetch_failed": 0}
     # Written since the last commit. "deadlines" = ha_pq_deadline rows, which
     # are not part of the inserted/updated counts.
     uncommitted = {"inserted": 0, "updated": 0, "deadlines": 0}
@@ -731,9 +756,27 @@ def ingest_pq_date_range(
     page = 0
     failed_in_a_row = 0
     fetch_fails_in_a_row = 0
+    progress = {"rows": 0, "at": time.monotonic()}
+
+    def _check_deadline() -> None:
+        if deadline is not None and time.monotonic() >= deadline:
+            _finish()
+            msg = (f"PQ ingest stopped at its time budget at skip={skip} ({where}); "
+                   f"the rest is left for the next run")
+            _log.error(msg)
+            raise PQTimeBudgetError(msg, result())
+
+    def _report_progress(rows_done: int) -> None:
+        if on_progress is None:
+            return
+        if not dry_run and any(uncommitted.values()):
+            _commit()
+        on_progress(skip, rows_done)
+        progress["rows"], progress["at"] = 0, time.monotonic()
 
     try:
         while True:
+            _check_deadline()
             fetched = _fetch_page(params_base, skip, take, where, delay)
 
             if fetched is None:
@@ -741,8 +784,7 @@ def ingest_pq_date_range(
                 # in a row (the API is down) rather than walking skip forever.
                 counts["page_errors"] += 1
                 failed_in_a_row += 1
-                if on_page is not None:
-                    on_page(skip, 0)
+                _report_progress(0)
                 if failed_in_a_row >= max_failed_pages:
                     _finish()   # rows already processed are good
                     msg = (f"PQ ingest aborted: {failed_in_a_row} consecutive API pages "
@@ -768,7 +810,12 @@ def ingest_pq_date_range(
                 break
 
             page_deadlines = []
-            for item in results:
+            for row_no, item in enumerate(results, 1):
+                progress["rows"] += 1
+                if on_progress is not None and (
+                        progress["rows"] >= _PROGRESS_ROWS
+                        or time.monotonic() - progress["at"] >= _PROGRESS_SECONDS):
+                    _report_progress(row_no - 1)
                 value = item.get("value") or item
                 if seen_ids is not None and value.get("id"):
                     seen_ids.add(value["id"])
@@ -786,6 +833,7 @@ def ingest_pq_date_range(
                         fields, len(value.get("questionText") or "")):
                     want_full = False
                 if want_full:
+                    _check_deadline()
                     full = _fetch_individual(fields["api_id"])
                     if full is None:
                         counts["full_fetch_failed"] += 1
@@ -798,6 +846,7 @@ def ingest_pq_date_range(
                             raise PQPageFailureError(msg, result())
                     else:
                         fetch_fails_in_a_row = 0
+                        counts["full_fetched"] += 1
                     text_complete = _apply_individual(fields, full)
                     time.sleep(delay)
 
@@ -856,8 +905,7 @@ def ingest_pq_date_range(
                     page, skip, len(results), counts["inserted"], counts["updated"],
                     counts["unchanged"], counts["identity_mismatch"], counts["failed"],
                 )
-            if on_page is not None:
-                on_page(skip, len(results))
+            _report_progress(len(results))
 
             # A partly fetched page is short because rows are missing, not
             # because it is the last page: carry on to the next one.
@@ -886,11 +934,11 @@ def ingest_pq_date_range(
     if verbose:
         _log.info(
             "ingest_pq_date_range (%s) done%s: inserted=%d updated=%d unchanged=%d "
-            "identity_mismatch=%d failed=%d page_errors=%d full_fetch_failed=%d "
-            "deadlines_written=%d",
+            "identity_mismatch=%d failed=%d page_errors=%d full_fetched=%d "
+            "full_fetch_failed=%d deadlines_written=%d",
             date_field, " (dry run)" if dry_run else "",
             out["inserted"], out["updated"], out["unchanged"],
             out["identity_mismatch"], out["failed"], out["page_errors"],
-            out["full_fetch_failed"], deadlines["written"],
+            out["full_fetched"], out["full_fetch_failed"], deadlines["written"],
         )
     return out
