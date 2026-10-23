@@ -2,8 +2,8 @@
 Written Question addresses: /archive/pq/<yyyy-mm-dd>/<uin> (PQ identity plan,
 Phase 4). UINs restart every session, so the UIN alone can match several
 questions; the old /archive/pq/<uin> address 301s to the question it has always
-shown (the earliest stored). Uses the real flask_app (canonical-URL hooks)
-on in-memory SQLite.
+shown (the earliest stored). Uses the real flask_app (canonical-URL hooks,
+sitemap routes) on in-memory SQLite.
 """
 
 import re
@@ -132,6 +132,39 @@ def test_single_question_page_has_no_same_number_list(client):
     _add("6978", date(2026, 6, 4), "Rail")
     html = client.get("/archive/pq/2026-06-04/6978").get_data(as_text=True)
     assert "Other written questions numbered" not in html
+
+
+# ── sitemap ───────────────────────────────────────────────────────────────────
+
+def test_sitemap_one_chunk_per_month_with_dated_urls(client):
+    _add("6978", date(2026, 6, 4), "Rail", is_answered=True, answer_date=date(2026, 6, 9),
+         updated_at=datetime(2026, 6, 5, 8, 0))
+    _add("6978", date(2024, 9, 10), "Bus fares", updated_at=datetime(2024, 9, 11, 8, 0))
+    _add("HL22", date(2026, 6, 30), "Lords question", chamber="Lords",
+         updated_at=datetime(2026, 7, 2, 8, 0))
+
+    index = client.get("/sitemap.xml").get_data(as_text=True)
+    assert "https://westminsterbrief.co.uk/sitemap-pqs-2026-06.xml" in index
+    assert "https://westminsterbrief.co.uk/sitemap-pqs-2024-09.xml" in index
+    assert "sitemap-pqs-1.xml" not in index
+    assert index.index("sitemap-pqs-2026-06.xml") < index.index("sitemap-pqs-2024-09.xml")
+
+    june = client.get("/sitemap-pqs-2026-06.xml").get_data(as_text=True)
+    locs = re.findall(r"<loc>(.*?)</loc>", june)
+    assert locs == ["https://westminsterbrief.co.uk/archive/pq/2026-06-04/6978",
+                    "https://westminsterbrief.co.uk/archive/pq/2026-06-30/hl22"]
+    lastmods = re.findall(r"<lastmod>(.*?)</lastmod>", june)
+    assert lastmods == ["2026-06-09", "2026-07-02"]       # answered / updated after tabling
+
+    sept = client.get("/sitemap-pqs-2024-09.xml").get_data(as_text=True)
+    assert re.findall(r"<loc>(.*?)</loc>", sept) == [
+        "https://westminsterbrief.co.uk/archive/pq/2024-09-10/6978"]
+
+
+@pytest.mark.parametrize("path", ["/sitemap-pqs-1.xml", "/sitemap-pqs-2026-13.xml",
+                                  "/sitemap-pqs-2026-6.xml", "/sitemap-pqs-1999-01.xml"])
+def test_bad_sitemap_chunk_names_are_404(client, path):
+    assert client.get(path).status_code == 404
 
 
 # ── links elsewhere ───────────────────────────────────────────────────────────
