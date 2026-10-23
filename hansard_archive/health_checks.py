@@ -113,7 +113,7 @@ CONFIG: dict = {
         # Any other "pq-*" service seen in the last N days is checked as Mon-Fri.
         "discover_days": 30,
         "discovered_default": {"days": "mon-fri", "warn_hours": 26, "fail_hours": 50},
-        "ignore": ["backfill", "manual"],
+        "ignore": ["backfill", "manual", "pq-catchup"],   # pq-catchup: one-off chunked runs
     },
     # Share of recent items with at least one topic tag. Window ends yesterday so
     # items ingested this morning (tagged by the same cron run) don't skew it.
