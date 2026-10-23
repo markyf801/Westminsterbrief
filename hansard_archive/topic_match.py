@@ -74,6 +74,7 @@ class Phrase:
         self.acronym = acronym and len(self.tokens) == 1
         bases = [_base(t) for t in self.tokens]
         self._like = "%".join(bases) + "%" if bases else ""
+        self._pg_body = ".*".join(bases)   # bases are [a-z0-9] only: nothing to escape
         body = r" ".join(re.escape(b) + r"(?:s|es)?" for b in bases)
         self._re = re.compile(r"(?<![a-z0-9])" + body + r"(?![a-z0-9])") if bases else None
         self._acronym_re = (
@@ -144,6 +145,17 @@ def expandable(phrases: list[Phrase]) -> list[Phrase]:
         if not any(k.in_tag(p.text) for k in keep):
             keep.append(p)
     return keep
+
+
+def tag_pg_regex(phrases: list[Phrase]) -> str:
+    """
+    One Postgres regex equivalent to every phrase's tag_like_patterns() ORed:
+    a phrase starting at the start of the tag or after a space or hyphen. One
+    regex per row is several times faster than dozens of LIKEs (SEND has 12
+    phrases). Empty when there is nothing to match.
+    """
+    bodies = [p._pg_body for p in phrases if p._pg_body]
+    return f"(^|[ -])({'|'.join(bodies)})" if bodies else ""
 
 
 def tag_matches(tag: str, phrases: list[Phrase]) -> bool:

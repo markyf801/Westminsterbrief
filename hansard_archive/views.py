@@ -1666,9 +1666,9 @@ def _build_pq_items(pqs: list) -> list:
 # Topic-page matching beyond exact tags (specific-topic pages only)
 # ---------------------------------------------------------------------------
 
-_TOPIC_TAG_CANDIDATES = 2000   # distinct stored tags examined per phrase
+_TOPIC_TAG_CANDIDATES = 5000   # distinct stored tags examined per page
 _TOPIC_TWIN_DAYS      = 14     # Lords repeat of a Commons statement: same title, days apart
-_TOPIC_MATCH_TTL      = 600    # seconds; topic pages re-read new tags within 10 minutes
+_TOPIC_MATCH_TTL      = 1800   # seconds; a topic page picks up new items within 30 minutes
 _TOPIC_MATCH_MAX      = 256    # cached topic pages per worker
 _topic_match_cache: dict = {}
 _IN_CHUNK = 500                # bound bind parameters per IN (...) list
@@ -1696,20 +1696,28 @@ def _session_tier_sql():
 
 
 def _contained_topic_names(theme_col, type_col, phrases) -> set[str]:
-    """Stored specific tags that contain one of the phrases as whole words."""
-    found: set[str] = set()
-    for p in phrases:
-        rows = (
-            db.session.query(theme_col)
-            .filter(type_col == THEME_TYPE_SPECIFIC,
-                    or_(*[func.lower(theme_col).like(x) for x in p.tag_like_patterns()]))
-            .distinct()
-            .order_by(theme_col)
-            .limit(_TOPIC_TAG_CANDIDATES)
-            .all()
-        )
-        found |= {r[0] for r in rows if p.in_tag(r[0])}
-    return found
+    """Stored specific tags that contain one of the phrases as whole words.
+    One pass over the tag table for all phrases (a regex on Postgres, LIKEs on
+    SQLite, as a pre-filter; then the whole-word check in Python)."""
+    patterns = sorted({x for p in phrases for x in p.tag_like_patterns()})
+    if not patterns:
+        return set()
+    if _is_postgres():
+        pre = func.lower(theme_col).op("~")(_tm.tag_pg_regex(phrases))
+    else:
+        pre = or_(*[func.lower(theme_col).like(x) for x in patterns])
+    rows = (
+        db.session.query(theme_col)
+        .filter(type_col == THEME_TYPE_SPECIFIC, pre)
+        .distinct()
+        .order_by(theme_col)
+        .limit(_TOPIC_TAG_CANDIDATES)
+        .all()
+    )
+    if len(rows) >= _TOPIC_TAG_CANDIDATES:
+        print(f"[brief_topic] tag candidates capped at {_TOPIC_TAG_CANDIDATES} for "
+              f"{[p.text for p in phrases]}", flush=True)
+    return {r[0] for r in rows if _tm.tag_matches(r[0], phrases)}
 
 
 def _tsquery_any(prefix: str, phrases) -> tuple[str, dict]:

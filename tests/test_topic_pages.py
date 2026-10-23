@@ -56,6 +56,18 @@ def test_tag_containment(slug, tag, hit):
     assert tm.tag_matches(tag, tm.expandable(tm.phrases_for_slug(slug))) is hit
 
 
+@pytest.mark.parametrize("tag", [
+    "send", "send system reform", "unmet send need", "sending", "consent", "pre-send checks",
+    "special educational needs funding", "ehcp delays", "sentencing and diversion",
+])
+def test_postgres_prefilter_regex_agrees_with_like_patterns(tag):
+    """The one-regex pre-filter used on Postgres keeps the same tags as the LIKEs."""
+    from fnmatch import fnmatchcase
+    ps = tm.expandable(tm.phrases_for_slug("special-educational-needs"))
+    like = any(fnmatchcase(tag, x.replace("%", "*")) for p in ps for x in p.tag_like_patterns())
+    assert bool(re.search(tm.tag_pg_regex(ps), tag)) is like
+
+
 def test_generic_and_short_phrases_are_not_expanded():
     assert tm.expandable(tm.phrases_for_slug("bill")) == []
     assert tm.expandable(tm.phrases_for_slug("nhs")) == []        # too short for LIKE
