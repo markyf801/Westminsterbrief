@@ -47,7 +47,8 @@ Safety
       backfill (strict=False): held only below half of ours.
     Smaller drops (Hansard removing a duplicate, merging two speeches) are
     applied.
-  - Writers lock the ha_session row (SELECT ... FOR UPDATE) and read its rows
+  - Writers lock the ha_session row (SELECT ... FOR NO KEY UPDATE: it does not
+    block inserts into tables pointing at the session) and read its rows
     after the lock, so the cron and the backfill refreshing the same session
     at once can't both add the same speeches. The lock is held until the
     caller commits or rolls back.
@@ -209,11 +210,14 @@ def stored_rows(session_id: int) -> list:
 
 
 def lock_session(session_id: int) -> None:
-    """SELECT ... FOR UPDATE on the ha_session row until commit/rollback (no-op on SQLite)."""
-    (db.session.query(HansardSession.id)
-     .filter(HansardSession.id == session_id)
-     .with_for_update()
-     .one())
+    """SELECT ... FOR NO KEY UPDATE on the ha_session row until commit/rollback (no-op on SQLite)."""
+    lock_query(session_id).one()
+
+
+def lock_query(session_id: int):
+    return (db.session.query(HansardSession.id)
+            .filter(HansardSession.id == session_id)
+            .with_for_update(key_share=True))
 
 
 def refresh_session(session: HansardSession, fresh: list[dict], apply: bool = True,
@@ -317,8 +321,9 @@ def retag_refreshed(session_ids: list[int], api_key: Optional[str] = None, limit
     final API error. Any other error on one session is logged, counted in
     "errors" and the run moves on. Commits per session.
 
-    "pending" lists the ids still to re-tag (over the cap, API failures, or
-    not reached after a stop) so the caller can carry them to the next run.
+    "pending" lists the ids still to re-tag (over the cap, transient API
+    failures, or not reached after a stop) so the caller can carry them to the
+    next run. A session whose own call failed with a final error is not listed.
     """
     from hansard_archive import tagger as tg
 
@@ -351,7 +356,8 @@ def retag_refreshed(session_ids: list[int], api_key: Optional[str] = None, limit
             except tg.GeminiCallFailed as e:
                 stats["api_errors"] += 1
                 consecutive += 1
-                pending.append(sid)
+                if not e.final:     # a final error (bad request/key/model) would fail again
+                    pending.append(sid)
                 print(f"[retag] API ERROR session {sid}: {e}", flush=True)
                 if e.final or consecutive >= tg.MAX_CONSECUTIVE_API_FAILURES:
                     stats["aborted"] = f"stopped after {consecutive} API failure(s): {e}"

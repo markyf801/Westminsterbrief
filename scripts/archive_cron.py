@@ -58,16 +58,20 @@ _TAG_CAP = int(os.environ.get("ARCHIVE_TAG_CAP", "200"))
 # ARCHIVE_RETAG_CAP.
 _RETAG_CAP = int(os.environ.get("ARCHIVE_RETAG_CAP", "30"))
 
-# Re-tags left over (over the cap, API failures) are written to the run's
-# ha_cron_run.notes as a "retag_pending: 1,2,3" line and picked up by the next
-# archive run, whichever service it is. At most this many ids are carried.
-_RETAG_PENDING_MAX = 300
+# Re-tags left over (over the cap, transient API failures) are written to the
+# run's ha_cron_run.notes as a "retag_pending: <id>:<times carried>,..." first
+# line and picked up by the next archive run, whichever service it is. An id is
+# dropped after it has been carried _RETAG_MAX_CARRIES times, and the line is
+# kept within _RETAG_PENDING_CHARS so the notes' 2000-character cut never
+# splits an id.
+_RETAG_MAX_CARRIES = 3
+_RETAG_PENDING_CHARS = 1500
 _RETAG_PENDING_PREFIX = "retag_pending: "
 _ARCHIVE_SERVICES = ("morning-catchup", "daytime-mth", "daytime-fri")
 
 
-def _previous_retag_pending(service_name: str) -> list[int]:
-    """Ids the newest finished archive run left to re-tag ([] if none or unreadable)."""
+def _previous_retag_pending(service_name: str) -> dict[int, int]:
+    """{session id: times carried} the newest finished archive run left to re-tag."""
     try:
         row = (HaCronRun.query
                .filter(HaCronRun.service_name.in_(set(_ARCHIVE_SERVICES) | {service_name}),
@@ -77,12 +81,39 @@ def _previous_retag_pending(service_name: str) -> list[int]:
     except Exception as exc:
         db.session.rollback()
         print(f"[cron] Warning: could not read pending re-tags: {exc}", flush=True)
-        return []
+        return {}
     for line in ((row.notes or "") if row else "").splitlines():
         if line.startswith(_RETAG_PENDING_PREFIX):
-            return [int(x) for x in line[len(_RETAG_PENDING_PREFIX):].split(",")
-                    if x.strip().isdigit()]
-    return []
+            return _parse_pending(line[len(_RETAG_PENDING_PREFIX):])
+    return {}
+
+
+def _parse_pending(text: str) -> dict[int, int]:
+    out: dict[int, int] = {}
+    for token in text.split(","):
+        sid, _, times = token.strip().partition(":")
+        if sid.isdigit():
+            out[int(sid)] = int(times) if times.isdigit() else 1
+    return out
+
+
+def _pending_line(pending: list[int], carried: dict[int, int]) -> tuple[str, int]:
+    """
+    The notes line for ids still to re-tag, and how many were dropped (carried
+    too often, or no room left). Each id's count goes up by one per carry.
+    """
+    tokens: list[str] = []
+    length = len(_RETAG_PENDING_PREFIX)
+    dropped = 0
+    for sid in dict.fromkeys(pending):
+        times = carried.get(sid, 0) + 1
+        token = f"{sid}:{times}"
+        if times > _RETAG_MAX_CARRIES or length + len(token) + 1 > _RETAG_PENDING_CHARS:
+            dropped += 1
+            continue
+        tokens.append(token)
+        length += len(token) + 1
+    return (_RETAG_PENDING_PREFIX + ",".join(tokens) if tokens else ""), dropped
 
 
 def _alert_email() -> str:
@@ -170,7 +201,7 @@ def main() -> None:
         # Re-tags the previous archive run left over; kept in this run's notes
         # even if it crashes before re-tagging.
         carried = _previous_retag_pending(args.service_name)
-        retag_pending = carried[:_RETAG_PENDING_MAX]
+        retag_pending = list(carried)
 
         try:
             # --- Ingestion ---
@@ -186,7 +217,7 @@ def main() -> None:
                 total_held += result["held"]
                 total_errors += result["refresh_errors"]
                 retag_ids.extend(result["retag_ids"])
-                retag_pending = list(dict.fromkeys(retag_ids + carried))[:_RETAG_PENDING_MAX]
+                retag_pending = list(dict.fromkeys(retag_ids + list(carried)))
                 print(
                     f"[cron] {house} done — "
                     f"{house_sessions} new sessions, "
@@ -201,7 +232,7 @@ def main() -> None:
             # --- Re-tag refreshed sessions whose text changed materially ---
             # (plus any the previous run left over; this run's own come first)
             db.session.rollback()
-            retag_ids = list(dict.fromkeys(retag_ids + carried))
+            retag_ids = list(dict.fromkeys(retag_ids + list(carried)))
             if retag_ids:
                 try:
                     retag = retag_refreshed(retag_ids, limit=_RETAG_CAP)
@@ -211,7 +242,7 @@ def main() -> None:
                              "api_errors": 0, "errors": 1, "pending": retag_ids,
                              "aborted": f"{type(exc).__name__}: {exc}"}
                 total_errors += retag["api_errors"] + retag["errors"]
-                retag_pending = retag["pending"][:_RETAG_PENDING_MAX]
+                retag_pending = list(retag["pending"])
                 refresh_notes += (
                     f" retag: carried_in={len(carried)} retagged={retag['retagged']} "
                     f"kept_old={retag['kept_old']} untagged={retag['untagged']} "
@@ -261,9 +292,13 @@ def main() -> None:
                     record.sessions_tagged = total_tagged
                     record.errors = total_errors
                     record.status = final_status
-                    # The pending line goes first so the 2000-character cut never loses it.
-                    pending_line = (_RETAG_PENDING_PREFIX + ",".join(str(i) for i in retag_pending)
-                                    if retag_pending else "")
+                    # The pending line goes first (and fits in 1500 characters) so the
+                    # 2000-character cut never loses or splits it.
+                    pending_line, pending_dropped = _pending_line(retag_pending, carried)
+                    if pending_dropped:
+                        print(f"[cron] {pending_dropped} pending re-tag(s) dropped (carried "
+                              f"{_RETAG_MAX_CARRIES} times, or no room); scripts/retag.py "
+                              f"can re-tag them by hand", flush=True)
                     notes = "\n".join(n for n in (pending_line, fatal_error, refresh_notes, tag_notes)
                                       if n)
                     if notes:

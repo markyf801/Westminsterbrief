@@ -69,11 +69,18 @@ changed (a debate stored while still going on, or before Hansard finished
 publishing it): contributions are updated in place, keeping the session's id,
 slug and tags, and `REFRESHED` / `HOLD` lines appear in the log, with counts in
 the run summary and `ha_cron_run.notes`. A debate that loses more than 3
-speeches and more than 10% is held (`HOLD`), not refreshed. Refreshed debates
-that were already tagged are re-tagged (at most `ARCHIVE_RETAG_CAP`, default
-30, per run; old tags kept if the new ones don't verify); any left over are
-carried to the next archive run via a `retag_pending:` line at the top of
-`ha_cron_run.notes`. See `hansard_archive/refresh.py`. Older debates stored cut
+speeches and more than 10% is held (`HOLD`), not refreshed — and stays held on
+every run while it is in the window, because the cron never applies such a
+drop. To clear one: compare our page with Hansard by hand; if Hansard really
+shortened it, run `python scripts/refresh_partial_debates.py --ext-id <ExtId>`
+(dry run first, then `--execute`), which applies drops down to half of our
+speeches. Refreshed debates that were already tagged are re-tagged (at most
+`ARCHIVE_RETAG_CAP`, default 30, per run; old tags kept if the new ones don't
+verify); any left over are carried to the next archive run via a
+`retag_pending: <id>:<times carried>,…` line at the top of `ha_cron_run.notes`,
+for at most 3 runs (a session whose Gemini call failed with a final error is
+not carried; the log says how many were dropped — re-tag those with
+`scripts/retag.py --ids`). See `hansard_archive/refresh.py`. Older debates stored cut
 short: `scripts/refresh_partial_debates.py` (one-off, dry run by default).
 
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)

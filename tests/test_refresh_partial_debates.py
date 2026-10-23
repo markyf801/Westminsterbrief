@@ -506,7 +506,7 @@ def test_archive_cron_counts_refreshes_and_retags(app, monkeypatch, capsys):
         assert retag_calls == [[11, 12]]
         run = HaCronRun.query.filter_by(service_name="test-refresh").one()
         assert run.status == "ok" and run.sessions_ingested == 2
-        assert run.notes.splitlines()[0] == "retag_pending: 12"
+        assert run.notes.splitlines()[0] == "retag_pending: 12:1"
         assert "refresh: refreshed=3 held=0 retag: carried_in=0 retagged=1" in run.notes
         assert "refreshed=3" in capsys.readouterr().out
 
@@ -614,7 +614,6 @@ def test_writers_lock_the_session_and_read_rows_after_the_lock(app, hansard, mon
     """Two refreshers of one session (cron + backfill) can't both add the growth."""
     from sqlalchemy.dialects import postgresql
     from extensions import db
-    from hansard_archive.models import HansardSession
     hansard.sessions[EXT] = session_json(speeches(3))
     _ingest()
     s = _session()
@@ -639,9 +638,9 @@ def test_writers_lock_the_session_and_read_rows_after_the_lock(app, hansard, mon
     assert rf.refresh_session(s, fresh).state == rf.STATE_UNCHANGED
     db.session.rollback()
     assert len(_rows(s.id)) == 40
-    # On Postgres the lock is a real SELECT ... FOR UPDATE.
-    q = db.session.query(HansardSession.id).filter(HansardSession.id == 1).with_for_update()
-    assert "FOR UPDATE" in str(q.statement.compile(dialect=postgresql.dialect()))
+    # On Postgres the lock is a real row lock that doesn't block foreign-key inserts.
+    sql = str(rf.lock_query(s.id).statement.compile(dialect=postgresql.dialect()))
+    assert sql.rstrip().endswith("FOR NO KEY UPDATE")
 
 
 def test_cron_holds_a_net_loss_the_backfill_would_apply(app, hansard):
@@ -711,6 +710,49 @@ def _make_tagged(n):
         ids.append(s.id)
     db.session.commit()
     return ids
+
+
+def test_final_gemini_error_is_not_carried_over(app, monkeypatch):
+    ids = _make_tagged(3)
+
+    def fake_tag(si, api_key, model=None):
+        if si.title == "Debate 1":
+            raise tg.GeminiCallFailed("400 bad request", final=True)
+        return tg.TagOutcome(policy_areas=["Environment"])
+    monkeypatch.setattr(tg, "tag_session_input", fake_tag)
+    stats = rf.retag_refreshed(ids, api_key="k", limit=3, verbose=False, sleep=lambda s: None)
+    assert stats["aborted"] and stats["api_errors"] == 1
+    assert ids[1] not in stats["pending"], "a final error would fail again every run"
+    assert stats["pending"] == [ids[2]], "sessions not reached are still carried"
+
+
+def _cron_module():
+    spec = importlib.util.spec_from_file_location(
+        "archive_cron", Path(__file__).parents[1] / "scripts" / "archive_cron.py")
+    cron = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cron)
+    return cron
+
+
+def test_pending_line_fits_the_notes_and_never_splits_an_id(app):
+    cron = _cron_module()
+    ids = list(range(100000, 100500))                      # 6-digit session ids
+    line, dropped = cron._pending_line(ids, {})
+    assert len(line) <= cron._RETAG_PENDING_CHARS < 2000
+    assert dropped > 0
+    parsed = cron._parse_pending(line[len(cron._RETAG_PENDING_PREFIX):])
+    assert list(parsed) == ids[:len(parsed)] and set(parsed.values()) == {1}
+    # The whole notes text cut at 2000 characters still parses to whole ids only.
+    notes = (line + "\nrefresh: refreshed=9 " + "x" * 3000)[:2000]
+    first = notes.splitlines()[0]
+    assert cron._parse_pending(first[len(cron._RETAG_PENDING_PREFIX):]) == parsed
+
+
+def test_pending_ids_are_dropped_after_three_carries(app):
+    cron = _cron_module()
+    line, dropped = cron._pending_line([5, 6, 7], {5: 3, 6: 2})
+    assert line == "retag_pending: 6:3,7:1" and dropped == 1
+    assert cron._parse_pending("12,13:2") == {12: 1, 13: 2}   # older "id" form still reads
 
 
 def test_retag_survives_an_unexpected_error_and_reports_pending(app, monkeypatch):
