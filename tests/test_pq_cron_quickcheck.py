@@ -256,7 +256,8 @@ def test_new_rows_are_tagged(db, api, cron, monkeypatch):
     api["tabled"].append(_value(3, "102", YESTERDAY))
     calls = []
     monkeypatch.setattr(tagger, "tag_pq_all_untagged",
-                        lambda verbose=True: calls.append(1) or {"tagged": 1, "errors": 0})
+                        lambda verbose=True, limit=None: calls.append(1)
+                        or {"tagged": 1, "errors": 0})
     monkeypatch.setattr(sys, "argv", ["x", "--quick-check", "--service-name", "pq-quickcheck",
                                       "--skip-answer-fetch"])
     cron.main()

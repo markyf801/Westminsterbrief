@@ -92,7 +92,7 @@ from sqlalchemy import func, not_, or_
 from flask_app import app
 from hansard_archive.pq_ingestor import (
     WQ_API_BASE, PQIdentityMismatchError, PQIngestAborted, PQRateLimitedError,
-    answer_needs_fetch_sql, ingest_pq_date_range,
+    _env_int, answer_needs_fetch_sql, ingest_pq_date_range,
 )
 from hansard_archive.models import HaCronRun, HaPQ
 from hansard_archive.pq_chunks import NOTE_PREFIX as _CHUNK_NOTE
@@ -103,7 +103,7 @@ from extensions import db
 _LOG_RETENTION_DAYS = 90
 _PASS_KEYS = ("inserted", "updated", "unchanged", "identity_mismatch",
               "failed", "page_errors", "rolled_back", "full_fetched",
-              "full_fetch_failed", "errors")
+              "full_fetch_failed", "full_missing", "errors")
 
 _QUICK_NOTE = "quick-check"     # HaCronRun.notes prefix for quick-check runs
 _QUICK_TIMEOUT = 60             # count calls have taken 40+ s while the API is slow
@@ -117,7 +117,12 @@ _MAX_CHUNKS = 200               # bigger plans: use longer chunks (keeps the not
 _HEARTBEAT_SECONDS = 60         # chunked run: progress saved at most this often mid-chunk
 # Scheduled sweeps stop starting new work after this many minutes (0 = no
 # limit), so a hanging API can't make one run into the next.
-_RUN_BUDGET_MINUTES = int(os.environ.get("PQ_RUN_BUDGET_MINUTES", "50") or 50)
+_RUN_BUDGET_MINUTES = _env_int("PQ_RUN_BUDGET_MINUTES", 50)
+# Most PQs tagged per run (env PQ_TAG_LIMIT), fewer after an ingest that
+# stopped early, so tagging can't run for hours past the time budget. The
+# rest are tagged by the next run.
+_TAG_LIMIT = _env_int("PQ_TAG_LIMIT", 500)
+_TAG_LIMIT_AFTER_ABORT = 200
 
 
 class QuickCheckError(RuntimeError):
@@ -144,7 +149,8 @@ def _run_pass(label: str, date_from: date, date_to: date,
         f"identity_mismatch={counts['identity_mismatch']} "
         f"failed={counts['failed']} page_errors={counts['page_errors']} "
         f"rolled_back={counts['rolled_back']} full_fetched={counts['full_fetched']} "
-        f"full_fetch_failed={counts['full_fetch_failed']} errors={counts['errors']}",
+        f"full_fetch_failed={counts['full_fetch_failed']} "
+        f"full_missing={counts['full_missing']} errors={counts['errors']}",
         flush=True,
     )
     return counts, abort, exc_out
@@ -155,7 +161,8 @@ def _pass_notes(passes: dict) -> str:
     many full records it fetched."""
     return "passes: " + "; ".join(
         f"{label} ins={c['inserted']} upd={c['updated']} full_fetched={c['full_fetched']} "
-        f"fetch_failed={c['full_fetch_failed']}" for label, c in passes.items())
+        f"fetch_failed={c['full_fetch_failed']} missing={c['full_missing']}"
+        for label, c in passes.items())
 
 
 def _tag_after_abort(exc: PQIngestAborted | None) -> bool:
@@ -459,7 +466,8 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
     elif args.dry_run:
         print("[pq-cron] Tagging skipped (--dry-run)", flush=True)
     elif new_rows:
-        out.update(_run_tagger(args.no_tag, new_rows))
+        out.update(_run_tagger(args.no_tag, new_rows,
+                               _TAG_LIMIT_AFTER_ABORT if out["abort"] else _TAG_LIMIT))
         out["errors"] += out["tag_errors"]
 
     fetched = sum(p["full_fetched"] for p in passes.values())
@@ -471,9 +479,9 @@ def _run_quick_check(args, today: date, run_record_id: int | None, passes: dict)
 
 # ── shared ───────────────────────────────────────────────────────────────────
 
-def _run_tagger(no_tag: bool, new_rows: int) -> dict:
-    """Theme-tag untagged PQs. Returns {"tagged", "tag_errors", "tag_aborted",
-    "tag_notes"}."""
+def _run_tagger(no_tag: bool, new_rows: int, limit: int | None = None) -> dict:
+    """Theme-tag untagged PQs, at most `limit` (None/0 = all). Returns
+    {"tagged", "tag_errors", "tag_aborted", "tag_notes"}."""
     if no_tag:
         print("[pq-cron] Tagging skipped (--no-tag)", flush=True)
         return {"tagged": 0, "tag_errors": 0, "tag_aborted": "", "tag_notes": ""}
@@ -482,7 +490,7 @@ def _run_tagger(no_tag: bool, new_rows: int) -> dict:
         print(f"[pq-cron] Tagging up to {new_rows} PQ(s)…", flush=True)
     else:
         print("[pq-cron] No new/updated rows — running tagger for any missed PQs…", flush=True)
-    tag_result = tag_pq_all_untagged(verbose=True)
+    tag_result = tag_pq_all_untagged(limit=limit or None, verbose=True)
     tagged = tag_result.get("tagged", 0)
     tag_aborted = tag_result.get("aborted") or ""
     tag_notes = (
@@ -560,7 +568,8 @@ def _tag_at_end(args, out: dict, abort_exc: PQIngestAborted | None) -> None:
             print("[pq-cron] Ingest stopped early (API failing or time budget) — tagging "
                   "what was stored",
                   flush=True)
-        out.update(_run_tagger(args.no_tag, out["inserted"] + out["updated"]))
+        out.update(_run_tagger(args.no_tag, out["inserted"] + out["updated"],
+                               _TAG_LIMIT_AFTER_ABORT if out["abort"] else _TAG_LIMIT))
         out["errors"] += out["tag_errors"]
 
 
@@ -883,6 +892,9 @@ def main() -> None:
                      "--answered-from/--answered-to or --tabled-from/--tabled-to")
     if args.max_minutes < 0:
         parser.error("--max-minutes must be >= 0")
+    if args.full_refresh and (chunked or args.quick_check):
+        parser.error("--full-refresh is for full sweeps only (not --quick-check or a "
+                     "chunked catch-up)")
     args.deadline = (time.monotonic() + args.max_minutes * 60
                      if args.max_minutes and not chunked else None)
 

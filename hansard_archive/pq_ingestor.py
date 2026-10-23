@@ -179,12 +179,18 @@ def _opt_bool(val) -> bool | None:
     return None if val is None else bool(val)
 
 
+# Returned by _fetch_individual for a 404: the record has gone (or, if every
+# record 404s, the endpoint is broken - counted as full_missing, and ten in a
+# row stop the pass like any other failure).
+_RECORD_GONE: dict = {}
+
+
 def _fetch_individual(api_id: int) -> dict | None:
     """Fetch the full individual question record, which includes fields the
     bulk endpoint omits or truncates (full question and answer text).
 
-    None when the request fails (the answer is left for the next run); {}
-    for a 404 (the record has gone: the bulk record is used, not a failure).
+    None when the request fails (the answer is left for the next run);
+    _RECORD_GONE for a 404 (the bulk record is used; counted as full_missing).
     401/403/429 raise _APIRefused: a rate limit or refusal stops the run."""
     url = f"{WQ_API_BASE}/{api_id}"
     try:
@@ -195,7 +201,7 @@ def _fetch_individual(api_id: int) -> dict | None:
     if resp.status_code in (401, 403, 429):
         raise _APIRefused(resp.status_code, f"individual record id={api_id}")
     if resp.status_code == 404:
-        return {}
+        return _RECORD_GONE
     if resp.status_code != 200:
         return None
     try:
@@ -690,11 +696,13 @@ def ingest_pq_date_range(
 
     Returns {"inserted", "updated", "unchanged", "identity_mismatch", "failed",
     "page_errors", "rolled_back", "full_fetched", "full_fetch_failed",
-    "errors", "api_total"} — errors = failed + page_errors + identity_mismatch
-    (kept for callers that check a single number). rolled_back: writes
-    discarded by a mismatch abort (not in inserted/updated). full_fetched /
-    full_fetch_failed: individual-record requests that worked / failed (a
-    failed one leaves that row's text for the next run; not an error).
+    "full_missing", "errors", "api_total"} — errors = failed + page_errors +
+    identity_mismatch (kept for callers that check a single number).
+    rolled_back: writes discarded by a mismatch abort (not in
+    inserted/updated). full_fetched / full_fetch_failed / full_missing:
+    individual-record requests that worked / failed / answered 404 (a failed
+    or missing one leaves that row's text for the next run; not an error, but
+    ten failed or missing in a row abort the pass).
     api_total: the API's totalResults on the latest page fetched (None if no
     page was). Aborts raise a PQIngestAborted subclass whose .counts has the
     same keys.
@@ -708,7 +716,8 @@ def ingest_pq_date_range(
 
     counts = {"inserted": 0, "updated": 0, "unchanged": 0,
               "identity_mismatch": 0, "failed": 0, "page_errors": 0,
-              "rolled_back": 0, "full_fetched": 0, "full_fetch_failed": 0}
+              "rolled_back": 0, "full_fetched": 0, "full_fetch_failed": 0,
+              "full_missing": 0}
     # Written since the last commit. "deadlines" = ha_pq_deadline rows, which
     # are not part of the inserted/updated counts.
     uncommitted = {"inserted": 0, "updated": 0, "deadlines": 0}
@@ -835,13 +844,14 @@ def ingest_pq_date_range(
                 if want_full:
                     _check_deadline()
                     full = _fetch_individual(fields["api_id"])
-                    if full is None:
-                        counts["full_fetch_failed"] += 1
+                    if full is None or full is _RECORD_GONE:
+                        counts["full_fetch_failed" if full is None else "full_missing"] += 1
                         fetch_fails_in_a_row += 1
                         if fetch_fails_in_a_row >= _MAX_FULL_FETCH_FAILURES:
                             _finish()
                             msg = (f"PQ ingest aborted: {fetch_fails_in_a_row} individual "
-                                   f"record requests failed in a row at skip={skip} ({where})")
+                                   f"record requests failed in a row (errors or 404s) at "
+                                   f"skip={skip} ({where})")
                             _log.error(msg)
                             raise PQPageFailureError(msg, result())
                     else:
@@ -935,10 +945,11 @@ def ingest_pq_date_range(
         _log.info(
             "ingest_pq_date_range (%s) done%s: inserted=%d updated=%d unchanged=%d "
             "identity_mismatch=%d failed=%d page_errors=%d full_fetched=%d "
-            "full_fetch_failed=%d deadlines_written=%d",
+            "full_fetch_failed=%d full_missing=%d deadlines_written=%d",
             date_field, " (dry run)" if dry_run else "",
             out["inserted"], out["updated"], out["unchanged"],
             out["identity_mismatch"], out["failed"], out["page_errors"],
-            out["full_fetched"], out["full_fetch_failed"], deadlines["written"],
+            out["full_fetched"], out["full_fetch_failed"], out["full_missing"],
+            deadlines["written"],
         )
     return out

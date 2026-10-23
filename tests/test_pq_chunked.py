@@ -586,7 +586,8 @@ def _tagger(monkeypatch):
     import hansard_archive.tagger as tagger
     calls = []
     monkeypatch.setattr(tagger, "tag_pq_all_untagged",
-                        lambda verbose=True: calls.append(1) or {"tagged": 0, "errors": 0})
+                        lambda verbose=True, limit=None: calls.append(limit)
+                        or {"tagged": 0, "errors": 0})
     return calls
 
 
@@ -620,9 +621,9 @@ def test_default_sweep_is_unchanged(db, wq, cron, monkeypatch):
     db.session.rollback()
     [run] = _runs()
     assert run.status == "ok"
-    assert run.notes == ("passes: tabled ins=1 upd=2 full_fetched=2 fetch_failed=0; "
-                         "answered ins=0 upd=0 full_fetched=0 fetch_failed=0; "
-                         "corrected ins=0 upd=0 full_fetched=0 fetch_failed=0")
+    assert run.notes == ("passes: tabled ins=1 upd=2 full_fetched=2 fetch_failed=0 missing=0; "
+                         "answered ins=0 upd=0 full_fetched=0 fetch_failed=0 missing=0; "
+                         "corrected ins=0 upd=0 full_fetched=0 fetch_failed=0 missing=0")
 
 
 def test_full_refresh_fetches_every_tabled_row(db, wq, cron, monkeypatch):
@@ -646,7 +647,7 @@ def test_answered_pass_failing_still_tags_what_was_stored(db, wq, cron, monkeypa
 
     assert _run(cron, monkeypatch, "--service-name", "pq-morning", "--skip-answer-fetch") == 1
 
-    assert tagged == [1]
+    assert tagged == [200]                                       # smaller limit after an abort
     assert not any("correctedWhenFrom" in c for c in wq["calls"])   # dead API: stop calling it
     run = _runs()[-1]
     assert run.status == "failed" and "PQPageFailureError" in run.notes
@@ -912,5 +913,80 @@ def test_scheduled_sweep_over_budget_stops_and_still_tags(db, wq, cron, monkeypa
     assert _run(cron, monkeypatch, "--service-name", "pq-cron-early", "--skip-answer-fetch",
                 "--max-minutes", "15") == 1
 
-    assert wq["calls"] == [] and tagged == [1]          # stopped before the first page
+    assert wq["calls"] == [] and tagged == [200]        # stopped before the first page
     assert "PQTimeBudgetError" in _runs()[-1].notes
+
+
+def test_individual_404s_are_counted_apart_and_ten_in_a_row_stop_the_pass(db, wq):
+    import hansard_archive.pq_ingestor as ing
+    from hansard_archive.models import HaPQ
+    wq["rows"] = [_value(1000 + i, "2026-08-20", answered="2026-09-03", answer="<p>A</p>")
+                  for i in range(30)]                        # no individual records: all 404
+    with pytest.raises(ing.PQPageFailureError) as exc:
+        _ingest(skip_answer_fetch=False)
+    counts = exc.value.counts
+    assert counts["full_missing"] == 10 and counts["full_fetched"] == 0
+    assert counts["full_fetch_failed"] == 0 and counts["inserted"] == 9
+    assert HaPQ.query.count() == 9
+
+
+def test_one_individual_404_is_not_a_failure(db, wq):
+    wq["rows"] = _three_weeks()[:3]
+    full = {"questionText": "To ask the Secretary of State, what steps are being taken.",
+            "answerText": "<p>Full</p>", "answerIsHolding": False}
+    wq["individual"] = {1000: full, 1002: full}              # 1001 has gone
+    res = _ingest(skip_answer_fetch=False)
+    assert (res["full_fetched"], res["full_missing"], res["full_fetch_failed"]) == (2, 1, 0)
+    assert res["errors"] == 0
+
+
+def test_budget_running_out_mid_page_keeps_the_rows_done(db, wq, monkeypatch):
+    import hansard_archive.pq_ingestor as ing
+    from hansard_archive.models import HaPQ
+    wq["rows"] = _three_weeks()
+    wq["individual"] = {1000 + i: {"questionText": "To ask the Secretary of State, what steps "
+                                                   "are being taken.",
+                                   "answerText": "<p>Full</p>", "answerIsHolding": False}
+                        for i in range(21)}
+    clock = {"t": 0.0}
+    monkeypatch.setattr(ing.time, "monotonic", lambda: clock["t"])
+    real = ing._fetch_individual
+
+    def slow_fetch(api_id):
+        clock["t"] += 10                                     # each full record takes 10 s
+        return real(api_id)
+    monkeypatch.setattr(ing, "_fetch_individual", slow_fetch)
+
+    with pytest.raises(ing.PQTimeBudgetError) as exc:
+        ing.ingest_pq_date_range(D("2026-09-01"), D("2026-09-21"), verbose=False,
+                                 date_field="answered", deadline=55)
+    db.session.rollback()
+    rows = HaPQ.query.all()
+    assert exc.value.counts["inserted"] == 6 and len(rows) == 6    # 0,10,..50 s: six fetched
+    assert all(r.answer_text == "<p>Full</p>" for r in rows)
+
+
+def test_tagging_is_limited_per_run(db, wq, cron, monkeypatch):
+    tagged = _tagger(monkeypatch)
+    wq["rows"] = [_value(1, date.today().isoformat())]
+    assert _run(cron, monkeypatch, "--service-name", "pq-cron-early",
+                "--skip-answer-fetch") == 0
+    assert tagged == [500]
+
+
+@pytest.mark.parametrize("extra", [("--quick-check",),
+                                   ("--answered-from", "2026-09-01", "--answered-to",
+                                    "2026-09-21", "--service-name", "pq-catchup")])
+def test_full_refresh_only_with_a_full_sweep(cron, monkeypatch, extra):
+    assert _run(cron, monkeypatch, "--full-refresh", *extra) == 2
+
+
+def test_bad_budget_env_value_does_not_break_import(monkeypatch, cron):
+    import importlib.util
+    monkeypatch.setenv("PQ_RUN_BUDGET_MINUTES", "fifty")
+    monkeypatch.setenv("PQ_TAG_LIMIT", "-3")
+    spec = importlib.util.spec_from_file_location(
+        "ingest_pq_cron_env_test", PROJECT_ROOT / "scripts" / "ingest_pq_cron.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod._RUN_BUDGET_MINUTES == 50 and mod._TAG_LIMIT == 500

@@ -121,11 +121,25 @@ neither its date nor its holding/correction flags; and a holding answer
 replaced the same day when the list record leaves out `answerIsHolding`.
 Safety net: **`pq-cron-monday` should run with `--full-refresh`**, which
 fetches every question in the tabled window as before, once a week (about 25
-minutes at today's speed, inside the budget). Start command:
-`python scripts/ingest_pq_cron.py --service-name pq-cron-monday --full-refresh`
-(add it to the existing command). Chosen over "also fetch answers from the
-last 2 days" because it covers all three cases, costs one run a week instead
-of a few hundred requests on every run, and Monday has the fewest new answers.
+minutes at today's speed, inside the budget). Chosen over "also fetch answers
+from the last 2 days" because it covers all three cases, costs one run a week
+instead of a few hundred requests on every run, and Monday has the fewest new
+answers. It covers only questions **tabled in the last 7 days**: an answer
+edited later (no new date or flag) on an older question is still missed, as
+it always was by the answered pass. `--full-refresh` is refused with
+`--quick-check` or a chunked run. Tagging is capped at 500 PQs a run (env
+`PQ_TAG_LIMIT`), 200 after an ingest that stopped early; the next run tags
+the rest. Individual-record 404s are counted as `missing=` in the notes (ten
+failed or missing in a row stop the pass, so a broken endpoint can't pass as
+"ok").
+
+Deploy steps for this change (after merging to `master`):
+1. `pq-cron-monday` → Settings → Start command: add ` --full-refresh` to the
+   end of its current command. If it is the plain form, the result is
+   `python scripts/ingest_pq_cron.py --service-name pq-cron-monday --full-refresh`.
+   Leave the other PQ crons as they are.
+2. Nothing else: no migrations or new variables (`PQ_RUN_BUDGET_MINUTES` and
+   `PQ_TAG_LIMIT` are optional; a bad value falls back to the default).
 
 **Long catch-ups: chunked mode (one-shot).** A long `--answered-days` window
 pages deep into the API, which returns HTTP 500 on deep pages and drops rows
@@ -135,9 +149,11 @@ as pages shift; a 541-day catch-up on 2026-10-22/23 aborted three times
 `--chunk-days` (default 7). Chunks are walked newest first, so if the run
 stops the most-read questions are already done. Progress and a heartbeat are
 saved in the run's `ha_cron_run.notes` after every page; **running the same
-command again carries on** from where an unfinished run stopped (a deploy to
-`master` kills a running one-shot: just run it again) and retries the chunks
-that failed. A failed chunk is retried at the end and doesn't stop the run;
+command again carries on** from where an unfinished run stopped and retries
+the chunks that failed. A deploy to `master` kills a running one-shot and
+leaves its record "running": for 2 hours after its last heartbeat a rerun is
+recorded as `skipped` (no email); once Railway shows the old container
+stopped, rerun with `--take-over` instead of waiting (step 3 below). A failed chunk is retried at the end and doesn't stop the run;
 3 failed chunks in a row, a 429, more than 5 identity mismatches in a chunk or
 more than 20 in the run do. A chunk where full-record requests failed counts
 as failed too, so its stale answers are retried. If a chunk's API total is above the unique questions seen, the chunk is
