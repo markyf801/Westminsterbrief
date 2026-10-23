@@ -21,6 +21,11 @@ def test_last_pq_update_reads_the_recorded_cron_names(app):  # noqa: F811
                       finished_at=None, status="running"),
             HaCronRun(service_name="morning-catchup", started_at=datetime(2026, 10, 23, 8),
                       finished_at=datetime(2026, 10, 23, 8, 5), status="ok"),
+            # one-off runs finishing later don't count
+            HaCronRun(service_name="pq-catchup", started_at=datetime(2026, 10, 22, 20),
+                      finished_at=datetime(2026, 10, 22, 23), status="ok"),
+            HaCronRun(service_name="manual", started_at=datetime(2026, 10, 23, 1),
+                      finished_at=datetime(2026, 10, 23, 2), status="ok"),
         ])
         db.session.commit()
         assert _last_pq_update() == "22 Oct 2026 14:41 UTC"
