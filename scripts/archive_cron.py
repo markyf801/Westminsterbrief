@@ -58,6 +58,32 @@ _TAG_CAP = int(os.environ.get("ARCHIVE_TAG_CAP", "200"))
 # ARCHIVE_RETAG_CAP.
 _RETAG_CAP = int(os.environ.get("ARCHIVE_RETAG_CAP", "30"))
 
+# Re-tags left over (over the cap, API failures) are written to the run's
+# ha_cron_run.notes as a "retag_pending: 1,2,3" line and picked up by the next
+# archive run, whichever service it is. At most this many ids are carried.
+_RETAG_PENDING_MAX = 300
+_RETAG_PENDING_PREFIX = "retag_pending: "
+_ARCHIVE_SERVICES = ("morning-catchup", "daytime-mth", "daytime-fri")
+
+
+def _previous_retag_pending(service_name: str) -> list[int]:
+    """Ids the newest finished archive run left to re-tag ([] if none or unreadable)."""
+    try:
+        row = (HaCronRun.query
+               .filter(HaCronRun.service_name.in_(set(_ARCHIVE_SERVICES) | {service_name}),
+                       HaCronRun.finished_at.isnot(None))
+               .order_by(HaCronRun.finished_at.desc(), HaCronRun.id.desc())
+               .first())
+    except Exception as exc:
+        db.session.rollback()
+        print(f"[cron] Warning: could not read pending re-tags: {exc}", flush=True)
+        return []
+    for line in ((row.notes or "") if row else "").splitlines():
+        if line.startswith(_RETAG_PENDING_PREFIX):
+            return [int(x) for x in line[len(_RETAG_PENDING_PREFIX):].split(",")
+                    if x.strip().isdigit()]
+    return []
+
 
 def _alert_email() -> str:
     return os.environ.get("CRON_ALERT_EMAIL") or os.environ.get("ADMIN_EMAIL", "")
@@ -118,6 +144,7 @@ def main() -> None:
     total_refreshed = 0
     total_held = 0
     retag_ids: list[int] = []
+    retag_pending: list[int] = []
     refresh_notes = ""
     tag_notes = ""
     tag_aborted = ""
@@ -140,6 +167,10 @@ def main() -> None:
             db.session.rollback()
 
         _prune_old_runs()
+        # Re-tags the previous archive run left over; kept in this run's notes
+        # even if it crashes before re-tagging.
+        carried = _previous_retag_pending(args.service_name)
+        retag_pending = carried[:_RETAG_PENDING_MAX]
 
         try:
             # --- Ingestion ---
@@ -153,11 +184,14 @@ def main() -> None:
                 total_errors += house_errors
                 total_refreshed += result["refreshed"]
                 total_held += result["held"]
+                total_errors += result["refresh_errors"]
                 retag_ids.extend(result["retag_ids"])
+                retag_pending = list(dict.fromkeys(retag_ids + carried))[:_RETAG_PENDING_MAX]
                 print(
                     f"[cron] {house} done — "
                     f"{house_sessions} new sessions, "
                     f"{result['refreshed']} refreshed, {result['held']} held, "
+                    f"{result['refresh_errors']} refresh error(s), "
                     f"{result['sitting_days']} sitting day(s), "
                     f"{house_errors} error(s)",
                     flush=True,
@@ -165,14 +199,24 @@ def main() -> None:
             refresh_notes = f"refresh: refreshed={total_refreshed} held={total_held}"
 
             # --- Re-tag refreshed sessions whose text changed materially ---
+            # (plus any the previous run left over; this run's own come first)
             db.session.rollback()
+            retag_ids = list(dict.fromkeys(retag_ids + carried))
             if retag_ids:
-                retag = retag_refreshed(retag_ids, limit=_RETAG_CAP)
-                total_errors += retag["api_errors"]
+                try:
+                    retag = retag_refreshed(retag_ids, limit=_RETAG_CAP)
+                except Exception as exc:  # never let re-tagging stop new sessions being tagged
+                    db.session.rollback()
+                    retag = {"retagged": 0, "kept_old": 0, "untagged": 0, "over_cap": 0,
+                             "api_errors": 0, "errors": 1, "pending": retag_ids,
+                             "aborted": f"{type(exc).__name__}: {exc}"}
+                total_errors += retag["api_errors"] + retag["errors"]
+                retag_pending = retag["pending"][:_RETAG_PENDING_MAX]
                 refresh_notes += (
-                    f" retag: retagged={retag['retagged']} kept_old={retag['kept_old']} "
-                    f"untagged={retag['untagged']} over_cap={retag['over_cap']} "
-                    f"api_errors={retag['api_errors']}"
+                    f" retag: carried_in={len(carried)} retagged={retag['retagged']} "
+                    f"kept_old={retag['kept_old']} untagged={retag['untagged']} "
+                    f"over_cap={retag['over_cap']} api_errors={retag['api_errors']} "
+                    f"errors={retag['errors']} pending={len(retag_pending)}"
                     + (f" ABORTED: {retag['aborted']}" if retag["aborted"] else "")
                 )
             print(f"[cron] {refresh_notes}", flush=True)
@@ -217,7 +261,11 @@ def main() -> None:
                     record.sessions_tagged = total_tagged
                     record.errors = total_errors
                     record.status = final_status
-                    notes = "\n".join(n for n in (fatal_error, refresh_notes, tag_notes) if n)
+                    # The pending line goes first so the 2000-character cut never loses it.
+                    pending_line = (_RETAG_PENDING_PREFIX + ",".join(str(i) for i in retag_pending)
+                                    if retag_pending else "")
+                    notes = "\n".join(n for n in (pending_line, fatal_error, refresh_notes, tag_notes)
+                                      if n)
                     if notes:
                         record.notes = notes[:2000]
                     db.session.commit()
@@ -250,7 +298,7 @@ def main() -> None:
             f"Window:    {start} → {today} ({args.days} days)\n"
             f"Ingested:  {total_sessions} sessions\n"
             f"Refreshed: {refresh_notes or 'not run'}\n"
-            f"Tagged:   {total_tagged} sessions\n"
+            f"Tagged:    {total_tagged} sessions\n"
             f"Tagging:   {tag_notes or 'not run'}\n"
             f"Errors:    {total_errors}\n"
             f"Status:    {final_status}\n"

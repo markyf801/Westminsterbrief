@@ -755,32 +755,36 @@ def _write_contributions(session: HansardSession, contributions: list[dict]) -> 
     return count
 
 
-def _refresh_existing(session: HansardSession, contributions: list[dict], stats: dict,
-                      verbose: bool, rollback) -> None:
-    """Bring one stored session up to date with the copy just downloaded; commits."""
+def _refresh_existing(session: HansardSession, overview: dict, contributions: list[dict],
+                      stats: dict, verbose: bool) -> None:
+    """
+    Bring one stored session up to date with the copy just downloaded. Commits
+    a refresh; rolls back otherwise (releasing the row lock refresh_session
+    takes). Raises on a DB error, for the caller to count.
+    """
     from hansard_archive.refresh import STATE_CHANGED, STATE_UNCHANGED, refresh_session
 
     label = f"{session.title[:60]!r} ({session.ext_id[:20]}...)"
-    res = refresh_session(session, contributions)
-    if res.state == STATE_UNCHANGED:
-        stats["unchanged"] += 1
-        if verbose:
-            print(f"[archive]   SKIP {session.ext_id[:20]}... (already ingested, unchanged)", flush=True)
-        return
+    ext_id = session.ext_id
+    res = refresh_session(session, contributions, strict=True,
+                          debate_type_label=overview.get("_DebateTypeLabel") or "")
     if res.state != STATE_CHANGED:
-        stats["held"] += 1
-        print(f"[archive]   HOLD {label} — Hansard now has {res.named_after} named "
-              f"contribution(s), we have {res.named_before}: left unchanged ({res.state})", flush=True)
+        db.session.rollback()
+        if res.state == STATE_UNCHANGED:
+            stats["unchanged"] += 1
+            if verbose:
+                print(f"[archive]   SKIP {ext_id[:20]}... (already ingested, unchanged)", flush=True)
+        else:
+            stats["held"] += 1
+            print(f"[archive]   HOLD {label} — Hansard now has {res.named_after} named "
+                  f"contribution(s), we have {res.named_before}: left unchanged ({res.state})",
+                  flush=True)
         return
-    try:
-        db.session.commit()
-    except Exception as e:
-        rollback()
-        print(f"[archive]   ERROR refreshing {session.ext_id}: {e}", flush=True)
-        return
+    session_id = session.id
+    db.session.commit()
     stats["refreshed"] += 1
     if res.needs_retag:
-        stats["retag_ids"].append(session.id)
+        stats["retag_ids"].append(session_id)
     print(f"[archive]   REFRESHED {label} — {res.summary()}", flush=True)
 
 
@@ -789,7 +793,7 @@ def _refresh_existing(session: HansardSession, contributions: list[dict], stats:
 # ---------------------------------------------------------------------------
 
 def _new_refresh_stats() -> dict:
-    return {"refreshed": 0, "unchanged": 0, "held": 0, "retag_ids": []}
+    return {"refreshed": 0, "unchanged": 0, "held": 0, "refresh_errors": 0, "retag_ids": []}
 
 
 def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True,
@@ -857,7 +861,12 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             existing = HansardSession.query.filter_by(ext_id=ext_id).first()
             if existing:
                 if refresh_existing and not existing.is_container:
-                    _refresh_existing(existing, contributions, refresh_stats, verbose, _safe_rollback)
+                    try:
+                        _refresh_existing(existing, overview, contributions, refresh_stats, verbose)
+                    except Exception as e:
+                        _safe_rollback()
+                        refresh_stats["refresh_errors"] += 1
+                        print(f"[archive]   ERROR refreshing {ext_id}: {e}", flush=True)
                 elif verbose:
                     print(f"[archive]   SKIP {ext_id[:20]}... (already ingested)", flush=True)
                 continue
@@ -960,7 +969,7 @@ def ingest_date_range(
     Non-sitting days produce 0 sessions and are skipped cleanly.
 
     Returns a summary dict: {total_days, sitting_days, total_sessions, errors,
-    refreshed, unchanged, held, retag_ids} (the refresh counts stay 0 unless
+    refreshed, unchanged, held, refresh_errors, retag_ids} (the refresh counts stay 0 unless
     refresh_existing=True; see ingest_date).
     """
     total_sessions = 0

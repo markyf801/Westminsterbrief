@@ -11,6 +11,13 @@ error never wipe a session; re-tagging keeps old tags unless the new ones
 verify; the backfill's dry run writes nothing, --execute keeps an undo table,
 resumes from its checkpoint, stops on 429 and leaves pre-May Lords rows to the
 attribution repair.
+
+Review follow-ups (end of file): ids stay with their speech in repeating-speaker
+debates and are never reused for another speaker's words; writers lock the
+session and read rows after the lock; the cron's stricter shrink guard; debate
+type for sessions stored before any speech; re-tag error handling and
+carry-over; the backfill's default --until, cron windows for dry runs, 404s,
+and the undo SQL round trip.
 """
 
 from __future__ import annotations
@@ -470,33 +477,326 @@ def test_archive_cron_counts_refreshes_and_retags(app, monkeypatch, capsys):
     cron = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cron)
 
+    from extensions import db
+
     seen = {}
+    ranges = {"Commons": {"refreshed": 2, "refresh_errors": 0, "retag_ids": [11, 12]},
+              "Lords": {"refreshed": 1, "refresh_errors": 0, "retag_ids": []}}
 
     def fake_range(start, end, house="Commons", verbose=True, refresh_existing=False):
         seen[house] = refresh_existing
         return {"total_days": 3, "sitting_days": 1, "total_sessions": 1, "errors": 0,
-                "refreshed": 2 if house == "Commons" else 1, "unchanged": 5, "held": 0,
-                "retag_ids": [11, 12] if house == "Commons" else []}
+                "unchanged": 5, "held": 0, **ranges[house]}
 
-    retagged = {}
+    retag_calls = []
+    pending_out = [[12]]          # run 1 leaves 12 over the cap; run 2 leaves nothing
 
     def fake_retag(ids, limit=30):
-        retagged["ids"] = ids
-        return {"retagged": 2, "kept_old": 0, "untagged": 0, "api_errors": 0,
-                "over_cap": 0, "aborted": ""}
+        retag_calls.append(list(ids))
+        return {"retagged": 1, "kept_old": 0, "untagged": 0, "api_errors": 0, "errors": 0,
+                "over_cap": 1, "aborted": "", "pending": pending_out.pop(0) if pending_out else []}
 
     monkeypatch.setattr(cron, "ingest_date_range", fake_range)
     monkeypatch.setattr(cron, "retag_refreshed", fake_retag)
     monkeypatch.setattr(cron, "tag_all_untagged", lambda limit, verbose: {"tagged": 0, "errors": 0})
     monkeypatch.setattr(cron.sys, "argv", ["archive_cron.py", "--service-name", "test-refresh"])
-    cron.main()
+    try:
+        cron.main()
+        assert seen == {"Commons": True, "Lords": True}
+        assert retag_calls == [[11, 12]]
+        run = HaCronRun.query.filter_by(service_name="test-refresh").one()
+        assert run.status == "ok" and run.sessions_ingested == 2
+        assert run.notes.splitlines()[0] == "retag_pending: 12"
+        assert "refresh: refreshed=3 held=0 retag: carried_in=0 retagged=1" in run.notes
+        assert "refreshed=3" in capsys.readouterr().out
 
-    assert seen == {"Commons": True, "Lords": True}
-    assert retagged["ids"] == [11, 12]
-    run = HaCronRun.query.filter_by(service_name="test-refresh").one()
-    assert run.status == "ok" and run.sessions_ingested == 2
-    assert "refresh: refreshed=3 held=0 retag: retagged=2" in run.notes
-    assert "refreshed=3" in capsys.readouterr().out
-    HaCronRun.query.filter_by(service_name="test-refresh").delete()
+        # Next run: nothing new refreshed, the leftover is carried in and re-tagged.
+        ranges["Commons"] = {"refreshed": 0, "refresh_errors": 0, "retag_ids": []}
+        cron.main()
+        assert retag_calls[1] == [12]
+        latest = (HaCronRun.query.filter_by(service_name="test-refresh")
+                  .order_by(HaCronRun.id.desc()).first())
+        assert "carried_in=1" in latest.notes and "retag_pending" not in latest.notes
+
+        # A refresh error makes the run fail (so the alert rules see it).
+        ranges["Lords"] = {"refreshed": 0, "refresh_errors": 1, "retag_ids": []}
+        with pytest.raises(SystemExit):
+            cron.main()
+    finally:
+        HaCronRun.query.filter_by(service_name="test-refresh").delete()
+        db.session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+
+def _texts_by_id(sid):
+    return {r.id: (r.member_name, r.speech_text) for r in _rows(sid)}
+
+
+# ---------------------------------------------------------------------------
+# Row ids stay with their speech
+# ---------------------------------------------------------------------------
+
+def test_point_of_order_near_the_start_moves_no_ids(app, hansard):
+    """Probe 1: 5 stored speeches, Hansard now 61 with a point of order inserted near the start."""
+    hansard.sessions[EXT] = session_json(speeches(5))
+    _ingest()
+    sid = _session().id
+    before = _texts_by_id(sid)
+    opening_id = _rows(sid)[0].id
+    grown = speeches(60)
+    grown.insert(2, item((999, "Mr Speaker"), "Order. Point of order."))
+    hansard.sessions[EXT] = session_json(grown)
+    _, stats = _ingest()
+    assert stats["refreshed"] == 1
+    after = _texts_by_id(sid)
+    assert len(after) == 61
+    assert all(after[i] == before[i] for i in before), "no stored id holds a different speech"
+    assert _rows(sid)[0].id == opening_id, "the PM's opening statement keeps its id"
+
+
+def test_repeating_speakers_with_a_mid_debate_insert(app, hansard):
+    """Alternating questioner / PM pattern, a new speech inserted mid-debate, then growth."""
+    pattern = []
+    for i in range(12):
+        pattern.append(item(LOTO if i % 2 == 0 else LD, f"Question {i}."))
+        pattern.append(item(PM, f"Answer {i}."))
+    hansard.sessions[EXT] = session_json(pattern[:16])
+    _ingest()
+    sid = _session().id
+    before = _texts_by_id(sid)
+    grown = list(pattern)
+    grown.insert(7, item(PM, "I should correct something I said earlier."))
+    hansard.sessions[EXT] = session_json(grown)
+    _ingest()
+    after = _texts_by_id(sid)
+    assert len(after) == 25
+    assert all(after[i] == before[i] for i in before)
+
+
+def test_dropped_speech_does_not_hand_its_id_to_the_same_speakers_next_speech():
+    """Probe 2: stored [A a1, B b1, A a2], Hansard [A a1, C c1, A a2, B b2]."""
+    a, b, c = PM, LOTO, LD
+    stored = [_d(a, "a1", 0), _d(b, "b1", 1), _d(a, "a2", 2)]
+    fresh = [_d(a, "a1", 0), _d(c, "c1", 1), _d(a, "a2", 2), _d(b, "b2", 3)]
+    ops = rf.plan_ops(stored, fresh)
+    paired = {i: e["speech_text"] for act, i, e in ops if act in ("keep", "update")}
+    assert paired == {0: "a1", 2: "a2"}
+    assert ("delete", 1, None) in ops
+    assert sorted(e["speech_text"] for act, _, e in ops if act == "insert") == ["b2", "c1"]
+
+
+def test_a_row_is_never_reused_for_a_different_speakers_words():
+    """Probe 3: a row is reused across speakers only when the words are identical."""
+    stored = [_d(PM, "p", 0), _d(LOTO, "Badenoch question", 1)]
+    fresh = [_d(PM, "p", 0), _d(LD, "Davey question", 1)]
+    ops = rf.plan_ops(stored, fresh)
+    assert ("delete", 1, None) in ops
+    assert [e["speech_text"] for act, _, e in ops if act == "insert"] == ["Davey question"]
+    # Same words, corrected attribution: the row (and its link) is kept.
+    fixed = [_d(PM, "p", 0), _d(LD, "Badenoch question", 1)]
+    assert [(act, i) for act, i, _ in rf.plan_ops(stored, fixed)] == [("keep", 0), ("update", 1)]
+
+
+def test_cut_off_speech_gets_its_full_text_in_place():
+    stored = [_d(PM, "With permission, I will", 0)]
+    fresh = [_d(PM, "With permission, I will make a statement.", 0), _d(LOTO, "q", 1)]
+    assert [(act, i) for act, i, _ in rf.plan_ops(stored, fresh)] == [("update", 0), ("insert", None)]
+
+
+# ---------------------------------------------------------------------------
+# Locking, strict guard, errors, debate type
+# ---------------------------------------------------------------------------
+
+def test_writers_lock_the_session_and_read_rows_after_the_lock(app, hansard, monkeypatch):
+    """Two refreshers of one session (cron + backfill) can't both add the growth."""
+    from sqlalchemy.dialects import postgresql
     from extensions import db
+    from hansard_archive.models import HansardSession
+    hansard.sessions[EXT] = session_json(speeches(3))
+    _ingest()
+    s = _session()
+    fresh = ingestion._flatten_items(session_json(speeches(40)), [0])
+
+    order = []
+    real_lock, real_rows = rf.lock_session, rf.stored_rows
+
+    def spy_lock(sid):
+        order.append("lock")
+        real_lock(sid)
+
+    def spy_rows(sid):
+        order.append("read")
+        return real_rows(sid)
+    monkeypatch.setattr(rf, "lock_session", spy_lock)
+    monkeypatch.setattr(rf, "stored_rows", spy_rows)
+    rf.refresh_session(s, fresh)
     db.session.commit()
+    assert order == ["lock", "read"]
+    # The second writer reads after the first committed: nothing left to add.
+    assert rf.refresh_session(s, fresh).state == rf.STATE_UNCHANGED
+    db.session.rollback()
+    assert len(_rows(s.id)) == 40
+    # On Postgres the lock is a real SELECT ... FOR UPDATE.
+    q = db.session.query(HansardSession.id).filter(HansardSession.id == 1).with_for_update()
+    assert "FOR UPDATE" in str(q.statement.compile(dialect=postgresql.dialect()))
+
+
+def test_cron_holds_a_net_loss_the_backfill_would_apply(app, hansard):
+    hansard.sessions[EXT] = session_json(speeches(40))
+    _ingest()
+    sid = _session().id
+    hansard.sessions[EXT] = session_json(speeches(34))       # 6 fewer: > 3 rows and > 10%
+    _, stats = _ingest()
+    assert stats["held"] == 1 and len(_rows(sid)) == 40
+    stored = [rf._row_dict(r) for r in _rows(sid)]
+    fresh = ingestion._flatten_items(session_json(speeches(34)), [0])
+    assert rf.assess(stored, fresh, strict=False).state == rf.STATE_CHANGED
+    hansard.sessions[EXT] = session_json(speeches(37))       # 3 fewer: applied
+    _, stats = _ingest()
+    assert stats["refreshed"] == 1 and len(_rows(sid)) == 37
+
+
+def test_refresh_error_is_counted(app, hansard, monkeypatch):
+    hansard.sessions[EXT] = session_json(speeches(2))
+    _ingest()
+    hansard.sessions[EXT] = session_json(speeches(9))
+
+    def boom(*a, **k):
+        raise RuntimeError("database went away")
+    monkeypatch.setattr(rf, "refresh_session", boom)
+    _, stats = _ingest()
+    assert stats["refresh_errors"] == 1 and stats["refreshed"] == 0
+
+
+def test_session_stored_before_any_speech_gets_its_type_worked_out(app, hansard):
+    from extensions import db
+    hansard.sessions[EXT] = session_json([])
+    _ingest()
+    s = _session()
+    s.hrs_tag, s.debate_type = "hs_2DebBill", "debate"   # the final record re-tags statements
+    db.session.commit()
+    hansard.sessions[EXT] = session_json(speeches(6))
+    _, stats = _ingest()
+    assert stats["refreshed"] == 1
+    assert _session().debate_type == "ministerial_statement"
+    # A session that already had speeches keeps its type.
+    s = _session()
+    s.debate_type = "debate"
+    db.session.commit()
+    hansard.sessions[EXT] = session_json(speeches(9))
+    _ingest()
+    assert _session().debate_type == "debate"
+
+
+# ---------------------------------------------------------------------------
+# Re-tagging
+# ---------------------------------------------------------------------------
+
+def _make_tagged(n):
+    from extensions import db
+    from hansard_archive.models import HansardSession, HansardSessionTheme
+    ids = []
+    for i in range(n):
+        s = HansardSession(ext_id=f"P{i}", title=f"Debate {i}", date=DAY, house="Commons",
+                           debate_type="debate", is_container=False, slug=f"debate-p{i}")
+        db.session.add(s)
+        db.session.flush()
+        db.session.add(ingestion.HansardContribution(session_id=s.id, member_name="A (Lab)",
+                                                     speech_text="Hares.", speech_order=0))
+        db.session.add(HansardSessionTheme(session_id=s.id, theme="Old area",
+                                           theme_type="policy_area"))
+        ids.append(s.id)
+    db.session.commit()
+    return ids
+
+
+def test_retag_survives_an_unexpected_error_and_reports_pending(app, monkeypatch):
+    ids = _make_tagged(3)
+
+    def fake_tag(si, api_key, model=None):
+        if si.title == "Debate 0":
+            raise RuntimeError("not a Gemini error")
+        return tg.TagOutcome(policy_areas=["Environment"])
+    monkeypatch.setattr(tg, "tag_session_input", fake_tag)
+    stats = rf.retag_refreshed(ids, api_key="k", limit=2, verbose=False, sleep=lambda s: None)
+    assert (stats["errors"], stats["retagged"], stats["over_cap"]) == (1, 1, 1)
+    assert stats["pending"] == [ids[2]]
+
+
+# ---------------------------------------------------------------------------
+# Backfill script
+# ---------------------------------------------------------------------------
+
+def test_backfill_defaults_until_to_four_days_ago(script):
+    args = _args(script)
+    assert script.effective_until(args, date(2026, 10, 24)) == "2026-10-20"
+    args.until = "2026-10-23"
+    assert script.effective_until(args, date(2026, 10, 24)) == "2026-10-23"
+
+
+def test_backfill_dry_run_respects_cron_windows(app, script, monkeypatch):
+    _, payloads = _seed_backfill()
+    calls = _patch_http(script, monkeypatch, payloads)
+    res = script.run(_args(script), sleep=lambda s: None, clock=lambda: WEDNESDAY_NOON)
+    assert res["exit_code"] == 4 and calls == []
+    res = script.run(_args(script, "--ignore-cron-windows"), sleep=lambda s: None,
+                     clock=lambda: WEDNESDAY_NOON)
+    assert res["exit_code"] == 0
+
+
+def test_backfill_404s_do_not_stop_the_run(app, script, monkeypatch):
+    from extensions import db
+    from hansard_archive.models import HansardSession
+    for i in range(4):
+        db.session.add(HansardSession(ext_id=f"GONE{i}", title="Gone", date=DAY, house="Commons",
+                                      debate_type="debate", is_container=False, slug=f"gone-{i}"))
+    db.session.commit()
+    _patch_http(script, monkeypatch, {})
+    res = script.run(_args(script), sleep=lambda s: None, clock=lambda: SATURDAY_NOON)
+    assert res["exit_code"] == 0 and res["counts"]["not_found"] == 4
+
+
+def _snapshot(sid):
+    return [(r.id, r.member_id, r.member_name, r.party, r.speech_order, r.speech_text)
+            for r in _rows(sid)]
+
+
+def test_backfill_undo_sql_restores_everything(app, script, monkeypatch):
+    from extensions import db
+    from sqlalchemy import text
+    from hansard_archive.models import HansardSession
+    s = HansardSession(ext_id="U1", title="Undo", date=DAY, house="Commons", debate_type="debate",
+                       is_container=False, slug="undo-u1", contributions_ingested=True)
+    e = HansardSession(ext_id="U2", title="Was empty", date=DAY, house="Commons",
+                       debate_type="debate", hrs_tag="hs_2DebBill", is_container=False,
+                       slug="was-empty-u2", contributions_ingested=True)
+    db.session.add_all([s, e])
+    db.session.flush()
+    stored = [item(PM, "a"), item(LOTO, "b"), item(LD, "dropped"), item(PM, "c"), item(LOTO, "d")]
+    for c in ingestion._flatten_items({"Items": stored}, [0]):
+        db.session.add(ingestion.HansardContribution(session_id=s.id, **c))
+    db.session.commit()
+    sid, eid = s.id, e.id
+    before = _snapshot(sid)
+    fresh = [item(PM, "a"), item(LD, "new1"), item(LOTO, "b changed"), item(PM, "c"),
+             item(LOTO, "d"), item(PM, "e"), item(LD, "f")]
+    _patch_http(script, monkeypatch, {"U1": session_json(fresh, ext_id="U1"),
+                                      "U2": session_json(speeches(3), ext_id="U2")})
+    res = script.run(_args(script, "--execute"), sleep=lambda s: None, clock=lambda: SATURDAY_NOON)
+    assert res["counts"]["refresh"] == 2
+    assert db.session.get(HansardSession, eid).debate_type == "ministerial_statement"
+    assert _snapshot(sid) != before
+
+    sql = script.UNDO_SQL.format(bak=res["undo_table"])
+    body = "".join(line for line in sql.splitlines(keepends=True)
+                   if not line.lstrip().startswith("--"))
+    for statement in (st for st in body.split(";") if st.strip()):
+        db.session.execute(text(statement))
+    db.session.commit()
+    db.session.expire_all()
+    assert _snapshot(sid) == before
+    assert _rows(eid) == []
+    assert db.session.get(HansardSession, eid).debate_type == "debate"

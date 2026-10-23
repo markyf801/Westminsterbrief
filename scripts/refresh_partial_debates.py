@@ -6,35 +6,36 @@ refresh.py), a debate stored while it was still going on, or before Hansard
 finished publishing it, stayed cut short for ever. A sample of 41 debates from
 Sept-Oct 2026 found 19 of the 33 with speeches cut short (we held about a fifth
 of their contributions). The cron now fixes debates in its 3-day window; this
-script fixes the older ones.
+script fixes the older ones. The hourly cron went live on 1 May 2026; debates
+before that were bulk-loaded complete, so --since 2026-04-27 covers it.
 
 Per session (one Hansard API call each, paced) it compares what we store with
 what Hansard has now and classifies the session:
   unchanged      same named contributions (speaker, attribution, text)
   refresh        Hansard's copy changed -> brought up to date in place (same
-                 session id, slug, URL and tags; rows matched by speaker, so
-                 #contrib-<id> links stay with their speech; Hansard's extra
-                 speeches added as new rows; rows Hansard dropped removed)
+                 session id, slug, URL and tags; rows matched on speaker and
+                 text, so #contrib-<id> links stay with their speech; Hansard's
+                 extra speeches added as new rows; rows Hansard dropped removed;
+                 a session that had no speeches gets its debate type re-worked
+                 out)
   held_empty     Hansard returned no named contributions -> left alone
   held_shrank    Hansard has under half our named contributions -> left alone
   legacy_rows    our rows still include the "Asked by" / "Moved by" items
                  current ingestion skips (Lords, ingested before May 2026) ->
                  left alone for scripts/repair_shifted_contributions.py
+  not_found      Hansard answered 404 -> skipped and counted
   fetch_failed   the API call failed -> skipped and counted
+
+Without --until it stops 4 days before today, so it never touches the debates
+the cron is refreshing (3-day window). Writers also lock each session row
+while refreshing it, so an overlap with the cron can't add speeches twice.
 
 DRY RUN BY DEFAULT: nothing is written. --execute writes, one transaction per
 session, after creating an undo table ha_contribution_refresh_bak_YYYYMMDD_
-HHMMSS holding every changed, added or removed row. Undo (Mark's call,
-production SQL log), in this order:
-    DELETE FROM ha_contribution
-      WHERE id IN (SELECT contribution_id FROM <bak> WHERE action = 'insert');
-    UPDATE ha_contribution c SET member_id = b.member_id, member_name = b.member_name,
-           party = b.party, speech_order = b.speech_order, speech_text = b.old_text
-      FROM <bak> b WHERE b.action = 'update' AND c.id = b.contribution_id;
-    INSERT INTO ha_contribution (id, session_id, member_id, member_name, party,
-                                 speech_text, speech_order)
-      SELECT contribution_id, session_id, member_id, member_name, party,
-             old_text, speech_order FROM <bak> WHERE action = 'delete';
+HHMMSS holding every changed, added or removed row (and every re-worked debate
+type), numbered in order (seq). The undo SQL (UNDO_SQL below, Mark's call,
+production SQL log) is printed at the end of every --execute run; it restores
+each row as it was before its first change.
 
 Tags: this script does not call Gemini. A refreshed session that had no tags
 is picked up by the cron's tagger (its "given up" attempt count is cleared).
@@ -44,24 +45,26 @@ its own dry run and --backup).
 
 Resumable: with --execute, progress (last session id done, counts, undo table,
 sessions to re-tag) is checkpointed in ha_cron_run (service_name
-"refresh-partial-<hash of the selection>") every 25 sessions; running the same
-command again carries on and reuses the same undo table. A dry run can be
-continued by hand with --after-id (printed when it stops).
+"refresh-partial-<hash of the arguments>") after every refreshed session and
+every 25 sessions; running the same command again carries on and reuses the
+same undo table. A dry run can be continued by hand with --after-id (printed
+when it stops).
 
-It never writes in or just before a production cron window
-(hansard_archive/cron_windows.py: weekday daytime is blocked whole): it refuses
-to start, or stops after the current session, with exit code 4 and the
-checkpoint saved. Override with --ignore-cron-windows.
+Cron windows: it doesn't run in or just before a production cron window
+(hansard_archive/cron_windows.py: weekday daytime is blocked whole), dry run
+or not: it refuses to start, or stops after the current session, with exit
+code 4 (checkpoint saved). Override with --ignore-cron-windows.
 
 API rules: one request at a time, at least 0.5s apart; a 429, 401 or 403 stops
 the run at once (exit 3; finished sessions stay committed); a timeout,
 connection error or 5xx is retried once after 5 seconds, then the session is
-skipped; three failed sessions in a row stop the run (exit 3).
+skipped; three failed sessions in a row stop the run (exit 3). A 404 is
+counted but doesn't count towards that stop.
 
 Usage (Railway one-off against production; dry run first):
-    python scripts/refresh_partial_debates.py --since 2026-06-01
+    python scripts/refresh_partial_debates.py --since 2026-04-27
     python scripts/refresh_partial_debates.py --ext-id 54FB2EDB-83AF-40FE-8A98-A914AD221CD7
-    python scripts/refresh_partial_debates.py --since 2026-06-01 --house Lords --execute
+    python scripts/refresh_partial_debates.py --since 2026-04-27 --execute
 
 Exit codes: 0 done, 2 bad arguments, 3 stopped on API errors, 4 stopped for a
 cron window (run the same command later to resume).
@@ -76,7 +79,7 @@ import json
 import os
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -89,8 +92,44 @@ _TIMEOUT = 30
 _MAX_CONSECUTIVE_FETCH_ERRORS = 3   # CLAUDE.md three-strike rule
 _CHECKPOINT_EVERY = 25
 _RETAG_IDS_PER_LINE = 100
+_DEFAULT_UNTIL_DAYS_AGO = 4         # the cron refreshes the last 3 days itself
 
-STATES = ("unchanged", "refresh", "held_empty", "held_shrank", "legacy_rows", "fetch_failed")
+STATES = ("unchanged", "refresh", "held_empty", "held_shrank", "legacy_rows",
+          "not_found", "fetch_failed")
+
+NOT_FOUND = "not_found"   # fetch_session_json() result for a 404
+
+# Restores every row as it was before its first change (lowest seq per row).
+UNDO_SQL = """\
+-- 1. Remove the rows the refresh added.
+DELETE FROM ha_contribution
+ WHERE id IN (SELECT contribution_id FROM {bak} WHERE action = 'insert');
+-- 2. Put changed rows back.
+UPDATE ha_contribution
+   SET member_id = b.member_id, member_name = b.member_name, party = b.party,
+       speech_order = b.speech_order, speech_text = b.old_text
+  FROM {bak} b
+ WHERE b.action IN ('update', 'delete') AND ha_contribution.id = b.contribution_id
+   AND b.seq = (SELECT MIN(e.seq) FROM {bak} e
+                 WHERE e.contribution_id = b.contribution_id AND e.action IN ('update', 'delete'));
+-- 3. Re-create removed rows.
+INSERT INTO ha_contribution (id, session_id, member_id, member_name, party, speech_text,
+                             speech_order, ingested_at)
+SELECT b.contribution_id, b.session_id, b.member_id, b.member_name, b.party, b.old_text,
+       b.speech_order, b.ingested_at
+  FROM {bak} b
+ WHERE b.action IN ('update', 'delete')
+   AND b.seq = (SELECT MIN(e.seq) FROM {bak} e
+                 WHERE e.contribution_id = b.contribution_id AND e.action IN ('update', 'delete'))
+   AND b.contribution_id IN (SELECT contribution_id FROM {bak} WHERE action = 'delete')
+   AND b.contribution_id NOT IN (SELECT contribution_id FROM {bak} WHERE action = 'insert');
+-- 4. Put back debate types re-worked out for sessions that had no speeches.
+UPDATE ha_session SET debate_type = b.old_text
+  FROM {bak} b
+ WHERE b.action = 'type' AND ha_session.id = b.session_id
+   AND b.seq = (SELECT MIN(e.seq) FROM {bak} e
+                 WHERE e.session_id = b.session_id AND e.action = 'type');
+"""
 
 
 class ApiStop(Exception):
@@ -98,11 +137,12 @@ class ApiStop(Exception):
 
 
 class WindowStop(Exception):
-    """A production cron window is due: stop cleanly before writing more."""
+    """A production cron window is due: stop cleanly before doing more."""
 
 
-def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | None:
-    """Session JSON, or None on a failed fetch. Raises ApiStop on 429/401/403."""
+def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | str | None:
+    """Session JSON; NOT_FOUND on a 404; None on another failed fetch.
+    Raises ApiStop on 429/401/403."""
     for attempt in range(2):
         try:
             r = requests.get(_API.format(ext_id), timeout=_TIMEOUT)
@@ -116,6 +156,8 @@ def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | None:
             raise ApiStop(f"429 from the Hansard API at {ext_id} — wait before re-running")
         if r.status_code in (401, 403):
             raise ApiStop(f"HTTP {r.status_code} from the Hansard API at {ext_id} (permanent error)")
+        if r.status_code == 404:
+            return NOT_FOUND
         if r.status_code >= 500 and attempt == 0:
             print(f"[refresh] HTTP {r.status_code}, retrying in 5s", flush=True)
             sleep(5)
@@ -171,6 +213,7 @@ def is_legacy(rows: list, fresh: list[dict], data: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def checkpoint_service(args) -> str:
+    # The arguments as given (a defaulted --until moves daily; resuming by id copes with that).
     key = json.dumps({"since": args.since, "until": args.until, "house": args.house,
                       "ext_id": sorted(args.ext_id or []), "limit": args.limit}, sort_keys=True)
     return f"refresh-partial-{hashlib.sha1(key.encode()).hexdigest()[:10]}"
@@ -222,23 +265,27 @@ def create_undo_table(db) -> str:
         n += 1
         name = f"{base}_{n}"
     db.session.execute(text(
-        f"CREATE TABLE {name} (contribution_id INTEGER NOT NULL, session_id INTEGER NOT NULL, "
-        f"action VARCHAR(10) NOT NULL, member_id INTEGER, member_name VARCHAR(300), "
-        f"party VARCHAR(100), speech_order INTEGER, old_text TEXT, new_text TEXT)"))
+        f"CREATE TABLE {name} (seq INTEGER NOT NULL, contribution_id INTEGER NOT NULL, "
+        f"session_id INTEGER NOT NULL, action VARCHAR(10) NOT NULL, member_id INTEGER, "
+        f"member_name VARCHAR(300), party VARCHAR(100), speech_order INTEGER, old_text TEXT, "
+        f"ingested_at TIMESTAMP)"))
     db.session.commit()
     print(f"[refresh] undo table: {name}", flush=True)
     return name
 
 
 def write_undo(db, table: str, entries: list[dict]) -> None:
+    """Append entries to the undo table, numbered after the ones already there."""
     from sqlalchemy import text
     if not entries:
         return
+    start = db.session.execute(text(f"SELECT COALESCE(MAX(seq), 0) FROM {table}")).scalar() or 0
     db.session.execute(
-        text(f"INSERT INTO {table} (contribution_id, session_id, action, member_id, member_name, "
-             f"party, speech_order, old_text, new_text) VALUES (:contribution_id, :session_id, "
-             f":action, :member_id, :member_name, :party, :speech_order, :old_text, :new_text)"),
-        entries)
+        text(f"INSERT INTO {table} (seq, contribution_id, session_id, action, member_id, "
+             f"member_name, party, speech_order, old_text, ingested_at) VALUES (:seq, "
+             f":contribution_id, :session_id, :action, :member_id, :member_name, :party, "
+             f":speech_order, :old_text, :ingested_at)"),
+        [dict(e, seq=start + k) for k, e in enumerate(entries, 1)])
 
 
 def _with_db_retry(db, fn):
@@ -255,7 +302,7 @@ def _with_db_retry(db, fn):
 
 def check_cron_window(args, clock=datetime.utcnow) -> None:
     from hansard_archive.cron_windows import blocked_window
-    if not args.execute or args.ignore_cron_windows:
+    if args.ignore_cron_windows:
         return
     label = blocked_window(clock())
     if label:
@@ -266,7 +313,14 @@ def check_cron_window(args, clock=datetime.utcnow) -> None:
 # Run
 # ---------------------------------------------------------------------------
 
-def select_sessions(args) -> list[tuple[int, str]]:
+def effective_until(args, today: date) -> str | None:
+    """--until, or 4 days before today for a --since selection (the cron's own window)."""
+    if args.until or not args.since:
+        return args.until
+    return (today - timedelta(days=_DEFAULT_UNTIL_DAYS_AGO)).isoformat()
+
+
+def select_sessions(args, until: str | None) -> list[tuple[int, str]]:
     from extensions import db
     from hansard_archive.models import HansardSession
     q = db.session.query(HansardSession.id, HansardSession.ext_id).filter(
@@ -275,8 +329,8 @@ def select_sessions(args) -> list[tuple[int, str]]:
         q = q.filter(HansardSession.house == args.house)
     if args.since:
         q = q.filter(HansardSession.date >= date.fromisoformat(args.since))
-    if args.until:
-        q = q.filter(HansardSession.date <= date.fromisoformat(args.until))
+    if until:
+        q = q.filter(HansardSession.date <= date.fromisoformat(until))
     if args.ext_id:
         q = q.filter(HansardSession.ext_id.in_(args.ext_id))
     rows = [(r[0], r[1]) for r in q.order_by(HansardSession.id).all()]
@@ -285,12 +339,16 @@ def select_sessions(args) -> list[tuple[int, str]]:
 
 def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
     from extensions import db
-    from hansard_archive.ingestion import _flatten_items
+    from hansard_archive.ingestion import _flatten_items, _official_debate_type_label
     from hansard_archive.models import HansardSession, HansardSessionTheme
     from hansard_archive.refresh import (STATE_CHANGED, STATE_EMPTY, STATE_SHRANK,
                                          refresh_session, stored_rows)
 
-    ids = _with_db_retry(db, lambda: select_sessions(args))
+    until = effective_until(args, clock().date())
+    if until and not args.until:
+        print(f"[refresh] --until not given: stopping at {until} (the cron refreshes the "
+              f"last 3 days itself)", flush=True)
+    ids = _with_db_retry(db, lambda: select_sessions(args, until))
     db.session.rollback()
 
     state: dict = {"counts": {s: 0 for s in STATES}, "retag_ids": [], "last_id": 0}
@@ -338,13 +396,18 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
             finally:
                 sleep(_DELAY)
             session = _with_db_retry(db, lambda sid=sid: db.session.get(HansardSession, sid))
-            if data is None:
-                counts["fetch_failed"] += 1
-                by_house[(session.house, "fetch_failed")] += 1
-                consecutive_errors += 1
-                if consecutive_errors >= _MAX_CONSECUTIVE_FETCH_ERRORS:
-                    raise ApiStop(f"{consecutive_errors} failed fetches in a row at session {sid} "
-                                  f"— check the Hansard API before re-running")
+            if data is None or data == NOT_FOUND:
+                st = "not_found" if data == NOT_FOUND else "fetch_failed"
+                counts[st] += 1
+                by_house[(session.house, st)] += 1
+                if st == "fetch_failed":
+                    consecutive_errors += 1
+                    if consecutive_errors >= _MAX_CONSECUTIVE_FETCH_ERRORS:
+                        raise ApiStop(f"{consecutive_errors} failed fetches in a row at session "
+                                      f"{sid} — check the Hansard API before re-running")
+                if len(listed[st]) < args.list_max:
+                    listed[st].append(f"{session.date} {session.house} id={sid} "
+                                      f"{(session.title or '')[:60]!r} ext_id={ext_id}")
                 last_done = sid
                 db.session.rollback()
                 continue
@@ -355,7 +418,9 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
             if is_legacy(rows, fresh, data):
                 st, res = "legacy_rows", None
             else:
-                res = refresh_session(session, fresh, apply=args.execute, rows=rows)
+                # Locks the session row and re-reads its rows when writing.
+                res = refresh_session(session, fresh, apply=args.execute,
+                                      debate_type_label=_official_debate_type_label(data))
                 st = {STATE_CHANGED: "refresh", STATE_EMPTY: "held_empty",
                       STATE_SHRANK: "held_shrank"}.get(res.state, "unchanged")
             counts[st] += 1
@@ -363,11 +428,13 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
             if st != "unchanged" and len(listed[st]) < args.list_max:
                 detail = (f" named {res.named_before} -> {res.named_after}" if res else
                           f" rows={sum(1 for r in rows if r.member_name)}")
+                if res and res.type_change:
+                    detail += f"; type {res.type_change[0]} -> {res.type_change[1]}"
                 listed[st].append(f"{session.date} {session.house} id={sid} "
                                   f"{(session.title or '')[:60]!r}{detail}")
             if st == "refresh":
                 rows_changed.update(updated=res.updated, inserted=res.inserted,
-                                    deleted=res.deleted)
+                                    deleted=res.deleted, types=1 if res.type_change else 0)
                 had_tags = _with_db_retry(db, lambda sid=sid: HansardSessionTheme.query
                                           .filter_by(session_id=sid).first() is not None)
                 if res.needs_retag and had_tags:
@@ -380,7 +447,7 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
             db.session.rollback()   # end this session's transaction (no-op after a commit)
             last_done = sid
 
-            if run_id and n % _CHECKPOINT_EVERY == 0:
+            if run_id and (st == "refresh" or n % _CHECKPOINT_EVERY == 0):
                 save_checkpoint(run_id, snapshot())
             if n % 50 == 0:
                 print(f"[refresh] checked {n}/{len(todo)} — "
@@ -414,9 +481,12 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
                 print(f"  {line}")
     verb = "written" if args.execute else "would be written"
     print(f"\n[refresh] rows: {rows_changed['updated']} updated, {rows_changed['inserted']} added, "
-          f"{rows_changed['deleted']} removed ({verb}, this run)")
+          f"{rows_changed['deleted']} removed; {rows_changed['types']} debate type(s) re-worked "
+          f"out ({verb}, this run)")
     if state.get("undo_table"):
         print(f"[refresh] undo table: {state['undo_table']}")
+        print("[refresh] undo SQL (production SQL is Mark's call):\n"
+              + UNDO_SQL.format(bak=state["undo_table"]))
     if state["retag_ids"]:
         print(f"\n[refresh] {len(state['retag_ids'])} refreshed session(s) already had tags and "
               f"changed materially — re-tag with (dry run first, then add --apply --backup):")
@@ -437,7 +507,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--execute", action="store_true", help="write the refreshes (default: dry run)")
     p.add_argument("--since", help="session date YYYY-MM-DD, inclusive (required unless --ext-id)")
-    p.add_argument("--until", help="session date YYYY-MM-DD, inclusive")
+    p.add_argument("--until", help="session date YYYY-MM-DD, inclusive (default with --since: "
+                                   "4 days before today)")
     p.add_argument("--house", choices=("Commons", "Lords"))
     p.add_argument("--ext-id", action="append", help="only this Hansard ExtId (repeatable)")
     p.add_argument("--limit", type=int, help="check at most N sessions (lowest ids first)")
