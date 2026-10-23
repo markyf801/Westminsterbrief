@@ -23,6 +23,7 @@ URL conventions (locked — do not change after indexing):
 import os
 import re
 import time
+from array import array
 from collections import defaultdict
 from datetime import date as date_type, datetime, timedelta
 from io import BytesIO
@@ -32,7 +33,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 from flask import Blueprint, abort, redirect, render_template, make_response, request
 from markupsafe import Markup
-from sqlalchemy import func, select, text as sqla_text
+from sqlalchemy import case, func, or_, select, text as sqla_text
 from sqlalchemy.orm import load_only
 
 from cache_models import CachedMember
@@ -56,6 +57,7 @@ from hansard_archive.models import (
 )
 from hansard_archive import policy_areas as _pa
 from hansard_archive import topic_canon as _tc
+from hansard_archive import topic_match as _tm
 from hansard_archive.slugs import slugify_theme
 from hansard_archive.stats_queries import get_headline_stat
 
@@ -1660,6 +1662,212 @@ def _build_pq_items(pqs: list) -> list:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Topic-page matching beyond exact tags (specific-topic pages only)
+# ---------------------------------------------------------------------------
+
+_TOPIC_TAG_CANDIDATES = 2000   # distinct stored tags examined per phrase
+_TOPIC_TWIN_DAYS      = 14     # Lords repeat of a Commons statement: same title, days apart
+_TOPIC_MATCH_TTL      = 600    # seconds; topic pages re-read new tags within 10 minutes
+_TOPIC_MATCH_MAX      = 256    # cached topic pages per worker
+_topic_match_cache: dict = {}
+_IN_CHUNK = 500                # bound bind parameters per IN (...) list
+
+
+def _chunks(seq, n: int = _IN_CHUNK):
+    seq = list(seq)
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
+def _session_tier(title: str, debate_type: str) -> int:
+    """0 = a debate, statement or question on the subject; 1 = a session of many
+    unrelated questions (PMQs, topical questions, business questions), listed last."""
+    return 1 if debate_type == "pmqs" or _is_procedural_noise(title or "") else 0
+
+
+def _session_tier_sql():
+    """_session_tier() as a SQL expression, for policy-area pages."""
+    return case(
+        (or_(HansardSession.debate_type == "pmqs",
+             HansardSession.title.in_(sorted(_PROCEDURAL_TITLE_NOISE))), 1),
+        else_=0,
+    )
+
+
+def _contained_topic_names(theme_col, type_col, phrases) -> set[str]:
+    """Stored specific tags that contain one of the phrases as whole words."""
+    found: set[str] = set()
+    for p in phrases:
+        rows = (
+            db.session.query(theme_col)
+            .filter(type_col == THEME_TYPE_SPECIFIC,
+                    or_(*[func.lower(theme_col).like(x) for x in p.tag_like_patterns()]))
+            .distinct()
+            .order_by(theme_col)
+            .limit(_TOPIC_TAG_CANDIDATES)
+            .all()
+        )
+        found |= {r[0] for r in rows if p.in_tag(r[0])}
+    return found
+
+
+def _tsquery_any(prefix: str, phrases) -> tuple[str, dict]:
+    """OR of phraseto_tsquery() over the phrases, with its bind parameters."""
+    params = {f"{prefix}{i}": p.text for i, p in enumerate(phrases)}
+    sql = " || ".join(f"phraseto_tsquery('english', :{k})" for k in params)
+    return f"({sql})", params
+
+
+def _title_matched_sessions(phrases) -> list:
+    """(id, title, date, house, debate_type) of non-container sessions whose title
+    contains a phrase. Postgres narrows with the title_tsv GIN index first."""
+    if not phrases:
+        return []
+    q = (db.session.query(HansardSession.id, HansardSession.title, HansardSession.date,
+                          HansardSession.house, HansardSession.debate_type)
+         .filter(HansardSession.is_container.is_(False)))
+    if _is_postgres():
+        tsq, params = _tsquery_any("tq", phrases)
+        q = q.filter(sqla_text(f"ha_session.title_tsv @@ {tsq}").bindparams(**params))
+    else:
+        q = q.filter(or_(*[func.lower(HansardSession.title).like(p.title_like_pattern())
+                           for p in phrases]))
+    return [r for r in q.all() if _tm.title_matches(r[1], phrases)]
+
+
+def _heading_matched_pqs(phrases) -> list:
+    """(id, tabled_date) of written questions whose heading contains a phrase.
+    Postgres narrows with the question_tsv GIN index (it includes the heading)."""
+    if not phrases:
+        return []
+    q = db.session.query(HaPQ.id, HaPQ.tabled_date, HaPQ.heading).filter(HaPQ.heading.isnot(None))
+    if _is_postgres():
+        tsq, params = _tsquery_any("hq", phrases)
+        q = q.filter(sqla_text(f"ha_pq.question_tsv @@ {tsq}").bindparams(**params))
+    q = q.filter(or_(*[func.lower(HaPQ.heading).like(p.title_like_pattern()) for p in phrases]))
+    return [(r[0], r[1]) for r in q.all() if _tm.title_matches(r[2], phrases)]
+
+
+def _other_house_twins(rows) -> list:
+    """
+    Sessions in the other House with the same title within _TOPIC_TWIN_DAYS of a
+    matched session: the Lords repeat of a Commons statement, or the Commons
+    original of a Lords repeat. These are often untagged (Lords debates are
+    typed 'other', which the tagger skips) and have nothing else to match on.
+    """
+    when: dict[str, list] = defaultdict(list)
+    for _sid, title, d, house, _dt in rows:
+        if title and not _is_procedural_noise(title):
+            when[title.lower()].append((d, house))
+    if not when:
+        return []
+    known = {r[0] for r in rows}
+    lo = min(d for v in when.values() for d, _ in v) - timedelta(days=_TOPIC_TWIN_DAYS)
+    hi = max(d for v in when.values() for d, _ in v) + timedelta(days=_TOPIC_TWIN_DAYS)
+    out = []
+    for chunk in _chunks(sorted(when)):
+        cands = (
+            db.session.query(HansardSession.id, HansardSession.title, HansardSession.date,
+                             HansardSession.house, HansardSession.debate_type)
+            .filter(HansardSession.is_container.is_(False),
+                    HansardSession.date.between(lo, hi),
+                    func.lower(HansardSession.title).in_(chunk))
+            .all()
+        )
+        for c in cands:
+            if c[0] in known:
+                continue
+            if any(h != c[3] and abs((d - c[2]).days) <= _TOPIC_TWIN_DAYS
+                   for d, h in when.get((c[1] or "").lower(), ())):
+                out.append(tuple(c))
+                known.add(c[0])
+    return out
+
+
+def _topic_match_ids(theme_slug: str, session_names: list, pq_names: list) -> tuple:
+    """
+    Ordered ids for a specific-topic page: (session ids, PQ ids), as compact arrays.
+
+    Sessions: tagged with an exact spelling (session_names) or with a tag that
+    contains the topic phrase, or titled with it, plus other-House twins of
+    those. Ordered by _session_tier, then newest first.
+    PQs: tagged the same way, or with the phrase in Parliament's heading.
+    Newest tabled first.
+
+    Cached per worker for _TOPIC_MATCH_TTL seconds: page 2 and repeat visits
+    re-use the match instead of re-scanning the tag tables.
+    """
+    key = (id(db.engine), theme_slug)
+    now = time.time()
+    hit = _topic_match_cache.get(key)
+    if hit and now - hit[2] < _TOPIC_MATCH_TTL:
+        return hit[0], hit[1]
+
+    phrases = _tm.expandable(_tm.phrases_for_slug(theme_slug))
+
+    s_names = set(session_names) | _contained_topic_names(
+        HansardSessionTheme.theme, HansardSessionTheme.theme_type, phrases)
+    rows: dict[int, tuple] = {}
+    for chunk in _chunks(sorted(s_names)):
+        for r in (
+            db.session.query(HansardSession.id, HansardSession.title, HansardSession.date,
+                             HansardSession.house, HansardSession.debate_type)
+            .filter(HansardSession.is_container.is_(False),
+                    HansardSession.id.in_(
+                        select(HansardSessionTheme.session_id).where(
+                            HansardSessionTheme.theme_type == THEME_TYPE_SPECIFIC,
+                            HansardSessionTheme.theme.in_(chunk))))
+            .all()
+        ):
+            rows[r[0]] = tuple(r)
+    for r in _title_matched_sessions(phrases):
+        rows.setdefault(r[0], tuple(r))
+    for r in _other_house_twins(list(rows.values())):
+        rows.setdefault(r[0], r)
+    ordered = sorted(rows.values(), key=lambda r: (_session_tier(r[1], r[4]), -r[2].toordinal(), -r[0]))
+    session_ids = array("q", (r[0] for r in ordered))
+
+    p_names = set(pq_names) | _contained_topic_names(HaPQTheme.theme, HaPQTheme.theme_type, phrases)
+    pq_rows: dict[int, object] = {}
+    for chunk in _chunks(sorted(p_names)):
+        for pid, tabled in (
+            db.session.query(HaPQ.id, HaPQ.tabled_date)
+            .filter(HaPQ.id.in_(
+                select(HaPQTheme.pq_id).where(
+                    HaPQTheme.theme_type == THEME_TYPE_SPECIFIC,
+                    HaPQTheme.theme.in_(chunk))))
+            .all()
+        ):
+            pq_rows[pid] = tabled
+    for pid, tabled in _heading_matched_pqs(phrases):
+        pq_rows.setdefault(pid, tabled)
+    pq_ids = array("q", sorted(pq_rows, key=lambda i: (pq_rows[i] or date_type.min, i), reverse=True))
+
+    if len(_topic_match_cache) >= _TOPIC_MATCH_MAX:
+        _topic_match_cache.pop(min(_topic_match_cache, key=lambda k: _topic_match_cache[k][2]))
+    _topic_match_cache[key] = (session_ids, pq_ids, now)
+    return session_ids, pq_ids
+
+
+_PQ_LIST_COLUMNS = (
+    HaPQ.uin, HaPQ.heading, HaPQ.asking_member, HaPQ.answering_body,
+    HaPQ.chamber, HaPQ.is_answered, HaPQ.tabled_date,
+    HaPQ.question_text,   # display_heading fallback when heading is NULL
+)
+
+
+def _load_in_order(model, ids, options=None) -> list:
+    """Rows of `model` for `ids`, in the order of `ids`."""
+    if not ids:
+        return []
+    q = model.query
+    if options is not None:
+        q = q.options(options)
+    by_id = {r.id: r for r in q.filter(model.id.in_(list(ids))).all()}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     """
     Render /brief/<slug> pages: debate sessions plus written questions (PQs).
@@ -1668,8 +1876,16 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
     0. Bridge mapping (policy_areas module) — resolves the mismatch
        between brief page slugs and Hansard DB policy area taxonomy strings.
     1. Policy area slug reverse-lookup — catches any policy areas not in the map.
-    2. Specific topic match (THEME_TYPE_SPECIFIC) on sessions and on PQs —
-       fallback for /archive/theme/ redirects. PQ-only topics resolve here.
+    2. Specific topic (THEME_TYPE_SPECIFIC) — the page exists when a stored tag
+       spells the topic exactly (or is in its topic_canon family). It then also
+       lists items whose tags contain the topic phrase, whose title or heading
+       contains it, and the other-House twins of those (_topic_match_ids).
+
+    Views: the overview (no ?show) lists the first _PER_PAGE debates and the
+    newest _PER_PAGE written questions, each with a "See all" link;
+    ?show=debates / ?show=questions page through one list (noindex). Debates on
+    the subject come before sessions of many unrelated questions (PMQs etc.),
+    each group newest first. Old ?page=N URLs redirect to a ?show list.
 
     No debates and no PQs -> friendly page with a 404 status, so search engines
     drop the URL instead of indexing an empty page (soft 404).
@@ -1682,12 +1898,12 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         policy_name  = next((p for p in _all_policy_areas() if slugify_theme(p) == theme_slug), None)
         policy_names = [policy_name] if policy_name else None
 
+    session_names = pq_names = []
     if policy_names:
         theme_name      = (_pa.display_name_from_slug(theme_slug)
                            or (policy_names[0] if len(policy_names) == 1 else None)
                            or theme_slug.replace("-", " ").title())
         theme_type_used = THEME_TYPE_POLICY_AREA
-        session_names   = pq_names = policy_names
     else:
         # -- 2. Fallback: specific topic match on sessions and PQs
         theme_type_used = THEME_TYPE_SPECIFIC
@@ -1698,42 +1914,56 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         theme_name      = (_tc.canonical_for_slug(theme_slug)
                            or (session_names or pq_names or [None])[0])
 
+    def _no_rows(offset, limit):
+        return []
+
     session_total = pq_total = 0
-    session_stmt = pq_stmt = None
-    if session_names:
+    get_sessions = get_pqs = _no_rows
+    if policy_names:
         theme_sub = (
             select(HansardSessionTheme.session_id)
-            .where(
-                HansardSessionTheme.theme.in_(session_names),
-                HansardSessionTheme.theme_type == theme_type_used,
-            )
+            .where(HansardSessionTheme.theme.in_(policy_names),
+                   HansardSessionTheme.theme_type == THEME_TYPE_POLICY_AREA)
         )
         session_stmt = (
             HansardSession.query
             .filter_by(is_container=False)
             .filter(HansardSession.id.in_(theme_sub))
-            .order_by(HansardSession.date.desc())
+            .order_by(_session_tier_sql(), HansardSession.date.desc(), HansardSession.id.desc())
         )
         session_total = session_stmt.count()
-    if pq_names:
         pq_sub = (
             select(HaPQTheme.pq_id)
-            .where(
-                HaPQTheme.theme.in_(pq_names),
-                HaPQTheme.theme_type == theme_type_used,
-            )
+            .where(HaPQTheme.theme.in_(policy_names),
+                   HaPQTheme.theme_type == THEME_TYPE_POLICY_AREA)
         )
         pq_stmt = (
             HaPQ.query
-            .options(load_only(
-                HaPQ.uin, HaPQ.heading, HaPQ.asking_member, HaPQ.answering_body,
-                HaPQ.chamber, HaPQ.is_answered, HaPQ.tabled_date,
-                HaPQ.question_text,   # display_heading fallback when heading is NULL
-            ))
+            .options(load_only(*_PQ_LIST_COLUMNS))
             .filter(HaPQ.id.in_(pq_sub))
             .order_by(HaPQ.tabled_date.desc(), HaPQ.id.desc())
         )
         pq_total = pq_stmt.count()
+
+        def _policy_sessions(offset, limit):
+            return session_stmt.offset(offset).limit(limit).all()
+
+        def _policy_pqs(offset, limit):
+            return pq_stmt.offset(offset).limit(limit).all()
+
+        get_sessions, get_pqs = _policy_sessions, _policy_pqs
+    elif session_names or pq_names:
+        session_ids, pq_ids = _topic_match_ids(theme_slug, session_names, pq_names)
+        session_total, pq_total = len(session_ids), len(pq_ids)
+
+        def _topic_sessions(offset, limit):
+            return _load_in_order(HansardSession, session_ids[offset:offset + limit])
+
+        def _topic_pqs(offset, limit):
+            return _load_in_order(HaPQ, pq_ids[offset:offset + limit],
+                                  load_only(HaPQ.id, *_PQ_LIST_COLUMNS))
+
+        get_sessions, get_pqs = _topic_sessions, _topic_pqs
 
     if session_total + pq_total == 0:
         # Nothing on this topic — friendly page, but 404 so it is never indexed
@@ -1750,6 +1980,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
             total_pages       = 1,
             total             = 0,
             pq_total          = 0,
+            show              = "",
             base_qs           = "",
             canonical_path    = f"{canonical_prefix}/{theme_slug}",
             og_title          = f"{display_name} — Westminster Brief",
@@ -1760,31 +1991,43 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
             robots_meta       = "noindex, follow",
         ), 404
 
-    total_pages = min(
-        _BRIEF_MAX_PAGES,
-        max(1, (max(session_total, pq_total) + _PER_PAGE - 1) // _PER_PAGE),
-    )
+    canonical_path = f"{canonical_prefix}/{theme_slug}"
+
+    def pages_for(n: int) -> int:
+        return min(_BRIEF_MAX_PAGES, max(1, (n + _PER_PAGE - 1) // _PER_PAGE))
+
     try:
         page = max(1, int(request.args.get("page", 1) or 1))
     except (ValueError, TypeError):
         page = 1
+    show = request.args.get("show", "")
+    if show not in ("debates", "questions"):
+        show = ""
+
+    if not show and page > 1:
+        # Old URLs paged both lists together: send them to the list that has that page.
+        if session_total and page <= pages_for(session_total):
+            return redirect(f"{canonical_path}?show=debates&page={page}", code=301)
+        if pq_total and page <= pages_for(pq_total):
+            return redirect(f"{canonical_path}?show=questions&page={page}", code=301)
+        abort(404)
+
+    list_total = session_total if show == "debates" else pq_total if show == "questions" else 0
+    if show and not list_total:
+        abort(404)
+    total_pages = pages_for(list_total) if show else 1
     if page > total_pages:
         abort(404)
 
-    # One page number drives both lists; a list past its last page shows nothing.
     offset   = (page - 1) * _PER_PAGE
-    sessions = (session_stmt.offset(offset).limit(_PER_PAGE).all()
-                if session_stmt is not None and offset < session_total else [])
-    pqs      = (pq_stmt.offset(offset).limit(_PER_PAGE).all()
-                if pq_stmt is not None and offset < pq_total else [])
+    sessions = get_sessions(offset, _PER_PAGE) if show in ("", "debates") else []
+    pqs      = get_pqs(offset, _PER_PAGE) if show in ("", "questions") else []
 
     session_ids    = [s.id for s in sessions]
     contrib_counts = _batch_load_contrib_counts(session_ids)
     policy_areas, specific_topics = _batch_load_tags(session_ids)
     items          = _build_session_items(sessions, contrib_counts, policy_areas, specific_topics)
     pq_items       = _build_pq_items(pqs)
-
-    base_qs = urlencode({"page": page}) if page > 1 else ""
 
     counts = []
     if session_total:
@@ -1802,6 +2045,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         headline_stat = get_headline_stat(theme_slug)
 
     thin = session_total + pq_total < _BRIEF_THIN_ITEMS
+    list_cap = _BRIEF_MAX_PAGES * _PER_PAGE
 
     return render_template(
         "hansard_archive/brief_theme.html",
@@ -1816,8 +2060,12 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         total             = session_total,
         pq_total          = pq_total,
         per_page          = _PER_PAGE,
-        base_qs           = base_qs,
-        canonical_path    = f"{canonical_prefix}/{theme_slug}",
+        show              = show,
+        list_capped       = bool(show) and list_total > list_cap,
+        list_cap          = list_cap,
+        search_url        = "/archive/search?" + urlencode({"q": f'"{theme_name}"'}),
+        base_qs           = "",
+        canonical_path    = canonical_path,
         og_title          = f"{theme_name} — Westminster Brief",
         meta_desc         = (
             f"UK parliamentary debates and written questions on {theme_name}. "
@@ -1826,7 +2074,7 @@ def _brief_theme_response(theme_slug: str, canonical_prefix: str):
         json_ld_type      = "CollectionPage",
         headline_stat     = headline_stat,
         theme_slug        = theme_slug,
-        robots_meta       = "noindex, follow" if thin else "index, follow",
+        robots_meta       = "noindex, follow" if (thin or show) else "index, follow",
     )
 
 
