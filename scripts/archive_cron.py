@@ -174,6 +174,8 @@ def main() -> None:
     total_tagged = 0
     total_refreshed = 0
     total_held = 0
+    total_swallowed = 0
+    total_duplicates = 0
     retag_ids: list[int] = []
     retag_pending: list[int] = []
     refresh_notes = ""
@@ -215,6 +217,8 @@ def main() -> None:
                 total_errors += house_errors
                 total_refreshed += result["refreshed"]
                 total_held += result["held"]
+                total_swallowed += result.get("swallowed", 0)
+                total_duplicates += result.get("duplicates", 0)
                 total_errors += result["refresh_errors"]
                 retag_ids.extend(result["retag_ids"])
                 retag_pending = list(dict.fromkeys(retag_ids + list(carried)))
@@ -228,6 +232,10 @@ def main() -> None:
                     flush=True,
                 )
             refresh_notes = f"refresh: refreshed={total_refreshed} held={total_held}"
+            # Copies / swallowed sessions seen this run (logged, never deleted here:
+            # scripts/find_duplicate_debates.py picks them up).
+            if total_swallowed or total_duplicates:
+                refresh_notes += f" swallowed={total_swallowed} duplicates={total_duplicates}"
 
             # --- Re-tag refreshed sessions whose text changed materially ---
             # (plus any the previous run left over; this run's own come first)

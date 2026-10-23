@@ -86,6 +86,26 @@ for at most 3 runs (a session whose Gemini call failed with a final error is
 not carried; the log says how many were dropped — re-tag those with
 `scripts/retag.py --ids`). See `hansard_archive/refresh.py`. Older debates stored cut
 short: `scripts/refresh_partial_debates.py` (one-off, dry run by default).
+Duplicate and swallowing debates (provisional copies Hansard later split or
+re-keyed): the cron logs `DUPLICATE?` / `SWALLOWED?` and counts them in
+`ha_cron_run.notes` (`swallowed=… duplicates=…`; a parent holding its own
+child debate is logged as `(parent/child)` and not counted) but never deletes.
+Clean-up, all one-shots, dry run first: `scripts/find_duplicate_debates.py`
+(read-only; CSV in the log) → review → `migrations/session_redirect_table.py
+--execute` → `scripts/delete_duplicate_debates.py` (only dead ids with a live
+twin; undo tables; old URLs 302 to the kept copy until `ARCHIVE_REDIRECT_CODE=301`
+is set on the web service) → `scripts/refresh_partial_debates.py --accept-shrink
+--ext-id …` (add `--allow-empty` only for reviewed headings Hansard now has
+empty) for the reviewed swallowers → `scripts/retag.py --ids …` as printed.
+Rehearse on a Postgres copy first; the delete script's docstring lists the
+before/after SQL checks, `curl -I`, the Cloudflare purge, and why the affected
+days must not be re-ingested afterwards. `ARCHIVE_REDIRECT_CODE` and the
+check that the redirect tables exist are per web worker (the check repeats at
+most every 10 minutes): after the migration, wait 10 minutes or restart the
+web service before testing redirects. Do not `--allow-empty` a final-id page
+with the debate's real title (e.g. 15 Oct C5400E9A) while its speeches live
+only under a provisional heading id; leave it for review until Hansard
+finalises the day.
 
 ### Written Questions (`scripts/ingest_pq_cron.py`, 7-day rolling window)
 

@@ -24,6 +24,10 @@ what Hansard has now and classifies the session:
                  current ingestion skips (Lords, ingested before May 2026) ->
                  left alone for scripts/repair_shifted_contributions.py
   not_found      Hansard answered 404 -> skipped and counted
+  dead_id        Hansard answered 400 (or 200 without a debate) for this id:
+                 a provisional id Hansard has since replaced with its final
+                 one -> skipped and counted (usually a duplicate copy:
+                 scripts/find_duplicate_debates.py)
   fetch_failed   the API call failed -> skipped and counted
 
 Without --until it stops 4 days before today, so it never touches the debates
@@ -59,12 +63,32 @@ API rules: one request at a time, at least 0.5s apart; a 429, 401 or 403 stops
 the run at once (exit 3; finished sessions stay committed); a timeout,
 connection error or 5xx is retried once after 5 seconds, then the session is
 skipped; three failed sessions in a row stop the run (exit 3). A 404 is
-counted but doesn't count towards that stop.
+counted but doesn't count towards that stop, nor does a dead id (a 400, or a
+200 with no debate in it).
+
+--accept-shrink (only with --ext-id, never with a date range): applies a
+held_shrank or held_empty result for the sessions named, through the same
+path (undo table), for headings that swallowed the debates published after
+them while Hansard's copy was still being built, once a person has checked
+them (scripts/find_duplicate_debates.py lists candidates). It is checked
+again just before writing (session row locked) and refused (shrink_refused)
+unless every speech it would remove is held by another stored session that
+day and what is left matches Hansard's current copy. Emptying a session
+(Hansard has no named contributions: held_empty) also needs --allow-empty.
+It takes the sitting day's advisory lock first (shared with
+scripts/delete_duplicate_debates.py). Do not empty a page with a final id and
+the debate's real title (e.g. 15 Oct 2026 C5400E9A, "Human Rights and the
+Regulation of AI") while its speeches are held only under a provisional
+heading id: leave it for review until Hansard finalises the day.
+A session shrunk to under half its speeches loses its tags too (backed up in
+ha_session_theme_refresh_bak_<time>; the undo SQL puts them back): they came
+from the swallowed speeches, and the cron's tagger tags it afresh.
 
 Usage (Railway one-off against production; dry run first):
     python scripts/refresh_partial_debates.py --since 2026-04-27
     python scripts/refresh_partial_debates.py --ext-id 54FB2EDB-83AF-40FE-8A98-A914AD221CD7
     python scripts/refresh_partial_debates.py --since 2026-04-27 --execute
+    python scripts/refresh_partial_debates.py --accept-shrink --ext-id <id> --ext-id <id>
 
 Exit codes: 0 done, 2 bad arguments, 3 stopped on API errors, 4 stopped for a
 cron window (run the same command later to resume).
@@ -95,9 +119,13 @@ _RETAG_IDS_PER_LINE = 100
 _DEFAULT_UNTIL_DAYS_AGO = 4         # the cron refreshes the last 3 days itself
 
 STATES = ("unchanged", "refresh", "held_empty", "held_shrank", "legacy_rows",
-          "not_found", "fetch_failed")
+          "not_found", "dead_id", "fetch_failed", "shrink_refused")
+
+TAG_LOCK_NAMESPACE = 72616701   # the tagger's pg_advisory_xact_lock(72616701, session_id)
+DROP_TAGS_BELOW_SHARE = 0.5      # an accepted shrink to under half the speeches drops the tags
 
 NOT_FOUND = "not_found"   # fetch_session_json() result for a 404
+DEAD_ID = "dead_id"       # ... for a 400, or a 200 without "Overview" (id replaced by Hansard)
 
 # Restores every row as it was before its first change (lowest seq per row).
 UNDO_SQL = """\
@@ -141,8 +169,8 @@ class WindowStop(Exception):
 
 
 def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | str | None:
-    """Session JSON; NOT_FOUND on a 404; None on another failed fetch.
-    Raises ApiStop on 429/401/403."""
+    """Session JSON; NOT_FOUND on a 404; DEAD_ID on a 400 or a 200 without a
+    debate in it; None on another failed fetch. Raises ApiStop on 429/401/403."""
     for attempt in range(2):
         try:
             r = requests.get(_API.format(ext_id), timeout=_TIMEOUT)
@@ -158,6 +186,8 @@ def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | str | None:
             raise ApiStop(f"HTTP {r.status_code} from the Hansard API at {ext_id} (permanent error)")
         if r.status_code == 404:
             return NOT_FOUND
+        if r.status_code == 400:
+            return DEAD_ID
         if r.status_code >= 500 and attempt == 0:
             print(f"[refresh] HTTP {r.status_code}, retrying in 5s", flush=True)
             sleep(5)
@@ -168,7 +198,9 @@ def fetch_session_json(ext_id: str, sleep=time.sleep) -> dict | str | None:
             data = r.json()
         except ValueError:
             return None
-        return data if isinstance(data, dict) and data.get("Overview") else None
+        if not isinstance(data, dict):
+            return None
+        return data if data.get("Overview") else DEAD_ID
     return None
 
 
@@ -214,8 +246,13 @@ def is_legacy(rows: list, fresh: list[dict], data: dict) -> bool:
 
 def checkpoint_service(args) -> str:
     # The arguments as given (a defaulted --until moves daily; resuming by id copes with that).
-    key = json.dumps({"since": args.since, "until": args.until, "house": args.house,
-                      "ext_id": sorted(args.ext_id or []), "limit": args.limit}, sort_keys=True)
+    fields = {"since": args.since, "until": args.until, "house": args.house,
+              "ext_id": sorted(args.ext_id or []), "limit": args.limit}
+    if getattr(args, "accept_shrink", False):
+        fields["accept_shrink"] = True    # only when set: older checkpoints keep their name
+    if getattr(args, "allow_empty", False):
+        fields["allow_empty"] = True
+    key = json.dumps(fields, sort_keys=True)
     return f"refresh-partial-{hashlib.sha1(key.encode()).hexdigest()[:10]}"
 
 
@@ -274,6 +311,39 @@ def create_undo_table(db) -> str:
     return name
 
 
+def drop_tags(db, state: dict, session_id: int, clock=datetime.utcnow) -> int:
+    """Back up then delete a session's tags (after an accepted shrink). Caller commits."""
+    from sqlalchemy import inspect, text
+    conn = db.session.connection()
+    cols = [c["name"] for c in inspect(conn).get_columns("ha_session_theme") if not c.get("computed")]
+    col_list = ", ".join(cols)
+    table = state.get("tag_undo_table")
+    if not table:
+        base = f"ha_session_theme_refresh_bak_{clock().strftime('%Y%m%d_%H%M%S')}"
+        existing = set(inspect(conn).get_table_names())
+        table, n = base, 1
+        while table in existing:
+            n += 1
+            table = f"{base}_{n}"
+        db.session.execute(text(f"CREATE TABLE {table} AS SELECT {col_list} FROM ha_session_theme "
+                                f"WHERE 1 = 0"))
+        state["tag_undo_table"] = table
+        state["tag_undo_cols"] = cols
+        print(f"[refresh] tag undo table: {table}", flush=True)
+    n = db.session.execute(text(f"INSERT INTO {table} ({col_list}) SELECT {col_list} "
+                                f"FROM ha_session_theme WHERE session_id = :s"),
+                           {"s": session_id}).rowcount
+    db.session.execute(text("DELETE FROM ha_session_theme WHERE session_id = :s"), {"s": session_id})
+    return n
+
+
+TAG_UNDO_SQL = """-- 5. Put back the tags removed after accepted shrinks (first remove any the
+--    cron's tagger has written for those sessions since).
+DELETE FROM ha_session_theme WHERE session_id IN (SELECT session_id FROM {tbak});
+INSERT INTO ha_session_theme ({cols}) SELECT {cols} FROM {tbak};
+"""
+
+
 def write_undo(db, table: str, entries: list[dict]) -> None:
     """Append entries to the undo table, numbered after the ones already there."""
     from sqlalchemy import text
@@ -298,6 +368,36 @@ def _with_db_retry(db, fn):
             db.engine.dispose()
             time.sleep(5)
     raise SystemExit("[refresh] DB unavailable — stopping")
+
+
+def lock_for_tags(db, session_id: int) -> None:
+    """The tagger's per-session advisory lock (Postgres), taken BEFORE the row lock."""
+    from sqlalchemy import text
+    if db.session.connection().dialect.name == "postgresql":
+        db.session.execute(text("SELECT pg_advisory_xact_lock(:ns, :s)"),
+                           {"ns": TAG_LOCK_NAMESPACE, "s": session_id})
+
+
+def lock_day(day, house) -> None:
+    from hansard_archive.dedupe import lock_day as _lock_day
+    _lock_day(day, house)
+
+
+def lock_session(session_id: int) -> None:
+    from hansard_archive.refresh import lock_session as _lock
+    _lock(session_id)
+
+
+def shrink_refusal(args, session_id: int, fresh: list[dict], held_state: str) -> str | None:
+    """Why an --accept-shrink must not be applied now (None = go ahead)."""
+    from hansard_archive.dedupe import shrink_safety_now
+    from hansard_archive.refresh import _FIELDS, STATE_EMPTY, stored_rows
+    if held_state == STATE_EMPTY and not args.allow_empty:
+        return ("Hansard has no named contributions: emptying the session needs "
+                "--allow-empty as well")
+    stored = [dict({f: getattr(r, f) for f in _FIELDS}, id=r.id) for r in stored_rows(session_id)]
+    ok, why = shrink_safety_now(session_id, fresh, stored)
+    return None if ok else why
 
 
 def check_cron_window(args, clock=datetime.utcnow) -> None:
@@ -396,8 +496,8 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
             finally:
                 sleep(_DELAY)
             session = _with_db_retry(db, lambda sid=sid: db.session.get(HansardSession, sid))
-            if data is None or data == NOT_FOUND:
-                st = "not_found" if data == NOT_FOUND else "fetch_failed"
+            if data is None or data in (NOT_FOUND, DEAD_ID):
+                st = {NOT_FOUND: "not_found", DEAD_ID: "dead_id"}.get(data, "fetch_failed")
                 counts[st] += 1
                 by_house[(session.house, st)] += 1
                 if st == "fetch_failed":
@@ -415,14 +515,32 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
 
             fresh = _flatten_items(data, [0])
             rows = _with_db_retry(db, lambda sid=sid: stored_rows(sid))
+            refused_why = None
             if is_legacy(rows, fresh, data):
                 st, res = "legacy_rows", None
             else:
+                accept = False
+                if args.accept_shrink:
+                    # Would this be held without the flag? Then re-check it, locked.
+                    held = refresh_session(session, fresh, apply=False).state
+                    if held in (STATE_EMPTY, STATE_SHRANK):
+                        if args.execute:
+                            # Same order as delete_duplicate_debates.py: day, tags, row.
+                            lock_day(session.date, session.house)
+                            lock_for_tags(db, sid)
+                            lock_session(sid)
+                        refused_why = shrink_refusal(args, sid, fresh, held)
+                        accept = refused_why is None
                 # Locks the session row and re-reads its rows when writing.
                 res = refresh_session(session, fresh, apply=args.execute,
-                                      debate_type_label=_official_debate_type_label(data))
+                                      debate_type_label=_official_debate_type_label(data),
+                                      accept_shrink=accept)
                 st = {STATE_CHANGED: "refresh", STATE_EMPTY: "held_empty",
                       STATE_SHRANK: "held_shrank"}.get(res.state, "unchanged")
+                if refused_why:
+                    st = "shrink_refused"
+                    print(f"[refresh] SHRINK REFUSED id={sid} ext_id={ext_id}: {refused_why}",
+                          flush=True)
             counts[st] += 1
             by_house[(session.house, st)] += 1
             if st != "unchanged" and len(listed[st]) < args.list_max:
@@ -437,13 +555,25 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
                                     deleted=res.deleted, types=1 if res.type_change else 0)
                 had_tags = _with_db_retry(db, lambda sid=sid: HansardSessionTheme.query
                                           .filter_by(session_id=sid).first() is not None)
-                if res.needs_retag and had_tags:
+                drop = (args.accept_shrink and had_tags
+                        and res.named_after < DROP_TAGS_BELOW_SHARE * res.named_before)
+                if res.needs_retag and had_tags and not drop:
                     state["retag_ids"].append(sid)
+                if drop:
+                    print(f"[refresh] TAGS {'REMOVED' if args.execute else 'would be removed'} "
+                          f"id={sid} (shrunk to {res.named_after} of {res.named_before} speeches; "
+                          f"the cron's tagger tags it afresh)", flush=True)
                 if args.execute:
                     write_undo(db, state["undo_table"], res.undo)
+                    if drop:
+                        drop_tags(db, state, sid, clock)
                     db.session.commit()
                     print(f"[refresh] REFRESHED id={sid} {session.date} {session.house} "
                           f"{(session.title or '')[:60]!r} — {res.summary()}", flush=True)
+                if args.accept_shrink and res.named_after < res.named_before:
+                    note = "" if args.execute else " (dry run: not written)"
+                    print(f"[refresh] SHRINK ACCEPTED id={sid} ext_id={ext_id} named "
+                          f"{res.named_before} -> {res.named_after}{note}", flush=True)
             db.session.rollback()   # end this session's transaction (no-op after a commit)
             last_done = sid
 
@@ -486,7 +616,10 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
     if state.get("undo_table"):
         print(f"[refresh] undo table: {state['undo_table']}")
         print("[refresh] undo SQL (production SQL is Mark's call):\n"
-              + UNDO_SQL.format(bak=state["undo_table"]))
+              + UNDO_SQL.format(bak=state["undo_table"])
+              + (TAG_UNDO_SQL.format(tbak=state["tag_undo_table"],
+                                     cols=", ".join(state["tag_undo_cols"]))
+                 if state.get("tag_undo_table") else ""))
     if state["retag_ids"]:
         print(f"\n[refresh] {len(state['retag_ids'])} refreshed session(s) already had tags and "
               f"changed materially — re-tag with (dry run first, then add --apply --backup):")
@@ -494,6 +627,10 @@ def run(args, sleep=time.sleep, clock=datetime.utcnow) -> dict:
         for i in range(0, len(ids_), _RETAG_IDS_PER_LINE):
             chunk = ",".join(str(x) for x in ids_[i:i + _RETAG_IDS_PER_LINE])
             print(f"  python scripts/retag.py --what sessions --ids {chunk}")
+    if counts["dead_id"]:
+        print(f"\n[refresh] {counts['dead_id']} session(s) have an id Hansard no longer "
+              f"recognises (replaced by a final id): usually a duplicate copy - see "
+              f"scripts/find_duplicate_debates.py")
     if stopped:
         print(f"\n[refresh] STOPPED: {stopped}")
         if not args.execute:
@@ -515,6 +652,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--after-id", type=int, help="skip sessions with id <= N (continue a dry run)")
     p.add_argument("--list-max", type=int, default=40, help="list at most N sessions per state")
     p.add_argument("--ignore-cron-windows", action="store_true")
+    p.add_argument("--accept-shrink", action="store_true",
+                   help="apply held_shrank results (only with --ext-id, for reviewed sessions; "
+                        "re-checked before writing)")
+    p.add_argument("--allow-empty", action="store_true",
+                   help="with --accept-shrink: also apply held_empty (the session ends up with "
+                        "no named contributions)")
     return p
 
 
@@ -524,6 +667,18 @@ def main(argv=None) -> int:
     if not args.since and not args.ext_id:
         p.print_usage()
         print("refresh_partial_debates.py: give --since (or --ext-id)", file=sys.stderr)
+        return 2
+    if args.allow_empty and not args.accept_shrink:
+        p.print_usage()
+        print("refresh_partial_debates.py: --allow-empty only works with --accept-shrink",
+              file=sys.stderr)
+        return 2
+    if args.accept_shrink and (not args.ext_id or args.since or args.until or args.house
+                               or args.limit or args.after_id):
+        p.print_usage()
+        print("refresh_partial_debates.py: --accept-shrink only works with --ext-id "
+              "(the reviewed sessions), not with a date range or other selection",
+              file=sys.stderr)
         return 2
     try:
         for d in (args.since, args.until):

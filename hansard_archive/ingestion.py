@@ -30,7 +30,13 @@ but their chain links are followed so traversal continues through them.
 All functions are safe to re-run: a session whose ext_id already exists is
 never inserted twice. By default it is skipped; with refresh_existing=True
 (the archive cron) it is brought up to date in place when Hansard's copy has
-changed (hansard_archive/refresh.py).
+changed (hansard_archive/refresh.py). With refresh_existing=True it also
+logs and counts ("swallowed" / "duplicates" in the refresh stats) a session it
+has just stored or refreshed that is an exact copy of another stored session
+that day, or that sits inside a bigger one (Hansard's provisional copy puts
+everything published after the last open heading under that heading for a
+while). It never deletes anything: scripts/find_duplicate_debates.py and
+scripts/delete_duplicate_debates.py do that after review.
 """
 
 import logging
@@ -708,6 +714,8 @@ def _collect_all_sessions_for_date(
         # Store non-procedural sessions; still follow links through procedural ones
         title = (overview.get("Title") or "").strip()
         if title.lower() not in _SKIP_TITLES:
+            # Parent/child links for the duplicate check (_report_copies); key is ours.
+            overview["_ChildExtIds"] = list(child_ext_ids)
             results[ext_id] = (overview, contributions)
 
         # When we encounter a department oral-questions container, record the mapping
@@ -756,11 +764,11 @@ def _write_contributions(session: HansardSession, contributions: list[dict]) -> 
 
 
 def _refresh_existing(session: HansardSession, overview: dict, contributions: list[dict],
-                      stats: dict, verbose: bool) -> None:
+                      stats: dict, verbose: bool) -> bool:
     """
     Bring one stored session up to date with the copy just downloaded. Commits
-    a refresh; rolls back otherwise (releasing the row lock refresh_session
-    takes). Raises on a DB error, for the caller to count.
+    a refresh (returns True); rolls back otherwise (releasing the row lock
+    refresh_session takes). Raises on a DB error, for the caller to count.
     """
     from hansard_archive.refresh import STATE_CHANGED, STATE_UNCHANGED, refresh_session
 
@@ -779,13 +787,50 @@ def _refresh_existing(session: HansardSession, overview: dict, contributions: li
             print(f"[archive]   HOLD {label} — Hansard now has {res.named_after} named "
                   f"contribution(s), we have {res.named_before}: left unchanged ({res.state})",
                   flush=True)
-        return
+        return False
     session_id = session.id
     db.session.commit()
     stats["refreshed"] += 1
     if res.needs_retag:
         stats["retag_ids"].append(session_id)
     print(f"[archive]   REFRESHED {label} — {res.summary()}", flush=True)
+    return True
+
+
+def _report_copies(sitting_date: date, house: str, changed_ids: list[int], stats: dict,
+                   related: list[tuple] = ()) -> None:
+    """
+    Log and count sessions just stored or refreshed that copy, or sit inside,
+    another stored session that day (hansard_archive/dedupe.py). Read-only and
+    never fatal: a failure is logged and the run carries on.
+    """
+    if not changed_ids:
+        return
+    from hansard_archive.dedupe import copies_and_swallows
+    try:
+        found = copies_and_swallows(sitting_date, house, changed_ids, related)
+    except Exception as e:  # noqa: BLE001 - a report must never stop ingestion
+        _log.warning("[archive] duplicate check failed for %s %s: %s", sitting_date, house, e)
+        print(f"[archive]   WARNING duplicate check failed for {sitting_date} {house}: {e}",
+              flush=True)
+        db.session.rollback()
+        return
+    db.session.rollback()   # end the read transaction
+    for kind, inner, outer in found:
+        if kind == "parent":         # a session holding its own child debate: expected, not counted
+            print(f"[archive]   (parent/child) id={outer.id} {outer.title[:50]!r} holds child "
+                  f"id={inner.id} {inner.title[:50]!r}", flush=True)
+        elif kind == "duplicate":
+            stats["duplicates"] += 1
+            print(f"[archive]   DUPLICATE? id={inner.id} {inner.title[:50]!r} ({inner.ext_id}) and "
+                  f"id={outer.id} {outer.title[:50]!r} ({outer.ext_id}) have the same "
+                  f"{inner.named} named contribution(s) — see scripts/find_duplicate_debates.py",
+                  flush=True)
+        else:
+            stats["swallowed"] += 1
+            print(f"[archive]   SWALLOWED? id={outer.id} {outer.title[:50]!r} ({outer.named}) "
+                  f"holds all {inner.named} named contribution(s) of id={inner.id} "
+                  f"{inner.title[:50]!r} — see scripts/find_duplicate_debates.py", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -793,7 +838,8 @@ def _refresh_existing(session: HansardSession, overview: dict, contributions: li
 # ---------------------------------------------------------------------------
 
 def _new_refresh_stats() -> dict:
-    return {"refreshed": 0, "unchanged": 0, "held": 0, "refresh_errors": 0, "retag_ids": []}
+    return {"refreshed": 0, "unchanged": 0, "held": 0, "refresh_errors": 0, "retag_ids": [],
+            "swallowed": 0, "duplicates": 0}
 
 
 def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True,
@@ -845,6 +891,7 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
         print(f"[archive] {sitting_date} — {len(all_sessions)} sessions total", flush=True)
 
     new_sessions = 0
+    changed_ids: list[int] = []   # stored or refreshed this run, for _report_copies
 
     def _safe_rollback() -> None:
         """Rollback; if rollback itself fails (dead connection), dispose the pool."""
@@ -862,7 +909,10 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             if existing:
                 if refresh_existing and not existing.is_container:
                     try:
-                        _refresh_existing(existing, overview, contributions, refresh_stats, verbose)
+                        existing_id = existing.id
+                        if _refresh_existing(existing, overview, contributions, refresh_stats,
+                                             verbose):
+                            changed_ids.append(existing_id)
                     except Exception as e:
                         _safe_rollback()
                         refresh_stats["refresh_errors"] += 1
@@ -937,8 +987,11 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             session.contributions_ingested = True
 
             try:
+                new_id = session.id
                 db.session.commit()
                 new_sessions += 1
+                if not is_container:
+                    changed_ids.append(new_id)
                 if verbose:
                     print(
                         f"[archive]   + {title[:60]!r} — {contrib_count} contributions",
@@ -952,6 +1005,10 @@ def ingest_date(sitting_date: date, house: str = "Commons", verbose: bool = True
             _safe_rollback()
             print(f"[archive]   ERROR processing session {ext_id}: {e}", flush=True)
 
+    if refresh_existing:
+        related = [(ext, child) for ext, (ov, _c) in all_sessions.items()
+                   for child in (ov.get("_ChildExtIds") or [])]
+        _report_copies(sitting_date, house, changed_ids, refresh_stats, related)
     return new_sessions
 
 
@@ -969,8 +1026,8 @@ def ingest_date_range(
     Non-sitting days produce 0 sessions and are skipped cleanly.
 
     Returns a summary dict: {total_days, sitting_days, total_sessions, errors,
-    refreshed, unchanged, held, refresh_errors, retag_ids} (the refresh counts stay 0 unless
-    refresh_existing=True; see ingest_date).
+    refreshed, unchanged, held, refresh_errors, retag_ids, swallowed, duplicates}
+    (the refresh counts stay 0 unless refresh_existing=True; see ingest_date).
     """
     total_sessions = 0
     sitting_days = 0
