@@ -4,7 +4,7 @@
 {% block meta_description %}{{ meta_desc }}{% endblock %}
 {% block og_title %}{{ og_title }}{% endblock %}
 {% block og_description %}{{ meta_desc }}{% endblock %}
-{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_path }}">{% endblock %}
+{% block canonical %}<link rel="canonical" href="https://westminsterbrief.co.uk{{ canonical_link|default(canonical_path) }}">{% endblock %}
 
 {% block json_ld %}
 <script type="application/ld+json">
@@ -55,14 +55,17 @@
         {% endif %}
     </div>
 
+    {% if show %}
+    <p class="ah-source-note"><a href="{{ canonical_path }}">&#8249; Back to {{ heading }} overview</a></p>
+    {% endif %}
+
     {# --- Session list --- #}
     {% if items %}
-    {% if pq_items %}
     <div class="ah-group-header">
-        <span class="ah-group-title">Debates</span>
-        <span class="ah-group-count">{{ total }} session{{ 's' if total != 1 else '' }}</span>
+        <span class="ah-group-title">{% if show %}All debates{% else %}Debates{% endif %}</span>
+        <span class="ah-group-count">{{ total }} session{{ 's' if total != 1 else '' }}{% if not show and total > items|length %} &middot; <a href="{{ canonical_path }}?show=debates">See all {{ total }} debates</a>{% endif %}</span>
     </div>
-    {% endif %}
+    <p class="ah-source-note">Newest first. Sessions covering many subjects (Prime Minister's Questions, topical questions, business questions) come after the debates on this topic.</p>
     <div class="ah-results-list">
         {% for item in items %}
         {% set s = item.session %}
@@ -102,8 +105,8 @@
     {# --- Written questions list --- #}
     {% if pq_items %}
     <div class="ah-group-header">
-        <span class="ah-group-title">Written questions</span>
-        <span class="ah-group-count">{{ pq_total }} question{{ 's' if pq_total != 1 else '' }}</span>
+        <span class="ah-group-title">{% if show %}All written questions{% else %}Written questions{% endif %}</span>
+        <span class="ah-group-count">{{ pq_total }} question{{ 's' if pq_total != 1 else '' }}{% if not show and pq_total > pq_items|length %} &middot; <a href="{{ canonical_path }}?show=questions">See all {{ pq_total }} written questions</a>{% endif %}</span>
     </div>
     <div class="ah-results-list">
         {% for pq in pq_items %}
@@ -134,17 +137,21 @@
     </div>
     {% endif %}
 
-    {# --- Pagination --- #}
+    {% if list_capped %}
+    <p class="ah-source-note">This list shows the newest {{ list_cap }}. For older items, <a href="{{ search_url }}">search the archive</a>.</p>
+    {% endif %}
+
+    {# --- Pagination (one list at a time: ?show=debates / ?show=questions) --- #}
     {% if total_pages > 1 %}
     <nav class="ah-pagination" aria-label="Results pages">
         {% if page > 1 %}
-        <a href="{{ canonical_path }}?page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
+        <a href="{{ canonical_path }}?show={{ show }}&amp;page={{ page - 1 }}" class="ah-page-btn">&#8249; Previous</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">&#8249; Previous</span>
         {% endif %}
         <span class="ah-page-info">Page {{ page }} of {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="{{ canonical_path }}?page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
+        <a href="{{ canonical_path }}?show={{ show }}&amp;page={{ page + 1 }}" class="ah-page-btn">Next &#8250;</a>
         {% else %}
         <span class="ah-page-btn ah-page-disabled">Next &#8250;</span>
         {% endif %}

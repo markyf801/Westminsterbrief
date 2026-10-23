@@ -12,6 +12,7 @@ are the same topic, and which topics sit under a broader one.
         "<parent>": {
             "aliases":  [...],                 # same topic, other spelling -> parent
             "children": {"<child>": [aliases of the child], ...},
+            "exclude":  [...],                 # optional: text naming something else
         },
     }
 
@@ -19,6 +20,16 @@ Write time (tagger): canonical_topic("send provision") -> "special educational n
 Read time (/brief pages, related panels): topic_family_names("special educational
 needs") -> the parent, its children and every alias, so pages also find rows
 stored before canonicalisation existed (e.g. "send", "send funding").
+
+Topic pages also look for a family's spellings inside other tags, debate titles
+and question headings (hansard_archive/topic_match.py). A one-word topic is only
+looked for that way when it has a family here, because one word often has
+another sense ("arms" in "arm's-length bodies", "turkey" the bird): adding a
+family is the decision that the word is safe to search for. "exclude" lists
+text that contains the word but means something else ("CAT scans" on the cats
+page); "upper_case_exclude" words in upper case in a title or heading are an
+acronym for something else ("CAT"). ACRONYMS are the reverse: they must be upper
+case in a title or heading ("SEND", not "send").
 
 Data-driven and extendable: add a family or an alias here, no other code changes.
 Keys and aliases are lowercase, whitespace-collapsed (as stored). Run
@@ -97,7 +108,29 @@ TOPIC_FAMILIES: dict[str, dict] = {
         "aliases": ["triple lock", "state pension triple lock", "the triple lock"],
         "children": {},
     },
+    # One-word topics safe to look for inside titles, headings and other tags.
+    "ukraine": {
+        "aliases": [],
+        "children": {},
+    },
+    "cats": {
+        "aliases": ["cat"],
+        "children": {},
+        "exclude": [
+            "cat scan", "cat scans", "cat scanner", "cat scanners",
+            "centres for advanced training", "music and dance scheme",
+            "cat and mouse", "fat cat", "cat s eyes", "cats eyes", "cat smith",
+            "out of the bag", "competition appeal tribunal",
+        ],
+        # Upper case in a title or heading is an acronym, not the animal:
+        # CAT scans, the Competition Appeal Tribunal (CAT), CATs dance scheme.
+        "upper_case_exclude": ["cat"],
+    },
 }
+
+# Aliases that are acronyms: on topic pages they must be upper case in a debate
+# title or question heading (tags are stored lowercase, so tags match as is).
+ACRONYMS: frozenset[str] = frozenset({"send", "sen", "ehcp", "ehcps", "senco", "sencos", "biot"})
 
 
 def _norm(t: str) -> str:
@@ -157,6 +190,26 @@ def expand_topics(themes) -> list[str]:
         if t:
             out |= topic_family_names(t)
     return sorted(out)
+
+
+def _family_spec(theme: str) -> dict:
+    canon = canonical_topic(theme)
+    root = _PARENT_OF.get(canon, canon)
+    for parent, spec in TOPIC_FAMILIES.items():
+        if _norm(parent) == root:
+            return spec
+    return {}
+
+
+def topic_exclusions(theme: str) -> list[str]:
+    """The "exclude" texts of the family this topic belongs to (empty if none)."""
+    return [_norm(x) for x in _family_spec(theme).get("exclude", [])]
+
+
+def topic_upper_case_exclusions(theme: str) -> list[str]:
+    """Words of this topic's family that, written in upper case in a title or
+    heading, are an acronym for something else ("CAT")."""
+    return [_norm(x) for x in _family_spec(theme).get("upper_case_exclude", [])]
 
 
 def known_canonical_topics() -> list[str]:
