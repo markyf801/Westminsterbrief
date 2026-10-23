@@ -18,7 +18,6 @@ skipped and logged. Progress is printed continuously so you can interrupt
 """
 
 import argparse
-import re
 import sys
 import time
 import os
@@ -26,11 +25,11 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
-from datetime import date, timedelta
+from datetime import date
 
 from flask_app import app, db
 from hansard_archive.models import HansardContribution, HansardSession
-from hansard_archive.ingestion import _clean_html, _flatten_items
+from hansard_archive.ingestion import _flatten_items
 
 HANSARD_API_BASE = "https://hansard-api.parliament.uk"
 _DELAY = 0.4  # seconds between requests
@@ -47,6 +46,11 @@ def _fetch_raw(ext_id: str) -> dict:
         return {}
 
 
+def _speaker_key(member_id, member_name) -> tuple:
+    """Who a row belongs to: member id when known, else the raw attribution."""
+    return (int(member_id), None) if member_id else (None, (member_name or "").strip())
+
+
 def _refresh_session(session: HansardSession, dry_run: bool) -> tuple[int, int]:
     """
     Re-fetch and update speech_text for one session.
@@ -56,6 +60,14 @@ def _refresh_session(session: HansardSession, dry_run: bool) -> tuple[int, int]:
     existing DB has speech_order values that include slots taken by null-name
     structural items (now deleted), while fresh _flatten_items() produces
     contiguous 0-based orders for named contributions only.
+
+    Position is only trusted when the stored speakers line up one-for-one with
+    the fresh speakers. If they don't (a different count, or a different
+    member at any position) the session is left untouched and reported:
+    copying text by position then moves words onto the wrong speaker. That is
+    how Lords sessions ingested before 1 May 2026 (which still had a row for
+    the "Asked by" hs_TabledBy item) ended up with every speech shifted one
+    row. Repair those with scripts/repair_shifted_contributions.py.
     """
     data = _fetch_raw(session.ext_id)
     if not data:
@@ -69,19 +81,24 @@ def _refresh_session(session: HansardSession, dry_run: bool) -> tuple[int, int]:
     existing = (
         db.session.query(HansardContribution)
         .filter_by(session_id=session.id)
-        .order_by(HansardContribution.speech_order)
+        .filter(HansardContribution.member_name.isnot(None))
+        .order_by(HansardContribution.speech_order, HansardContribution.id)
         .all()
     )
 
-    if len(fresh) != len(existing):
-        # Count mismatch — log but still update what we can (positional)
-        pass
+    if [_speaker_key(c.member_id, c.member_name) for c in existing] != [
+        _speaker_key(f["member_id"], f["member_name"]) for f in fresh
+    ]:
+        print(
+            f"\n    MISMATCH {session.ext_id[:24]}… stored {len(existing)} rows vs "
+            f"{len(fresh)} from Hansard, or speakers differ — left unchanged "
+            f"(see scripts/repair_shifted_contributions.py)",
+            end=" ", flush=True,
+        )
+        return 0, len(existing)
 
     updated = skipped = 0
     for i, contrib in enumerate(existing):
-        if i >= len(fresh):
-            skipped += 1
-            continue
         new_text = fresh[i]["speech_text"]
         if contrib.speech_text == new_text:
             skipped += 1
@@ -112,8 +129,8 @@ def main():
             HansardSession.query
             .filter(
                 HansardSession.house == args.house,
-                HansardSession.is_container == False,
-                HansardSession.contributions_ingested == True,
+                HansardSession.is_container.is_(False),
+                HansardSession.contributions_ingested.is_(True),
                 HansardSession.date >= start,
                 HansardSession.date <= end,
             )

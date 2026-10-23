@@ -96,6 +96,22 @@ _NOT_PARTY = frozenset({
 })
 _STRIP_PREFIXES = frozenset({"Mr", "Mrs", "Ms", "Miss", "Dr"})
 
+# Party / Lords group labels that can follow a peer styled "The Earl of X".
+_PARTY_LABELS = frozenset(_PARTY_COLOURS) | {"Bishops"}
+
+# A bracketed group starting with one of these is a peer's name, so the text
+# before it is a job title: "Baroness in Waiting/Government Whip (Baroness
+# Blake of Leeds) (Lab)". "Bishop" needs "of" after it, or the Commons
+# constituency "Bishop Auckland" would be read as a peer's name.
+_PEER_NAME_RE = re.compile(
+    r"^(?:The\s+)?(?:(?:Lord|Baroness|Lady|Viscount|Viscountess|Earl|Countess|Marquess|"
+    r"Marchioness|Duke|Duchess)\s|Bishop\s+of\s)"
+)
+
+
+def _is_party_label(text: str) -> bool:
+    return text in _PARTY_LABELS or text.startswith("Ind")
+
 
 def _parse_attribution(raw: str | None) -> dict:
     """
@@ -103,8 +119,9 @@ def _parse_attribution(raw: str | None) -> dict:
 
     Handles:
       "Name (Constituency) (Party)"  — standard Commons
-      "Name (Party)"                 — standard Lords
+      "Name (Party)"                 — standard Lords, incl. "The Earl of X (Con)"
       "The [Role] (Name)"            — ministerial proxy format
+      "[Role] (Peer name) (Party)"   — Lords minister / whip / Deputy Speaker
       "Name"                         — short reference form
     """
     if not raw:
@@ -113,9 +130,10 @@ def _parse_attribution(raw: str | None) -> dict:
 
     raw = raw.strip()
 
-    # Ministerial proxy: "The Secretary of State for X (Name)"
+    # Ministerial proxy: "The Secretary of State for X (Name)" — but not a peer
+    # styled "The Earl of X (Con)", whose bracket is a party.
     m = re.match(r'^(The\s+[^(]+?)\s*\(([^)]+)\)\s*$', raw)
-    if m:
+    if m and not _is_party_label(m.group(2).strip()):
         role = m.group(1).strip()
         name = m.group(2).strip()
         return {"name": name, "role": role, "party": None,
@@ -124,6 +142,13 @@ def _parse_attribution(raw: str | None) -> dict:
     # Standard: extract parenthetical groups
     groups = re.findall(r'\(([^)]+)\)', raw)
     base = re.sub(r'\s*\([^)]+\)', '', raw).strip()
+
+    # Lords office holder: "Role (Peer name) (Party)"
+    if len(groups) >= 2 and _PEER_NAME_RE.match(groups[0].strip()) and base:
+        candidate = groups[-1].strip()
+        party = candidate if candidate not in _NOT_PARTY else None
+        colour = _PARTY_COLOURS.get(party, _DEFAULT_PARTY_COLOUR) if party else _DEFAULT_PARTY_COLOUR
+        return {"name": groups[0].strip(), "role": base, "party": party, "party_colour": colour}
 
     # Strip leading salutation (Mr/Mrs etc — not Lord/Baroness which are titles)
     parts = base.split(None, 1)
