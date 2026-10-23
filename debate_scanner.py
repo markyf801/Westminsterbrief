@@ -916,6 +916,30 @@ def _get_minister_list_live():
     return data
 
 
+def flag_minister_rows(rows):
+    """Set is_minister / minister_role on speech rows from the post each speaker
+    held on the speech date (ministers.post_on_date: our member_profile history
+    plus gov_minister), never their current post projected back.
+
+    A speaker with no dated record in our DB (no member id, or no stored
+    Biography) is flagged from the current minister list as before, but gets a
+    title only when gov_minister shows their current post had begun by then.
+    """
+    from ministers import post_histories, post_on_date
+    by_norm = get_minister_list().get('by_norm', {})
+    histories = post_histories({r.get('member_id') for r in rows if r.get('member_id')})
+    for row in rows:
+        member_id = row.get('member_id')
+        role = post_on_date(member_id, row.get('hdate'), row.get('dept') or None,
+                            histories=histories) if member_id else None
+        if member_id and int(member_id) in histories:
+            row['is_minister'] = bool(role)
+        else:
+            norm_spk = _normalise_name(row.get('speaker_name', ''))
+            row['is_minister'] = bool(role or (norm_spk and by_norm.get(norm_spk)))
+        row['minister_role'] = role or ''
+
+
 def verify_government_speaker(name):
     """Confirm a speaker holds a current government post.
     Returns dict with confirmed (bool) and role (str).
@@ -2267,14 +2291,7 @@ def debates_topic():
             # No fetch_all_debate_sessions() needed — DB fetch already returns full sessions
 
             # Flag ministerial speakers and sort them to the top
-            minister_data = get_minister_list()
-            by_norm = minister_data.get('by_norm', {})
-            for row in topic_rows:
-                spk = row.get('speaker_name', '')
-                norm_spk = _normalise_name(spk)
-                role = by_norm.get(norm_spk) if norm_spk else None
-                row['is_minister'] = bool(role)
-                row['minister_role'] = role or ''
+            flag_minister_rows(topic_rows)
 
             if not topic_rows:
                 error_message = f"No parliamentary contributions found for '{topic}'. Try a broader search term or wider date range."
@@ -3136,14 +3153,8 @@ def stakeholder_search():
                         and (not end_date or r.get('hdate', '') <= end_date)]
 
     # Flag ministers in Hansard results
-    minister_data = get_minister_list()
-    by_norm = minister_data.get('by_norm', {})
+    flag_minister_rows(hansard_rows)
     for row in hansard_rows:
-        spk = row.get('speaker_name', '')
-        norm_spk = _normalise_name(spk)
-        role = by_norm.get(norm_spk) if norm_spk else None
-        row['is_minister'] = bool(role)
-        row['minister_role'] = role or ''
         row['body_clean'] = clean_body_text(row.get('body', ''))
 
     # AI briefing
@@ -3692,7 +3703,7 @@ def download_research_brief():
                     spk_run = spk_p.add_run(r.get('speaker_name', ''))
                     spk_run.bold = True
                     if r.get('is_minister'):
-                        role_run = spk_p.add_run(f"  —  {r.get('minister_role', 'Minister')}")
+                        role_run = spk_p.add_run(f"  —  {r.get('minister_role') or 'Minister'}")
                         role_run.font.size = Pt(9)
                         _set_run_colour(role_run, '1C3E6E')
                     elif r.get('speaker_party'):

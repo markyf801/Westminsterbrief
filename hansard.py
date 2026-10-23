@@ -358,12 +358,13 @@ def _pq_result(pq) -> dict:
     house = pq.chamber or actual_house
 
     answering_role = None
+    answering_name = pq.answering_member or ''
     if pq.answering_mnis_id:
-        ans_cached = CachedMember.get(pq.answering_mnis_id)
-        if ans_cached:
-            from ministers import pq_answering_role
-            answering_role = pq_answering_role(pq.answering_mnis_id, pq.answering_body,
-                                               pq.answer_date, fallback=ans_cached.ministerial_role)
+        from ministers import pq_answering_role
+        answering_role = pq_answering_role(pq.answering_mnis_id, pq.answering_body, pq.answer_date)
+        if not answering_name:
+            ans_cached = CachedMember.get(pq.answering_mnis_id)
+            answering_name = (ans_cached.name or '') if ans_cached else ''
 
     return {
         'uin':                    pq.uin,
@@ -380,7 +381,7 @@ def _pq_result(pq) -> dict:
         'is_holding':             pq.is_holding,
         'is_withdrawn':           pq.is_withdrawn,
         'answer_text':            pq.answer_text or '',
-        'answering_minister':     pq.answering_member or '',
+        'answering_minister':     answering_name,
         'answering_minister_role': answering_role or '',
         'date_answered':          date_answered,
     }

@@ -918,7 +918,7 @@
                 <div class="debate-speech {% if r.is_minister %}debate-speech-minister{% endif %}" style="margin-bottom:10px;">
                     <div class="debate-speech-content">
                         <span class="debate-speech-name">{{ r.speaker_name }}</span>
-                        {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role }}</span>
+                        {% if r.is_minister %}<span class="debate-speech-role">{{ r.minister_role or 'Minister' }}</span>
                         {% elif r.speaker_party %}<span class="topic-party-badge">{{ r.speaker_party }}</span>{% endif %}
                         <span style="font-size:11.5px; color:#888; margin-left:6px;">{{ r.hdate }}</span>
                         {% if r.listurl %}&nbsp;<a href="{{ r.listurl | debate_url }}" target="_blank" style="font-size:11px; color:#005a8f;">↗ Hansard</a>{% endif %}

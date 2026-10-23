@@ -428,9 +428,9 @@ class TestPqAnsweringRole:
             1234, "Department for Environment, Food & Rural Affairs", date(2026, 8, 1)) == \
             "Secretary of State for Environment, Food and Rural Affairs"
 
-    def test_empty_table_returns_fallback(self, app):
-        assert ministers.pq_answering_role(5305, "Department for Education", None,
-                                           fallback="Old role") == "Old role"
+    def test_empty_tables_give_no_title(self, app):
+        # No stale fallback (cached_member.ministerial_role): no record, no title
+        assert ministers.pq_answering_role(5305, "Department for Education", date(2026, 1, 5)) is None
 
     def test_table_status(self, stored):
         s = ministers.table_status()

@@ -287,7 +287,9 @@ def member_header(member_id) -> dict:
             "is_lord": house == "Lords",
             "house": house,
             "constituency": cached.constituency or "",
-            "current_role": cached.ministerial_role or "",
+            # cached_member.ministerial_role was a one-off snapshot that is never
+            # refreshed, so it goes stale after a reshuffle: show no role instead.
+            "current_role": "",
             "is_current": True,
             "last_updated": _iso(cached.cached_at),
             "profile_url": profile_path(cached.member_id,

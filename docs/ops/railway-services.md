@@ -245,7 +245,12 @@ Order:
 Feeds `gov_minister`, which the Research Tool's department/minister pickers,
 its minister flags and the PQ pages' answering-minister roles read (via
 `ministers.py`) instead of the old `minister_cache.json` (ephemeral disk,
-refetched from GOV.UK after every deploy). About 30 polite requests: Parliament
+refetched from GOV.UK after every deploy). Titles next to an answer or speech
+are the post held on that date: `ministers.post_on_date()` reads the dated
+post history in `member_profile.government_posts` (weekly
+`member-profile-refresh`) plus `gov_minister` (daily, so a new appointment
+shows before the weekly history catches up). With neither, no title is shown;
+`cached_member.ministerial_role` is no longer read. About 30 polite requests: Parliament
 Members API government posts per department (member ids, post names, start
 dates) merged with GOV.UK's ministers page (portfolio titles, and anyone
 Parliament is missing). Any failed request, or a result that is implausibly
