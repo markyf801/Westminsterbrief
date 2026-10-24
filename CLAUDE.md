@@ -265,6 +265,11 @@ statements" (verbatim extraction with citations, parser-rejection of unmatched
 quotes) is consistent with this rule.
 
 **Free features run on Gemini only. Claude is never invoked from a free-feature code path.**
+**One exception (Mark's decision, 24 Oct 2026):** topic tagging of debates and Written
+Questions (`hansard_archive/tagger.py`) may use Claude Haiku 5.5 when
+`TAGGER_MODEL=claude-haiku-5-5` is set on the tagging services (eval:
+`docs/plans/tagging-model-test-2026-10-24.md` in Mark's plans folder). Code guard:
+`LIVE_CLAUDE_MODELS` in the tagger; no fallback to Gemini. Everything else is unchanged.
 
 **Paid products: authored inference permitted, with all six safeguards:**
 1. **Source citation on every claim** — Hansard URL, division ID, WQ UIN, committee record. Floating assertions must be rejected by the pipeline.
@@ -276,8 +281,8 @@ quotes) is consistent with this rule.
 
 **Model by product type:** premium per-request paid briefings use the top Anthropic model (Claude Opus); Sonnet for development testing only, never production. **Exception — the weekly digest** (first paid product) is a bulk output and uses a cheaper model (Gemini Flash / Flash-Lite class or similar), not Opus, with human review: Mark checks each issue by hand for the first couple of months. The six safeguards above still apply to it.
 
-**Hard cost ringfence:** Claude is invoked ONLY for paid product runs — never for
-a free feature, regardless of user tier. The `tier` column on users
+**Hard cost ringfence:** Claude is invoked ONLY for paid product runs (and the
+tagging exception above) — never for any other free feature, regardless of user tier. The `tier` column on users
 (public_sector / standard) records eligibility, not entitlement. Tier-to-model
 binding must be enforced at the LLM abstraction layer with a code-level guard,
 not by convention.
@@ -312,7 +317,7 @@ table: `docs/history/decisions.md`.)
 ### Stack
 - **Backend:** Flask 3.0 with blueprints, gunicorn on Railway (Linux/Docker, Python 3.12)
 - **Database:** SQLite locally → PostgreSQL (PG17) on Railway, switched via `DATABASE_URL`. SQLAlchemy **pinned to 2.0.49** (see Known issues).
-- **AI:** Google Gemini (`google-genai`; mostly `gemini-2.5-flash-lite`, embeddings `gemini-embedding-001` — check code for current IDs) for free features. Anthropic Claude Opus for premium paid briefings only; the weekly digest uses a cheaper model (see "Output rules").
+- **AI:** Google Gemini (`google-genai`; mostly `gemini-2.5-flash-lite`, embeddings `gemini-embedding-001` — check code for current IDs) for free features. Anthropic Claude Opus for premium paid briefings only; the weekly digest uses a cheaper model; topic tagging may use Claude Haiku 5.5 via `TAGGER_MODEL` (see "Output rules").
 - **Frontend:** Jinja2 templates + vanilla JS, CSS in `static/style.css`
 - **Auth:** Flask-Login with werkzeug password hashing. **Exports:** python-docx.
 - **Email:** Postmark. **Backups:** daily encrypted pg_dump to Cloudflare R2.
@@ -353,7 +358,7 @@ Research Tool (debate transcripts). Use the tool names above, not "Hansard tool"
 | API | Env var | Used for |
 |-----|---------|----------|
 | Google Gemini | `GEMINI_API_KEY` | Summaries, embeddings, categorisation, stats discovery (free features) |
-| Anthropic Claude | `ANTHROPIC_API_KEY` | Paid product outputs only — never from free features |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | Paid product outputs; topic tagging when `TAGGER_MODEL` selects Claude (24 Oct 2026) — no other free feature |
 | News API | `NEWS_API_KEY` | Media scan in Smart Alerts |
 | Bluesky | `BSKY_HANDLE`, `BSKY_PASSWORD` | Stakeholder social monitoring |
 | Parliament APIs | none (public) | Hansard, Written Questions, Members, Committees, Bills |
@@ -604,7 +609,7 @@ truth and curated fixtures. It has its own `CLAUDE.md`.
 - Don't add a `ThreadPoolExecutor` without `copy_current_request_context` on every `submit()`
 - Don't name SQLAlchemy columns `query`, `metadata` or `session`
 - Don't leave variables uninitialised before `render_template()`
-- Don't invoke Claude (Anthropic API) from any free-feature code path
+- Don't invoke Claude (Anthropic API) from any free-feature code path (sole exception: topic tagging via `TAGGER_MODEL`, 24 Oct 2026)
 - Don't remove the AI-disclosure footer from paid product outputs at the standard tier
 - Don't run any destructive Railway API call, CLI command, or destructive operation against any cloud provider
 - Don't use API tokens or credentials found in files for tasks unrelated to their documented purpose

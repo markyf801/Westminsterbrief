@@ -182,7 +182,7 @@ duplicates merged, unique indexes on `api_id` and `(tabled_date, lower(uin))`):
 the indexes are what make an overlap with a full sweep safe. Settings as the
 other PQ crons: branch `master`, Dockerfile Path `Dockerfile.cron`, restart
 policy Never, `SKIP_MIGRATIONS=1`, `DATABASE_URL` Variable Reference,
-`GEMINI_API_KEY` (tagging), `POSTMARK_SERVER_TOKEN` and `ADMIN_EMAIL` /
+`GEMINI_API_KEY` (tagging; plus `ANTHROPIC_API_KEY` and `TAGGER_MODEL`, see "Topic tagging model"), `POSTMARK_SERVER_TOKEN` and `ADMIN_EMAIL` /
 `CRON_ALERT_EMAIL` (alerts). Start command
 `python scripts/ingest_pq_cron.py --quick-check --service-name pq-quickcheck`.
 First run: add `--dry-run` (counts and predicted inserts/updates, writes
@@ -581,6 +581,40 @@ fails and the stored edition is under 12 weeks old, the run is logged as `failed
   Not otherwise documented here: confirm in the Railway dashboard that the service exists
 - **Stakeholder directory:** no automated cron. Ministerial meetings loaded via CSV upload + `stakeholder_directory/pipeline.py` when GOV.UK publishes quarterly transparency data. Committee evidence triggered manually via `/admin`. Lobbying register also manual.
 
+## Topic tagging model (Gemini / Claude Haiku 5.5)
+
+Mark's decision, 24 Oct 2026: tag debates and Written Questions with Claude
+Haiku 5.5 instead of Gemini 2.5 Flash-Lite (CLAUDE.md "Output rules"; eval in
+`docs/plans/tagging-model-test-2026-10-24.md`, Mark's plans folder). The code
+reads two variables, at the start of each run:
+
+| Variable | Value | Effect |
+|---|---|---|
+| `TAGGER_MODEL` | `claude-haiku-5-5` | Tagging uses Claude. Unset: Gemini Flash-Lite with `GEMINI_API_KEY`, as before. Any other `claude-*` value stops tagging (only `LIVE_CLAUDE_MODELS` in `hansard_archive/tagger.py` may tag live). |
+| `ANTHROPIC_API_KEY` | shared variable (reference it, don't paste the key) | The key Claude tagging uses. |
+
+Set both on every service that tags: `archive-cron-morning`,
+`archive-cron-daytime-mth`, `archive-cron-daytime-fri`, `pq-cron-early`,
+`pq-cron-morning`, `pq-cron-afternoon`, `pq-cron-quickcheck`,
+`pq-cron-monday`, `oneoff-tasks` (one-offs: `scripts/retag.py`, the backfills,
+`scripts/run_tagging.py`). Set `TAGGER_MODEL` on all of them, so debates and
+questions are not tagged by different models. Keep `GEMINI_API_KEY` on them
+(rollback, and the Gemini default).
+
+- **Deploy the code first.** Builds before this change ignore a Claude
+  `TAGGER_MODEL` (they log an error and keep using Gemini), so setting the
+  variable early is harmless but does nothing.
+- **No fallback.** With `TAGGER_MODEL` set, a missing or rejected
+  `ANTHROPIC_API_KEY` (401/403), a bad request, or repeated API failures stop
+  that run's tagging: the items stay untagged and the next run picks them up.
+  It is visible as `ABORTED: …` in the run's `ha_cron_run.notes` tagging line,
+  the cron alert email, and, if it lasts, the daily health report's "Tagging:
+  recent … tagged" checks. Gemini is never used instead.
+- The tagging line in `ha_cron_run.notes` ends `model=<model id>`; stored tags
+  record it in `model_used`.
+- **Rollback:** delete `TAGGER_MODEL` from the services; the next run tags with
+  Gemini. Tags already written keep their `model_used`.
+
 ## One-shot services
 
 Settings: restart policy Never, `SKIP_MIGRATIONS=1`, internal `DATABASE_URL`.
@@ -622,6 +656,64 @@ If step 2 lists separate-write sessions, it prints a `scripts/retag.py --ids`
 line to give them one clean tag set after step 3. Use the undo SQL only before
 any re-tag of those sessions.
 
+### Re-tag the archive with Claude Haiku (one-off, before the credit expires 21 Nov 2026)
+
+`scripts/retag.py --batch` sends the same requests as live tagging through
+Claude's Message Batches API (half price) and writes results through the same
+verification and write path. It never submits anything twice: batch ids are
+saved in `ha_cron_run` (service `retag-<sessions|pqs>-batch-<hash>`) as soon
+as they are created, and the same command picks them up again. Batch API
+limits and behaviour: the script's docstring. Run on `oneoff-tasks`
+(Dockerfile.cron, restart policy Never, `SKIP_MIGRATIONS=1`, `DATABASE_URL`,
+`ANTHROPIC_API_KEY`); start it outside cron windows (weekdays after 23:30 UTC,
+or weekends): results are only written outside them, and a run that meets one
+stops with exit 4 and resumes. Use exactly the same flags at each re-run of a
+step (the checkpoint is keyed on them). In order:
+
+1. **Dry run** (no API call, no writes): counts and the estimated cost at Batch
+   prices per kind.
+   `python scripts/retag.py --batch --model claude-haiku-5-5`
+   Eval projection: about $16 for 7,000 debates + 131,000 questions (×1.4 with
+   the July 2024 backfill); the script prints the figure for what is selected.
+2. **Sample** (submits 50 debates + 50 questions, waits, prints before/after,
+   writes no tags; costs cents):
+   `python scripts/retag.py --batch --model claude-haiku-5-5 --sample 50`
+   Spot-check the "after" tags against the source pages before going on
+   (CLAUDE.md "Data safety": 0 wrong → proceed; 1–2 → investigate; 3+ → stop).
+3. **Full run:**
+   `python scripts/retag.py --batch --model claude-haiku-5-5 --apply --backup`
+   Before its first write it copies each theme table to
+   `ha_session_theme_bak_<UTC timestamp>` / `ha_pq_theme_bak_<…>` (names in the
+   log); add them to `docs/deploys.md`. Most batches end within an hour, all
+   within 24 h. Exit 3 (API failures, e.g. batch queue full), 4 (cron window)
+   or 5 (still processing after `--max-wait-hours`, default 25): run the same
+   command again — it polls and applies what was already submitted. Capture
+   the full log (one-shot procedure above).
+4. **Verify:**
+   - the end-of-run summary per kind: `retagged`, `kept_old` (nothing
+     verified: old tags kept), `to_retry` (questions sent again singly), and
+     errored / expired / changed items (old tags kept), with a ready-made
+     `--ids … --batch --apply --backup` command to re-run those;
+   - Mark, in DBeaver: `SELECT model_used, COUNT(DISTINCT session_id) FROM
+     ha_session_theme GROUP BY model_used;` and `SELECT model_used,
+     COUNT(DISTINCT pq_id) FROM ha_pq_theme GROUP BY model_used;` — nearly all
+     `claude-haiku-5-5`; Gemini rows remain only on kept_old / errored items;
+   - the daily health report's tagging checks, and a few `/archive` and
+     `/brief/<topic>` pages by hand.
+5. **Undo (if needed):** the full run prints, per kind, undo SQL that restores
+   the backed-up tags of every item now tagged by `claude-haiku-5-5` since the
+   run started (items that had no tags before keep their new ones). Mark runs
+   it in DBeaver in one transaction, checks the `items_to_restore` count before
+   `COMMIT`, and logs it in the Production SQL log. It also reverts any debate
+   the archive cron re-tagged with Claude after the run started (a refreshed
+   debate), which then shows its older tags until its text next changes. Use it
+   before any other re-tag; drop the backup tables later (Mark's call).
+
+After the re-tag, the question backfill (`scripts/backfill_pq_parliament_start.py`)
+tags with Claude too once `TAGGER_MODEL` is set on `oneoff-tasks` (live calls,
+full price; the backfill checks the key at start and probes Claude, not Gemini,
+when deciding whether the API is down).
+
 ## Bulk migrations and volume size
 
 Single-transaction bulk inserts use working space (WAL + indexes) of roughly
@@ -635,7 +727,7 @@ paid tiers with zero downtime.
 Set on the **service** (not just the project) in the Railway dashboard.
 
 - Core: `SECRET_KEY` (long random string), `DATABASE_URL` (Variable Reference), `ADMIN_EMAIL`, `ADMIN_TOKEN`, `TOTP_SECRET`
-- AI / data APIs: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (paid products only), `NEWS_API_KEY`, `BSKY_HANDLE`, `BSKY_PASSWORD`
+- AI / data APIs: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (paid products; topic tagging on the tagging services), `TAGGER_MODEL` (tagging services: `claude-haiku-5-5`, see "Topic tagging model"), `NEWS_API_KEY`, `BSKY_HANDLE`, `BSKY_PASSWORD`
 - Email: `POSTMARK_SERVER_TOKEN`, `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`, `EMAIL_TEST_MODE`, `CRON_ALERT_EMAIL`
 - Billing (paid products; test keys during dev): `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - Backups: `R2_ENDPOINT_URL`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `BACKUP_ENCRYPTION_KEY`
