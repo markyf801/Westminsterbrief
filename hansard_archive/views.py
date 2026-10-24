@@ -60,6 +60,7 @@ from hansard_archive.models import (
     THEME_TYPE_POLICY_AREA,
     THEME_TYPE_SPECIFIC,
     UpcomingRelease,
+    pq_indexable,
     pq_url_path,
 )
 from hansard_archive import policy_areas as _pa
@@ -3175,6 +3176,8 @@ def pq_detail(tabled: str, uin: str):
         ),
         canonical_path  = pq.url_path,
         same_uin        = same_uin,
+        # Older questions stay on the site but out of search engines (PQ_INDEX_FROM).
+        robots_meta     = "index, follow" if pq_indexable(pq.tabled_date) else "noindex, follow",
     )
 
 

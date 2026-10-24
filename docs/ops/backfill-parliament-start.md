@@ -8,6 +8,11 @@ the current Parliament (Tue 9 July 2024):
 - `scripts/backfill_pq_parliament_start.py` — Written Questions (9 Jul 2024 →
   5 May 2025). Insert-only: a stored question is never changed.
 
+Backfilled written questions (tabled before May 2025) are shown to users but
+kept out of Google: `noindex` and not in the PQ sitemaps, until `PQ_INDEX_FROM`
+is changed (`railway-services.md` → "Older written questions kept out of
+Google"). The debates are indexed as normal.
+
 Items the tagger cannot tag never block a run: they are counted (in the
 checkpoint, and in `ha_tag_attempt` by the tagger) and skipped after a few
 attempts; items the crons already gave up on are skipped too. Only a Gemini

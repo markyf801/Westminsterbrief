@@ -23,8 +23,9 @@ def fa():
 
 
 @pytest.fixture
-def client(fa):
+def client(fa, monkeypatch):
     from extensions import db
+    monkeypatch.delenv("PQ_INDEX_FROM", raising=False)   # the default cutoff unless a test sets it
     from hansard_archive.models import HaPQ, HaPQTheme
 
     def _clear():
@@ -174,7 +175,8 @@ def test_single_question_page_has_no_same_number_list(client):
 
 # ── sitemap ───────────────────────────────────────────────────────────────────
 
-def test_sitemap_one_chunk_per_month_with_dated_urls(client):
+def test_sitemap_one_chunk_per_month_with_dated_urls(client, monkeypatch):
+    monkeypatch.setenv("PQ_INDEX_FROM", "none")          # 2024 question included (no cutoff)
     # updated_at is ignored: bulk scripts stamp it on unchanged rows
     _add("6978", date(2026, 6, 4), "Rail", is_answered=True, answer_date=date(2026, 6, 9),
          updated_at=datetime(2026, 10, 20, 8, 0))
@@ -215,6 +217,75 @@ def test_sitemap_month_with_no_questions_is_404(client):
     _add("6978", date(2026, 6, 4), "Rail")
     assert client.get("/sitemap-pqs-2026-06.xml").status_code == 200
     assert client.get("/sitemap-pqs-2026-05.xml").status_code == 404
+
+
+# ── older questions kept out of search engines (PQ_INDEX_FROM) ────────────────
+
+def _robots(html):
+    return re.findall(r'<meta name="robots" content="(.*?)">', html)
+
+
+def test_question_before_cutoff_is_noindex_with_dated_canonical(client):
+    _add("6978", date(2025, 4, 30), "Bus fares")
+    _add("7001", date(2025, 5, 1), "Rail fares")
+    old = client.get("/archive/pq/2025-04-30/6978")
+    assert old.status_code == 200
+    html = old.get_data(as_text=True)
+    assert _robots(html) == ["noindex, follow"]                          # one tag, from base.html
+    assert ('<link rel="canonical" href="https://westminsterbrief.co.uk/archive/pq/2025-04-30/6978">'
+            in html)
+    assert "Bus fares" in html                                            # still shown to users
+    assert _robots(client.get("/archive/pq/2025-05-01/7001").get_data(as_text=True)) == ["index, follow"]
+
+
+@pytest.mark.parametrize("value", ["none", "None", "", "  "])
+def test_variable_can_lift_the_cutoff(client, monkeypatch, value):
+    monkeypatch.setenv("PQ_INDEX_FROM", value)
+    _add("6978", date(2024, 9, 10), "Bus fares")
+    assert _robots(client.get("/archive/pq/2024-09-10/6978").get_data(as_text=True)) == ["index, follow"]
+
+
+def test_variable_moves_the_cutoff_and_bad_values_use_the_default(client, monkeypatch, caplog):
+    from hansard_archive.models import PQ_INDEX_FROM_DEFAULT, pq_index_from
+    _add("6978", date(2025, 6, 10), "Bus fares")
+    monkeypatch.setenv("PQ_INDEX_FROM", "2025-07-01")
+    assert _robots(client.get("/archive/pq/2025-06-10/6978").get_data(as_text=True)) == ["noindex, follow"]
+    for bad in ("01/05/2025", "2025-13-01", "20250501", "yes"):
+        monkeypatch.setenv("PQ_INDEX_FROM", bad)
+        with caplog.at_level("WARNING"):
+            assert pq_index_from() == PQ_INDEX_FROM_DEFAULT
+    assert "PQ_INDEX_FROM" in caplog.text
+    assert _robots(client.get("/archive/pq/2025-06-10/6978").get_data(as_text=True)) == ["index, follow"]
+
+
+def test_sitemap_leaves_out_questions_before_the_cutoff(fa, client):
+    _add("6978", date(2025, 4, 30), "Bus fares")
+    _add("7001", date(2025, 5, 1), "Rail fares")
+    index = client.get("/sitemap.xml").get_data(as_text=True)
+    assert "sitemap-pqs-2025-05.xml" in index
+    assert "sitemap-pqs-2025-04.xml" not in index                         # nothing indexable that month
+    may = client.get("/sitemap-pqs-2025-05.xml").get_data(as_text=True)
+    assert re.findall(r"<loc>(.*?)</loc>", may) == [
+        "https://westminsterbrief.co.uk/archive/pq/2025-05-01/7001"]
+    fa._sitemap_pq_month_summary["ts"] -= 61                              # the one rebuild is allowed
+    assert client.get("/sitemap-pqs-2025-04.xml").status_code == 404     # and it still isn't listed
+
+
+def test_sitemap_cutoff_mid_month_and_change_of_cutoff(fa, client, monkeypatch):
+    _add("6978", date(2025, 5, 10), "Bus fares")
+    _add("7001", date(2025, 5, 20), "Rail fares")
+    monkeypatch.setenv("PQ_INDEX_FROM", "2025-05-15")
+    may = client.get("/sitemap-pqs-2025-05.xml").get_data(as_text=True)
+    assert re.findall(r"<loc>(.*?)</loc>", may) == [
+        "https://westminsterbrief.co.uk/archive/pq/2025-05-20/7001"]
+    assert list(fa._sitemap_pq_months()) == ["2025-05"]
+    # Lifting the cutoff takes effect at once for the month list and chunks,
+    # although both are cached (the cache keys on the cutoff).
+    monkeypatch.setenv("PQ_INDEX_FROM", "none")
+    may = client.get("/sitemap-pqs-2025-05.xml").get_data(as_text=True)
+    assert len(re.findall(r"<loc>(.*?)</loc>", may)) == 2
+    monkeypatch.setenv("PQ_INDEX_FROM", "2025-06-01")
+    assert fa._sitemap_pq_months() == {}
 
 
 # ── links elsewhere ───────────────────────────────────────────────────────────

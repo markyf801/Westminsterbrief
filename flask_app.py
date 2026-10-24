@@ -964,8 +964,10 @@ def robots():
     return app.send_static_file('robots.txt')
 
 _sitemap_core_cache:  dict = {'xml': None, 'ts': 0.0}
-_sitemap_pqs_month_caches: dict = {}  # 'YYYY-MM' -> {'xml', 'ts'}; one chunk per tabled month
-_sitemap_pq_month_summary: dict = {'data': None, 'ts': 0.0}  # {'YYYY-MM': lastmod}
+# PQ caches carry the PQ_INDEX_FROM cutoff they were built with, so a change
+# of cutoff rebuilds them on the next request (the index follows within its hour).
+_sitemap_pqs_month_caches: dict = {}  # ('YYYY-MM', cutoff) -> {'xml', 'ts'}; one chunk per tabled month
+_sitemap_pq_month_summary: dict = {'data': None, 'ts': 0.0, 'cutoff': None}  # {'YYYY-MM': lastmod}
 _sitemap_index_cache: dict = {'xml': None, 'ts': 0.0}
 _sitemap_edms_cache:  dict = {'xml': None, 'ts': 0.0}
 _sitemap_consultations_cache: dict = {'xml': None, 'ts': 0.0}
@@ -1115,43 +1117,52 @@ def _pq_lastmod(*days):
 
 
 def _sitemap_pq_months(refresh: bool = False) -> dict:
-    """{'YYYY-MM': lastmod} for every month with a stored written question,
-    newest first. One GROUP BY over ha_pq, cached for an hour like the index.
+    """{'YYYY-MM': lastmod} for every month with a stored written question
+    tabled on or after the PQ_INDEX_FROM cutoff, newest first (so months
+    wholly before it aren't listed). One GROUP BY over ha_pq, cached for an
+    hour like the index, or until the cutoff changes.
     refresh=True rebuilds early (a chunk asked for a month not in the list,
     e.g. on the 1st), at most once a minute so unknown months can't force a
     rebuild on every request."""
     import time as _t
     from sqlalchemy import func as sqlfunc
-    from hansard_archive.models import HaPQ
+    from hansard_archive.models import HaPQ, pq_index_from
     cache = _sitemap_pq_month_summary
+    cutoff = pq_index_from()
     age = _t.time() - cache['ts']
-    if cache['data'] is not None and age < _SITEMAP_TTL and not (refresh and age >= 60):
+    if (cache['data'] is not None and cache['cutoff'] == cutoff and age < _SITEMAP_TTL
+            and not (refresh and age >= 60)):
         return cache['data']
-    months: dict = {}
-    for tabled, answered, corrected in (
-            db.session.query(HaPQ.tabled_date, sqlfunc.max(HaPQ.answer_date),
+    query = db.session.query(HaPQ.tabled_date, sqlfunc.max(HaPQ.answer_date),
                              sqlfunc.max(HaPQ.answer_corrected_date))
-            .group_by(HaPQ.tabled_date).all()):
+    if cutoff:
+        query = query.filter(HaPQ.tabled_date >= cutoff)
+    months: dict = {}
+    for tabled, answered, corrected in query.group_by(HaPQ.tabled_date).all():
         if not tabled:
             continue
         key = f"{tabled.year:04d}-{tabled.month:02d}"
         last = _pq_lastmod(tabled, answered, corrected)
         months[key] = max(months.get(key, last), last)
     data = dict(sorted(months.items(), reverse=True))
-    cache.update(data=data, ts=_t.time())
+    cache.update(data=data, ts=_t.time(), cutoff=cutoff)
     return data
 
 
-def _build_sitemap_pqs_xml(month: str) -> str:
+def _build_sitemap_pqs_xml(month: str, cutoff=None) -> str:
     """Written questions tabled in one month ('YYYY-MM'), at their dated
-    addresses. One chunk per month: no overall cap, and a question stays in
-    the same chunk. lastmod = the latest of tabled, answered and corrected."""
+    addresses, leaving out any tabled before cutoff (PQ_INDEX_FROM; those
+    pages are noindex). One chunk per month: no overall cap, and a question
+    stays in the same chunk. lastmod = the latest of tabled, answered and
+    corrected."""
     from datetime import date as _date
     from hansard_archive.models import HaPQ, pq_url_path
     BASE = "https://westminsterbrief.co.uk"
     year, mon = int(month[:4]), int(month[5:])
     start = _date(year, mon, 1)
     end = _date(year + mon // 12, mon % 12 + 1, 1)
+    if cutoff:
+        start = max(start, cutoff)
     rows = (db.session.query(HaPQ.uin, HaPQ.tabled_date, HaPQ.answer_date,
                              HaPQ.answer_corrected_date)
             .filter(HaPQ.tabled_date >= start, HaPQ.tabled_date < end)
@@ -1249,10 +1260,12 @@ def sitemap_pqs_month(month: str):
         print(f'[SITEMAP] PQ month list error: {exc}', flush=True)
         db.session.rollback()
         known = True
-    if not known:              # a month with no stored questions
+    if not known:              # a month with no stored questions on/after the cutoff
         abort(404)
-    cache = _sitemap_pqs_month_caches.setdefault(month, {'xml': None, 'ts': 0.0})
-    return _serve_xml(cache, lambda: _build_sitemap_pqs_xml(month),
+    from hansard_archive.models import pq_index_from
+    cutoff = pq_index_from()
+    cache = _sitemap_pqs_month_caches.setdefault((month, cutoff), {'xml': None, 'ts': 0.0})
+    return _serve_xml(cache, lambda: _build_sitemap_pqs_xml(month, cutoff),
                       _SITEMAP_PQ_TTL, _XML_EMPTY_URLSET)
 
 @app.route('/sitemap-edms.xml')

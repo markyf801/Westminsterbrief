@@ -13,7 +13,9 @@ Table prefix ha_ keeps archive tables clearly namespaced from the existing
 application tables (user, tracked_topic, cached_*, sd_*, etc.).
 """
 
-from datetime import datetime
+import logging
+import os
+from datetime import date, datetime
 from extensions import db
 from sqlalchemy import event, inspect as sa_inspect, text
 
@@ -251,6 +253,40 @@ def pq_url_path(tabled_date, uin: str | None) -> str:
         tabled_date = tabled_date.date()
     day = tabled_date.isoformat() if hasattr(tabled_date, "isoformat") else str(tabled_date or "")[:10]
     return f"/archive/pq/{day}/{uin_lc}" if day else f"/archive/pq/{uin_lc}"
+
+
+# Written questions tabled before this date are kept out of search engines:
+# their pages say noindex and they are left out of the PQ sitemaps. They stay
+# on the site for users (search, topic pages, MP pages). Override with
+# PQ_INDEX_FROM=YYYY-MM-DD; an empty value or "none" indexes every question.
+PQ_INDEX_FROM_DEFAULT = date(2025, 5, 1)
+_pq_index_from_warned: set[str] = set()
+
+
+def pq_index_from() -> date | None:
+    """First tabled date offered to search engines, or None (no cutoff).
+    Reads PQ_INDEX_FROM at call time; a bad value logs a warning (once per
+    value) and falls back to the default."""
+    raw = os.environ.get("PQ_INDEX_FROM")
+    if raw is None:
+        return PQ_INDEX_FROM_DEFAULT
+    raw = raw.strip()
+    if raw == "" or raw.lower() == "none":
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        if raw not in _pq_index_from_warned:
+            _pq_index_from_warned.add(raw)
+            logging.getLogger(__name__).warning(
+                "PQ_INDEX_FROM=%r is not YYYY-MM-DD or 'none'; using %s", raw, PQ_INDEX_FROM_DEFAULT)
+        return PQ_INDEX_FROM_DEFAULT
+
+
+def pq_indexable(tabled_date) -> bool:
+    """True if a question tabled on this date should be offered to search engines."""
+    cutoff = pq_index_from()
+    return cutoff is None or tabled_date is None or tabled_date >= cutoff
 
 
 class HaPQ(db.Model):
