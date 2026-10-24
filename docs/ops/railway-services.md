@@ -501,6 +501,7 @@ windows and before `archive-cron-morning` (08:00).
 | `ADMIN_EMAIL` or `CRON_ALERT_EMAIL` | where the report goes (`CRON_ALERT_EMAIL` wins if both are set) |
 | `SKIP_MIGRATIONS` | `1` |
 | `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` | optional; without them the R2 backup check shows SKIPPED (a read-only R2 token is enough) |
+| `DB_VOLUME_GB` | size of the Postgres volume in GB, as shown in Railway (Postgres → Volume). Default 5; **update it whenever the volume is resized**, or the disk-space line is wrong |
 
 First run: set the start command to `python scripts/daily_health_report.py --dry-run`,
 press Run Now, read the log, then put the normal start command back. Exits 0 even
@@ -548,6 +549,12 @@ normally empty):
   apostrophe as punctuation, which depends on the database locale (production is
   `en_US.utf8`); a restore into a "C"-locale cluster would silently stop most
   possessives matching. The line shows the database `LC_CTYPE`. SKIPPED on SQLite
+- Database disk space: `pg_database_size(current_database())` against `DB_VOLUME_GB`
+  (default 5), e.g. "Database 2.4 GB of 5 GB (48%)". WARN at 70%, FAIL at 85%: grow
+  the volume (see "Bulk migrations and volume size"), then update `DB_VOLUME_GB`. WAL
+  and other files also sit on the volume, so Railway's own usage figure is a little
+  higher. GB here is 10^9 bytes, so the percentage errs high. The line says when
+  `DB_VOLUME_GB` is unset or not a number. SKIPPED on SQLite
 - Committee evidence cron, backup cron record, newest R2 object, live `/ping` + `/health`
 
 ### Committees and APPGs (`scripts/ingest_committees.py`, `scripts/ingest_appgs.py`) — not yet set up
@@ -640,4 +647,27 @@ Set on the **service** (not just the project) in the Railway dashboard.
 - Billing (paid products; test keys during dev): `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - Backups: `R2_ENDPOINT_URL`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `BACKUP_ENCRYPTION_KEY`
 - No longer read by any code (delete from the web service once the TheyWorkForYou removal is deployed and confirmed): `TWFY_API_KEY`, `SEARCH_BACKEND`
-- Flags / behaviour: `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `FEATURE_DIVISIONS`, `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`
+- Flags / behaviour: `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `FEATURE_DIVISIONS`, `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`, `PQ_INDEX_FROM` (web service; see below)
+- Health report (`health-report` service): `DB_VOLUME_GB` (Postgres volume size in GB; default 5)
+
+### Older written questions kept out of Google (`PQ_INDEX_FROM`)
+
+Written questions tabled **before** `PQ_INDEX_FROM` (web service; `YYYY-MM-DD`,
+default `2025-05-01`) are on the site as normal (pages, archive search, topic
+briefs, MP pages) but not offered to search engines: their pages carry
+`<meta name="robots" content="noindex, follow">` and they are left out of the
+monthly PQ sitemaps. A month with nothing on or after the cutoff isn't listed in
+`/sitemap.xml`, and its `/sitemap-pqs-YYYY-MM.xml` is 404 (after the usual one
+rebuild of the month list). Reason: Google already declines to index most PQ
+pages (they largely repeat Parliament's own), and the July 2024–April 2025
+backfill would add ~57k more.
+
+- **Lift it** (index every question): set `PQ_INDEX_FROM` to `none` on the web
+  service. An empty value also means no cutoff; deleting the variable restores
+  the default. **Move it**: set another date, e.g. `2025-01-01`.
+- A value that isn't `YYYY-MM-DD` or `none` logs a warning and uses the default.
+- Read at request time. Applying a Railway variable change redeploys the service,
+  which empties the sitemap caches; without a restart the PQ month list and month
+  chunks still rebuild at once (their caches key on the cutoff), and
+  `/sitemap.xml` follows within its 1-hour cache.
+- After lifting it, resubmit `/sitemap.xml` in Search Console.
