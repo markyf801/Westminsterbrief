@@ -72,6 +72,8 @@ The --no-tag flag skips theme tagging. Use it for backfill runs — tagging
 Environment:
   DATABASE_URL          — Postgres (Railway Variable Reference); falls back to SQLite
   GEMINI_API_KEY        — required for theme tagging (not needed with --no-tag)
+  TAGGER_MODEL          — claude-haiku-5-5 tags with Claude instead (needs
+                          ANTHROPIC_API_KEY; no fallback to Gemini)
   POSTMARK_SERVER_TOKEN — required for email alerts; absent = log-only
   ADMIN_EMAIL           — alert recipient; overridden by CRON_ALERT_EMAIL if set
   CRON_ALERT_EMAIL      — explicit alert recipient (optional)
@@ -496,7 +498,8 @@ def _run_tagger(no_tag: bool, new_rows: int, limit: int | None = None) -> dict:
     tag_notes = (
         f"tagging: eligible={tag_result.get('total_eligible', 0)} tagged={tagged} "
         f"nothing_verified={tag_result.get('failed', 0)} "
-        f"api_errors={tag_result.get('api_errors', 0)} given_up={tag_result.get('given_up')}"
+        f"api_errors={tag_result.get('api_errors', 0)} given_up={tag_result.get('given_up')} "
+        f"model={tag_result.get('model') or '-'}"
         + (f" ABORTED: {tag_aborted}" if tag_aborted else "")
     )
     print(f"[pq-cron] Tagging done — {tag_notes}", flush=True)

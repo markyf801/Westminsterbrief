@@ -24,7 +24,9 @@ Usage:
 
 Environment:
   DATABASE_URL          — Postgres (Railway Variable Reference); falls back to SQLite
-  GEMINI_API_KEY        — required for theme tagging
+  GEMINI_API_KEY        — required for theme tagging (Gemini, the default)
+  TAGGER_MODEL          — claude-haiku-5-5 tags with Claude instead (needs
+                          ANTHROPIC_API_KEY; no fallback to Gemini)
   POSTMARK_SERVER_TOKEN — required for email alerts; absent = log-only
   ADMIN_EMAIL           — alert recipient; overridden by CRON_ALERT_EMAIL if set
   CRON_ALERT_EMAIL      — explicit alert recipient (optional)
@@ -276,7 +278,7 @@ def main() -> None:
                 f"tagging: eligible={tag_result.get('total_eligible', 0)} (cap {_TAG_CAP}) "
                 f"tagged={total_tagged} nothing_verified={tag_result.get('failed', 0)} "
                 f"api_errors={tag_result.get('api_errors', 0)} "
-                f"given_up={tag_result.get('given_up')}"
+                f"given_up={tag_result.get('given_up')} model={tag_result.get('model') or '-'}"
                 + (f" ABORTED: {tag_aborted}" if tag_aborted else "")
             )
             print(f"[cron] Tagging done — {tag_notes}", flush=True)
