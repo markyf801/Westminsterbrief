@@ -601,9 +601,9 @@ Set both on every service that tags: `archive-cron-morning`,
 questions are not tagged by different models. Keep `GEMINI_API_KEY` on them
 (rollback, and the Gemini default).
 
-- **Deploy the code first.** Builds before this change ignore a Claude
-  `TAGGER_MODEL` (they log an error and keep using Gemini), so setting the
-  variable early is harmless but does nothing.
+- **Deploy the code first, then set the variable.** Builds before this change
+  pass `TAGGER_MODEL` to Gemini as a model name: Gemini answers 404, so every
+  run's tagging stops (`ABORTED`) and each cron run sends an alert email.
 - **No fallback.** With `TAGGER_MODEL` set, a missing or rejected
   `ANTHROPIC_API_KEY` (401/403), a bad request, or repeated API failures stop
   that run's tagging: the items stay untagged and the next run picks them up.
@@ -687,8 +687,15 @@ step (the checkpoint is keyed on them). In order:
    log); add them to `docs/deploys.md`. Most batches end within an hour, all
    within 24 h. Exit 3 (API failures, e.g. batch queue full), 4 (cron window)
    or 5 (still processing after `--max-wait-hours`, default 25): run the same
-   command again — it polls and applies what was already submitted. Capture
-   the full log (one-shot procedure above).
+   command again — it polls and applies what was already submitted. Any other
+   stop (exit 1 with a traceback, e.g. a database error) resumes the same way.
+   Capture the full log (one-shot procedure above). Don't push to `master`
+   while it is submitting (the log shows `submitting …` / `submitted batch …`):
+   a container killed between a batch being created and its id being saved
+   (a fraction of a second, or a submit that got no answer, which stops the
+   run with a message) would send those items again on the next run, so first
+   compare Console > Batches with the `submitted batch` lines in the log and
+   cancel any batch the log doesn't list.
 4. **Verify:**
    - the end-of-run summary per kind: `retagged`, `kept_old` (nothing
      verified: old tags kept), `to_retry` (questions sent again singly), and
