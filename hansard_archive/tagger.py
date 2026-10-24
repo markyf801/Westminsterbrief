@@ -1332,7 +1332,8 @@ def _lock_session_tags(session_id: int) -> None:
     Postgres: hold a transaction-scoped advisory lock on one session's tags, so
     two writers (hourly archive cron, retag, backfill) can't interleave their
     delete/insert and leave a tag stored twice. Released at commit/rollback.
-    ha_session_theme has no unique constraint to fall back on. SQLite
+    Production also has the unique index uq_ha_session_theme_session_theme_type
+    (24 Oct 2026; migrations/theme_unique_indexes.py) as a backstop. SQLite
     serialises writers anyway.
     """
     if db.session.get_bind().dialect.name == "postgresql":

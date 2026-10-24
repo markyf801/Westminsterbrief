@@ -83,9 +83,11 @@ Examples (Railway one-off; dry run first, then a small apply, then everything):
     python scripts/retag.py --batch --model claude-haiku-5-5 --sample 50
     python scripts/retag.py --batch --model claude-haiku-5-5 --apply --backup
 
-Exit codes: 0 ok, 2 no API key / bad arguments, 3 stopped after API failures,
-4 stopped for a cron window (resume later with the same command),
-5 --batch: batches still processing (resume later with the same command).
+Exit codes: 0 ok, 1 unexpected error (traceback, e.g. a database error; the
+checkpoint holds what was done, so the same command resumes), 2 no API key /
+bad arguments, 3 stopped after API failures, 4 stopped for a cron window
+(resume later with the same command), 5 --batch: batches still processing
+(resume later with the same command).
 """
 
 from __future__ import annotations
