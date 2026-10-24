@@ -25,6 +25,12 @@ PATH = "/written-questions/answer-times"
 BASE_URL = "https://westminsterbrief.co.uk"
 
 
+def _csv_cell(value: str) -> str:
+    """Neutralise spreadsheet formulas (CSV injection): text starting with
+    = + - @ or a tab/carriage return gets a leading apostrophe."""
+    return "'" + value if value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
+
+
 def _csv_response(period: pt.Period, departments: list[dict]):
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -33,7 +39,7 @@ def _csv_response(period: pt.Period, departments: list[dict]):
                 "Ordinary within expected time (%)", "Median working days to answer",
                 "Period start", "Period end"])
     for d in departments:
-        w.writerow([d["department"],
+        w.writerow([_csv_cell(d["department"]),
                     d["named"]["questions"], d["named"]["on_time"], d["named"]["pct"] if d["named"]["pct"] is not None else "",
                     d["ordinary"]["questions"], d["ordinary"]["on_time"],
                     d["ordinary"]["pct"] if d["ordinary"]["pct"] is not None else "",

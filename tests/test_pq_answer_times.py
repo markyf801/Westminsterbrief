@@ -431,6 +431,14 @@ class TestLeagueTable:
         body = r.get_data(as_text=True)
         assert "Department for Education,41,30,73.2,35,28,80.0,6.0,2026-07-01,2026-09-30" in body
 
+    def test_csv_neutralises_formulas(self, client):
+        from extensions import db
+        _add(db, '=HYPERLINK("http://x","y")', MON, THU, dfa=THU, named=True)
+        pt.clear_caches()
+        body = client.get(URL + "?format=csv").get_data(as_text=True)
+        assert '"\'=HYPERLINK(""http://x"",""y"")",' in body
+        assert "\n=HYPERLINK" not in body
+
     @pytest.mark.parametrize("state", ["hidden", "beta", ""])
     def test_not_public_unless_live(self, client, monkeypatch, state):
         monkeypatch.setenv(FLAG, state)
