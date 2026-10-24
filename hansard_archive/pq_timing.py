@@ -50,6 +50,8 @@ CURRENT_SESSION_LABEL = "2026–27"
 
 ON_TIME, AFTER, PENDING = "on_time", "after", "pending"
 
+FELL_NOTE = "Written questions not answered by the end of a parliamentary session fall (lapse)."
+
 PROCEDURE_COMMITTEE_URL = "https://committees.parliament.uk/committee/126/procedure-committee/"
 
 # Our rules applied to Parliament's data for 17 July - 6 December 2024 against
@@ -158,15 +160,25 @@ def pq_answer_timing(pq: HaPQ, deadline: HaPQDeadline | None, today: date) -> di
     holding = answered and bool(pq.is_holding)
 
     if pq.chamber == "Lords":
-        return _lords_timing(tabled, ans, holding, today)
-    if pq.chamber != "Commons" or deadline is None:
+        result = _lords_timing(tabled, ans, holding, today)
+    elif pq.chamber != "Commons" or deadline is None:
         return None
-    dfa, named = deadline.date_for_answer, deadline.is_named_day
-    if dfa is None or named is None or dfa < tabled or not covered(dfa):
-        return None
-    if named:
-        return _named_day_timing(dfa, ans, holding, today)
-    return _ordinary_timing(tabled, dfa, ans, holding, today)
+    else:
+        dfa, named = deadline.date_for_answer, deadline.is_named_day
+        if dfa is None or named is None or dfa < tabled or not covered(dfa):
+            return None
+        if named:
+            result = _named_day_timing(dfa, ans, holding, today)
+        else:
+            result = _ordinary_timing(tabled, dfa, ans, holding, today)
+    if tabled < CURRENT_SESSION_START <= today and (ans is None or holding):
+        # From an earlier session: an unanswered question fell when the session
+        # ended, so it is not "awaiting" an answer and gets no verdict.
+        result["facts"][-1] = (f"holding answer given on {fmt_day(ans)}; no full answer recorded"
+                               if holding else "no answer recorded")
+        result["verdict"] = None
+        result["note"] = " ".join(filter(None, [result["note"], FELL_NOTE]))
+    return result
 
 
 def _holding_fact(ans: date) -> str:

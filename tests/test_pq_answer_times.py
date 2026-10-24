@@ -150,10 +150,30 @@ class TestPageTiming:
     @pytest.mark.parametrize("named", [True, False])
     def test_holding_answer_is_not_judged(self, named):
         t = pt.pq_answer_timing(_pq(answer=date(2026, 3, 20), holding=True),
-                                _dl(date(2026, 3, 12), named), TODAY)
+                                _dl(date(2026, 3, 12), named), date(2026, 3, 25))
         assert "holding answer given on Fri 20 March 2026; no full answer recorded yet" in _line(t)
         assert t["verdict"] is None
         assert "after" not in _line(t) and "on time" not in _line(t)
+
+    @pytest.mark.parametrize("named", [True, False])
+    def test_unanswered_from_an_earlier_session_fell(self, named):
+        # Tabled March 2026, before the session that opened on 13 May 2026.
+        t = pt.pq_answer_timing(_pq(), _dl(date(2026, 3, 12), named), TODAY)
+        assert t["facts"][-1] == "no answer recorded"
+        assert t["verdict"] is None and "awaiting" not in _line(t)
+        assert t["note"] == pt.FELL_NOTE
+        t = pt.pq_answer_timing(_pq(answer=date(2026, 3, 20), holding=True),
+                                _dl(date(2026, 3, 12), named), TODAY)
+        assert t["facts"][-1] == "holding answer given on Fri 20 March 2026; no full answer recorded"
+
+    def test_lords_unanswered_from_an_earlier_session_fell(self):
+        t = pt.pq_answer_timing(_pq(chamber="Lords"), None, TODAY)
+        assert _line(t) == "Tabled Mon 9 March 2026 · no answer recorded"
+        assert t["note"].endswith(pt.FELL_NOTE)
+
+    def test_unanswered_in_the_current_session_is_awaiting(self):
+        t = pt.pq_answer_timing(_pq(tabled=date(2026, 10, 19)), _dl(date(2026, 10, 21), True), TODAY)
+        assert _line(t).endswith("awaiting answer, 2 working days after the named day")   # Thu, Fri
 
     def test_lords_facts_only(self):
         t = pt.pq_answer_timing(_pq(chamber="Lords", answer=date(2026, 3, 25)), None, TODAY)
