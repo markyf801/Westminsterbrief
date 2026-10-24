@@ -222,14 +222,7 @@ def test_gemini_is_the_default(monkeypatch):
     assert calls == ["gemini-2.5-flash-lite", "gemini-2.5-pro"]
 
 
-def test_claude_tagger_model_env_is_ignored(monkeypatch):
-    calls = []
-    monkeypatch.setattr(tg, "_gemini_json", _fake_gemini(calls))
-    monkeypatch.setattr(tg, "_claude_json", _no_gemini)
-    monkeypatch.setenv("TAGGER_MODEL", HAIKU)
-    assert tg.resolve_model("gemini-key") == "gemini-2.5-flash-lite"
-    assert tg.tag_session_input(_SI, "gemini-key").model == "gemini-2.5-flash-lite"
-    assert calls == ["gemini-2.5-flash-lite"]
+# TAGGER_MODEL selecting Claude for live tagging (24 Oct 2026): tests/test_tagger_live_model.py
 
 
 def test_claude_prices():

@@ -29,18 +29,20 @@ Rules
   range, after each day and for any leftovers at the start of a run, so the PQ
   crons (which tag up to 500 untagged PQs a run, env PQ_TAG_LIMIT, newest
   first) never have a large backlog to work through.
-  --max-tag caps PQs sent to Gemini per run (default 3000; the run stops when
+  --max-tag caps PQs sent to the tagging model per run (default 3000; the run stops when
   it is reached, so raise it for the full backfill, e.g. --max-tag 60000). A PQ that cannot be tagged is
   skipped after 2 counted failures and never blocks the run (see TagBudget in
-  scripts/backfill_parliament_start.py); only a confirmed Gemini outage stops it.
+  scripts/backfill_parliament_start.py); only a confirmed outage of the tagging
+  API (Gemini, or Claude when TAGGER_MODEL selects it) stops it.
 - Same cron-window guard as scripts/backfill_parliament_start.py, checked
   before each tabled day and before each tagging call (a busy day, ~600 PQs at
   ~1.2 s each, takes ~12 minutes — inside the 20-minute lookahead). It will not
   start while the debates backfill is running.
 
 Exit codes: 0 finished / stopped cleanly · 1 a day failed after retries or a
-database error · 2 API refused (401/403/429) or GEMINI_API_KEY missing ·
-3 tagging failed (Gemini down, or too many untaggable PQs) · 4 another backfill
+database error · 2 API refused (401/403/429) or the tagging key missing
+(GEMINI_API_KEY, or ANTHROPIC_API_KEY with TAGGER_MODEL=claude-haiku-5-5) ·
+3 tagging failed (tagging API down, or too many untaggable PQs) · 4 another backfill
 is running · 5 identity mismatch — nothing changed, investigate before re-running.
 
 Usage
@@ -77,6 +79,7 @@ from backfill_parliament_start import (  # noqa: E402
     check_tagger_api,
     load_state,
     run_active,
+    tagging_key,
 )
 from extensions import db  # noqa: E402
 from hansard_archive import pq_ingestor  # noqa: E402
@@ -328,10 +331,8 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
     tagging = not args.dry_run and not args.no_tag
     api_key = ""
     if tagging:
-        from flask import current_app
-        api_key = current_app.config.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            print("[pq-backfill] GEMINI_API_KEY not set — set it or pass --no-tag", flush=True)
+        api_key, refused = tagging_key("pq-backfill")
+        if refused:
             return EXIT_REFUSED
         missing = check_tagger_api()
         if missing:

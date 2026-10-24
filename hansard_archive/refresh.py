@@ -343,10 +343,15 @@ def retag_refreshed(session_ids: list[int], api_key: Optional[str] = None, limit
 
     stats = {"retagged": 0, "kept_old": 0, "untagged": 0, "api_errors": 0, "errors": 0,
              "over_cap": 0, "aborted": "", "pending": []}
-    api_key = tg._api_key(api_key)
     ids = list(dict.fromkeys(session_ids))
+    try:
+        model, api_key = tg.resolve_backend(api_key)      # same model and key as tag_all_untagged
+    except tg.GeminiCallFailed as e:                      # unapproved Claude TAGGER_MODEL
+        stats["aborted"] = str(e)
+        stats["pending"] = ids
+        return stats
     if not api_key:
-        stats["aborted"] = "GEMINI_API_KEY not set"
+        stats["aborted"] = tg.missing_key_message(model)
         stats["pending"] = ids
         return stats
     tagged_ids = {r[0] for r in db.session.query(HansardSessionTheme.session_id)
@@ -365,7 +370,7 @@ def retag_refreshed(session_ids: list[int], api_key: Optional[str] = None, limit
             if not any(t.strip() for _, t in si.contributions):
                 continue
             try:
-                outcome = tg.tag_session_input(si, api_key)
+                outcome = tg.tag_session_input(si, api_key, model)
                 consecutive = 0
             except tg.GeminiCallFailed as e:
                 stats["api_errors"] += 1

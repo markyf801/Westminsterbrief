@@ -1,7 +1,9 @@
 """
 Hansard Archive — Phase 2A Week 2 batch theme tagging.
 
-Tags all untagged non-container sessions with two-level themes via Gemini Flash-Lite.
+Tags all untagged non-container sessions with two-level themes, with the
+crons' model (Gemini Flash-Lite, or Claude when TAGGER_MODEL=claude-haiku-5-5;
+see hansard_archive/tagger.py resolve_backend).
 Safe to re-run: already-tagged sessions are skipped.
 
 Usage:
@@ -10,7 +12,8 @@ Usage:
   python scripts/run_tagging.py --limit 1 --id 123  # tag a specific session by ID
 
 Environment:
-  GEMINI_API_KEY — required
+  GEMINI_API_KEY — required for Gemini (the default)
+  TAGGER_MODEL / ANTHROPIC_API_KEY — claude-haiku-5-5 tags with Claude (no fallback to Gemini)
   DATABASE_URL   — optional; defaults to local SQLite (intelligence.db)
 """
 
@@ -57,12 +60,15 @@ def main() -> None:
     print(f"[tagging]   Tagged:            {summary['tagged']}")
     print(f"[tagging]   Failed (no response): {summary['failed']}")
     print(f"[tagging]   Errors:            {summary['errors']}")
+    print(f"[tagging]   Model:             {summary.get('model') or '-'}")
+    if summary.get("aborted"):
+        print(f"[tagging]   STOPPED:           {summary['aborted']}")
     print(f"[tagging]   Theme rows added:  {after - before}")
     print("=" * 60)
     print()
     print(f"[tagging] Policy areas in use (controlled vocab — {len(POLICY_AREAS)} terms):")
-    print(f"[tagging] Run 'SELECT theme, COUNT(*) FROM ha_session_theme WHERE theme_type=\"policy_area\"")
-    print(f"[tagging]   GROUP BY theme ORDER BY COUNT(*) DESC' to see distribution.")
+    print("[tagging] Run 'SELECT theme, COUNT(*) FROM ha_session_theme WHERE theme_type=\"policy_area\"")
+    print("[tagging]   GROUP BY theme ORDER BY COUNT(*) DESC' to see distribution.")
 
 
 if __name__ == "__main__":

@@ -28,14 +28,22 @@ Accuracy rules (owner standard: accuracy before cost):
     Business of the House) are tagged per question group and aggregated, so
     one long exchange doesn't stand for the whole session.
 
-Gemini with JSON schema enforcement (policy areas are a hard enum).
-Default model: gemini-2.5-flash-lite (auto-detected); override with the
-TAGGER_MODEL environment variable or the `model` argument.
+Structured output with JSON schema enforcement (policy areas are a hard enum).
 
-For evaluation only (scripts/eval_tagging.py), a "claude-*" id passed as the
-`model` argument uses the Claude backend (_claude_json) with the same prompts,
-schema fields, evidence check and batching; `api_key` must then be an
-Anthropic key. TAGGER_MODEL never selects Claude.
+Model (resolve_backend is the one place every entry point picks model + key):
+  - the `model` argument, else the TAGGER_MODEL environment variable, else
+    gemini-2.5-flash-lite (auto-detected) with GEMINI_API_KEY.
+  - TAGGER_MODEL=claude-haiku-5-5 selects Claude for live tagging (owner
+    decision 24 Oct 2026; CLAUDE.md "Output rules"), with ANTHROPIC_API_KEY.
+    Only models in LIVE_CLAUDE_MODELS may be set there; any other "claude-*"
+    value stops tagging. Same prompts, schema fields, evidence check and PQ
+    batching as Gemini: only the model call differs (_model_json).
+  - No fallback: when Claude is selected and its key is missing or rejected,
+    or the API fails, the run stops ("aborted" in the result, which the crons
+    put in ha_cron_run.notes and the alert email) and the items stay untagged
+    for the next run. Gemini is never used instead.
+  - A Gemini key is never sent to Anthropic, nor an Anthropic key to Google.
+  - Any "claude-*" id passed explicitly also works (scripts/eval_tagging.py).
 """
 
 from __future__ import annotations
@@ -700,19 +708,86 @@ def _detect_model(api_key: str) -> str:
     return _MODEL_CACHE[api_key]
 
 
-def resolve_model(api_key: str, model: Optional[str] = None) -> str:
+# Claude models that may tag live (TAGGER_MODEL, scripts/retag.py --apply).
+# Owner decision 24 Oct 2026: Claude Haiku 5.5 (eval:
+# docs/plans/tagging-model-test-2026-10-24.md in the owner's plans folder).
+LIVE_CLAUDE_MODELS = frozenset({"claude-haiku-5-5"})
+
+_ANTHROPIC_KEY_PREFIX = "sk-ant-"
+_GEMINI_KEY_PREFIX = "AIza"
+
+
+def _config_key(name: str) -> Optional[str]:
+    try:
+        from flask import current_app
+        return current_app.config.get(name) or os.environ.get(name)
+    except RuntimeError:
+        return os.environ.get(name)
+
+
+def configured_model(model: Optional[str] = None) -> Optional[str]:
     """
-    Explicit model, else TAGGER_MODEL, else the auto-detected Flash-Lite.
-    A Claude model is used only when passed explicitly (evaluation): free
-    features run on Gemini, so a Claude TAGGER_MODEL is ignored.
+    The explicit model, else TAGGER_MODEL, else None (= auto-detected Gemini
+    Flash-Lite). A Claude TAGGER_MODEL that isn't in LIVE_CLAUDE_MODELS raises a
+    final GeminiCallFailed, so tagging stops visibly instead of falling back to
+    Gemini. Makes no network call.
     """
     if model:
         return model
-    env_model = os.environ.get("TAGGER_MODEL")
-    if is_claude_model(env_model):
-        logger.error("Tagger: TAGGER_MODEL=%s ignored — Claude models are for evaluation only", env_model)
-        env_model = None
-    return env_model or _detect_model(api_key)
+    env_model = (os.environ.get("TAGGER_MODEL") or "").strip()
+    if not env_model:
+        return None
+    if is_claude_model(env_model) and env_model not in LIVE_CLAUDE_MODELS:
+        msg = (f"TAGGER_MODEL={env_model} is not approved for live tagging "
+               f"(approved: {', '.join(sorted(LIVE_CLAUDE_MODELS))}) — tagging stopped, no fallback to Gemini")
+        logger.error("Tagger: %s", msg)
+        raise GeminiCallFailed(msg, final=True)
+    return env_model
+
+
+def resolve_model(api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+    """Explicit model, else TAGGER_MODEL (see configured_model), else the auto-detected Flash-Lite."""
+    chosen = configured_model(model)
+    if chosen:
+        return chosen
+    if not api_key or api_key.startswith(_ANTHROPIC_KEY_PREFIX):
+        return DEFAULT_MODEL      # never send an Anthropic key (or none) to Google's model list
+    return _detect_model(api_key)
+
+
+def key_for_model(model: str, api_key: Optional[str] = None) -> Optional[str]:
+    """
+    The API key for `model`. Claude: `api_key` when it is an Anthropic key
+    (sk-ant-…, as scripts/eval_tagging.py passes), else ANTHROPIC_API_KEY.
+    Gemini: `api_key` unless it is an Anthropic key, else GEMINI_API_KEY.
+    Callers pass the Gemini key by habit; it is never used for Claude.
+    """
+    anthropic_key = bool(api_key) and api_key.startswith(_ANTHROPIC_KEY_PREFIX)
+    if is_claude_model(model):
+        return api_key if anthropic_key else _config_key("ANTHROPIC_API_KEY")
+    return api_key if (api_key and not anthropic_key) else _config_key("GEMINI_API_KEY")
+
+
+def key_env_name(model: str) -> str:
+    return "ANTHROPIC_API_KEY" if is_claude_model(model) else "GEMINI_API_KEY"
+
+
+def missing_key_message(model: str) -> str:
+    if is_claude_model(model):
+        return (f"tagging model {model} needs ANTHROPIC_API_KEY, which is not set — "
+                "tagging skipped, no fallback to Gemini")
+    return "GEMINI_API_KEY not set"
+
+
+def resolve_backend(api_key: Optional[str] = None, model: Optional[str] = None) -> tuple[str, Optional[str]]:
+    """
+    (model, key) for tagging: the one way every entry point (crons, retag,
+    backfills, refresh) picks both. The key is None when it isn't configured.
+    Raises a final GeminiCallFailed for an unapproved Claude TAGGER_MODEL.
+    """
+    gemini_key = key_for_model(DEFAULT_MODEL, api_key)
+    chosen = resolve_model(gemini_key, model)
+    return chosen, key_for_model(chosen, api_key)
 
 
 class GeminiCallFailed(Exception):
@@ -839,11 +914,17 @@ def _add_usage(total: dict, usage: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Claude client — for evaluation only (scripts/eval_tagging.py). Chosen only
-# when a model id starting "claude-" is passed explicitly; never the default
-# and never from TAGGER_MODEL. Same prompt, same schema fields, same evidence
-# check and batching as Gemini: only the model call differs. The `anthropic`
-# package is imported here, lazily, so the Gemini path never needs it.
+# Claude client — live tagging when TAGGER_MODEL selects it (LIVE_CLAUDE_MODELS),
+# scripts/retag.py (--batch uses the Message Batches API with the same request
+# and response handling), and evaluation (scripts/eval_tagging.py). Never the
+# default. Same prompt, same schema fields, same evidence check and batching
+# as Gemini: only the model call differs. The `anthropic` package is imported
+# here, lazily, so the Gemini path never needs it.
+#
+# Prompt caching is deliberately not used: the shared prefix (rules + scope
+# notes) sits inside the single user message after a per-prompt intro, so
+# caching it means splitting the evaluated prompt into separate blocks, and the
+# saving is a fraction of a cent per call at Haiku input prices.
 # ---------------------------------------------------------------------------
 
 CLAUDE_EFFORT = "low"          # classification task; Haiku 5.5 defaults to medium
@@ -902,6 +983,77 @@ def _claude_usage(usage) -> dict:
     return {"promptTokenCount": prompt, "candidatesTokenCount": int(getattr(usage, "output_tokens", 0) or 0)}
 
 
+def claude_request_params(model: str, prompt: str, schema: dict) -> tuple[dict, bool]:
+    """
+    Messages API parameters for one tagging call (live, or one Message Batches
+    request): the prompt as the only user message, structured output, effort
+    low; no temperature, thinking budget, system prompt or prefill. Returns
+    (params, wrapped) — wrapped: a top-level array schema was put under
+    _CLAUDE_ARRAY_KEY and parse_claude_message unwraps it.
+    """
+    claude_schema, wrapped = _claude_schema(schema)
+    return {
+        "model": model,
+        "max_tokens": _CLAUDE_MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+        "output_config": {"effort": CLAUDE_EFFORT,
+                          "format": {"type": "json_schema", "schema": claude_schema}},
+    }, wrapped
+
+
+def parse_claude_message(resp, model: str, wrapped: bool) -> tuple[object, dict]:
+    """
+    (parsed JSON, usage) from a Claude message — a live response or a Batch API
+    result. Raises GeminiEmptyResponse (refusal, max_tokens, no text) or
+    json.JSONDecodeError (unparseable text).
+    """
+    usage = _claude_usage(resp.usage)
+    if resp.stop_reason == "refusal":
+        details = getattr(resp, "stop_details", None)
+        why = f"empty response (Claude refusal, category={getattr(details, 'category', None)})"
+        logger.warning("Tagger: %s, model %s", why, model)
+        raise GeminiEmptyResponse(why, usage)
+    if resp.stop_reason == "max_tokens":
+        why = f"empty response (Claude stop_reason=max_tokens at {_CLAUDE_MAX_TOKENS})"
+        logger.warning("Tagger: %s, model %s", why, model)
+        raise GeminiEmptyResponse(why, usage)
+    raw = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+    if not raw.strip():
+        why = f"empty response (Claude stop_reason={resp.stop_reason}, no text)"
+        logger.warning("Tagger: %s, model %s", why, model)
+        raise GeminiEmptyResponse(why, usage)
+    parsed = json.loads(raw)
+    if wrapped and isinstance(parsed, dict) and _CLAUDE_ARRAY_KEY in parsed:
+        parsed = parsed[_CLAUDE_ARRAY_KEY]
+    return parsed, usage
+
+
+def check_anthropic_key(api_key: Optional[str], model: str) -> None:
+    """Raise a final GeminiCallFailed unless api_key can be sent to Anthropic."""
+    if not api_key or api_key.startswith(_GEMINI_KEY_PREFIX):
+        # Never send a Gemini key to Anthropic.
+        raise GeminiCallFailed(
+            f"model {model} needs an Anthropic API key (ANTHROPIC_API_KEY is not set, or holds a "
+            "Gemini key) — tagging skipped, no fallback to Gemini", final=True)
+
+
+def claude_error(e: Exception, model: str) -> GeminiCallFailed:
+    """An anthropic SDK exception as GeminiCallFailed: final for 4xx other than 429."""
+    import anthropic
+    if isinstance(e, anthropic.RateLimitError):
+        return GeminiCallFailed(f"HTTP 429 from Claude: {str(e)[:200]}")
+    if isinstance(e, anthropic.APIStatusError):
+        final = e.status_code < 500
+        hint = " — check ANTHROPIC_API_KEY" if e.status_code in (401, 403) else ""
+        log = logger.error if final else logger.warning
+        log("Tagger: HTTP %d from Claude (model %s)%s%s: %s", e.status_code, model, hint,
+            " — not retrying" if final else "", str(e)[:_BODY_LOG_CHARS])
+        return GeminiCallFailed(f"HTTP {e.status_code} from Claude{hint}: {str(e)[:200]}", final=final)
+    if isinstance(e, anthropic.APIConnectionError):   # includes timeouts
+        return GeminiCallFailed(f"Claude connection error: {str(e)[:200]}")
+    return GeminiCallFailed(f"Claude API error: {str(e)[:200]}")
+
+
 def _claude_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[object, dict]:
     """
     One structured-output call to Claude, with the same contract as _gemini_json:
@@ -909,75 +1061,40 @@ def _claude_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[o
     than 429) or GeminiEmptyResponse (refusal, max_tokens, no text). HTTP
     retries (429, 5xx, connection) are the SDK's; unparseable JSON is retried here.
     """
-    if not api_key or api_key.startswith("AIza"):
-        # Never send a Gemini key to Anthropic, and never fall back to a key
-        # found in the environment: the caller must pass an Anthropic key.
-        raise GeminiCallFailed(f"model {model} needs an Anthropic API key (ANTHROPIC_API_KEY)", final=True)
+    check_anthropic_key(api_key, model)
     try:
         import anthropic
     except ImportError as e:
         raise GeminiCallFailed(f"model {model} needs the anthropic package: {e}", final=True) from e
 
-    claude_schema, wrapped = _claude_schema(schema)
+    params, wrapped = claude_request_params(model, prompt, schema)
     client = _claude_client(api_key)
     last_error = ""
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            resp = client.messages.create(
-                model=model,
-                max_tokens=_CLAUDE_MAX_TOKENS,
-                messages=[{"role": "user", "content": prompt}],
-                output_config={"effort": CLAUDE_EFFORT,
-                               "format": {"type": "json_schema", "schema": claude_schema}},
-            )
-        except anthropic.RateLimitError as e:
-            raise GeminiCallFailed(f"HTTP 429 from Claude: {str(e)[:200]}") from e
-        except anthropic.APIStatusError as e:
-            final = e.status_code < 500
-            log = logger.error if final else logger.warning
-            log("Tagger: HTTP %d from Claude (model %s)%s: %s", e.status_code, model,
-                " — not retrying" if final else "", str(e)[:_BODY_LOG_CHARS])
-            raise GeminiCallFailed(f"HTTP {e.status_code} from Claude: {str(e)[:200]}", final=final) from e
-        except anthropic.APIConnectionError as e:   # includes timeouts
-            raise GeminiCallFailed(f"Claude connection error: {str(e)[:200]}") from e
+            resp = client.messages.create(**params)
         except anthropic.APIError as e:
-            raise GeminiCallFailed(f"Claude API error: {str(e)[:200]}") from e
-
-        usage = _claude_usage(resp.usage)
-        if resp.stop_reason == "refusal":
-            details = getattr(resp, "stop_details", None)
-            why = f"empty response (Claude refusal, category={getattr(details, 'category', None)})"
-            logger.warning("Tagger: %s, model %s", why, model)
-            raise GeminiEmptyResponse(why, usage)
-        if resp.stop_reason == "max_tokens":
-            why = f"empty response (Claude stop_reason=max_tokens at {_CLAUDE_MAX_TOKENS})"
-            logger.warning("Tagger: %s, model %s", why, model)
-            raise GeminiEmptyResponse(why, usage)
-        raw = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-        if not raw.strip():
-            why = f"empty response (Claude stop_reason={resp.stop_reason}, no text)"
-            logger.warning("Tagger: %s, model %s", why, model)
-            raise GeminiEmptyResponse(why, usage)
+            raise claude_error(e, model) from e
         try:
-            parsed = json.loads(raw)
+            return parse_claude_message(resp, model, wrapped)
         except json.JSONDecodeError as e:
             last_error = str(e)[:200]
             logger.warning("Tagger: attempt %d/%d failed: unparseable JSON from Claude: %s",
                            attempt + 1, _MAX_RETRIES + 1, e)
             if attempt < _MAX_RETRIES:
                 time.sleep(2 ** attempt)
-            continue
-        if wrapped and isinstance(parsed, dict) and _CLAUDE_ARRAY_KEY in parsed:
-            parsed = parsed[_CLAUDE_ARRAY_KEY]
-        return parsed, usage
     raise GeminiCallFailed(last_error or "no response")
 
 
-def _model_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[object, dict]:
-    """The structured-output call for `model`: Claude for "claude-*" ids, else Gemini."""
+def _model_json(api_key: Optional[str], model: str, prompt: str, schema: dict) -> tuple[object, dict]:
+    """
+    The structured-output call for `model`: Claude for "claude-*" ids, else
+    Gemini, each with its own provider's key (key_for_model), so a key passed
+    for one provider never reaches the other.
+    """
     if is_claude_model(model):
-        return _claude_json(api_key, model, prompt, schema)
-    return _gemini_json(api_key, model, prompt, schema)
+        return _claude_json(key_for_model(model, api_key), model, prompt, schema)
+    return _gemini_json(key_for_model(model, api_key), model, prompt, schema)
 
 
 # USD per 1M tokens: (input, output). Output includes thinking tokens, which
@@ -989,10 +1106,14 @@ MODEL_PRICES_PER_M: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash":      (0.30, 2.50),
     "gemini-2.5-pro":        (1.25, 10.00),
     # Anthropic list prices (Haiku 5.5: prompts up to 100K tokens, which every
-    # tagging prompt is). Evaluation only. Output includes thinking tokens.
+    # tagging prompt is). Output includes thinking tokens. The Message Batches
+    # API charges half (BATCH_PRICE_FACTOR).
     "claude-haiku-5-5":      (0.10, 0.50),
     "claude-sonnet-5-5":     (2.00, 10.00),
 }
+
+
+BATCH_PRICE_FACTOR = 0.5
 
 
 def model_prices(model: str) -> Optional[tuple[float, float]]:
@@ -1022,55 +1143,137 @@ def _empty_outcome(e: GeminiEmptyResponse, model: str) -> TagOutcome:
     return out
 
 
-def tag_session_input(si: SessionInput, api_key: str, model: Optional[str] = None) -> TagOutcome:
-    """
-    Tag one session (no DB writes). Raises GeminiCallFailed on API failure; an
-    empty (e.g. safety-blocked) response returns an outcome with nothing in it
-    and empty_reason set.
-    """
-    model = resolve_model(api_key, model)
-    try:
-        return _tag_session_input(si, api_key, model)
-    except GeminiEmptyResponse as e:
-        return _empty_outcome(e, model)
+# Requests and their interpretation, shared by the live calls below and by
+# scripts/retag.py --batch (Message Batches API): one request = one API call,
+# and its answer goes through the same verification as a live answer.
+
+@dataclass
+class TagRequest:
+    prompt: str
+    schema: dict
+    sources: object          # str, or list[str] per question group / per PQ in a batch
+    grouped: bool = False    # multi-question session tagged per group
+
+    @property
+    def fingerprint(self) -> str:
+        """Short hash of the prompt: tells whether an item's text changed since a request was built."""
+        import hashlib
+        return hashlib.sha1(self.prompt.encode("utf-8")).hexdigest()[:8]
 
 
-def _tag_session_input(si: SessionInput, api_key: str, model: str) -> TagOutcome:
+def session_request(si: SessionInput) -> TagRequest:
     if is_multi_question(si) and len(question_groups(si.contributions)) >= 2:
         prompt, sources = build_grouped_prompt(si)
-        parsed, usage = _model_json(api_key, model, prompt, _GROUPED_RESPONSE_SCHEMA)
+        return TagRequest(prompt, _GROUPED_RESPONSE_SCHEMA, sources, grouped=True)
+    prompt, source = build_session_prompt(si)
+    return TagRequest(prompt, _RESPONSE_SCHEMA, source)
+
+
+def session_outcome(req: TagRequest, parsed, usage: dict, model: str) -> TagOutcome:
+    """Verified tags for a session from the model's answer to session_request()."""
+    if req.grouped:
         by_group: dict[int, dict] = {}
         groups = parsed.get("groups") if isinstance(parsed, dict) else None
         for g in groups or []:
             if isinstance(g, dict) and isinstance(g.get("group"), int):
                 by_group.setdefault(g["group"], g)
         outcomes = []
-        for i, src in enumerate(sources):
+        for i, src in enumerate(req.sources):
             g = by_group.get(i + 1)
             if g is not None:
                 outcomes.append(verify_tags(g, src))
         out = aggregate_groups(outcomes)
     else:
-        prompt, source = build_session_prompt(si)
-        parsed, usage = _model_json(api_key, model, prompt, _RESPONSE_SCHEMA)
-        out = verify_tags(parsed if isinstance(parsed, dict) else {}, source)
+        out = verify_tags(parsed if isinstance(parsed, dict) else {}, req.sources)
     out.model = model
     _add_usage(out.usage, usage)
     return out
+
+
+def pq_request(pq: PQInput) -> TagRequest:
+    prompt, source = build_pq_prompt(pq)
+    return TagRequest(prompt, _RESPONSE_SCHEMA, source)
+
+
+def pq_outcome(req: TagRequest, parsed, usage: dict, model: str) -> TagOutcome:
+    out = verify_tags(parsed if isinstance(parsed, dict) else {}, req.sources)
+    out.model = model
+    _add_usage(out.usage, usage)
+    return out
+
+
+def pq_batch_request(pqs: list[PQInput]) -> TagRequest:
+    prompt, sources = build_pq_batch_prompt(pqs)
+    return TagRequest(prompt, _BATCH_RESPONSE_SCHEMA, sources)
+
+
+def pq_batch_outcomes(pqs: list[PQInput], req: TagRequest, parsed, usage: dict,
+                      model: str) -> tuple[list[Optional[TagOutcome]], list[int]]:
+    """
+    Map a batch answer back by POSITION, accepting an entry only when the UIN
+    the model echoes agrees. Returns (outcomes, positions to retry on their own):
+    a position is retried when its UIN didn't line up, nothing verified, or the
+    answer wasn't a list of the right length (parsed=None: the call failed).
+    """
+    results: list[Optional[TagOutcome]] = [None] * len(pqs)
+    retry: list[int] = []
+    if isinstance(parsed, list) and len(parsed) == len(pqs):
+        share = {k: int(v or 0) // len(pqs) for k, v in usage.items() if isinstance(v, int)}
+        for j, pq in enumerate(pqs):
+            cand = parsed[j] if isinstance(parsed[j], dict) else {}
+            echoed = str(cand.get("uin") or "").strip().lower()
+            if echoed == (pq.uin or "").strip().lower():
+                out = verify_tags(cand, req.sources[j])
+                out.model = model
+                _add_usage(out.usage, share)
+                results[j] = out
+                if not out.ok:
+                    retry.append(j)     # nothing verified: one more try with more context
+            else:
+                logger.warning("Tagger batch: position %d echoed UIN %r, expected %r (PQ %s)",
+                               j + 1, cand.get("uin"), pq.uin, pq.ref)
+                retry.append(j)
+    else:
+        if parsed is not None:
+            logger.warning("Tagger batch: %s results for %d questions — retrying individually",
+                           len(parsed) if isinstance(parsed, list) else "non-list", len(pqs))
+        retry = list(range(len(pqs)))
+    return results, retry
+
+
+def better_of(first: Optional[TagOutcome], retried: Optional[TagOutcome]) -> Optional[TagOutcome]:
+    """After a single-question retry: the retry if it verified something (or there was nothing else)."""
+    if retried is not None:
+        retried.retried = True
+        if retried.ok or first is None:
+            return retried
+    return first
+
+
+def tag_session_input(si: SessionInput, api_key: str, model: Optional[str] = None) -> TagOutcome:
+    """
+    Tag one session (no DB writes). Raises GeminiCallFailed on API failure; an
+    empty (e.g. safety-blocked) response returns an outcome with nothing in it
+    and empty_reason set.
+    """
+    model = resolve_model(key_for_model(DEFAULT_MODEL, api_key), model)
+    req = session_request(si)
+    try:
+        parsed, usage = _model_json(api_key, model, req.prompt, req.schema)
+    except GeminiEmptyResponse as e:
+        return _empty_outcome(e, model)
+    return session_outcome(req, parsed, usage, model)
 
 
 def tag_pq_input(pq: PQInput, api_key: str, model: Optional[str] = None) -> TagOutcome:
     """Tag one Written Question on its own (no DB writes); empty response -> empty outcome."""
-    model = resolve_model(api_key, model)
-    prompt, source = build_pq_prompt(pq)
+    model = resolve_model(key_for_model(DEFAULT_MODEL, api_key), model)
+    req = pq_request(pq)
     try:
-        parsed, usage = _model_json(api_key, model, prompt, _RESPONSE_SCHEMA)
+        parsed, usage = _model_json(api_key, model, req.prompt, req.schema)
     except GeminiEmptyResponse as e:
         return _empty_outcome(e, model)
-    out = verify_tags(parsed if isinstance(parsed, dict) else {}, source)
-    out.model = model
-    _add_usage(out.usage, usage)
-    return out
+    return pq_outcome(req, parsed, usage, model)
 
 
 def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
@@ -1081,43 +1284,23 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
     that doesn't line up (or a failed batch) is retried on its own. One entry
     per input; None where even the single retry failed.
     """
-    model = resolve_model(api_key, model)
+    model = resolve_model(key_for_model(DEFAULT_MODEL, api_key), model)
     results: list[Optional[TagOutcome]] = [None] * len(pqs)
     for start in range(0, len(pqs), batch_size):
         batch = pqs[start:start + batch_size]
-        retry: list[int] = []
+        req = pq_batch_request(batch)
         try:
-            prompt, sources = build_pq_batch_prompt(batch)
-            parsed, usage = _model_json(api_key, model, prompt, _BATCH_RESPONSE_SCHEMA)
+            parsed, usage = _model_json(api_key, model, req.prompt, req.schema)
         except GeminiCallFailed as e:
             if e.final:
                 raise
             logger.warning("Tagger batch at %d failed (%s) — retrying individually", start, e)
-            parsed, usage, sources = None, {}, []
+            parsed, usage = None, {}
         except GeminiEmptyResponse as e:
             logger.warning("Tagger batch at %d: %s — retrying individually", start, e.reason)
-            parsed, usage, sources = None, {}, []
-        if isinstance(parsed, list) and len(parsed) == len(batch):
-            share = {k: int(v or 0) // len(batch) for k, v in usage.items() if isinstance(v, int)}
-            for j, pq in enumerate(batch):
-                cand = parsed[j] if isinstance(parsed[j], dict) else {}
-                echoed = str(cand.get("uin") or "").strip().lower()
-                if echoed == (pq.uin or "").strip().lower():
-                    out = verify_tags(cand, sources[j])
-                    out.model = model
-                    _add_usage(out.usage, share)
-                    results[start + j] = out
-                    if not out.ok:
-                        retry.append(j)     # nothing verified: one more try with more context
-                else:
-                    logger.warning("Tagger batch: position %d echoed UIN %r, expected %r (PQ %s)",
-                                   j + 1, cand.get("uin"), pq.uin, pq.ref)
-                    retry.append(j)
-        else:
-            if parsed is not None:
-                logger.warning("Tagger batch at %d: %s results for %d questions — retrying individually",
-                               start, len(parsed) if isinstance(parsed, list) else "non-list", len(batch))
-            retry = list(range(len(batch)))
+            parsed, usage = None, {}
+        first, retry = pq_batch_outcomes(batch, req, parsed, usage, model)
+        results[start:start + len(batch)] = first
         for j in retry:
             time.sleep(_INTER_REQUEST_DELAY)
             try:
@@ -1127,10 +1310,7 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
                     raise
                 logger.warning("Tagger: single retry failed for PQ %s: %s", batch[j].ref, e)
                 continue
-            if single is not None:
-                single.retried = True
-                if single.ok or results[start + j] is None:
-                    results[start + j] = single
+            results[start + j] = better_of(results[start + j], single)
         if start + batch_size < len(pqs):
             time.sleep(_PQ_BATCH_DELAY)
     return results
@@ -1233,16 +1413,6 @@ MAX_CONSECUTIVE_API_FAILURES = int(os.environ.get("TAGGER_MAX_API_FAILURES", "5"
 TAG_MAX_ATTEMPTS = int(os.environ.get("TAGGER_MAX_ATTEMPTS", "3"))
 
 
-def _api_key(api_key: Optional[str]) -> Optional[str]:
-    if api_key:
-        return api_key
-    try:
-        from flask import current_app
-        return current_app.config.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    except RuntimeError:
-        return os.environ.get("GEMINI_API_KEY")
-
-
 # --- attempt tracking (ha_tag_attempt; optional until the migration has run) ---
 
 def _attempts_table_ready() -> bool:
@@ -1301,11 +1471,14 @@ def tag_session(session_id: int, api_key: Optional[str] = None, model: Optional[
     Tag a single session. Skips if already tagged.
     Returns number of theme rows written (0 if skipped or failed), or
     ALREADY_TAGGED if another run tagged it while the model was answering.
-    Raises GeminiCallFailed when the API call fails (so callers can count it).
+    Raises GeminiCallFailed when the API call fails (so callers can count it),
+    and a final one when Claude is selected without ANTHROPIC_API_KEY.
     Expects to run inside a Flask app context with an active DB session.
     """
-    api_key = _api_key(api_key)
+    model, api_key = resolve_backend(api_key, model)
     if not api_key:
+        if is_claude_model(model):
+            raise GeminiCallFailed(missing_key_message(model), final=True)
         logger.error("Tagger: GEMINI_API_KEY not set")
         return 0
 
@@ -1348,9 +1521,18 @@ def tag_all_untagged(
     meanwhile (not a failure). API failures count as errors; after
     MAX_CONSECUTIVE_API_FAILURES in a row the run stops and aborted holds the
     reason. Expects to run inside a Flask app context.
+
+    Claude selected (TAGGER_MODEL) but not usable (no ANTHROPIC_API_KEY, model
+    not approved): nothing is tagged, errors=1 and aborted says why — never
+    Gemini instead. The result's "model" is the model the run used.
     """
-    api_key = _api_key(api_key)
+    try:
+        model, api_key = resolve_backend(api_key)
+    except GeminiCallFailed as e:
+        return _stopped_result(str(e), "tagger", verbose)
     if not api_key:
+        if is_claude_model(model):
+            return _stopped_result(missing_key_message(model), "tagger", verbose, model)
         raise ValueError("GEMINI_API_KEY not set")
 
     already_tagged_subq = db.session.query(HansardSessionTheme.session_id).distinct().subquery()
@@ -1370,14 +1552,14 @@ def tag_all_untagged(
     sessions = query.all()
     total_eligible = len(sessions)
     if verbose:
-        print(f"[tagger] {total_eligible} sessions to tag (limit={limit})", flush=True)
+        print(f"[tagger] {total_eligible} sessions to tag (limit={limit}, model {model})", flush=True)
 
     tagged = failed = errors = api_errors = consecutive = already_tagged = 0
     aborted = ""
     for i, session in enumerate(sessions):
         try:
             time.sleep(_INTER_REQUEST_DELAY)
-            count = tag_session(session.id, api_key=api_key)
+            count = tag_session(session.id, api_key=api_key, model=model)
             consecutive = 0
             if count > 0:
                 tagged += 1
@@ -1416,17 +1598,29 @@ def tag_all_untagged(
               "with nothing writable", flush=True)
     return {"total_eligible": total_eligible, "tagged": tagged, "failed": failed, "errors": errors,
             "api_errors": api_errors, "aborted": aborted, "given_up": n_given_up,
-            "already_tagged": already_tagged}
+            "already_tagged": already_tagged, "model": model}
+
+
+def _stopped_result(reason: str, prefix: str, verbose: bool, model: str = "") -> dict:
+    """A tag_*_all_untagged result for a run that could not start (nothing tagged, visible as an error)."""
+    logger.error("Tagger: %s", reason)
+    if verbose:
+        print(f"[{prefix}] STOPPED: {reason}", flush=True)
+    return {"total_eligible": 0, "tagged": 0, "failed": 0, "retried": 0, "errors": 1, "api_errors": 1,
+            "aborted": f"stopped: {reason}", "given_up": None, "already_tagged": 0, "model": model}
 
 
 def tag_pq(pq_id: int, api_key: Optional[str] = None, model: Optional[str] = None) -> int:
     """
     Tag a single Written Question. Skips if already tagged.
     Returns number of theme rows written (0 if skipped or failed).
-    Raises GeminiCallFailed when the API call fails.
+    Raises GeminiCallFailed when the API call fails, and a final one when
+    Claude is selected without ANTHROPIC_API_KEY.
     """
-    api_key = _api_key(api_key)
+    model, api_key = resolve_backend(api_key, model)
     if not api_key:
+        if is_claude_model(model):
+            raise GeminiCallFailed(missing_key_message(model), final=True)
         logger.error("Tagger: GEMINI_API_KEY not set")
         return 0
     pq = db.session.get(HaPQ, pq_id)
@@ -1457,10 +1651,17 @@ def tag_pq_all_untagged(
     Returns {total_eligible, tagged, failed, retried, errors, api_errors,
     aborted, given_up}. Questions with no result after retries count as API
     errors; the run stops after MAX_CONSECUTIVE_API_FAILURES of them in a row,
-    or at once on a final API error (bad request / key / model).
+    or at once on a final API error (bad request / key / model). Claude
+    selected but not usable: nothing tagged, errors=1, aborted says why
+    (never Gemini instead), as tag_all_untagged.
     """
-    api_key = _api_key(api_key)
+    try:
+        model, api_key = resolve_backend(api_key)
+    except GeminiCallFailed as e:
+        return _stopped_result(str(e), "pq-tagger", verbose)
     if not api_key:
+        if is_claude_model(model):
+            return _stopped_result(missing_key_message(model), "pq-tagger", verbose, model)
         raise ValueError("GEMINI_API_KEY not set")
 
     already_tagged_subq = db.session.query(HaPQTheme.pq_id).distinct().subquery()
@@ -1479,7 +1680,7 @@ def tag_pq_all_untagged(
     total_eligible = len(pqs)
     if verbose:
         print(f"[pq-tagger] {total_eligible} PQs to tag in batches of {_PQ_BATCH_SIZE} "
-              f"(limit={limit}, batch_delay={_PQ_BATCH_DELAY}s)", flush=True)
+              f"(limit={limit}, batch_delay={_PQ_BATCH_DELAY}s, model {model})", flush=True)
 
     tagged = failed = errors = retried = api_errors = consecutive = 0
     aborted = ""
@@ -1487,7 +1688,7 @@ def tag_pq_all_untagged(
     for start in range(0, total_eligible, chunk):
         part = pqs[start:start + chunk]
         try:
-            outcomes = tag_pq_inputs([pq_input_from_db(pq) for pq in part], api_key)
+            outcomes = tag_pq_inputs([pq_input_from_db(pq) for pq in part], api_key, model)
         except GeminiCallFailed as e:          # final: retrying cannot help
             errors += len(part)
             api_errors += len(part)
@@ -1529,4 +1730,4 @@ def tag_pq_all_untagged(
               "with nothing writable", flush=True)
     return {"total_eligible": total_eligible, "tagged": tagged, "failed": failed,
             "retried": retried, "errors": errors, "api_errors": api_errors,
-            "aborted": aborted, "given_up": n_given_up}
+            "aborted": aborted, "given_up": n_given_up, "model": model}

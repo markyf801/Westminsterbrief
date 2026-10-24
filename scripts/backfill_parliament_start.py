@@ -33,7 +33,8 @@ How it works
   A session that cannot be tagged is not retried within a run, and after
   TAG_MAX_ATTEMPTS counted failures (kept in the checkpoint) it is skipped for
   good, so it never blocks the backfill. Failures only stop the run when a
-  Gemini health check confirms the API itself is failing (see TagBudget).
+  health check of the tagging API (Gemini, or Claude when TAGGER_MODEL selects
+  it) confirms the API itself is failing (see TagBudget).
 - Cron windows: by default the run will not start a (day, house) or a tagging
   call inside, or within 20 minutes of, a production cron window (the shared
   schedule in hansard_archive/cron_windows.py) and stops cleanly instead. In
@@ -44,7 +45,8 @@ How it works
 
 Exit codes: 0 finished or stopped cleanly (cap / time / cron window) ·
 1 a day failed after retries, or a database error · 2 API refused (401/403/429)
-or GEMINI_API_KEY missing · 3 tagging stopped (Gemini down, or too many
+or the tagging key missing (GEMINI_API_KEY, or ANTHROPIC_API_KEY with
+TAGGER_MODEL=claude-haiku-5-5) · 3 tagging stopped (tagging API down, or too many
 untaggable sessions) · 4 another backfill run looks active.
 
 Usage
@@ -56,7 +58,8 @@ Usage
   python scripts/backfill_parliament_start.py --since 2024-07-09 --until 2025-04-29
 
 Railway one-off: build from Dockerfile.cron, restart policy Never,
-SKIP_MIGRATIONS=1, DATABASE_URL (Variable Reference), GEMINI_API_KEY.
+SKIP_MIGRATIONS=1, DATABASE_URL (Variable Reference), GEMINI_API_KEY (and
+TAGGER_MODEL + ANTHROPIC_API_KEY to tag with Claude, as the crons).
 Run order, checks and estimates: docs/ops/backfill-parliament-start.md.
 """
 
@@ -104,7 +107,7 @@ FETCH_BACKOFF = (5, 20)              # seconds before attempts 2 and 3
 DAY_ATTEMPTS = 2                     # per (day, house)
 DAY_RETRY_PAUSE = 60                 # seconds
 DAY_PAUSE = 2                        # seconds between days (polite pacing)
-TAG_PAUSE = 0.4                      # seconds between Gemini calls
+TAG_PAUSE = 0.4                      # seconds between tagging calls
 MAX_CONSECUTIVE_TAG_FAILURES = 5
 TAG_MAX_ATTEMPTS = 2                 # counted failures before the backfill skips an item
 MAX_SKIPPED_ITEMS = 200
@@ -382,8 +385,9 @@ def _untagged_ids(since: date, until: date, limit: int, house: str | None = None
 
 # What this script needs from hansard_archive.tagger. Checked before a run
 # starts, so a renamed helper fails loudly instead of looking like an outage.
-_TAGGER_API = ("_gemini_json", "_RESPONSE_SCHEMA", "resolve_model", "GeminiCallFailed",
-               "_given_up_ids", "tag_session", "tag_pq")
+_TAGGER_API = ("_gemini_json", "_model_json", "_RESPONSE_SCHEMA", "resolve_model",
+               "resolve_backend", "configured_model", "key_for_model", "key_env_name",
+               "GeminiCallFailed", "GeminiEmptyResponse", "_given_up_ids", "tag_session", "tag_pq")
 
 _PROBE_PROMPT = (
     "Tag this UK parliamentary debate. Session title: School funding. House: Commons.\n"
@@ -400,18 +404,46 @@ def check_tagger_api() -> str | None:
 
 def gemini_healthy(api_key: str) -> bool:
     """
-    One small Gemini call through the tagger's own path (_gemini_json with the
-    production response schema). Tells 'the API is failing' apart from 'these
-    particular items cannot be tagged'. Only an API failure counts as down —
-    a missing helper is a bug and raises (check_tagger_api runs first).
+    One small call to the model tagging uses (Gemini, or Claude when
+    TAGGER_MODEL selects it — resolve_backend, as the tagger) through the
+    tagger's own path (_model_json with the production response schema). Tells
+    'the API is failing' apart from 'these particular items cannot be tagged'.
+    Only an API failure counts as down (an empty answer, e.g. a refusal, means
+    the API works) — a missing helper is a bug and raises (check_tagger_api
+    runs first). The name is historical.
     """
     try:
-        model = tagger.resolve_model(api_key)
-        tagger._gemini_json(api_key, model, _PROBE_PROMPT, tagger._RESPONSE_SCHEMA)
+        model, key = tagger.resolve_backend(api_key)
+        tagger._model_json(key, model, _PROBE_PROMPT, tagger._RESPONSE_SCHEMA)
+        return True
+    except tagger.GeminiEmptyResponse:
         return True
     except tagger.GeminiCallFailed as exc:
-        print(f"[backfill]   Gemini health check failed: {exc}", flush=True)
+        print(f"[backfill]   tagging API health check failed: {exc}", flush=True)
         return False
+
+
+def tagging_key(prefix: str) -> tuple[str, bool]:
+    """
+    (key, refused) for tagging: the key for the model the crons tag with
+    (tagger.resolve_backend: GEMINI_API_KEY, or ANTHROPIC_API_KEY when
+    TAGGER_MODEL=claude-haiku-5-5). refused=True (message printed) when that
+    key is missing or TAGGER_MODEL names an unapproved model. No network call.
+    """
+    from flask import current_app
+    gemini_key = current_app.config.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
+    try:
+        model = tagger.configured_model() or tagger.DEFAULT_MODEL
+    except tagger.GeminiCallFailed as exc:
+        print(f"[{prefix}] {exc}", flush=True)
+        return "", True
+    key = tagger.key_for_model(model, gemini_key) or ""
+    if not key:
+        print(f"[{prefix}] {tagger.key_env_name(model)} not set (tagging model {model}) — "
+              "set it or pass --no-tag", flush=True)
+        return "", True
+    print(f"[{prefix}] tagging model: {model}", flush=True)
+    return key, False
 
 
 def _given_up(kind: str) -> set[int]:
@@ -518,8 +550,9 @@ class TagBudget:
                 count = self.tag_fn(item_id)
             except tagger.GeminiCallFailed as exc:
                 if exc.final:
-                    raise TaggingStopped(f"Gemini rejected the request ({exc}) — check "
-                                         "GEMINI_API_KEY / TAGGER_MODEL; nothing counted") from exc
+                    raise TaggingStopped(f"the tagging API rejected the request ({exc}) — check "
+                                         "TAGGER_MODEL and its key (GEMINI_API_KEY or "
+                                         "ANTHROPIC_API_KEY); nothing counted") from exc
                 print(f"[backfill]   tag API error {self.label} {item_id}: {exc}", flush=True)
                 count = None
             except Exception as exc:
@@ -546,7 +579,8 @@ class TagBudget:
             if len(self.streak) >= MAX_CONSECUTIVE_TAG_FAILURES:
                 if not self.probe():
                     raise TaggingStopped(f"{len(self.streak)} tagging API errors in a row and the "
-                                         "Gemini health check failed — check GEMINI_API_KEY / quota")
+                                         "tagging API health check failed — check TAGGER_MODEL, "
+                                         "its key (GEMINI_API_KEY or ANTHROPIC_API_KEY) and quota")
                 self._count(self.streak)
                 self.streak = []
         return tagged
@@ -686,10 +720,8 @@ def run(args: argparse.Namespace, sleep=time.sleep, now=datetime.utcnow) -> int:
     tagging = not args.dry_run and not args.no_tag
     api_key = ""
     if tagging or (args.tag_only and not args.dry_run):
-        from flask import current_app
-        api_key = current_app.config.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            print("[backfill] GEMINI_API_KEY not set — set it or pass --no-tag", flush=True)
+        api_key, refused = tagging_key("backfill")
+        if refused:
             return EXIT_REFUSED
     if api_key:
         missing = check_tagger_api()
