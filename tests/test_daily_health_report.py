@@ -967,9 +967,16 @@ def test_db_size_thresholds_on_default_5_gb(monkeypatch, size_gb, status):
     res = _db_size(size_gb, monkeypatch, volume="5")
     assert res.status == status
     if status == hc.OK:
-        assert res.detail == f"Database {size_gb:.1f} GB of 5 GB ({100 * size_gb / 5:.0f}%)"
+        assert "grow the Postgres volume" not in res.detail
     else:
         assert "grow the Postgres volume" in res.detail
+
+
+def test_db_size_percentage_never_rounds_up_to_the_next_level(monkeypatch):
+    res = _db_size(3.49, monkeypatch, volume="5")                     # 69.8%
+    assert (res.status, res.detail) == (hc.OK, "Database 3.5 GB of 5 GB (69%)")
+    res = _db_size(4.249, monkeypatch, volume="5")                    # 84.98%
+    assert res.status == hc.WARN and res.detail.startswith("Database 4.2 GB of 5 GB (84%) - ")
 
 
 def test_db_size_plain_english_and_volume_from_env(monkeypatch):

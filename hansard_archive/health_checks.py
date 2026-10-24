@@ -870,7 +870,8 @@ def check_db_size(ctx: HealthContext) -> CheckResult:
     volume_gb, note = _volume_gb(cfg["default_volume_gb"])
     size_gb = ctx.conn.execute(sa.text("SELECT pg_database_size(current_database())")).scalar() / 1e9
     pct = 100 * size_gb / volume_gb
-    detail = f"Database {size_gb:.1f} GB of {volume_gb:g} GB ({pct:.0f}%){note}"
+    # Rounded down, so the line never shows 70% or 85% on a level below it.
+    detail = f"Database {size_gb:.1f} GB of {volume_gb:g} GB ({int(pct)}%){note}"
     if pct >= cfg["fail_pct"]:
         status = FAIL
     elif pct >= cfg["warn_pct"]:
