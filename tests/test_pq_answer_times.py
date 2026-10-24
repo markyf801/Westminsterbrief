@@ -363,6 +363,13 @@ class TestQuestionPage:
             s["admin_authenticated"] = True
         assert 'id="answer-timing"' in _page(client, _path_of("Commons"))
 
+    def test_unexpected_error_leaves_the_block_out(self, client, monkeypatch):
+        def boom(*a):
+            raise ValueError("unexpected")
+        monkeypatch.setattr(pt, "pq_answer_timing", boom)
+        html = _page(client, _path_of("Commons"))
+        assert 'id="answer-timing"' not in html
+
     def test_missing_deadline_table_shows_nothing(self, client, fa):
         from extensions import db
         from hansard_archive.models import HaPQDeadline

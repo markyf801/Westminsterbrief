@@ -3154,13 +3154,19 @@ def pq_detail(tabled: str, uin: str):
 
     # Answer timing (FEATURE_PQ_ANSWER_TIMES): one primary-key lookup for the due
     # date; the department line reads the cached per-period figures.
+    # Never allowed to break the page: on any error the block is left out.
     answer_timing = dept_record = None
     if _pq_timing.answer_times_enabled():
-        today = _pq_timing.today()
-        deadline = _pq_timing.deadline_for(pq) if pq.chamber == "Commons" else None
-        answer_timing = _pq_timing.pq_answer_timing(pq, deadline, today)
-        if answer_timing and answer_timing["house"] == "Commons":
-            dept_record = _pq_timing.department_record(pq.answering_body, today)
+        try:
+            today = _pq_timing.today()
+            deadline = _pq_timing.deadline_for(pq) if pq.chamber == "Commons" else None
+            answer_timing = _pq_timing.pq_answer_timing(pq, deadline, today)
+            if answer_timing and answer_timing["house"] == "Commons":
+                dept_record = _pq_timing.department_record(pq.answering_body, today)
+        except Exception as e:
+            db.session.rollback()
+            _pq_timing.log.warning("answer timing skipped for pq %s/%s: %s", tabled, uin, str(e)[:120])
+            answer_timing = dept_record = None
 
     return render_template(
         "hansard_archive/archive_pq_detail.html",
