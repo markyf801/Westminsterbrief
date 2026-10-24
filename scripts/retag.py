@@ -94,6 +94,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from collections import Counter
@@ -335,18 +336,21 @@ def undo_sql(kind: str, backup: str, model: str, since: str) -> str:
     """
     table, col = ("ha_session_theme", "session_id") if kind == "sessions" else ("ha_pq_theme", "pq_id")
     order = " ORDER BY b.id" if kind == "sessions" else ""     # session tags: centrality = id order
+    cols = f"{col}, theme, theme_type, tagged_at, model_used" + (", confidence" if kind == "sessions" else "")
+    b_cols = ", ".join(f"b.{c.strip()}" for c in cols.split(","))
+    tmp = f"retag_undo_{kind}"          # one per kind: both undos can run in one DBeaver session
     model_q = model.replace("'", "''")
     return (
         f"-- Undo re-tag ({kind}): restore tags from {backup}. Run in one transaction; check the counts.\n"
         "BEGIN;\n"
-        f"CREATE TEMP TABLE retag_undo AS SELECT DISTINCT t.{col} AS item_id FROM {table} t\n"
+        f"CREATE TEMP TABLE {tmp} AS SELECT DISTINCT t.{col} AS item_id FROM {table} t\n"
         f"  WHERE t.model_used = '{model_q}' AND t.tagged_at >= '{since}'\n"
         f"    AND t.{col} IN (SELECT {col} FROM {backup});\n"
-        "SELECT COUNT(*) AS items_to_restore FROM retag_undo;\n"
-        f"DELETE FROM {table} WHERE {col} IN (SELECT item_id FROM retag_undo);\n"
-        f"INSERT INTO {table} ({col}, theme, theme_type, tagged_at, model_used)\n"
-        f"  SELECT b.{col}, b.theme, b.theme_type, b.tagged_at, b.model_used FROM {backup} b\n"
-        f"  WHERE b.{col} IN (SELECT item_id FROM retag_undo){order};\n"
+        f"SELECT COUNT(*) AS items_to_restore FROM {tmp};\n"
+        f"DELETE FROM {table} WHERE {col} IN (SELECT item_id FROM {tmp});\n"
+        f"INSERT INTO {table} ({cols})\n"
+        f"  SELECT {b_cols} FROM {backup} b\n"
+        f"  WHERE b.{col} IN (SELECT item_id FROM {tmp}){order};\n"
         "COMMIT;"
     )
 
@@ -529,8 +533,16 @@ def run(kind: str, args, api_key: str, model: str | None = None) -> dict:
 # the database and must hash the same, so tags are always checked against the
 # text that was sent (and an item edited meanwhile keeps its old tags).
 
+_CUSTOM_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
 def _custom_id(prefix: str, ids: list[int], fp: str) -> str:
-    return f"{prefix}{'_'.join(str(i) for i in ids)}-{fp}"
+    cid = f"{prefix}{'_'.join(str(i) for i in ids)}-{fp}"
+    if not _CUSTOM_ID_RE.fullmatch(cid):
+        # 5 ids of up to 9 digits fit; refuse before anything is submitted rather than
+        # have the whole batch rejected.
+        raise ValueError(f"custom_id {cid!r} breaks the Batch API limit (1-64 chars of A-Za-z0-9_-)")
+    return cid
 
 
 def _parse_custom_id(cid: str) -> tuple[str, list[int], str]:

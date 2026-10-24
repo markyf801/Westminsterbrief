@@ -346,6 +346,10 @@ def test_undo_sql_restores_the_old_tags(retag, seeded, fake, capsys):
     """Run the printed undo SQL (SQLite) and check the old tags are back."""
     from sqlalchemy import text
     from extensions import db
+    from hansard_archive.models import HansardSessionTheme
+    with seeded.app_context():
+        HansardSessionTheme.query.update({"confidence": 0.7})
+        db.session.commit()
     assert retag.main([*BATCH, "--apply", "--backup", "--ignore-cron-windows", "--what", "sessions"]) == 0
     sql = capsys.readouterr().out.split("-- Undo re-tag")[1]
     sql = sql[sql.index("BEGIN;") + len("BEGIN;"): sql.index("COMMIT;")]
@@ -354,9 +358,72 @@ def test_undo_sql_restores_the_old_tags(retag, seeded, fake, capsys):
             if stmt:
                 db.session.execute(text(stmt))
         db.session.commit()
-        db.session.execute(text("DROP TABLE IF EXISTS retag_undo"))
+        db.session.execute(text("DROP TABLE IF EXISTS retag_undo_sessions"))
+        assert {t.confidence for t in HansardSessionTheme.query.all()} == {0.7}
     sessions, _ = _tags(seeded)
     assert _themes(sessions) == {OLD} and len(sessions) == 3
+
+
+def test_undo_sql_temp_tables_differ_per_kind(retag):
+    s = retag.undo_sql("sessions", "ha_session_theme_bak_x", HAIKU, "2026-10-24 23:30:00")
+    p = retag.undo_sql("pqs", "ha_pq_theme_bak_x", HAIKU, "2026-10-24 23:30:00")
+    assert "retag_undo_sessions" in s and "retag_undo_pqs" in p and "retag_undo_pqs" not in s
+    assert "confidence" in s and "confidence" not in p        # ha_pq_theme has no such column
+
+
+# ── items gone, duplicates, lock, custom_id ──────────────────────────────────
+
+def test_items_deleted_after_submission_keep_nothing_written_and_others_apply(retag, seeded, fake,
+                                                                               monkeypatch):
+    sids, pids = _ids(seeded)
+    real_results = fake.results
+
+    def results_after_delete(bid):
+        from extensions import db
+        from hansard_archive.models import (HansardContribution, HansardSession, HansardSessionTheme,
+                                            HaPQ, HaPQTheme)
+        HansardSessionTheme.query.filter_by(session_id=sids[0]).delete()
+        HansardContribution.query.filter_by(session_id=sids[0]).delete()
+        HansardSession.query.filter_by(id=sids[0]).delete()
+        HaPQTheme.query.filter_by(pq_id=pids[1]).delete()
+        HaPQ.query.filter_by(id=pids[1]).delete()
+        db.session.commit()
+        monkeypatch.setattr(fake, "results", real_results)
+        return real_results(bid)
+    monkeypatch.setattr(fake, "results", results_after_delete)
+    assert retag.main(APPLY) == 0
+    sessions, pqs = _tags(seeded)
+    assert sids[0] not in {i for i, *_ in sessions}           # nothing written for a deleted session
+    assert all(_themes(sessions, s) == {"Environment", "brown hares"} for s in sids[1:])
+    assert pids[1] not in {i for i, *_ in pqs}
+    # the rest of the deleted PQ's group was asked again on its own, then written
+    singles = sorted(int(r["custom_id"][1:].split("-")[0]) for r in fake.requests()
+                     if r["custom_id"].startswith("q"))
+    assert singles == [pids[0], pids[2], pids[3], pids[4]]
+    assert all(_themes(pqs, p) == {"Environment", "farmland birds"} for p in pids if p != pids[1])
+
+
+def test_duplicate_tags_in_one_answer_are_written_once(retag, seeded, fake):
+    dup = {"area": "Environment", "evidence": "a close season for brown hares"}
+    top = {"topic": "brown hares", "evidence": "close season for brown hares"}
+    fake.answer = lambda cid, params: _message({"policy_areas": [dup, dup], "topics": [top, top, top]})
+    assert retag.main([*APPLY, "--what", "sessions"]) == 0
+    sessions, _ = _tags(seeded)
+    assert len(sessions) == 6 and len(set(sessions)) == 6     # one row per (session, theme)
+
+
+def test_batch_session_writes_take_the_live_taggers_lock(retag, seeded, fake, monkeypatch):
+    sids, _ = _ids(seeded)
+    locked = []
+    monkeypatch.setattr(tg, "_lock_session_tags", lambda sid: locked.append(sid))
+    assert retag.main([*APPLY, "--what", "sessions"]) == 0
+    assert sorted(locked) == sids
+
+
+def test_custom_id_over_the_api_limit_is_refused(retag):
+    assert retag._custom_id("p", [123456789] * 5, "abcdef12")       # 59 chars: fine
+    with pytest.raises(ValueError):
+        retag._custom_id("p", [1234567890123] * 5, "abcdef12")
 
 
 # ── guards ───────────────────────────────────────────────────────────────────
