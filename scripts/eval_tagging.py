@@ -21,10 +21,13 @@ the other's. The tagger already dropped tags without verbatim evidence; the
 "evidence-drop rate" is the share of the model's proposed tags that check removed.
 
 Uses the production code path (hansard_archive.tagger): no database, no writes.
-Needs GEMINI_API_KEY in the environment. Runnable as a Railway one-off:
+Needs GEMINI_API_KEY for Gemini models and ANTHROPIC_API_KEY for Claude models
+("claude-*", which also need the anthropic package); only the keys for the
+models asked for. Runnable as a Railway one-off:
 
     python scripts/eval_tagging.py                                  # flash-lite, flash, pro
     python scripts/eval_tagging.py --models gemini-2.5-flash-lite --show-errors
+    python scripts/eval_tagging.py --models gemini-2.5-flash-lite claude-haiku-5-5 claude-sonnet-5-5
     python scripts/eval_tagging.py --kind pq --limit 10 --json out.json
     python scripts/eval_tagging.py --dry-run                        # sample summary, no API calls
 
@@ -34,6 +37,7 @@ Prices: hansard_archive.tagger.MODEL_PRICES_PER_M (check before relying on them)
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -188,7 +192,11 @@ def evaluate(items: list[dict], model: str, api_key: str, pq_batch: int = tg._PQ
     for start in range(0, len(pqs), pq_batch):
         chunk = pqs[start:start + pq_batch]
         t0 = time.time()
-        outcomes = tg.tag_pq_inputs([pq_input(i) for i in chunk], api_key, model, batch_size=pq_batch)
+        try:
+            outcomes = tg.tag_pq_inputs([pq_input(i) for i in chunk], api_key, model, batch_size=pq_batch)
+        except tg.GeminiCallFailed as e:      # final (bad request / key / model): score as failed
+            print(f"  [{model}] PQ batch at {start} failed: {e}", flush=True)
+            outcomes = [None] * len(chunk)
         per = (time.time() - t0) / max(1, len(chunk))
         for item, outcome in zip(chunk, outcomes):
             rows.append(_row(item, outcome, model, per))
@@ -234,6 +242,11 @@ def project_cost(results: dict[str, dict[str, dict]], sessions: int, pqs: int) -
         print(f"  {model:28s} ${total:,.2f}")
 
 
+def key_name(model: str) -> str:
+    """The environment variable holding the API key for a model."""
+    return "ANTHROPIC_API_KEY" if tg.is_claude_model(model) else "GEMINI_API_KEY"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Evaluate tagging models on the labelled sample.")
     ap.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
@@ -257,16 +270,24 @@ def main(argv=None) -> int:
               f"{sum(len(i['gold']['topics']) for i in items)}")
         return 0
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("[eval] GEMINI_API_KEY is not set — nothing to run (use --dry-run to check the sample).")
+    keys = {model: os.environ.get(key_name(model)) for model in args.models}
+    missing = sorted({key_name(m) for m, k in keys.items() if not k})
+    if missing:
+        for name in missing:
+            needs = ", ".join(m for m in args.models if key_name(m) == name)
+            print(f"[eval] {name} is not set — needed for {needs}.")
+        print("[eval] nothing run (use --dry-run to check the sample).")
+        return 2
+    if any(tg.is_claude_model(m) for m in args.models) and importlib.util.find_spec("anthropic") is None:
+        print("[eval] the anthropic package is not installed — needed for Claude models "
+              "(pip install -r requirements.txt).")
         return 2
 
     results: dict[str, dict[str, dict]] = {}
     all_rows: dict[str, list[dict]] = {}
     for model in args.models:
         print(f"[eval] running {model} ...", flush=True)
-        rows = evaluate(items, model, api_key, args.pq_batch)
+        rows = evaluate(items, model, keys[model], args.pq_batch)
         all_rows[model] = rows
         results[model] = {k: summarise([r for r in rows if r["kind"] == k]) for k in ("session", "pq")
                           if any(r["kind"] == k for r in rows)}

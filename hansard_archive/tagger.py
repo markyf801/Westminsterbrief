@@ -31,6 +31,11 @@ Accuracy rules (owner standard: accuracy before cost):
 Gemini with JSON schema enforcement (policy areas are a hard enum).
 Default model: gemini-2.5-flash-lite (auto-detected); override with the
 TAGGER_MODEL environment variable or the `model` argument.
+
+For evaluation only (scripts/eval_tagging.py), a "claude-*" id passed as the
+`model` argument uses the Claude backend (_claude_json) with the same prompts,
+schema fields, evidence check and batching; `api_key` must then be an
+Anthropic key. TAGGER_MODEL never selects Claude.
 """
 
 from __future__ import annotations
@@ -696,8 +701,18 @@ def _detect_model(api_key: str) -> str:
 
 
 def resolve_model(api_key: str, model: Optional[str] = None) -> str:
-    """Explicit model, else TAGGER_MODEL, else the auto-detected Flash-Lite."""
-    return model or os.environ.get("TAGGER_MODEL") or _detect_model(api_key)
+    """
+    Explicit model, else TAGGER_MODEL, else the auto-detected Flash-Lite.
+    A Claude model is used only when passed explicitly (evaluation): free
+    features run on Gemini, so a Claude TAGGER_MODEL is ignored.
+    """
+    if model:
+        return model
+    env_model = os.environ.get("TAGGER_MODEL")
+    if is_claude_model(env_model):
+        logger.error("Tagger: TAGGER_MODEL=%s ignored — Claude models are for evaluation only", env_model)
+        env_model = None
+    return env_model or _detect_model(api_key)
 
 
 class GeminiCallFailed(Exception):
@@ -705,6 +720,7 @@ class GeminiCallFailed(Exception):
     The call failed. final=True means retrying cannot help (bad request — e.g.
     a schema the API rejects —, unknown model, bad key): callers stop the run.
     Otherwise all retries failed (network, 5xx, rate limit, unparseable output).
+    Also raised by the Claude backend (the name is kept for existing callers).
     """
 
     def __init__(self, message: str, final: bool = False):
@@ -822,6 +838,148 @@ def _add_usage(total: dict, usage: dict) -> None:
         total[k] = total.get(k, 0) + int(usage.get(k) or 0)
 
 
+# ---------------------------------------------------------------------------
+# Claude client — for evaluation only (scripts/eval_tagging.py). Chosen only
+# when a model id starting "claude-" is passed explicitly; never the default
+# and never from TAGGER_MODEL. Same prompt, same schema fields, same evidence
+# check and batching as Gemini: only the model call differs. The `anthropic`
+# package is imported here, lazily, so the Gemini path never needs it.
+# ---------------------------------------------------------------------------
+
+CLAUDE_EFFORT = "low"          # classification task; Haiku 5.5 defaults to medium
+_CLAUDE_MAX_TOKENS = 16000     # thinking + JSON; the largest (grouped) answers are a few thousand
+_CLAUDE_TIMEOUT = 120.0        # seconds per request; the SDK retries timeouts
+_CLAUDE_ARRAY_KEY = "results"  # a top-level array schema is wrapped in an object under this key
+
+_CLAUDE_CLIENTS: dict[str, object] = {}
+
+
+def is_claude_model(model: Optional[str]) -> bool:
+    return (model or "").startswith("claude-")
+
+
+def _claude_client(api_key: str):
+    import anthropic
+    client = _CLAUDE_CLIENTS.get(api_key)
+    if client is None:
+        client = anthropic.Anthropic(api_key=api_key, timeout=_CLAUDE_TIMEOUT, max_retries=_MAX_RETRIES)
+        _CLAUDE_CLIENTS[api_key] = client
+    return client
+
+
+def _claude_schema(schema: dict) -> tuple[dict, bool]:
+    """
+    The Gemini response schema as JSON Schema for Claude structured outputs:
+    lowercase types, no propertyOrdering (Claude keeps the properties' order),
+    additionalProperties false on every object; constraints Claude doesn't
+    enforce (maxItems) are moved into the description by the SDK. A top-level
+    array is wrapped in an object; returns (schema, wrapped).
+    """
+    import anthropic
+
+    def convert(s):
+        if isinstance(s, dict):
+            return {k: (v.lower() if k == "type" and isinstance(v, str) else convert(v))
+                    for k, v in s.items() if k != "propertyOrdering"}
+        if isinstance(s, list):
+            return [convert(x) for x in s]
+        return s
+
+    out = convert(schema)
+    wrapped = out.get("type") == "array"
+    if wrapped:
+        out = {"type": "object", "properties": {_CLAUDE_ARRAY_KEY: out}, "required": [_CLAUDE_ARRAY_KEY]}
+    return anthropic.transform_schema(out), wrapped
+
+
+def _claude_usage(usage) -> dict:
+    """Claude usage in the Gemini usage keys, so _add_usage and usage_cost work
+    unchanged. output_tokens already includes thinking (billed as output)."""
+    if usage is None:
+        return {}
+    prompt = sum(int(getattr(usage, k, 0) or 0) for k in
+                 ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+    return {"promptTokenCount": prompt, "candidatesTokenCount": int(getattr(usage, "output_tokens", 0) or 0)}
+
+
+def _claude_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[object, dict]:
+    """
+    One structured-output call to Claude, with the same contract as _gemini_json:
+    returns (parsed JSON, usage); raises GeminiCallFailed (final for 4xx other
+    than 429) or GeminiEmptyResponse (refusal, max_tokens, no text). HTTP
+    retries (429, 5xx, connection) are the SDK's; unparseable JSON is retried here.
+    """
+    if not api_key or api_key.startswith("AIza"):
+        # Never send a Gemini key to Anthropic, and never fall back to a key
+        # found in the environment: the caller must pass an Anthropic key.
+        raise GeminiCallFailed(f"model {model} needs an Anthropic API key (ANTHROPIC_API_KEY)", final=True)
+    try:
+        import anthropic
+    except ImportError as e:
+        raise GeminiCallFailed(f"model {model} needs the anthropic package: {e}", final=True) from e
+
+    claude_schema, wrapped = _claude_schema(schema)
+    client = _claude_client(api_key)
+    last_error = ""
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=_CLAUDE_MAX_TOKENS,
+                messages=[{"role": "user", "content": prompt}],
+                output_config={"effort": CLAUDE_EFFORT,
+                               "format": {"type": "json_schema", "schema": claude_schema}},
+            )
+        except anthropic.RateLimitError as e:
+            raise GeminiCallFailed(f"HTTP 429 from Claude: {str(e)[:200]}") from e
+        except anthropic.APIStatusError as e:
+            final = e.status_code < 500
+            log = logger.error if final else logger.warning
+            log("Tagger: HTTP %d from Claude (model %s)%s: %s", e.status_code, model,
+                " — not retrying" if final else "", str(e)[:_BODY_LOG_CHARS])
+            raise GeminiCallFailed(f"HTTP {e.status_code} from Claude: {str(e)[:200]}", final=final) from e
+        except anthropic.APIConnectionError as e:   # includes timeouts
+            raise GeminiCallFailed(f"Claude connection error: {str(e)[:200]}") from e
+        except anthropic.APIError as e:
+            raise GeminiCallFailed(f"Claude API error: {str(e)[:200]}") from e
+
+        usage = _claude_usage(resp.usage)
+        if resp.stop_reason == "refusal":
+            details = getattr(resp, "stop_details", None)
+            why = f"empty response (Claude refusal, category={getattr(details, 'category', None)})"
+            logger.warning("Tagger: %s, model %s", why, model)
+            raise GeminiEmptyResponse(why, usage)
+        if resp.stop_reason == "max_tokens":
+            why = f"empty response (Claude stop_reason=max_tokens at {_CLAUDE_MAX_TOKENS})"
+            logger.warning("Tagger: %s, model %s", why, model)
+            raise GeminiEmptyResponse(why, usage)
+        raw = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        if not raw.strip():
+            why = f"empty response (Claude stop_reason={resp.stop_reason}, no text)"
+            logger.warning("Tagger: %s, model %s", why, model)
+            raise GeminiEmptyResponse(why, usage)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            last_error = str(e)[:200]
+            logger.warning("Tagger: attempt %d/%d failed: unparseable JSON from Claude: %s",
+                           attempt + 1, _MAX_RETRIES + 1, e)
+            if attempt < _MAX_RETRIES:
+                time.sleep(2 ** attempt)
+            continue
+        if wrapped and isinstance(parsed, dict) and _CLAUDE_ARRAY_KEY in parsed:
+            parsed = parsed[_CLAUDE_ARRAY_KEY]
+        return parsed, usage
+    raise GeminiCallFailed(last_error or "no response")
+
+
+def _model_json(api_key: str, model: str, prompt: str, schema: dict) -> tuple[object, dict]:
+    """The structured-output call for `model`: Claude for "claude-*" ids, else Gemini."""
+    if is_claude_model(model):
+        return _claude_json(api_key, model, prompt, schema)
+    return _gemini_json(api_key, model, prompt, schema)
+
+
 # USD per 1M tokens: (input, output). Output includes thinking tokens, which
 # Gemini bills as output. Paid-tier list prices for prompts under 200K tokens as
 # last checked — confirm at https://ai.google.dev/gemini-api/docs/pricing before
@@ -830,6 +988,10 @@ MODEL_PRICES_PER_M: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash-lite": (0.10, 0.40),
     "gemini-2.5-flash":      (0.30, 2.50),
     "gemini-2.5-pro":        (1.25, 10.00),
+    # Anthropic list prices (Haiku 5.5: prompts up to 100K tokens, which every
+    # tagging prompt is). Evaluation only. Output includes thinking tokens.
+    "claude-haiku-5-5":      (0.10, 0.50),
+    "claude-sonnet-5-5":     (2.00, 10.00),
 }
 
 
@@ -876,7 +1038,7 @@ def tag_session_input(si: SessionInput, api_key: str, model: Optional[str] = Non
 def _tag_session_input(si: SessionInput, api_key: str, model: str) -> TagOutcome:
     if is_multi_question(si) and len(question_groups(si.contributions)) >= 2:
         prompt, sources = build_grouped_prompt(si)
-        parsed, usage = _gemini_json(api_key, model, prompt, _GROUPED_RESPONSE_SCHEMA)
+        parsed, usage = _model_json(api_key, model, prompt, _GROUPED_RESPONSE_SCHEMA)
         by_group: dict[int, dict] = {}
         groups = parsed.get("groups") if isinstance(parsed, dict) else None
         for g in groups or []:
@@ -890,7 +1052,7 @@ def _tag_session_input(si: SessionInput, api_key: str, model: str) -> TagOutcome
         out = aggregate_groups(outcomes)
     else:
         prompt, source = build_session_prompt(si)
-        parsed, usage = _gemini_json(api_key, model, prompt, _RESPONSE_SCHEMA)
+        parsed, usage = _model_json(api_key, model, prompt, _RESPONSE_SCHEMA)
         out = verify_tags(parsed if isinstance(parsed, dict) else {}, source)
     out.model = model
     _add_usage(out.usage, usage)
@@ -902,7 +1064,7 @@ def tag_pq_input(pq: PQInput, api_key: str, model: Optional[str] = None) -> TagO
     model = resolve_model(api_key, model)
     prompt, source = build_pq_prompt(pq)
     try:
-        parsed, usage = _gemini_json(api_key, model, prompt, _RESPONSE_SCHEMA)
+        parsed, usage = _model_json(api_key, model, prompt, _RESPONSE_SCHEMA)
     except GeminiEmptyResponse as e:
         return _empty_outcome(e, model)
     out = verify_tags(parsed if isinstance(parsed, dict) else {}, source)
@@ -926,7 +1088,7 @@ def tag_pq_inputs(pqs: list[PQInput], api_key: str, model: Optional[str] = None,
         retry: list[int] = []
         try:
             prompt, sources = build_pq_batch_prompt(batch)
-            parsed, usage = _gemini_json(api_key, model, prompt, _BATCH_RESPONSE_SCHEMA)
+            parsed, usage = _model_json(api_key, model, prompt, _BATCH_RESPONSE_SCHEMA)
         except GeminiCallFailed as e:
             if e.final:
                 raise
