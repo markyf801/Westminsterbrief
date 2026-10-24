@@ -647,8 +647,22 @@ Set on the **service** (not just the project) in the Railway dashboard.
 - Billing (paid products; test keys during dev): `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - Backups: `R2_ENDPOINT_URL`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `BACKUP_ENCRYPTION_KEY`
 - No longer read by any code (delete from the web service once the TheyWorkForYou removal is deployed and confirmed): `TWFY_API_KEY`, `SEARCH_BACKEND`
-- Flags / behaviour: `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `FEATURE_DIVISIONS`, `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`, `PQ_INDEX_FROM` (web service; see below)
+- Flags / behaviour: `FEATURE_AUTH`, `FEATURE_ACCOUNT`, `FEATURE_DIVISIONS`, `FEATURE_PQ_ANSWER_TIMES` (see below), `STATS_CATALOGUE_ENABLED`, `BETA_USERS`, `SKIP_MIGRATIONS`, `RATELIMIT_ENABLED`, `APPROVED_EMAILS`, `APPROVED_DOMAINS`, `DISCOVERY_POLL_INTERVAL`, `PQ_INDEX_FROM` (web service; see below)
 - Health report (`health-report` service): `DB_VOLUME_GB` (Postgres volume size in GB; default 5)
+
+### Written question answer times (`FEATURE_PQ_ANSWER_TIMES`)
+
+Web service; `hidden` (default) / `beta` / `live`, as `feature_enabled()`. Controls
+both the "Answer timing" block on each question page and the department table at
+`/written-questions/answer-times` (plus its tab on the Written Questions pages).
+`beta` shows them only to the owner signed in at `/admin` (or `BETA_USERS`); `live`
+makes them public and adds the table to `sitemap-core.xml`. Needs no migration
+(reads `ha_pq` and `ha_pq_deadline`; without the deadline table the Commons facts
+and the table's figures are simply not shown). Department figures are cached for
+6 hours per worker. Code: `hansard_archive/pq_timing.py` (definitions),
+`hansard_archive/working_days.py` (bank holidays 2024–2027: extend before 2028;
+`tests/test_pq_answer_times.py` fails from October 2027 as a reminder),
+`pq_answer_times.py` (route).
 
 ### Older written questions kept out of Google (`PQ_INDEX_FROM`)
 

@@ -27,6 +27,16 @@ body { background: #f0f2f5; }
 .pq-same-uin ul { margin: 4px 0 0; padding-left: 18px; }
 .pq-same-uin a { color: #2f6690; }
 
+/* Answer timing (FEATURE_PQ_ANSWER_TIMES) */
+.pq-timing { max-width: 720px; margin: 20px 30px 0; padding: 10px 14px; background: #fff;
+             border: 1px solid #dde3ed; border-radius: 5px; font-size: 13px; color: #2d3748; }
+.pq-timing-heading { font-size: 12px; font-weight: 700; color: #5a6675; text-transform: uppercase;
+                     letter-spacing: 0.05em; margin: 0 0 6px; }
+.pq-timing p { margin: 0 0 4px; line-height: 1.5; }
+.pq-timing p:last-child { margin-bottom: 0; }
+.pq-timing-note { font-size: 12px; color: #5a6675; }
+.pq-timing a { color: #2f6690; }
+
 /* Related parliamentary activity panel — matches .sd-transcript alignment */
 .rpa-panel {
     max-width: 720px;
@@ -188,6 +198,22 @@ body { background: #f0f2f5; }
         </div>
 
     </div>
+
+    {# --- Answer timing (FEATURE_PQ_ANSWER_TIMES; facts first, neutral wording) --- #}
+    {% if answer_timing %}
+    <div class="pq-timing" id="answer-timing">
+        <h2 class="pq-timing-heading">Answer timing</h2>
+        <p>{{ answer_timing.facts|join(' · ') }}{% if answer_timing.verdict %} · {{ answer_timing.verdict }}{% endif %}</p>
+        {% if answer_timing.note %}<p class="pq-timing-note">{{ answer_timing.note }}</p>{% endif %}
+        {% if dept_record %}
+        <p>{{ dept_record.department }}, questions tabled {{ dept_record.period.label }}:
+            {%- if dept_record.named %} {{ '%.1f'|format(dept_record.named.pct) }}% of named-day questions answered on time ({{ '{:,}'.format(dept_record.named.on_time) }} of {{ '{:,}'.format(dept_record.named.questions) }}){% if dept_record.ordinary %};{% else %}.{% endif %}{% endif %}
+            {%- if dept_record.ordinary %} {{ '%.1f'|format(dept_record.ordinary.pct) }}% of ordinary questions answered within the expected time ({{ '{:,}'.format(dept_record.ordinary.on_time) }} of {{ '{:,}'.format(dept_record.ordinary.questions) }}).{% endif %}
+            <a href="/written-questions/answer-times">Compare departments</a></p>
+        {% endif %}
+        <p class="pq-timing-note">Working days exclude weekends and bank holidays. <a href="/written-questions/answer-times#methodology">How this is measured</a></p>
+    </div>
+    {% endif %}
 
     {# --- Related parliamentary activity panel --- #}
     {# basis 'tags': shared specific topics (canonical families), main policy area as a

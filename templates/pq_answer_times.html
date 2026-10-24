@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Written question answer times by department — Westminster Brief{% endblock %}
+{% block meta_description %}{{ meta_desc }}{% endblock %}
+{% block og_title %}Written question answer times by department — Westminster Brief{% endblock %}
+{% block og_description %}{{ meta_desc }}{% endblock %}
+{% block twitter_title %}Written question answer times by department{% endblock %}
+{% block twitter_description %}{{ meta_desc }}{% endblock %}
+{% block canonical %}<link rel="canonical" href="{{ canonical_url }}">{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Dataset",
+  "name": "Written question answer times by government department (House of Commons)",
+  "description": {{ meta_desc|tojson }},
+  "url": {{ canonical_url|tojson }},
+  "creator": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
+  "publisher": {"@type": "Organization", "name": "Westminster Brief", "url": "https://westminsterbrief.co.uk"},
+  "isBasedOn": "https://questions-statements.parliament.uk/written-questions",
+  "license": "https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/",
+  "spatialCoverage": "United Kingdom",
+  "temporalCoverage": "{{ period.start.isoformat() }}/{{ period.end.isoformat() }}",
+{% if figures %}  "dateModified": "{{ figures.computed_at.date().isoformat() }}",
+{% endif %}  "variableMeasured": ["Named-day questions answered on time (%)", "Ordinary questions answered within the expected time (%)", "Median working days to answer"],
+  "distribution": [{"@type": "DataDownload", "encodingFormat": "text/csv", "contentUrl": {{ (canonical_url ~ '?format=csv')|tojson }}}]
+}
+</script>
+{% endblock %}
+
+{% block extra_head %}<style>
+.pat-period { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; font-size: 13px; }
+.pat-period select { font-size: 13px; padding: 4px 6px; border: 1px solid #c8d1dc; border-radius: 4px; }
+.pat-period button { font-size: 13px; padding: 4px 12px; }
+.pat-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 10px; }
+.pat-table th, .pat-table td { padding: 6px 8px; border-bottom: 1px solid #e3e8ef; text-align: right; vertical-align: top; }
+.pat-table th:first-child, .pat-table td:first-child { text-align: left; }
+.pat-table th { font-size: 12px; color: #4a5568; font-weight: 700; background: #f5f7fa; }
+.pat-table th a { color: #1a4a6e; }
+.pat-table .pat-n { color: #5a6675; font-size: 12px; }
+.pat-muted { color: #8a96a4; }
+.pat-small-table td { color: #5a6675; }
+.pat-notes { font-size: 12.5px; color: #4a5568; margin: 4px 0 18px; }
+.pat-notes p { margin: 0 0 4px; }
+.pat-method { background: #f8fafc; border: 1px solid #dde3ed; border-radius: 6px; padding: 14px 18px; font-size: 13px; color: #2d3748; }
+.pat-method h2 { font-size: 15px; margin: 0 0 8px; }
+.pat-method h3 { font-size: 13px; margin: 14px 0 4px; }
+.pat-method p, .pat-method li { line-height: 1.55; }
+.pat-method ul { margin: 4px 0 8px; padding-left: 20px; }
+.pat-method .pat-table { font-size: 12.5px; background: #fff; }
+</style>{% endblock %}
+
+{% block content %}
+<div class="box">
+    <div class="wq-tab-row">
+        <a href="/written-questions" class="wq-tab">Written Questions Scanner</a>
+        <a href="/written-questions/today" class="wq-tab">Today's PQs Tracker</a>
+        <a href="/written-questions/answer-times" class="wq-tab wq-tab-active">Answer times</a>
+    </div>
+
+    <h1 style="font-size:22px;margin:0 0 6px;">Written question answer times by department</h1>
+    <p class="page-desc">How quickly government departments answered written questions tabled in the House of Commons, calculated from Parliament's data. Counts are shown beside every percentage. <a href="#methodology">How this is measured</a>.</p>
+
+    <form class="pat-period" method="get" action="/written-questions/answer-times">
+        <label for="pat-period">Questions tabled:</label>
+        <select name="period" id="pat-period">
+            {% for p in periods %}
+            <option value="{{ p.key }}"{% if p.key == period.key %} selected{% endif %}>{% if loop.first %}Last 3 full months ({{ p.label }}){% elif p.key == 'last-12-months' %}Last 12 full months ({{ p.label }}){% else %}{{ p.label }}{% endif %}</option>
+            {% endfor %}
+        </select>
+        {% if sort != 'named' %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+        <button type="submit">Show</button>
+        <a href="{{ csv_url }}">Download CSV</a>
+    </form>
+
+    <p style="font-size:13px;margin:0 0 4px;"><strong>House of Commons, questions tabled {{ fmt_date(period.start) }} to {{ fmt_date(period.end) }}{% if period.to_date %} (period still running){% endif %}.</strong>
+    Ordered by {% if sort == 'named' %}the share of named-day questions answered on time, highest first{% elif sort == 'ordinary' %}the share of ordinary questions answered within the expected time, highest first{% elif sort == 'median' %}median working days to answer, fewest first{% else %}department name{% endif %}.</p>
+
+    {% macro dept_rows(rows) %}
+    {% for d in rows %}
+    <tr>
+        <td>{{ d.department }}</td>
+        <td>{{ '{:,}'.format(d.named.questions) }}</td>
+        <td{% if d.named.questions < min_questions %} class="pat-muted"{% endif %}>{{ fmt_pct(d.named.pct) }}{% if d.named.questions %} <span class="pat-n">({{ '{:,}'.format(d.named.on_time) }})</span>{% endif %}{% if d.named.questions and d.named.questions < min_questions %} †{% endif %}</td>
+        <td>{{ '{:,}'.format(d.ordinary.questions) }}</td>
+        <td{% if d.ordinary.questions < min_questions %} class="pat-muted"{% endif %}>{{ fmt_pct(d.ordinary.pct) }}{% if d.ordinary.questions %} <span class="pat-n">({{ '{:,}'.format(d.ordinary.on_time) }})</span>{% endif %}{% if d.ordinary.questions and d.ordinary.questions < min_questions %} †{% endif %}</td>
+        <td>{% if d.median_days is not none %}{{ '%g'|format(d.median_days) }}{% else %}–{% endif %}</td>
+    </tr>
+    {% endfor %}
+    {% endmacro %}
+
+    {% macro head(sortable) %}
+    <thead><tr>
+        <th scope="col">{% if sortable %}<a href="{{ sort_url('department') }}">Department</a>{% else %}Department{% endif %}</th>
+        <th scope="col">Named-day questions</th>
+        <th scope="col">{% if sortable %}<a href="{{ sort_url('named') }}">Answered on time</a>{% else %}Answered on time{% endif %}</th>
+        <th scope="col">Ordinary questions</th>
+        <th scope="col">{% if sortable %}<a href="{{ sort_url('ordinary') }}">Within expected time</a>{% else %}Within expected time{% endif %}</th>
+        <th scope="col">{% if sortable %}<a href="{{ sort_url('median') }}">Median working days to answer</a>{% else %}Median working days to answer{% endif %}</th>
+    </tr></thead>
+    {% endmacro %}
+
+    {% if not figures %}
+    <p>The figures are not available at the moment. Please try again later.</p>
+    {% elif main %}
+    <table class="pat-table" id="pat-main">
+        {{ head(true) }}
+        <tbody>{{ dept_rows(main) }}</tbody>
+    </table>
+    {% else %}
+    <p>No department had {{ min_questions }} or more Commons written questions in this period in our archive.</p>
+    {% endif %}
+
+    {% if small %}
+    <h2 style="font-size:15px;margin:18px 0 4px;">Departments with fewer than {{ min_questions }} questions in this period</h2>
+    <p style="font-size:12.5px;color:#5a6675;margin:0 0 4px;">Shown separately: percentages based on few questions can change a great deal from one period to the next.</p>
+    <table class="pat-table pat-small-table" id="pat-small">
+        {{ head(false) }}
+        <tbody>{{ dept_rows(small) }}</tbody>
+    </table>
+    {% endif %}
+
+    <div class="pat-notes">
+        <p>Numbers in brackets are the questions answered on time or within the expected time. † fewer than {{ min_questions }} questions of that type.</p>
+        {% if figures and figures.pending %}<p>{{ '{:,}'.format(figures.pending) }} question{{ 's' if figures.pending != 1 }} not yet answered and not yet past the expected date {{ 'are' if figures.pending != 1 else 'is' }} left out until {{ 'they are' if figures.pending != 1 else 'it is' }} answered or the date passes.</p>{% endif %}
+        {% if figures and figures.no_due_date %}<p>{{ '{:,}'.format(figures.no_due_date) }} question{{ 's' if figures.no_due_date != 1 }} with no due date or department in our data {{ 'are' if figures.no_due_date != 1 else 'is' }} left out.</p>{% endif %}
+        <p>Departments are listed under the name recorded on each question. After a machinery-of-government change, a department can appear under both its old and new names.</p>
+    </div>
+
+    <div class="pat-method" id="methodology">
+        <h2>How this is measured</h2>
+        <p>Calculated by Westminster Brief from Parliament's Written Questions API, through our own archive of written questions. Withdrawn questions are not counted. Only a full (substantive) answer counts: a holding answer, saying a full reply will follow, does not. Working days are Monday to Friday, excluding bank holidays in England and Wales; recesses are not excluded.</p>
+
+        <h3>Named-day questions</h3>
+        <p>An MP can ask for an answer on a named day. A question counts as answered on time if it received a full answer on or before that day.</p>
+
+        <h3>Ordinary questions</h3>
+        <p>Parliament expects ordinary written questions to be answered within five working days of being tabled. We count a full answer as within the expected time if it is given no more than {{ ordinary_extra }} working days after the date Parliament lists the question for answer (usually two sitting days after tabling). Counting from that date rather than from tabling is what reproduces the Procedure Committee's published counts (see below).</p>
+
+        <h3>Questions without a full answer</h3>
+        <p>A question still without a full answer counts as not on time once its expected date has passed. Until then it is left out (see the notes above). Our archive keeps only each question's latest answer: where a holding answer was later replaced by a full one, the date of the full answer is used.</p>
+
+        <h3>Median working days to answer</h3>
+        <p>The middle value of the working days between tabling and the full answer, for all named-day and ordinary questions that have one.</p>
+
+        <h3>Checked against the Procedure Committee's figures</h3>
+        <p>The House of Commons <a href="{{ committee_url }}" target="_blank" rel="noopener">Procedure Committee</a> publishes departments' answer times for written questions. It uses {{ benchmark }}% as its benchmark. We applied the rules above to Parliament's data for questions tabled 17 July to 6 December 2024 and compared the results with the Committee's published counts for four departments. Ordinary questions matched to within about 1 percentage point (ours slightly higher each time); named-day questions matched exactly or to within 0.4 points for three departments, and 2.4 points for the fourth.</p>
+        <table class="pat-table">
+            <thead><tr>
+                <th scope="col">Department</th>
+                <th scope="col">Named day: ours</th>
+                <th scope="col">Named day: Committee</th>
+                <th scope="col">Ordinary: ours</th>
+                <th scope="col">Ordinary: Committee</th>
+            </tr></thead>
+            <tbody>
+            {% for v in validation %}
+            <tr>
+                <td>{{ v.department }}</td>
+                <td>{{ '{:,}'.format(v.named_ours[0]) }} of {{ '{:,}'.format(v.named_ours[1]) }} ({{ fmt_pct(v.named_ours_pct) }})</td>
+                <td>{{ '{:,}'.format(v.named_official[0]) }} of {{ '{:,}'.format(v.named_official[1]) }} ({{ fmt_pct(v.named_official_pct) }})</td>
+                <td>{{ '{:,}'.format(v.ordinary_ours[0]) }} of {{ '{:,}'.format(v.ordinary_ours[1]) }} ({{ fmt_pct(v.ordinary_ours_pct) }})</td>
+                <td>{{ '{:,}'.format(v.ordinary_official[0]) }} of {{ '{:,}'.format(v.ordinary_official[1]) }} ({{ fmt_pct(v.ordinary_official_pct) }})</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        <h3>House of Lords</h3>
+        <p>The House of Lords expects written questions to be answered within {{ lords_days }} working days of tabling (Companion to the Standing Orders, 6.41), and has no named days. No official department-by-department figures are published for the Lords, so this table covers the Commons only; each Lords question page shows its own dates.</p>
+
+        <p class="pat-muted" style="margin-top:12px;">
+            {% if figures %}Figures calculated {{ fmt_date(figures.computed_at.date()) }} at {{ figures.computed_at.strftime('%H:%M') }} UTC.{% endif %}
+            {% if archive_updated %}Archive last updated from Parliament {{ archive_updated }}.{% endif %}</p>
+    </div>
+</div>
+{% endblock %}
