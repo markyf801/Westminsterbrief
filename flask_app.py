@@ -67,6 +67,7 @@ from consultations import consultations_bp
 from committees import committees_bp
 from written_statements import written_statements_bp  # noqa: E402  (same position as the other blueprints)
 from divisions import divisions_bp  # noqa: E402
+from pq_answer_times import pq_answer_times_bp  # noqa: E402
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app = Flask(__name__)
@@ -1017,6 +1018,10 @@ def _build_sitemap_core_xml() -> str:
         urls.append((f"{BASE}/written-statements", ""))
     if feature_enabled('FEATURE_DIVISIONS'):
         urls.append((f"{BASE}/divisions", ""))
+    # Only when public: the cached sitemap must not depend on who requested it.
+    from hansard_archive.pq_timing import answer_times_public
+    if answer_times_public():
+        urls.append((f"{BASE}/written-questions/answer-times", ""))
 
     # Date browse — one URL per distinct date with sessions
     for (d,) in (db.session.query(HansardSession.date)
@@ -2710,6 +2715,7 @@ app.register_blueprint(consultations_bp)
 app.register_blueprint(committees_bp)
 app.register_blueprint(written_statements_bp)
 app.register_blueprint(divisions_bp)
+app.register_blueprint(pq_answer_times_bp)
 
 
 # ── WQs / Tracker merge — new canonical URLs ──────────────────────────────
