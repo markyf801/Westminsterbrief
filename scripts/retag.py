@@ -108,10 +108,10 @@ _CHUNK = 50
 
 # Rough token model for the up-front estimate (chars/4 plus the fixed prompt).
 _EST_OUTPUT_TOKENS = {"session": 450, "pq": 120}
-# Thinking tokens per call. claude-haiku-5-5 at effort low: calibrated on the
-# 24 Oct 2026 eval ($0.98 per 1,000 debates, $0.19 per 1,000 questions).
+# Thinking tokens per call. claude-haiku-5-5 at effort medium: calibrated on the
+# 24 Oct 2026 eval ($1.30 per 1,000 debates, $0.28 per 1,000 questions, before the batch discount).
 _EST_THINKING_TOKENS = {"gemini-2.5-flash-lite": 0, "gemini-2.5-flash": 700, "gemini-2.5-pro": 1500,
-                        "claude-haiku-5-5": 700}
+                        "claude-haiku-5-5": 1300}
 
 # Message Batches: well under the API's 100,000 requests / 256 MB per batch, so
 # batches end sooner and a stop loses less.

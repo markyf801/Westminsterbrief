@@ -927,7 +927,8 @@ def _add_usage(total: dict, usage: dict) -> None:
 # saving is a fraction of a cent per call at Haiku input prices.
 # ---------------------------------------------------------------------------
 
-CLAUDE_EFFORT = "low"          # classification task; Haiku 5.5 defaults to medium
+CLAUDE_EFFORT = "medium"       # 24 Oct 2026 eval: medium cut wrong policy areas 27-30 -> 17 and
+                               # restored first-area accuracy (94%) vs low; docs/plans/tagging-model-test-2026-10-24.md
 _CLAUDE_MAX_TOKENS = 16000     # thinking + JSON; the largest (grouped) answers are a few thousand
 _CLAUDE_TIMEOUT = 120.0        # seconds per request; the SDK retries timeouts
 _CLAUDE_ARRAY_KEY = "results"  # a top-level array schema is wrapped in an object under this key

@@ -100,7 +100,7 @@ def test_claude_session_same_prompt_schema_and_evidence_check(fake_client, monke
     (call,) = client.calls
     assert call["model"] == HAIKU
     assert call["messages"] == [{"role": "user", "content": tg.build_session_prompt(_SI)[0]}]
-    assert call["output_config"]["effort"] == "low"
+    assert call["output_config"]["effort"] == "medium"
     fmt = call["output_config"]["format"]
     assert fmt["type"] == "json_schema"
     assert fmt["schema"]["additionalProperties"] is False

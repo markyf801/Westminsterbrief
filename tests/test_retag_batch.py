@@ -216,7 +216,7 @@ def test_apply_out_of_order_results_replace_tags_with_the_claude_model(retag, se
     assert sum(c.startswith("s") for c in cids) == 3 and sum(c.startswith("p") for c in cids) == 2
     assert all(len(c) <= 64 and re.fullmatch(r"[A-Za-z0-9_-]+", c) for c in cids)
     params = fake.requests()[0]["params"]
-    assert params["model"] == HAIKU and params["output_config"]["effort"] == "low"
+    assert params["model"] == HAIKU and params["output_config"]["effort"] == "medium"
     assert "temperature" not in params and "thinking" not in params
     assert fake.built == ["sk-ant-batch-test"]
 
