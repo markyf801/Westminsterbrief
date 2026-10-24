@@ -184,7 +184,8 @@ def test_fresh_data_all_ok():
     bad = [(r.name, r.status, r.detail) for r in results if r.status not in (hc.OK, hc.SKIPPED)]
     assert bad == []
     skipped = {r.name for r in results if r.status == hc.SKIPPED}
-    assert skipped == {"Search: curly apostrophes (database locale)"}   # Postgres only
+    assert skipped == {"Search: curly apostrophes (database locale)",   # Postgres only
+                       "Database: disk space"}
     assert hc.count_problems(results) == 0
 
 
@@ -929,3 +930,64 @@ def test_search_locale_fails_on_c_locale_style_result(tsvector):
 
 def test_search_locale_is_registered():
     assert hc.check_search_locale in hc.DB_CHECKS
+
+
+# ---------------------------------------------------------------------------
+# Database disk space
+# ---------------------------------------------------------------------------
+
+class _PgSizeConn:
+    """Stands in for a Postgres connection answering pg_database_size."""
+
+    def __init__(self, size_bytes):
+        self.dialect = type("D", (), {"name": "postgresql"})()
+        self.size_bytes = size_bytes
+        self.sql = []
+
+    def execute(self, stmt, params=None):
+        self.sql.append(str(stmt))
+        return MagicMock(scalar=MagicMock(return_value=self.size_bytes))
+
+
+def _db_size(size_gb, monkeypatch, volume=None):
+    if volume is None:
+        monkeypatch.delenv("DB_VOLUME_GB", raising=False)
+    else:
+        monkeypatch.setenv("DB_VOLUME_GB", volume)
+    conn = _PgSizeConn(int(size_gb * 1e9))
+    res = hc.check_db_size(_locale_ctx(conn))
+    assert conn.sql == ["SELECT pg_database_size(current_database())"]
+    return res
+
+
+@pytest.mark.parametrize("size_gb, status", [
+    (2.4, hc.OK), (3.49, hc.OK), (3.5, hc.WARN), (4.2, hc.WARN), (4.25, hc.FAIL), (4.9, hc.FAIL),
+])
+def test_db_size_thresholds_on_default_5_gb(monkeypatch, size_gb, status):
+    res = _db_size(size_gb, monkeypatch, volume="5")
+    assert res.status == status
+    if status == hc.OK:
+        assert res.detail == f"Database {size_gb:.1f} GB of 5 GB ({100 * size_gb / 5:.0f}%)"
+    else:
+        assert "grow the Postgres volume" in res.detail
+
+
+def test_db_size_plain_english_and_volume_from_env(monkeypatch):
+    assert _db_size(2.4, monkeypatch, volume="5").detail == "Database 2.4 GB of 5 GB (48%)"
+    res = _db_size(7.5, monkeypatch, volume="10")
+    assert res.status == hc.WARN and res.detail.startswith("Database 7.5 GB of 10 GB (75%)")
+    assert _db_size(4.5, monkeypatch, volume="10").status == hc.OK
+
+
+@pytest.mark.parametrize("volume", [None, "", "five", "0", "-5", "nan"])
+def test_db_size_unset_or_bad_volume_uses_5_gb_and_says_so(monkeypatch, volume):
+    res = _db_size(2.4, monkeypatch, volume=volume)
+    assert res.status == hc.OK
+    assert res.detail.startswith("Database 2.4 GB of 5 GB (48%); DB_VOLUME_GB")
+    assert "assuming 5 GB" in res.detail
+
+
+def test_db_size_skipped_on_sqlite():
+    res = _run_db(_engine(), TUESDAY)["Database: disk space"]
+    assert res.status == hc.SKIPPED and "not Postgres" in res.detail
+    assert hc.check_db_size in hc.DB_CHECKS

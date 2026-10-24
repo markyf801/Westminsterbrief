@@ -59,6 +59,7 @@ heading lag) counts them as working days.
 from __future__ import annotations
 
 import html
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
@@ -151,6 +152,10 @@ CONFIG: dict = {
     # Archive search relies on Postgres splitting "Starmer’s" (curly apostrophe)
     # into 'starmer', which depends on the database locale (LC_CTYPE).
     "search_locale": {"sample": "Starmer’s", "expect": "starmer"},
+    # pg_database_size(current_database()) against the Postgres volume size,
+    # DB_VOLUME_GB on the health-report service (default below). WAL and other
+    # files also live on the volume, so it is a little fuller than this.
+    "db_size": {"default_volume_gb": 5, "warn_pct": 70.0, "fail_pct": 85.0},
     "cron_recent_failures_hours": 24,     # failed runs in this window are listed in the detail
     "cron_stuck_hours": 3,                # latest run still "running" after this: interrupted
     "cron_interrupted_streak_warn": 3,    # grouped service: this many unfinished runs in a row -> WARN
@@ -839,6 +844,43 @@ def check_search_locale(ctx: HealthContext) -> CheckResult:
     return CheckResult(name, OK, detail)
 
 
+def _volume_gb(default: float) -> tuple[float, str]:
+    """Volume size from DB_VOLUME_GB (read at call time), and a note when the
+    default is used."""
+    raw = (os.environ.get("DB_VOLUME_GB") or "").strip()
+    if not raw:
+        return default, f"; DB_VOLUME_GB not set, assuming {default:g} GB"
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not 0 < value < float("inf"):    # also rejects nan
+        return default, f"; DB_VOLUME_GB={raw!r} not understood, assuming {default:g} GB"
+    return value, ""
+
+
+def check_db_size(ctx: HealthContext) -> CheckResult:
+    """Database size as a share of the Postgres volume: WARN at 70%, FAIL at
+    85% (vacuum, index builds and restores need headroom). GB = 10^9 bytes, so
+    the percentage errs high if Railway counts the volume in GiB."""
+    name = "Database: disk space"
+    if ctx.conn.dialect.name != "postgresql":
+        return CheckResult(name, SKIPPED, f"not Postgres ({ctx.conn.dialect.name}): size not checked")
+    cfg = ctx.config["db_size"]
+    volume_gb, note = _volume_gb(cfg["default_volume_gb"])
+    size_gb = ctx.conn.execute(sa.text("SELECT pg_database_size(current_database())")).scalar() / 1e9
+    pct = 100 * size_gb / volume_gb
+    detail = f"Database {size_gb:.1f} GB of {volume_gb:g} GB ({pct:.0f}%){note}"
+    if pct >= cfg["fail_pct"]:
+        status = FAIL
+    elif pct >= cfg["warn_pct"]:
+        status = WARN
+    else:
+        return CheckResult(name, OK, detail)
+    return CheckResult(name, status, f"{detail} - WARN from {cfg['warn_pct']:g}%, FAIL from "
+                                     f"{cfg['fail_pct']:g}%: grow the Postgres volume in Railway")
+
+
 def check_headline_stats(ctx: HealthContext) -> CheckResult:
     # last_success, not last_refreshed: stats_refresh bumps last_refreshed on failure too (SWR).
     res = _table_freshness(ctx, "Stats: headline refresh", "headline_stat", "headline_stats", "last_success")
@@ -886,6 +928,7 @@ DB_CHECKS: list[Callable[[HealthContext], CheckResult | list[CheckResult]]] = [
     check_pq_headings_total,
     check_tagging_coverage,
     check_search_locale,
+    check_db_size,
     check_bills,
     check_edms,
     check_edm_cron,
